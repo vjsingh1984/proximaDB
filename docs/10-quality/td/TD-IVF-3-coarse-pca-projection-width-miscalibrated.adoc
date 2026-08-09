@@ -8,7 +8,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open — measured at two dimensionalities. Proposes a calibrated default, gated default-OFF.**
+| Status | **Open — measured at two dimensionalities. No production-default change is justified yet.**
 | Priority | **P1 — read-side cost.** Object-store round-trips are the dominant cost term under the co-design mandate. Measured 20–21% GET/query reduction at the 0.98 recall SLA, for a one-time write cost of +9…15%.
 | Component | `src/storage/engines/sst/block_cluster.rs` — `ivf_projection_dims()` :294, call sites :390 and :598. Env gates `PROXIMADB_IVF_NCOMP`, `_A`, `_B` (ENV_GATE_REGISTRY :131–133, TD-WLP-4b).
 | Evidence | 16 beds on one binary (`62677fb41686…` @ `aed724fc5`), exact top-100 ground truth, 1000-query slices. **128-d**: BIGANN prefixes, 12 beds, 100K→10M. **768-d**: BGE-base over 491,655 code/doc chunks from 17 distinct repos, 4 widths + an independent replicate + clean serial write costs.
@@ -57,7 +57,7 @@ across a controlled BGE ladder — 384→1024 is 2.7× wider but needs only 1.20
 components for 79% variance (132→158). A rule keyed on `log2(dim)` scales with
 the one quantity that demonstrably does not drive the answer.
 
-== What we could NOT predict, and why the rule is a table
+== What we could NOT predict
 
 Three a-priori framings were each fitted to the 128-d data and each failed
 out-of-sample at 768-d:
@@ -77,7 +77,7 @@ not a portable constant. The two-constraint clamp rule this TD previously propos
 (a variance target AND an independent estimation floor) is therefore **wrong in
 structure**, not merely mis-parameterised: the two terms trade off continuously.
 
-We are left with two solid measurements and a sublinear relationship between them:
+We are left with two solid measurements and a two-point interpolation:
 
 ....
   measured:   128-d -> 32 comps (25.0% of dims)
@@ -92,24 +92,29 @@ We are left with two solid measurements and a sublinear relationship between the
       dim= 128 ->  10   dim= 384 ->  12   dim= 768 ->  14   dim=1536 ->  15
 ....
 
-A two-point fit reproduces two points by construction. It is offered as an
-**interpolation between measurements, explicitly not a law**, and the 384-d
-prediction of ~49 is the falsifiable test.
+A two-point fit reproduces two points by construction. It is an **interpolation
+between measurements, explicitly not a law**. It cannot establish that dimension
+is the correct policy key, especially when the fixed-dimension experiment above
+identifies `k_c` as the larger effect. The 384-d prediction of ~49 is one
+falsifiable test, not a default candidate.
 
 == Proposed resolution
 
-. **Ship a calibrated default, not a derived formula.** Replace
-  `ivf_projection_dims` with a table keyed on `dim` carrying the measured values
-  (128→32, 768→64) and the interpolation for unmeasured widths, clamped to
-  `[1, dim]`. Every entry records whether it is measured or interpolated.
-. **Delete or invert the `max()` masking** so the `k_c` term can fire; its
-  direction is correct and its magnitude needs calibration once ≥3 dimensionalities
-  are measured.
-. **Ship default-OFF**, per-collection opt-in via the existing
-  `PROXIMADB_IVF_NCOMP`, until validated at ≥1 further dimensionality.
-. **Measure 384-d next.** It costs one corpus embed (bge-small is ~3.3× faster
-  than bge-base on the same chunks) and either validates the interpolation across
-  three dimensionalities or kills it.
+. **Keep the production default unchanged.** The existing `PROXIMADB_IVF_NCOMP`
+  is a process-global evaluation override, not a per-collection policy surface;
+  it remains suitable for controlled beds only.
+. **Measure a minimal factorial before proposing a rule.** At 384-d, sweep the
+  predicted width neighbourhood at at least two independently forced `k_c`
+  values. Repeat one 128-d or 768-d point at those same `k_c` values. Record the
+  recall-per-probe frontier, GET/query, bytes/query, cache state, and write cost.
+  This distinguishes width, cell-count, and corpus-content effects.
+. **Then choose the policy key from evidence.** If a later policy needs a
+  per-collection choice, add a versioned collection configuration rather than
+  overload a process environment variable. Only then calibrate whether a
+  `k_c`-aware rule, a content-class table, or neither beats the existing formula.
+. **Do not alter `max()` yet.** Its masking is a real observation, but deleting
+  or inverting it before the factorial data merely replaces one uncalibrated
+  formula with another.
 
 **Mixed-read safety is already satisfied.** `n_comp` is persisted per segment in
 the A0 coarse directory and read back from the file, so existing segments retain
@@ -134,7 +139,7 @@ CAUTION: timings require a quiet machine. A first attempt at the 768-d costs
 produced 334k/468k/307k ms — non-monotonic, despite identical compaction paths —
 because the host slept and ran analysis concurrently. The numbers above use
 `caffeinate -i`, serial execution, and the minimum of two builds per width
-(contention only ever inflates a timer). Recall and GET/query are
+(contention only ever inflates a timer). Recall and object-store GET/query are
 contention-invariant; **no timing is**.
 
 == Determinism, and what is therefore NOT a risk
@@ -198,9 +203,11 @@ exists to absorb CI hardware/threading differences, not scatter.
   transaction per request with **no 4 MiB increment** — that rule is ADLS Gen2
   (`dfs.`) only, and ADR-036 puts us on the flat Blob endpoint. S3 and GCS also
   bill per request. All three charge per-GB retrieval **only** on cold tiers
-  (Hot/Standard are free). So GET/query is the complete read-cost metric for
-  hot-tier collections, and the 4MiB target is not a billing quantum — it needs a
-  latency/memory justification instead.
+  (Hot/Standard are free). Thus GET/query is the direct *object-store request
+  COGS* metric for hot-tier collections; it is not the complete read-cost or
+  performance metric. Bytes still affect latency, cache capacity, Cool/Cold
+  retrieval, and the separately metered network/egress dimension. The 4MiB target
+  is not a billing quantum — it needs a latency/cache/memory justification instead.
 * **A larger prize may sit next door.** Because no cloud penalises request *size*,
   coalescing region A (≈551 KiB/cell of codes) with region B (≈3.72 MiB/cell of
   rerank vectors) into one ranged read could take GET/query from ~26 to ~13 —

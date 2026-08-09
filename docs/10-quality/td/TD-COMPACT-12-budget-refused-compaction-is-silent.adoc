@@ -10,7 +10,7 @@
 | Field | Value
 | Status | **Open**
 | Priority | **P2 — observability.** The underlying stall is TD-COMPACT-11 (P0). This entry is *only* about the operator being unable to detect it.
-| Component | `src/storage/common/compaction_memory.rs` :174–176 (planner returns `None`); `src/storage/common/compaction_utils.rs` :395 and :497 (the INFO log sites).
+| Component | `src/storage/common/compaction_memory.rs` (`plan_compaction_resources` and its retrying `acquire_compaction_resources` caller); `src/storage/common/compaction_utils.rs` (candidate selection and its INFO log sites).
 | Evidence | Reproduced twice on 2026-08-08 during the coarse-PCA width study (TD-IVF-3): once at 128-d/3.3M and once at 768-d/491,655 rows. Details below.
 |===
 
@@ -23,8 +23,15 @@ it must be observable. TD-COMPACT-11 does not cover detection.
 
 == Defect
 
-`plan_compaction_resources` returns `Option<CompactionResourcePlan>` and uses
-`None` for two semantically different outcomes:
+`plan_compaction_resources` returns `Option<CompactionResourcePlan>`.  Its
+`None` conflates several distinct non-admission outcomes: an input that exceeds
+the in-memory budget with spill disabled, a spill working set that cannot fit,
+and insufficient scratch.  `acquire_compaction_resources` then rechecks these
+conditions indefinitely, also conflating a durable configuration/capacity block
+with transient reservations held by other compactions.  Separately, the task
+selector reports no morsel when no pair fits its current input-byte budget.
+
+The result is not merely two outcomes:
 
 [source,rust]
 ----
@@ -32,12 +39,15 @@ if in_memory_bytes <= memory_budget.remaining_bytes {
     return Some(CompactionExecutionMode::InMemory ...);
 }
 if !config.spill_enabled || config.spill_working_memory_mb == 0 {
-    return None;                 // <-- "budget refused this pair"
+    return None;                 // disabled-spill capacity block
 }
+// Other `None` branches: working-set-over-budget, scratch-over-budget,
+// invalid amplification; a reservation race is retried by the caller.
 ----
 
-The caller cannot distinguish that from "there were no candidates", so it emits a
-single **INFO** line and moves on:
+The selector cannot distinguish its capacity condition from no candidates, and
+the admission loop has no durable blocked-state signal. It emits a single
+**INFO** line and moves on:
 
 ....
 ⏸️ SST COMPACTION: L0 remains horizontal because no file pair fits the
@@ -86,24 +96,34 @@ minutes, ~50 minutes of machine time lost before it was killed manually.
 
 == Proposed fix
 
-. **Distinguish the two refusals.** Return a typed outcome rather than bare
-  `None` — e.g. `NoCandidates` vs `RefusedByBudget { input_bytes,
-  projected_bytes, remaining_budget_bytes }`.
-. **Log the budget refusal at WARN, and name the remedy** — include projected vs
-  available bytes and state that `spill_enabled` with a local scratch path
-  resolves it. INFO is the wrong level for "this collection has stopped
-  consolidating permanently".
-. **Emit a counter** (e.g. `proximadb_compaction_refused_by_budget_total`,
-  labelled by collection) so it is alertable and assertable. A gauge for
-  "levels currently horizontal due to budget" would let a soak test fail on it.
-. Optional: surface it in collection stats/admin so the condition is visible
-  without log scraping.
+. **Classify every non-admission.** Replace the bare planner `None` with a typed
+  decision: `Admitted(plan)` or `Blocked { reason, input_bytes,
+  projected_memory_bytes, remaining_memory_bytes, required_scratch_bytes,
+  remaining_scratch_bytes }`, where `reason` is a bounded enum such as
+  `spill_disabled`, `working_set_over_budget`, `scratch_unavailable`,
+  `scratch_over_budget`, or `temporarily_reserved`. Keep `NoCandidates` at the
+  selector boundary; it is not an admission outcome.
+. **Make the signal episode-based.** The retry loop must not increment a counter
+  on each periodic recheck. Emit one WARN and increment once when a candidate
+  enters a *sustained blocked episode*; clear it on admission, candidate/geometry
+  change, or shutdown. Treat `temporarily_reserved` as waiting rather than a
+  permanent failure and rate-limit any diagnostic log.
+. **Use bounded metrics.** Emit a counter such as
+  `proximadb_compaction_blocked_episodes_total{engine,level,reason}` and a
+  current blocked-level gauge with the same bounded labels. Do **not** label a
+  Prometheus series by collection/tenant: that has unbounded cardinality. Put the
+  collection stable ID, candidate fingerprint, and proposed remedy in the WARN
+  and in collection/admin stats, where per-collection state belongs.
+. **Name only applicable remedies.** A disabled spill path can name
+  `spill_enabled` plus its local scratch directory; a scratch-capacity block must
+  name the scratch shortfall; a transient reservation must not tell an operator
+  that the collection has permanently stopped.
 
 The fix is independent of TD-COMPACT-11's executor work and shippable on its own.
 
 == Exit criteria
 
-A compaction refused by the memory budget emits a WARN naming the remedy and
-increments an alertable counter; a test asserts the counter fires when a pair
-exceeds the budget with spill disabled, and does **not** fire when a level is
-merely idle.
+Each durable blocked episode emits one WARN naming the applicable remedy and
+increments an alertable, bounded-label counter. Tests cover every typed reason,
+prove repeated rechecks do not double-count an episode, prove admission clears
+it, and prove a merely idle level emits neither counter nor gauge.

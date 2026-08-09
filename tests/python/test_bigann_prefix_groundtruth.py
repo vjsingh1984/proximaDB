@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
+import struct
+import sys
 
 import numpy as np
 
@@ -74,3 +77,56 @@ def test_exact_fallback_uses_prefix_and_deterministic_id_ties() -> None:
 
     assert neighbors.tolist() == [[2, 1]]
     assert tied_neighbors.tolist() == [[3]]
+
+
+def test_main_exact_only_mode_records_complete_provenance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Omitting the superset must brute-force every query and say so in evidence."""
+    base_path = tmp_path / "base.u8bin"
+    queries_path = tmp_path / "queries.u8bin"
+    output_path = tmp_path / "truth.ivecs"
+
+    def write_u8bin(path: Path, rows: np.ndarray) -> None:
+        with path.open("wb") as destination:
+            destination.write(struct.pack("<II", rows.shape[0], rows.shape[1]))
+            rows.tofile(destination)
+
+    write_u8bin(
+        base_path,
+        np.asarray([[0, 0], [1, 0], [10, 0], [20, 0]], dtype=np.uint8),
+    )
+    write_u8bin(queries_path, np.asarray([[0, 0], [9, 0]], dtype=np.uint8))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bigann_prefix_groundtruth.py",
+            "--base",
+            str(base_path),
+            "--queries-path",
+            str(queries_path),
+            "--output",
+            str(output_path),
+            "--prefix-rows",
+            "3",
+            "--queries",
+            "2",
+            "--top-k",
+            "2",
+            "--query-batch",
+            "1",
+            "--base-block",
+            "2",
+        ],
+    )
+
+    assert GROUNDTRUTH.main() == 0
+    encoded = np.fromfile(output_path, dtype="<i4").reshape(2, 3)
+    manifest = json.loads(output_path.with_suffix(".ivecs.json").read_text())
+    assert encoded.tolist() == [[2, 0, 1], [2, 2, 1]]
+    assert manifest["mode"] == "exact_full"
+    assert manifest["superset_groundtruth"] is None
+    assert manifest["derived_from_superset_rows"] == 0
+    assert manifest["exact_fallback_rows"] == 2
+    assert manifest["exact_fallback_query_indices"] == [0, 1]
