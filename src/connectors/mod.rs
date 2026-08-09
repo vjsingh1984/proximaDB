@@ -94,7 +94,7 @@
 
 pub mod pushdown;
 pub mod traits;
-pub mod types;
+pub use proximadb_connectors_types::types;
 
 // Compute engine connectors
 pub mod duckdb;
