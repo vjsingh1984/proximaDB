@@ -2582,7 +2582,12 @@ jobs:
     name: SIFT PAX recall ratchet (N=10k)
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Release-mode compile of the recall test binary (pulls the full root crate) +
+    # 10k-vector ingest measured 30m17s on 2026-08-09 (#1552) — right at the prior
+    # 30m cap, so it tipped to CANCELLED under normal runner variance and blocked
+    # every storage/query-touching PR via the `ci-success` aggregator. 45m gives
+    # comfortable headroom without masking a genuine hang.
+    timeout-minutes: 45
     # only run when search/flush/WAL/PAX/cascade code changes
     if: >
       github.event_name == 'workflow_dispatch' ||
