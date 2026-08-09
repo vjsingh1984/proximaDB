@@ -6745,6 +6745,7 @@ dependencies = [
  "proximadb-filter-expression",
  "proximadb-filterable-metadata",
  "proximadb-functions",
+ "proximadb-geo-index",
  "proximadb-graph",
  "proximadb-graph-arrow",
  "proximadb-graph-engine-traits",
@@ -7452,6 +7453,13 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-relational-types",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-geo-index"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]

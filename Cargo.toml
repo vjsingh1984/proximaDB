@@ -69,6 +69,7 @@ members = [
     "crates/horizontal/proximadb-audit",
     "crates/horizontal/proximadb-cross-modal-fusion",
     "crates/horizontal/proximadb-utility-scorer",
+    "crates/horizontal/proximadb-geo-index",
     "crates/horizontal/proximadb-auth-sso",
     "crates/horizontal/proximadb-catapult",
     "crates/horizontal/proximadb-axis-tunnel",
@@ -295,6 +296,7 @@ proximadb-automl = { path = "crates/horizontal/proximadb-automl" }
 proximadb-audit = { path = "crates/horizontal/proximadb-audit" }
 proximadb-cross-modal-fusion = { path = "crates/horizontal/proximadb-cross-modal-fusion" }
 proximadb-utility-scorer = { path = "crates/horizontal/proximadb-utility-scorer" }
+proximadb-geo-index = { path = "crates/horizontal/proximadb-geo-index" }
 proximadb-auth-sso = { path = "crates/horizontal/proximadb-auth-sso" }
 proximadb-catapult = { path = "crates/horizontal/proximadb-catapult" }
 proximadb-axis-tunnel = { path = "crates/horizontal/proximadb-axis-tunnel" }
@@ -425,6 +427,7 @@ proximadb-automl = { workspace = true }
 proximadb-audit = { workspace = true }
 proximadb-cross-modal-fusion = { workspace = true }
 proximadb-utility-scorer = { workspace = true }
+proximadb-geo-index = { workspace = true }
 proximadb-auth-sso = { workspace = true }
 proximadb-catapult = { workspace = true }
 proximadb-axis-tunnel = { workspace = true }
