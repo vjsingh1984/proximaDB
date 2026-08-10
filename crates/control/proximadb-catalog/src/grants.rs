@@ -174,6 +174,59 @@ pub fn evaluate_grants(
     }
 }
 
+/// The decision at the **collection-open seam** when the acting identity does not
+/// own the collection (ADR-090 L1.2 / TD-AUTHZ-1 item 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrossTenantOpen {
+    /// The acting tenant OWNS the collection — this path does not apply, and the
+    /// caller must use its ordinary owner-scoped resolution. Kept distinct from
+    /// `Admitted` so an owner can never be mistaken for a grantee in an audit
+    /// record.
+    NotApplicable,
+    /// A grant admits the acting identity to the owner's collection.
+    Admitted,
+    /// No applicable grant. The caller MUST fail closed exactly as it does today.
+    Denied,
+}
+
+/// Decide whether `acting` may open a collection owned by `owner`.
+///
+/// This is the seam that makes cross-tenant sharing observable: today a foreign
+/// grantee is rejected by the owner-scoped catalog lookup before any row filter
+/// runs, so a grant that the catalog correctly evaluates has no visible effect.
+///
+/// # The escalation rule this function exists to enforce
+///
+/// The collection-open seam guards **reads and writes alike** — in the vector
+/// service the same validator fronts `search`/`get` AND
+/// `insert_batch`/`insert_records_only`. So the action is a REQUIRED parameter,
+/// never defaulted: a `Read` grant must not admit an INSERT. Callers pass the
+/// action they are actually performing, and a grant admits only if it carries
+/// that exact action.
+///
+/// # Cost
+///
+/// Only reached when the owner-scoped lookup already MISSED, so the ordinary
+/// same-tenant path pays nothing. Cross-tenant opens cost one grant-slice scan,
+/// evaluated once per open rather than per row — the ADR-090 L1 rule that
+/// sharing is a catalog decision, not a query predicate.
+pub fn cross_tenant_open_decision(
+    owner_grants: &[GrantRecord],
+    acting: &GrantSubject<'_>,
+    owner: TenantStableId,
+    resource: &Target,
+    action: GrantAction,
+    now_ms: i64,
+) -> CrossTenantOpen {
+    if acting.tenant_stable_id == owner {
+        return CrossTenantOpen::NotApplicable;
+    }
+    match evaluate_grants(owner_grants, acting, resource, action, now_ms) {
+        GrantDecision::Permit { .. } => CrossTenantOpen::Admitted,
+        GrantDecision::Deny(_) => CrossTenantOpen::Denied,
+    }
+}
+
 /// ADR-090 L1 composition: **deny > absence-of-grant > grant**. A policy-layer
 /// deny vetoes any entitlement.
 pub fn compose_with_policy(policy_denied: bool, grants: GrantDecision) -> GrantDecision {
@@ -622,6 +675,153 @@ mod tests {
             ),
             GrantDecision::Deny(_)
         ));
+    }
+
+    /// The acting tenant OWNS the collection ⇒ this seam does not apply, even
+    /// when a grant would also admit. Owners must never be recorded as grantees.
+    #[test]
+    fn owner_is_not_applicable_not_admitted() {
+        let (_d, s) = store();
+        s.grant(
+            OWNER,
+            Scope::Table(10),
+            Grantee::Tenant(OWNER),
+            read_only(),
+            None,
+            None,
+            None,
+        )
+        .expect("grant");
+        assert_eq!(
+            cross_tenant_open_decision(
+                &s.grants_for_owner(OWNER),
+                &subject(OWNER, "alice"),
+                OWNER,
+                &target(1, 10),
+                GrantAction::Read,
+                now(),
+            ),
+            CrossTenantOpen::NotApplicable
+        );
+    }
+
+    /// ⭐ THE ESCALATION TEST. The collection-open seam fronts reads AND writes
+    /// (search/get alongside insert_batch/insert_records_only), so a Read grant
+    /// must NOT admit a Write open. If this ever passes as Admitted, a shared
+    /// read has silently become shared write access.
+    #[test]
+    fn read_grant_never_admits_a_write_open() {
+        let (_d, s) = store();
+        s.grant(
+            OWNER,
+            Scope::Table(10),
+            Grantee::User {
+                tenant_stable_id: FOREIGN,
+                subject: SubjectId("bob".into()),
+            },
+            read_only(),
+            None,
+            None,
+            None,
+        )
+        .expect("grant");
+        let grants = s.grants_for_owner(OWNER);
+        let bob = subject(FOREIGN, "bob");
+
+        assert_eq!(
+            cross_tenant_open_decision(
+                &grants,
+                &bob,
+                OWNER,
+                &target(1, 10),
+                GrantAction::Read,
+                now()
+            ),
+            CrossTenantOpen::Admitted,
+            "the granted action opens"
+        );
+        for escalated in [GrantAction::Write, GrantAction::Ddl, GrantAction::Grant] {
+            assert_eq!(
+                cross_tenant_open_decision(&grants, &bob, OWNER, &target(1, 10), escalated, now()),
+                CrossTenantOpen::Denied,
+                "a Read grant must never admit {escalated:?}"
+            );
+        }
+    }
+
+    /// Absent, revoked, and expired grants all leave the seam CLOSED — the
+    /// caller's existing rejection is preserved unchanged.
+    #[test]
+    fn seam_stays_closed_without_a_live_grant() {
+        let (_d, s) = store();
+        let bob = subject(FOREIGN, "bob");
+        let t = target(1, 10);
+
+        assert_eq!(
+            cross_tenant_open_decision(&[], &bob, OWNER, &t, GrantAction::Read, now()),
+            CrossTenantOpen::Denied,
+            "no grants at all"
+        );
+
+        let id = s
+            .grant(
+                OWNER,
+                Scope::Table(10),
+                Grantee::Tenant(FOREIGN),
+                read_only(),
+                None,
+                None,
+                None,
+            )
+            .expect("grant");
+        assert_eq!(
+            cross_tenant_open_decision(
+                &s.grants_for_owner(OWNER),
+                &bob,
+                OWNER,
+                &t,
+                GrantAction::Read,
+                now()
+            ),
+            CrossTenantOpen::Admitted
+        );
+        s.revoke(OWNER, &id).expect("revoke");
+        assert_eq!(
+            cross_tenant_open_decision(
+                &s.grants_for_owner(OWNER),
+                &bob,
+                OWNER,
+                &t,
+                GrantAction::Read,
+                now()
+            ),
+            CrossTenantOpen::Denied,
+            "revocation closes the seam"
+        );
+
+        let (_d2, s2) = store();
+        s2.grant(
+            OWNER,
+            Scope::Table(10),
+            Grantee::Tenant(FOREIGN),
+            read_only(),
+            None,
+            None,
+            Some(now() - 1),
+        )
+        .expect("grant");
+        assert_eq!(
+            cross_tenant_open_decision(
+                &s2.grants_for_owner(OWNER),
+                &bob,
+                OWNER,
+                &t,
+                GrantAction::Read,
+                now()
+            ),
+            CrossTenantOpen::Denied,
+            "expiry closes the seam"
+        );
     }
 
     /// Deny > absence > grant: a policy deny vetoes an otherwise-valid grant.
