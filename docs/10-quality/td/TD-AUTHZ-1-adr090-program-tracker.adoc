@@ -225,3 +225,60 @@ METHOD NOTE: while checking this, a `grep | head -6` truncated the call-site lis
 read path look unguarded — a security asymmetry that does not exist. Caught before it was
 written down. Truncated search output is evidence of nothing; re-run unbounded before
 asserting an absence.
+
+
+== Item 3 wiring — the identity constraint at the seam (2026-08-10)
+
+The decision core (`cross_tenant_open_decision`) is merged and escalation-safe. Wiring it into
+`validate_tenant_collection_access` runs into a constraint that determines the shape of the
+remaining work, and it is NOT the one the earlier notes anticipated.
+
+**`TenantContext` carries only `tenant_id: String`.** No subject, no stable id
+(`crates/platform/proximadb-api/src/rest/state.rs:16`). But:
+
+* grants may be per-user — `Grantee::User { tenant_stable_id, subject }`;
+* `evaluate_grants` needs a `TenantStableId` (u64) for the acting tenant;
+* the grant store is partitioned by the OWNER's stable id, so even finding the candidate
+  grants requires resolving a string tenant to its stable id.
+
+So the seam cannot evaluate a per-user grant, and cannot even load the owner's grant slice,
+from what it is handed today.
+
+=== Safe interim: tenant-wide grants only, per-user FAIL-CLOSED
+
+`evaluate_grants` already gives the correct answer if the acting subject is a value that can
+never match a `Grantee::User`: `Grantee::Tenant(t)` matches on tenant alone and admits, while
+`Grantee::User { .. }` requires a subject equality that fails. That yields exactly the right
+partial capability:
+
+* tenant-to-tenant sharing works at the seam;
+* user-scoped sharing stays CLOSED until identity is threaded — it must never widen to "any
+  subject of the grantee tenant", which would be a second escalation of the same family as the
+  read-grant-admits-write case the decision core already rules out.
+
+This has to be asserted, not assumed: a spec test must pin that a `Grantee::User` grant does
+NOT admit at the seam while identity is missing.
+
+=== Plumbing the wiring still needs
+
+. A grant store handle on the vector service (`SharedServices.abac_grant_store` already exists
+  and is hot-reload shared — same pattern as the enforcer).
+. A `TenantStableIdResolver` on the vector service to map both the acting tenant string and
+  the owner to stable ids (`CatalogTenantStableIdResolver` exists and is used by the admin
+  endpoints).
+. Owner resolution for a collection the acting tenant cannot see: the owner-agnostic
+  `get_or_load_collection(collection_id)` already exists and is used by the non-multi-tenant
+  branch of this very function.
+. A default-OFF env gate (`PROXIMADB_AUTHZ_CROSS_TENANT_GRANTS`) with its ENV_GATE_REGISTRY
+  row, so cross-tenant opens are an explicit operator opt-in rather than an emergent property
+  of a grant existing.
+. The action passed explicitly per call site — read paths pass `Read`. The shared
+  `validate_tenant_collection_access` MUST NOT gain a defaulted action: it fronts
+  `insert_batch_with_tenant_context` and `insert_records_only_with_tenant_context` as well as
+  the read paths.
+
+=== The real end-state
+
+Threading `PortIdentity` (subject + tenant + stable id, already the documented carrier at
+`CollectionPort`) to this seam removes the interim restriction and is the same change item 3's
+design note scoped at one call site. The interim above is what can land safely before it.
