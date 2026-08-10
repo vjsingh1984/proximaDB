@@ -22,7 +22,7 @@ pub mod integrated_search_optimization;
 pub mod merge;
 pub mod metadata_filter_pushdown;
 pub mod multi_tier_deduplication;
-pub mod mvcc_resolution;
+pub use proximadb_mvcc_resolution::mvcc_resolution;
 pub mod progressive_quantization;
 pub mod progressive_search_pipeline;
 pub mod queries;
