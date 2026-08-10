@@ -79,6 +79,7 @@ members = [
     "crates/horizontal/proximadb-pgwire-translator",
     "crates/horizontal/proximadb-kafka-config",
     "crates/horizontal/proximadb-montecarlo",
+    "crates/horizontal/proximadb-kafka-deserializer",
     "crates/platform/proximadb-network-middleware",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-serialization",
@@ -306,6 +307,7 @@ proximadb-write-intent = { path = "crates/horizontal/proximadb-write-intent" }
 proximadb-pgwire-translator = { path = "crates/horizontal/proximadb-pgwire-translator" }
 proximadb-kafka-config = { path = "crates/horizontal/proximadb-kafka-config" }
 proximadb-montecarlo = { path = "crates/horizontal/proximadb-montecarlo" }
+proximadb-kafka-deserializer = { path = "crates/horizontal/proximadb-kafka-deserializer" }
 proximadb-network-middleware = { path = "crates/platform/proximadb-network-middleware" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
@@ -437,6 +439,7 @@ proximadb-write-intent = { workspace = true }
 proximadb-pgwire-translator = { workspace = true }
 proximadb-kafka-config = { workspace = true }
 proximadb-montecarlo = { workspace = true }
+proximadb-kafka-deserializer = { workspace = true }
 proximadb-network-middleware = { workspace = true }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }

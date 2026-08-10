@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::config::DeserializationFormat;
+use proximadb_kafka_config::config::DeserializationFormat;
 
 /// Deserialization error
 #[derive(Debug, Clone)]
