@@ -33,7 +33,6 @@ cache_size_mb = 8192  # 8GB cache for production
 [storage.wal_config]
 write_buffer_size_mb = 16384  # 16GB for high-throughput production
 memory_flush_size_bytes = 67108864  # 64MB per batch
-vector_count_threshold = 100000
 memtable_type = "BTree"
 sync_mode = "PerBatch"
 write_buffer_directory = "/var/lib/proximadb/write_buffer"

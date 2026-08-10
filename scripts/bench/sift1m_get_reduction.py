@@ -1332,7 +1332,6 @@ write_buffer_directory = "file://{data / "wal"}"
 enable_wal = true
 sync_mode = "PerBatch"
 write_buffer_size_mb = {write_buffer_mb}
-vector_count_threshold = {flush_vector_threshold}
 flush_interval_secs = {flush_interval_secs}
 flush_floor_predicted_mb = {flush_floor_predicted_mb}
 
@@ -2006,8 +2005,8 @@ def main() -> int:
         type=int,
         default=100_000,
         help=(
-            "WAL vector-count threshold; the predicted-byte floor may defer "
-            "its size flush, so this does not guarantee segment cardinality"
+            "RETIRED no-op (#1526): the server-side vector_count_threshold knob "
+            "was removed; kept only for checkpoint-identity stability"
         ),
     )
     parser.add_argument(

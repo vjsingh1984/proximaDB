@@ -1025,8 +1025,6 @@ pub struct WriteBufferUserConfig {
     pub write_buffer_size_mb: u64,
     /// Threshold in bytes to trigger flush when a collection's total unflushed data exceeds this
     pub memory_flush_size_bytes: usize,
-    /// Threshold in vector count to trigger flush when a collection's vector count exceeds this
-    pub vector_count_threshold: usize,
     /// Memtable implementation type (BTree, SkipList)
     pub memtable_type: String,
     /// Sync mode for durability (PerBatch, Periodic, None)
@@ -1115,7 +1113,6 @@ impl Default for WriteBufferUserConfig {
         Self {
             write_buffer_size_mb: 8192, // 8GB total across all collections
             memory_flush_size_bytes: 16 * 1024 * 1024, // 16MB per collection (aggregate)
-            vector_count_threshold: 100_000, // 100k vectors per collection
             memtable_type: "BTree".to_string(),
             sync_mode: "PerBatch".to_string(),
             write_buffer_directory: "./data/write_buffer".to_string(),
@@ -1177,7 +1174,6 @@ impl WriteBufferUserConfig {
             performance: PerformanceConfig {
                 memory_flush_size_bytes: self.memory_flush_size_bytes,
                 global_flush_threshold: self.write_buffer_size_mb as usize * mib,
-                batch_threshold: self.vector_count_threshold,
                 sync_mode: match self.sync_mode.to_lowercase().as_str() {
                     "perbatch" | "always" => SyncMode::PerBatch,
                     "periodic" => SyncMode::Periodic,
@@ -2010,10 +2006,6 @@ fn default_memtable_type() -> Option<String> {
 }
 #[allow(dead_code)]
 fn default_sync_mode() -> Option<String> {
-    None
-}
-#[allow(dead_code)]
-fn default_batch_threshold() -> Option<usize> {
     None
 }
 #[allow(dead_code)]
