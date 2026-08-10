@@ -6779,6 +6779,7 @@ dependencies = [
  "proximadb-pgwire-translator",
  "proximadb-pipeline-operator",
  "proximadb-proto",
+ "proximadb-pushdown",
  "proximadb-quantization-kernel",
  "proximadb-quantization-model",
  "proximadb-quantization-types",
@@ -7928,6 +7929,14 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+]
+
+[[package]]
+name = "proximadb-pushdown"
+version = "0.2.0"
+dependencies = [
+ "hex",
+ "serde",
 ]
 
 [[package]]
