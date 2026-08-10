@@ -6824,6 +6824,7 @@ dependencies = [
  "proximadb-storage-tenant",
  "proximadb-storage-traits",
  "proximadb-storage-transaction",
+ "proximadb-tcp-multiplexer",
  "proximadb-telemetry",
  "proximadb-tenant",
  "proximadb-tls",
@@ -8677,6 +8678,14 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-tcp-multiplexer"
+version = "0.2.0"
+dependencies = [
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

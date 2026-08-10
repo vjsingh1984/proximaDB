@@ -16,6 +16,6 @@
 //! wiring in `multi_server` used only `TcpMultiplexer`) and has been removed
 //! (TD-104 S3-f dead-code cleanup).
 
-pub mod tcp_multiplexer;
+pub use proximadb_tcp_multiplexer::tcp_multiplexer;
 
 pub use tcp_multiplexer::{TcpMultiplexConfig, TcpMultiplexer, TcpProtocol};
