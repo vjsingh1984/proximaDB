@@ -6731,6 +6731,7 @@ dependencies = [
  "proximadb-compression-types",
  "proximadb-concurrent",
  "proximadb-config",
+ "proximadb-connectors-types",
  "proximadb-cross-modal-fusion",
  "proximadb-data-model",
  "proximadb-distance-kernel",
@@ -7240,6 +7241,14 @@ dependencies = [
  "thiserror 2.0.19",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-connectors-types"
+version = "0.2.0"
+dependencies = [
+ "arrow",
+ "serde",
 ]
 
 [[package]]
