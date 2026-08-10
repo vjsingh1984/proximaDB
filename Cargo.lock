@@ -6827,6 +6827,7 @@ dependencies = [
  "proximadb-telemetry",
  "proximadb-tenant",
  "proximadb-tls",
+ "proximadb-type-validators",
  "proximadb-uql",
  "proximadb-usage-event",
  "proximadb-utility-scorer",
@@ -8720,6 +8721,16 @@ dependencies = [
  "tokio-rustls 0.26.4",
  "tracing",
  "x509-parser",
+]
+
+[[package]]
+name = "proximadb-type-validators"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
