@@ -153,10 +153,30 @@ impl AutoFlushDriver {
                 wal_flush_metrics::inc_backpressure(collection_id);
             }
 
-            let Some(meta) = catalog.iter().find(|c| &c.id == collection_id) else {
-                tracing::warn!(
-                    "⚠️ ADR-069 auto-flush: no catalog metadata for '{}', skipping",
-                    collection_id
+            // TD-FLUSH-8: the catalog is the identity authority — a WAL id MUST
+            // be catalog-resolvable. The bulk list (now `["default"]`-fallback
+            // aware) is the fast path; on a miss, fall back to the per-id
+            // resolver, which additionally has the `resolve_table` fast-path
+            // the write path trusts. Only when BOTH miss is the invariant
+            // violated — escalate loudly (metric + error) instead of spinning
+            // silently at WARN: a permanently unflushable collection is a
+            // durability incident (its unflushed window grows without bound).
+            let resolved_fallback = match catalog.iter().find(|c| &c.id == collection_id) {
+                Some(meta) => Some(meta.clone()),
+                None => {
+                    crate::storage::persistence::write_ahead_log::resolve_collection_from_catalog(
+                        collection_id,
+                    )
+                    .await
+                }
+            };
+            let Some(meta) = resolved_fallback.as_ref() else {
+                wal_flush_metrics::inc_catalog_unresolved(collection_id);
+                tracing::error!(
+                    collection_id,
+                    "🚨 ADR-069/TD-FLUSH-8 auto-flush: WAL collection id is NOT \
+                     catalog-resolvable (identity-invariant violation) — flush \
+                     skipped; unflushed window keeps growing"
                 );
                 continue;
             };
