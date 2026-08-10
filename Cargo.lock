@@ -6770,6 +6770,7 @@ dependencies = [
  "proximadb-montecarlo",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
+ "proximadb-mvcc-resolution",
  "proximadb-network-middleware",
  "proximadb-object-store",
  "proximadb-observability",
@@ -7770,6 +7771,14 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-query-fusion",
  "proximadb-vector-query",
+]
+
+[[package]]
+name = "proximadb-mvcc-resolution"
+version = "0.2.0"
+dependencies = [
+ "proximadb-records",
+ "tracing",
 ]
 
 [[package]]
