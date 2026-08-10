@@ -47,7 +47,7 @@ pub mod metrics;
 pub use proximadb_network_middleware::rate_limit;
 pub mod request_id;
 pub mod tenant;
-pub mod timeout;
+pub use proximadb_network_middleware::timeout;
 pub mod tls;
 pub mod v1_sunset;
 
