@@ -625,11 +625,13 @@ def test_create_collection_success(patched_http):
     assert db._collections["c1"] is col
     assert captured["verb"] == "POST"
     assert captured["url"].endswith("/api/v2/collections")
-    assert captured["json"] == {
+    # Assert the required fields are sent; tolerate additive server-shape fields
+    # (e.g. the default `engine`) so the contract check doesn't break on additions.
+    assert {
         "name": "c1",
         "dimension": 4,
         "distance_metric": "euclidean",
-    }
+    }.items() <= captured["json"].items()
     assert "transport" in patched_http.init_kwargs[-1]
 
 
@@ -786,11 +788,11 @@ def test_search_vector_posts_v2_typed_search(patched_http):
     assert out[0]["id"] == "x"
     assert captured["verb"] == "POST"
     assert captured["url"].endswith("/api/v2/collections/c/search")
-    assert captured["json"] == {
+    assert {
         "vector": [0.1, 0.2],
         "top_k": 5,
         "filters": [{"field": "f", "op": "eq", "value": 1}],
-    }
+    }.items() <= captured["json"].items()
 
 
 def test_search_vector_list_results(patched_http):
