@@ -60,7 +60,7 @@
 //! | MAP<K,V> | Map<K,V> | Key-value maps |
 
 pub mod storage;
-pub mod validators;
+pub use proximadb_type_validators::validators;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
