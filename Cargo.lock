@@ -6756,6 +6756,7 @@ dependencies = [
  "proximadb-hardware",
  "proximadb-hardware-caps",
  "proximadb-iceberg-engine",
+ "proximadb-implicit-id-generator",
  "proximadb-index-storage",
  "proximadb-index-traits",
  "proximadb-index-types",
@@ -7596,6 +7597,13 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-implicit-id-generator"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]
