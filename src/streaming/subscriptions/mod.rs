@@ -43,7 +43,7 @@
 pub mod evaluator;
 pub mod manager;
 pub mod result_set;
-pub mod subscription;
+pub use proximadb_subscription::subscription;
 
 pub use evaluator::{EvaluationResult, QueryEvaluator, ScoreChange};
 pub use manager::{SubscriptionHandle, SubscriptionManager};
