@@ -7915,8 +7915,10 @@ name = "proximadb-pgwire-translator"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "hex",
  "regex",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
