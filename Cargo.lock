@@ -6712,6 +6712,7 @@ dependencies = [
  "proximadb-abac",
  "proximadb-admin-ui",
  "proximadb-api",
+ "proximadb-arrow-block-index",
  "proximadb-audit",
  "proximadb-auth-sso",
  "proximadb-automl",
@@ -6954,6 +6955,15 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-arrow-block-index"
+version = "0.2.0"
+dependencies = [
+ "bincode",
+ "bytes",
+ "serde",
 ]
 
 [[package]]
