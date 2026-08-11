@@ -6737,6 +6737,7 @@ dependencies = [
  "proximadb-distance-kernel",
  "proximadb-distance-types",
  "proximadb-document",
+ "proximadb-document-compression",
  "proximadb-document-query",
  "proximadb-embedded",
  "proximadb-embedded-common",
@@ -7318,6 +7319,14 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-document-compression"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "lz4_flex 0.11.6",
 ]
 
 [[package]]

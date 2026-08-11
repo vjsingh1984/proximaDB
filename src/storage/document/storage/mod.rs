@@ -4,7 +4,7 @@
 
 pub mod cold_tier;
 pub mod collection_metadata;
-pub mod compression;
+pub use proximadb_document_compression::compression;
 pub mod document_block;
 
 pub use cold_tier::{
