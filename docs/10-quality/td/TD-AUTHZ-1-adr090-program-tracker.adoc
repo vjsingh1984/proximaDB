@@ -282,3 +282,71 @@ NOT admit at the seam while identity is missing.
 Threading `PortIdentity` (subject + tenant + stable id, already the documented carrier at
 `CollectionPort`) to this seam removes the interim restriction and is the same change item 3's
 design note scoped at one call site. The interim above is what can land safely before it.
+
+
+== Item 3 GATE FAILED (2026-08-11) — coarse open would have leaked owner data
+
+The plan for the grant-aware open seam rested on one assumption, gated before any code: *every
+vector read path that passes the open seam is backstopped by a subject-level check.* It is not.
+**Only 2 of 5 paths are enforced.**
+
+[cols="2,1,3"]
+|===
+| Path | Enforced | Evidence
+
+| `search_records_with_tenant_context_inner` (:919) | YES | threads subject/stable-id →
+`unified_search_v1_inner` ABAC seam (:2926)
+| `get_record_with_tenant_context` (:993) | MOSTLY | `admit_record_abac` (:1017) — but
+`src/services/record_store.rs:1230` passes `PortIdentity::anonymous()` and DISCARDS its own
+`_read_context` parameter, so that route is unenforced
+| `search_v1_with_tenant_context` (:867) | **NO** | hardcodes `PortIdentity::anonymous()` ⇒
+`ReadContext::System`. Zero callers repo-wide — dead surface, but dead in the FAIL-OPEN direction
+| `unified_search_with_tenant_context` (:2610) | **NO** | no `records_read_context`, no
+`apply_abac_vector_filter`, no `ReadContext` in the signature at all. Production-reachable via
+`src/graph/rag/engine_impls.rs:53`
+| `VectorOpsPort::unified_search_native` (:6527) | **NO** | hardcoded
+`ReadContext::system(.., "legacy::tests")`; this is the port the DataFusion `vector_search` UDTF
+uses (`src/datafusion/cross_modal.rs:168`)
+|===
+
+So widening the open seam to admit a non-owner tenant would have returned the owner's rows
+**unfiltered** on three routes. The gate existed for exactly this and is the reason no code was
+written.
+
+**Design correction**: the grant-aware fallback becomes **opt-in per call site**, wired only at
+paths with a proven subject-level backstop — never a blanket change to
+`validate_tenant_collection_access`. Same discipline as the action parameter: no defaulting.
+
+=== Independent security finding (worse than the above)
+
+`unified_search_with_tenant_context`'s only isolation is
+`validate_search_results_tenant_isolation` (:2781-2860), which matches tenant strings in result
+metadata and **explicitly admits any result carrying no `tenant_id` metadata** (:2818-2824, "No
+tenant metadata - allow by default"). That is fail-OPEN isolation on a production-reachable
+path, independent of grants or this feature. It belongs with the L2.2 `System`-bypass work and
+should be treated as higher priority than the sharing capability.
+
+== Item 3 findings that make the wiring EASIER than planned
+
+* **No `TenantStableIdResolver` needed.** `collection.storage_assignment.typed_account_id: Option<u32>`
+  IS the owner's `tenant_stable_id` — minted from the owning tenant string at create and resolved
+  from the same `account_registry` that `CatalogTenantStableIdResolver::stable_id_of` uses. Cast
+  `u64` and use directly as the `grants_for_owner` key. `None` (legacy/pre-Phase-4d collections)
+  MUST be treated as deny, never as "same tenant". The acting tenant's stable id already arrives
+  as a parameter (`legacy.rs:714`, `:923`).
+* **`Target` needs no catalog round-trip** for vector collections: `collection.id` IS the decimal
+  object_id (`create_table` adopts it, asserted at `manager.rs:3673`), so
+  `resolve_vector_read_context` (:670-688) just parses it. TD-AUTHZ-2's empty-object_id defect is
+  a *relational SQL-DDL* schema-population gap and does not affect this path.
+
+== 🔴 Two defects found while verifying
+
+. **`grant_admits_read` loads the WRONG grant slice.** `src/security/rls/abac_adapter.rs:981`
+  does `store.grants_for_owner(tenant)` where `tenant` is the **acting** subject's stable id, not
+  the resource owner's. Harmless today because L1.2 only enforces same-tenant (owner == acting),
+  but it means a cross-tenant grant would never be found — the owner's slice is never loaded. Must
+  be fixed as part of item 3, with a test that would fail today.
+. **`Target.table` truncates `u64` → `u32`** (`legacy.rs:685`, `src/services/dml/mod.rs:1478`)
+  while collection object_ids come from a global monotonic `u64` allocator. Two collections whose
+  ids differ by exactly 2^32 alias to the **same grant target** — a silent authorization-aliasing
+  hazard. Not reachable at today's id magnitudes; record it before this seam is formalized.
