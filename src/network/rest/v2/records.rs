@@ -1420,6 +1420,10 @@ pub struct TypedSearchRequest {
     /// non-debug requests don't pay the JSON serialization cost of
     /// the ~30-field trace envelope.
     pub debug: Option<bool>,
+    /// Optional ADR-011 ANN filtering-mode override: `"Inline"` forces the
+    /// accelerated ACORN filtered path, `"PreFilter"` forces the exact scan.
+    /// Omitted (the default) lets the optimizer choose by estimated selectivity.
+    pub ann_filtering_mode: Option<String>,
 }
 
 /// A typed filter for search operations
@@ -1662,6 +1666,7 @@ pub async fn search_with_typed_filters(
         query_vector: request.vector.clone(),
         top_k: request.top_k as u32,
         filters,
+        ann_filtering_mode: request.ann_filtering_mode.clone(),
     };
 
     // TD-064: wrap the search in a predicate-diagnostics scope so any

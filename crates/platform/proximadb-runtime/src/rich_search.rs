@@ -20,6 +20,10 @@ pub struct RichSearchRequest {
     pub query_vector: Vec<f32>,
     pub top_k: u32,
     pub filters: Vec<RichFilterCondition>,
+    /// Optional ADR-011 ANN filtering-mode override ("PreFilter" / "Inline" /
+    /// "PostFilter"). `None` preserves the planner-chosen default. Set by the
+    /// REST v2 search path; other transports leave it `None` for now.
+    pub ann_filtering_mode: Option<String>,
 }
 
 /// Canonical rich search response for v2 and internal callers.

@@ -767,6 +767,7 @@ impl MultiModalQueryExecutor {
             scenario: Some("query_execution".to_string()),
             search_mode: crate::core::search::SearchMode::default(),
             freshness_mode: None,
+            ann_filtering_mode: None,
         };
 
         // Execute with VOS - this will use HashMap metadata filtering internally

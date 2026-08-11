@@ -650,6 +650,7 @@ impl EntityStore for ProximaEntityStore {
                     scenario: Some("sks_entity_search".to_string()),
                     search_mode: crate::core::search::SearchMode::default(),
                     freshness_mode: None,
+                    ann_filtering_mode: None,
                 };
                 let vos_results = vs
                     .unified_search_v1(

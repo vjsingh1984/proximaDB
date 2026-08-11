@@ -560,10 +560,19 @@ class Adapter(Protocol):
 class ProximaAdapter:
     system_id = "proximadb"
 
-    def __init__(self, base_url: str, timeout: float, collection: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float,
+        collection: str,
+        filter_mode: str | None = None,
+    ) -> None:
         self.base_url = base_url
         self.timeout = timeout
         self.collection = collection
+        # ADR-011 ANN filtering-mode override ("Inline" / "PreFilter"); None lets
+        # the optimizer choose (default = PreFilter-exact brute-force scan).
+        self.filter_mode = filter_mode
 
     def prepare(self, dimension: int) -> None:
         request(
@@ -624,6 +633,10 @@ class ProximaAdapter:
                     "value": record["props"]["partition"],
                 }
             ]
+            # Only meaningful on a filtered search: force the AXIS filtering mode
+            # (ADR-011) so we can measure Inline/ACORN vs the PreFilter-exact scan.
+            if self.filter_mode:
+                body["ann_filtering_mode"] = self.filter_mode
         payload, latency = request(
             self.base_url,
             "POST",
@@ -649,6 +662,7 @@ class ProximaAdapter:
             "engine": "sst",
             "distance": "cosine",
             "settle_seconds": 0.75,
+            "ann_filtering_mode": self.filter_mode or "optimizer-default (PreFilter)",
         }
 
     def close(self, *, keep_data: bool) -> None:
@@ -1798,7 +1812,9 @@ def make_adapter(
     args: argparse.Namespace, run_name: str, descriptor: DatasetDescriptor
 ) -> Adapter:
     if args.system == "proximadb":
-        return ProximaAdapter(args.base_url, args.timeout, run_name)
+        return ProximaAdapter(
+            args.base_url, args.timeout, run_name, args.proximadb_filter_mode
+        )
     if args.system == "pgvector":
         return PgvectorAdapter(args.pg_dsn, run_name)
     if args.system == "qdrant":
@@ -1882,6 +1898,13 @@ def main() -> int:
         default="proximadb",
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:5678")
+    parser.add_argument(
+        "--proximadb-filter-mode",
+        choices=("Inline", "PreFilter", "PostFilter"),
+        default=None,
+        help="ADR-011 AXIS filtering-mode override for ProximaDB filtered search; "
+        "omit to use the optimizer default (PreFilter-exact)",
+    )
     parser.add_argument(
         "--pg-dsn",
         default="postgresql://postgres:postgres@127.0.0.1:5432/postgres",

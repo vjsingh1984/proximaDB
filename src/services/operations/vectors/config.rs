@@ -30,6 +30,12 @@ pub struct UnifiedSearchConfig {
     ///
     /// [`VectorFreshnessMode::Strong`]: crate::core::search::VectorFreshnessMode::Strong
     pub freshness_mode: Option<crate::core::search::VectorFreshnessMode>,
+    /// Caller-supplied ADR-011 ANN filtering-mode override ("PreFilter" /
+    /// "Inline" / "PostFilter"). When `Some`, it overrides the optimizer's
+    /// default-by-selectivity choice so a client can force the accelerated
+    /// Inline/ACORN filtered path instead of the PreFilter-exact scan. `None`
+    /// (the default) preserves the existing planner-chosen behavior.
+    pub ann_filtering_mode: Option<String>,
 }
 
 impl Default for UnifiedSearchConfig {
@@ -43,7 +49,45 @@ impl Default for UnifiedSearchConfig {
             scenario: None,
             search_mode: crate::core::search::SearchMode::default(),
             freshness_mode: None,
+            ann_filtering_mode: None,
         }
+    }
+}
+
+/// Resolve the effective ADR-011 ANN filtering mode: a caller-supplied override
+/// wins over the optimizer's default-by-selectivity `planner_choice`, so a client
+/// can force the accelerated Inline/ACORN filtered path (or PreFilter) instead of
+/// the optimizer's pick. `None` on both preserves the planner default.
+pub fn override_ann_filtering_mode(
+    planner_choice: Option<String>,
+    caller_override: Option<String>,
+) -> Option<String> {
+    caller_override.or(planner_choice)
+}
+
+#[cfg(test)]
+mod ann_filtering_mode_tests {
+    use super::override_ann_filtering_mode;
+
+    #[test]
+    fn caller_override_wins_over_planner() {
+        assert_eq!(
+            override_ann_filtering_mode(Some("PostFilter".into()), Some("Inline".into())),
+            Some("Inline".into())
+        );
+    }
+
+    #[test]
+    fn planner_choice_used_when_no_override() {
+        assert_eq!(
+            override_ann_filtering_mode(Some("PreFilter".into()), None),
+            Some("PreFilter".into())
+        );
+    }
+
+    #[test]
+    fn none_when_neither_supplied() {
+        assert_eq!(override_ann_filtering_mode(None, None), None);
     }
 }
 

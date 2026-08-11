@@ -197,6 +197,7 @@ impl FlightSearchTicket {
             query_vector: self.query_vector.clone(),
             top_k: self.top_k,
             filters,
+            ann_filtering_mode: None,
         })
     }
 }

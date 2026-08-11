@@ -933,6 +933,7 @@ impl VectorOperationsService {
                 subject,
                 tenant_stable_id,
                 auth_class,
+                request.ann_filtering_mode,
             )
             .await?;
         let Some(search_result) = response.results else {
@@ -1465,6 +1466,8 @@ impl VectorOperationsService {
             identity.subject,
             identity.tenant_stable_id,
             identity.auth_class,
+            // v1 proto path carries no ANN filtering-mode override.
+            None,
         )
         .await
     }
@@ -1489,6 +1492,7 @@ impl VectorOperationsService {
         subject: Option<&str>,
         tenant_stable_id: Option<u64>,
         auth_class: proximadb_tenant::AuthClass,
+        ann_filtering_mode: Option<String>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         // P4 advisor observability: capture per-search latency so
         // the post-search hook can populate the recall-residual /
@@ -1507,6 +1511,7 @@ impl VectorOperationsService {
             scenario: None,
             search_mode: crate::core::search::SearchMode::default(),
             freshness_mode: None,
+            ann_filtering_mode,
         });
 
         let results = self
@@ -2909,6 +2914,12 @@ impl VectorOperationsService {
         Vec<crate::proto::proximadb_v1::SearchResult>,
         Option<crate::query::explain::VectorObjectEconomyExplain>,
     )> {
+        // ADR-011: a caller-supplied ANN filtering-mode override (REST v2). Read
+        // it before `config` is consumed downstream; applied to the execution plan
+        // right after optimization so it wins over the default-by-selectivity pick.
+        let requested_ann_filtering_mode =
+            config.as_ref().and_then(|c| c.ann_filtering_mode.clone());
+
         // ABAC seam (cache-safe — TD-ABAC-5/6): fold the subject's security
         // predicate into `filter` BEFORE the cache key is derived below. The
         // augmented filter becomes part of the cache key, so two subjects with
@@ -3054,7 +3065,15 @@ impl VectorOperationsService {
         };
 
         // Optimize and execute
-        let execution_plan = self.query_optimizer.optimize_query(context).await?;
+        let mut execution_plan = self.query_optimizer.optimize_query(context).await?;
+        // ADR-011 override: honor the caller-supplied ann_filtering_mode over the
+        // optimizer's default-by-selectivity choice, so a REST client can force
+        // the accelerated Inline/ACORN filtered path instead of PreFilter-exact.
+        execution_plan.ann_filtering_mode =
+            crate::services::operations::vectors::config::override_ann_filtering_mode(
+                execution_plan.ann_filtering_mode.take(),
+                requested_ann_filtering_mode.clone(),
+            );
         let optimized_results = self
             .execute_unified_plan(
                 collection_id,

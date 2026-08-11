@@ -1466,6 +1466,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             query_vector: req.query_vector.clone(),
             top_k: req.top_k,
             filters: grpc_filters_to_rich(&req.filters)?,
+            ann_filtering_mode: None,
         };
 
         // TD-064: scope the search in a predicate-diagnostics context so
@@ -1552,6 +1553,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             query_vector: req.query_vector.clone(),
             top_k: req.top_k,
             filters: grpc_filters_to_rich(&req.filters)?,
+            ann_filtering_mode: None,
         };
 
         let include_vector = req.include_vector;
