@@ -76,6 +76,7 @@ members = [
     "crates/horizontal/proximadb-pushdown",
     "crates/horizontal/proximadb-mvcc-resolution",
     "crates/horizontal/proximadb-scan-cursor",
+    "crates/horizontal/proximadb-llm-config",
     "crates/horizontal/proximadb-auth-sso",
     "crates/horizontal/proximadb-catapult",
     "crates/horizontal/proximadb-axis-tunnel",
@@ -310,6 +311,7 @@ proximadb-tcp-multiplexer = { path = "crates/horizontal/proximadb-tcp-multiplexe
 proximadb-pushdown = { path = "crates/horizontal/proximadb-pushdown" }
 proximadb-mvcc-resolution = { path = "crates/horizontal/proximadb-mvcc-resolution" }
 proximadb-scan-cursor = { path = "crates/horizontal/proximadb-scan-cursor" }
+proximadb-llm-config = { path = "crates/horizontal/proximadb-llm-config" }
 proximadb-auth-sso = { path = "crates/horizontal/proximadb-auth-sso" }
 proximadb-catapult = { path = "crates/horizontal/proximadb-catapult" }
 proximadb-axis-tunnel = { path = "crates/horizontal/proximadb-axis-tunnel" }
@@ -448,6 +450,7 @@ proximadb-tcp-multiplexer = { workspace = true }
 proximadb-pushdown = { workspace = true }
 proximadb-mvcc-resolution = { workspace = true }
 proximadb-scan-cursor = { workspace = true }
+proximadb-llm-config = { workspace = true }
 proximadb-auth-sso = { workspace = true }
 proximadb-catapult = { workspace = true }
 proximadb-axis-tunnel = { workspace = true }
