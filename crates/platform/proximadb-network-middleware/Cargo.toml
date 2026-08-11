@@ -21,4 +21,5 @@ tokio.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 tower-http = { workspace = true, features = ["timeout"] }
+tower = { workspace = true }
 tracing.workspace = true
