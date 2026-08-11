@@ -6764,6 +6764,7 @@ dependencies = [
  "proximadb-kafka-deserializer",
  "proximadb-kernel",
  "proximadb-ledger",
+ "proximadb-llm-config",
  "proximadb-mcp",
  "proximadb-metrics",
  "proximadb-mongodb-parser",
@@ -7673,6 +7674,13 @@ dependencies = [
  "bincode",
  "serde",
  "tempfile",
+]
+
+[[package]]
+name = "proximadb-llm-config"
+version = "0.2.0"
+dependencies = [
+ "proximadb-config",
 ]
 
 [[package]]
