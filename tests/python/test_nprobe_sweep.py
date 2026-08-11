@@ -87,6 +87,45 @@ def test_resume_rejects_terminal_checkpoint():
         SWEEP.validate_resume(existing, expected)
 
 
+def test_checkpoint_loading_auto_resumes_only_non_terminal_states(tmp_path: Path):
+    output = tmp_path / "matrix.json"
+    assert SWEEP.load_resumable_checkpoint(output) is None
+
+    for state in ("running", "incomplete"):
+        checkpoint = expected_result()
+        checkpoint["status"] = state
+        output.write_text(json.dumps(checkpoint))
+        assert SWEEP.load_resumable_checkpoint(output) == checkpoint
+
+    for state in ("pass", "fail", "unknown"):
+        checkpoint = expected_result()
+        checkpoint["status"] = state
+        output.write_text(json.dumps(checkpoint))
+        with pytest.raises(RuntimeError, match="terminal or invalid"):
+            SWEEP.load_resumable_checkpoint(output)
+
+
+def test_checkpoint_loading_rejects_malformed_json(tmp_path: Path):
+    output = tmp_path / "matrix.json"
+    output.write_text("{not-json")
+
+    with pytest.raises(RuntimeError, match="cannot read matrix checkpoint"):
+        SWEEP.load_resumable_checkpoint(output)
+
+
+def test_matrix_lock_is_single_writer_and_recovers_after_close(tmp_path: Path):
+    output = tmp_path / "matrix.json"
+    first = SWEEP.acquire_matrix_lock(output)
+    try:
+        with pytest.raises(RuntimeError, match="already owns checkpoint"):
+            SWEEP.acquire_matrix_lock(output)
+    finally:
+        first.close()
+
+    recovered = SWEEP.acquire_matrix_lock(output)
+    recovered.close()
+
+
 def test_quality_policy_reports_unattained_without_invalidating_measurement():
     points = [
         {"top_k": 10, "recall_at_k": 0.975},
