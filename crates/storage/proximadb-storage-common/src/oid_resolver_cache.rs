@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
-use proximadb_storage_common::oid_position_resolver::OidPositionResolver;
+use crate::oid_position_resolver::OidPositionResolver;
 
 const OID_RESOLVER_CACHE_SHARDS: usize = 16;
 
