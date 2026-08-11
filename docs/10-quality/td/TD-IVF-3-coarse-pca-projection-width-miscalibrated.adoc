@@ -1,0 +1,216 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-IVF-3: coarse-PCA projection width is mis-calibrated — the default costs 20–21% extra GETs at the recall SLA
+:status: Open
+:dim: D1
+:pillar: PERF
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open — measured at two dimensionalities. No production-default change is justified yet.**
+| Priority | **P1 — read-side cost.** Object-store round-trips are the dominant cost term under the co-design mandate. Measured 20–21% GET/query reduction at the 0.98 recall SLA, for a one-time write cost of +9…15%.
+| Component | `src/storage/engines/sst/block_cluster.rs` — `ivf_projection_dims()` :294, call sites :390 and :598. Env gates `PROXIMADB_IVF_NCOMP`, `_A`, `_B` (ENV_GATE_REGISTRY :131–133, TD-WLP-4b).
+| Evidence | 16 beds on one binary (`62677fb41686…` @ `aed724fc5`), exact top-100 ground truth, 1000-query slices. **128-d**: BIGANN prefixes, 12 beds, 100K→10M. **768-d**: BGE-base over 491,655 code/doc chunks from 17 distinct repos, 4 widths + an independent replicate + clean serial write costs.
+|===
+
+== The defect
+
+`ivf_projection_dims(dim, k) = max(1.5·log2 dim, 1.5·log2 k)` decides how many PCA
+components rank coarse cells at query time. It yields **10 components for 128-d**
+and **14 for 768-d** — 7.8% and 1.8% of the space respectively. When the true
+nearest cell fails to rank inside `nprobe` under that compressed metric, no amount
+of centroid precision recovers it: the cell is simply never read.
+
+Measured cost of that under-projection, at the recall-0.98 SLA:
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| corpus | default | optimum | floor nprobe | GET/query | write
+| 128-d BIGANN 3.3M (k_c=100) | 10 | **32** | 16 → 12 | 33.4 → **26.3** (−21%) | +15%
+| 768-d BGE 491k (k_c=90) | 14 | **64** | 30 → 25 | 48.6 → **38.7** (−20%) | +8.9%
+|===
+
+Both optima beat *every* other width measured at their scale, on every shared
+point. The 768-d saving applies at top-10 and top-20 alike; the 128-d saving is
+−21%/−23%.
+
+=== Two structural faults, separable from the calibration
+
+**(a) The `k` term is masked and far too shallow.** `max(…)` means the `k` term
+only exceeds the `dim` term when `k_c > dim`. Every scale we measured sits below
+that, so `n_comp` is pinned by dimension alone and **never responds to `k_c`** —
+yet `k_c` is the variable that actually drives the requirement. Forcing `k_c`
+apart from `N` shows it accounts for ~¾ of the effect (raising `k_c` at fixed N
+moves the 10-d penalty by 0.0092; tripling N at fixed `k_c` moves it by 0.0032).
+The transition sits between `k_c` 30 and 50 — about **1.5M vectors** — so nearly
+every production collection needs a wider projection, and SIFT1M-scale benchmarks
+(k_c=30, where all widths tie) show nothing at all.
+
+NOTE: an earlier revision of this TD argued the `k` term had the *wrong sign*.
+Measurement refuted that — the requirement rises with `k_c`, because more cells
+sit closer together and ranking them needs finer resolution. The direction is
+right; the magnitude and the `max()` masking are the faults.
+
+**(b) `dim` is the wrong primary variable.** Intrinsic content is nearly flat
+across a controlled BGE ladder — 384→1024 is 2.7× wider but needs only 1.20× the
+components for 79% variance (132→158). A rule keyed on `log2(dim)` scales with
+the one quantity that demonstrably does not drive the answer.
+
+== What we could NOT predict
+
+Three a-priori framings were each fitted to the 128-d data and each failed
+out-of-sample at 768-d:
+
+[cols="2,2,2", options="header"]
+|===
+| framing | predicted 768-d optimum | actual
+| samples/param ≥ ~15 | 32 | **wrong** — 64 beat 32 by +0.0190 (11/11 points)
+| fraction of dims ≈ 25% | ~190 | **wrong** — flat from 64 to 128 (−0.0014, 6/13)
+| variance target 79% | 163 | **wrong** — flat well below it
+|===
+
+The samples/param framing failed most instructively: at 128-d the optimum sat at
+s/p 15.6 and 64 components *lost*; at 768-d, 64 components *won* at s/p 8.5. So
+`S_min` was an artifact of where 128-d happens to sit on its own variance curve,
+not a portable constant. The two-constraint clamp rule this TD previously proposed
+(a variance target AND an independent estimation floor) is therefore **wrong in
+structure**, not merely mis-parameterised: the two terms trade off continuously.
+
+We are left with two solid measurements and a two-point interpolation:
+
+....
+  measured:   128-d -> 32 comps (25.0% of dims)
+              768-d -> 64 comps ( 8.3% of dims)
+
+  interpolation:  n_comp ~= 4.9 * dim^0.387
+      dim= 128 ->  32   (matches)          dim= 768 ->  64   (matches)
+      dim= 384 ->  49   UNTESTED           dim=1024 ->  72   UNTESTED
+      dim=1536 ->  84   UNTESTED
+
+  today's formula, for contrast:
+      dim= 128 ->  10   dim= 384 ->  12   dim= 768 ->  14   dim=1536 ->  15
+....
+
+A two-point fit reproduces two points by construction. It is an **interpolation
+between measurements, explicitly not a law**. It cannot establish that dimension
+is the correct policy key, especially when the fixed-dimension experiment above
+identifies `k_c` as the larger effect. The 384-d prediction of ~49 is one
+falsifiable test, not a default candidate.
+
+== Proposed resolution
+
+. **Keep the production default unchanged.** The existing `PROXIMADB_IVF_NCOMP`
+  is a process-global evaluation override, not a per-collection policy surface;
+  it remains suitable for controlled beds only.
+. **Measure a minimal factorial before proposing a rule.** At 384-d, sweep the
+  predicted width neighbourhood at at least two independently forced `k_c`
+  values. Repeat one 128-d or 768-d point at those same `k_c` values. Record the
+  recall-per-probe frontier, GET/query, bytes/query, cache state, and write cost.
+  This distinguishes width, cell-count, and corpus-content effects.
+. **Then choose the policy key from evidence.** If a later policy needs a
+  per-collection choice, add a versioned collection configuration rather than
+  overload a process environment variable. Only then calibrate whether a
+  `k_c`-aware rule, a content-class table, or neither beats the existing formula.
+. **Do not alter `max()` yet.** Its masking is a real observation, but deleting
+  or inverting it before the factorial data merely replaces one uncalibrated
+  formula with another.
+
+**Mixed-read safety is already satisfied.** `n_comp` is persisted per segment in
+the A0 coarse directory and read back from the file, so existing segments retain
+their stored width and only newly written segments adopt a new default. No
+flag-day, per the storage-format migration mandate.
+
+== Cost model (both dimensionalities, clean serial measurements)
+
+....
+  128-d, 3.3M rows:  write_ms =  79,828 + 521.3 * n_comp   R^2=0.997
+  768-d, 491k rows:  write_ms = 274,711 + 502.1 * n_comp   R^2=0.9997
+....
+
+The **slopes match (521 vs 502 ms/dim) despite 6.7× fewer rows**. If the per-dim
+term were projecting and assigning all rows, the 768-d slope would be ~78 ms/dim.
+It is not — so the per-dimension cost is **k-means over the training sample**
+(50k rows, k_c≈90–100 in both cases), and is therefore **independent of collection
+size**. It amortises away entirely as collections grow: a 10M-row collection pays
+the same absolute k-means cost as a 500k one.
+
+CAUTION: timings require a quiet machine. A first attempt at the 768-d costs
+produced 334k/468k/307k ms — non-monotonic, despite identical compaction paths —
+because the host slept and ran analysis concurrently. The numbers above use
+`caffeinate -i`, serial execution, and the minimum of two builds per width
+(contention only ever inflates a timer). Recall and object-store GET/query are
+contention-invariant; **no timing is**.
+
+== Determinism, and what is therefore NOT a risk
+
+`PAX_IVF_KMEANS_SEED` is a fixed constant and `block_cluster.rs:737` documents the
+pipeline as "deterministic end to end: strided sample-train, seeded k-means,
+fixed-init". An independent rebuild of the 768-d `n_comp=64` bed reproduced
+**recall to sd 0.00013 and GET/query to 0.000** across 24 points, with identical
+`coarse_seed` and `cell_row_max_to_mean`.
+
+Consequently width comparisons carry **no bed-construction noise** and small
+deltas are real signal. An earlier revision of this TD quoted σ = 0.0027 as a
+bed-to-bed noise floor; that figure came from a run whose training-sample size
+also differed, so it measured the training-size effect and mislabelled it noise.
+All conclusions that were hedged against it stand unhedged.
+
+RESIDUAL uncertainty is different in kind: every result is **one clustering draw**
+from a hard-coded seed. Sensitivity to initialisation is unmeasured and needs the
+seed made overridable. Determinism was also verified on one machine — k-means
+parallel reduction order may vary with thread count, so CI on other hardware may
+not reproduce bit-identically.
+
+== Reconciling with TD-WLP-4b
+
+`block_cluster.rs` :294 records _"Phase-0 sweep: recall@10 flat 0.989 for n_comp ∈
+[4,128]"_. **Not contradicted, and independently reproduced here**: at 768-d and
+nprobe 40–50 the 14-component bed slightly *beats* the 32-component one (0.9941 vs
+0.9934). Both hold:
+
+* **n_comp does not change maximum achievable recall** — TD-WLP-4b, correct.
+* **n_comp changes the recall-per-probe frontier** — this TD.
+
+A sweep at generous `nprobe` measures the first and cannot see the second.
+
+== Gate (prerequisite)
+
+No CI gate observes probe economy. `sift_pax_recall_ratchet_test` (qa-gate, WS8)
+asserts recall@10 ≥ 0.90 on SIFT1M — every width in this study clears that by a
+wide margin while differing 21% in GET/query. A separate regression (the pre-#1422
+spill path) silently moved 10M GET/query ~46% with nothing catching it.
+
+Proposed: a deterministic 1M bed (k_c=30; 100K is unusable, its floor equals `k_c`
+so there is no headroom), ratcheted **at a fixed nprobe**:
+
+* `recall@10 ≥ baseline` and `GET/query ≤ baseline × 1.05`
+
+Fixed nprobe rather than the floor — but not because of measurement noise, which
+we now know is ~0. The floor **quantises a continuous curve**, so an arbitrarily
+small real change becomes a whole-grid-step regression; a fixed-nprobe assertion
+tracks the same underlying quantity and degrades gracefully. The ×1.05 tolerance
+exists to absorb CI hardware/threading differences, not scatter.
+
+== Adjacent findings (measured, not proposed here)
+
+* **The 4MiB IOP target should stand.** Forcing `k_c=50` at 3.3M (≈8MiB cells)
+  costs **+7.2% GETs at iso-recall**, +21% bytes and +11% write. ADR-065's "one
+  cell ≈ one IOP-sized block" is already missed at 4MiB (2.19 GETs/cell) and worse
+  at 8MiB (3.54). The *other* direction — `k_c=200`, ≈2MiB — is untested and may
+  approach 1 GET/cell.
+* **Read metering, verified against vendor docs.** Azure **Blob** bills one
+  transaction per request with **no 4 MiB increment** — that rule is ADLS Gen2
+  (`dfs.`) only, and ADR-036 puts us on the flat Blob endpoint. S3 and GCS also
+  bill per request. All three charge per-GB retrieval **only** on cold tiers
+  (Hot/Standard are free). Thus GET/query is the direct *object-store request
+  COGS* metric for hot-tier collections; it is not the complete read-cost or
+  performance metric. Bytes still affect latency, cache capacity, Cool/Cold
+  retrieval, and the separately metered network/egress dimension. The 4MiB target
+  is not a billing quantum — it needs a latency/cache/memory justification instead.
+* **A larger prize may sit next door.** Because no cloud penalises request *size*,
+  coalescing region A (≈551 KiB/cell of codes) with region B (≈3.72 MiB/cell of
+  rerank vectors) into one ranged read could take GET/query from ~26 to ~13 —
+  bigger than this entire TD. It forfeits the two-stage filter, so it is **free on
+  Hot and costs per-GB retrieval on Cool/Cold**: tier-conditional, and worth a
+  design pass before implementation.
