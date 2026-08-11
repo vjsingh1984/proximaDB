@@ -197,7 +197,7 @@ pub mod recall_drift_sweeper;
 pub mod recall_observer;
 pub mod record_memtable;
 pub mod record_store;
-pub mod scan_cursor;
+pub use proximadb_scan_cursor::scan_cursor;
 pub mod schema;
 pub mod search;
 pub mod shutdown_registry;

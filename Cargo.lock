@@ -6811,6 +6811,7 @@ dependencies = [
  "proximadb-rl-reward",
  "proximadb-runtime",
  "proximadb-runtime-common",
+ "proximadb-scan-cursor",
  "proximadb-sdk",
  "proximadb-search-types",
  "proximadb-security",
@@ -8407,6 +8408,17 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-scan-cursor"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "proximadb-records",
+ "rmp-serde",
+ "serde",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
