@@ -677,15 +677,21 @@ impl VectorOperationsService {
         let enforcer = self.abac_enforcer.as_ref()?;
         let collection = self.get_or_load_collection(collection_id).await.ok()?;
         let object_id: crate::core::stable_id::CollectionObjectId = collection.id.parse().ok()?;
-        Some(enforcer.resolve_read_context(
-            subject,
-            tenant_stable_id,
-            proximadb_catalog::fc_metamodel::Target {
-                namespace: 0,
-                table: object_id as u32,
-                column: None,
-            },
-        ))
+        // B3: build the Target FALLIBLY rather than truncating `object_id as u32`.
+        // `Target.table` is u32 while catalog object ids come from a global u64
+        // allocator, and `scope_covers` matches with `==` — a wrapped id can
+        // collide with a different, legitimately bound table.
+        //
+        // The deny MUST be `Some(Err(..))`, never `None`: `records_read_context`
+        // maps `None` to `ReadContext::system(..)`, i.e. an UNFILTERED read. A
+        // `?` here would turn an unrepresentable id into unfiltered access —
+        // the exact inverse of this fix.
+        let Some(target) =
+            proximadb_catalog::fc_metamodel::Target::try_from_object_ids(0, object_id)
+        else {
+            return Some(Err(proximadb_abac::DenyReason::NoApplicablePolicy));
+        };
+        Some(enforcer.resolve_read_context(subject, tenant_stable_id, target))
     }
 
     /// **The ONE read-context composition rule** (ADR-087): resolve
@@ -856,21 +862,6 @@ impl VectorOperationsService {
         Ok(object_id)
     }
 
-    /// Execute a v1 vector search after validating that the caller has access to the collection
-    /// under the provided tenant context.
-    pub async fn search_v1_with_tenant_context(
-        &self,
-        mut req: crate::proto::proximadb_v1::VectorSearchRequest,
-        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        req.collection_id = self
-            .validate_tenant_collection_access(&req.collection_id, tenant_context)
-            .await?
-            .to_string();
-        self.search_v1(req, proximadb_runtime::PortIdentity::anonymous())
-            .await
-    }
-
     /// Execute canonical rich-record vector search.
     ///
     /// The caller supplies `ProximaValue` predicates. The temporary v1 filter
@@ -914,7 +905,8 @@ impl VectorOperationsService {
         tenant_stable_id: Option<u64>,
         auth_class: proximadb_tenant::AuthClass,
     ) -> Result<RichSearchResponse> {
-        // Authorize before touching data, matching `search_v1_with_tenant_context`.
+        // Authorize before touching data (collection-level) BEFORE the ABAC
+        // row/vector decision below — deny at the cheaper boundary first.
         let collection_id = self
             .validate_tenant_collection_access(&request.collection_id, tenant_context)
             .await?
