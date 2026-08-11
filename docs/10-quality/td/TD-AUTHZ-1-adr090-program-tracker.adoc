@@ -350,3 +350,38 @@ should be treated as higher priority than the sharing capability.
   while collection object_ids come from a global monotonic `u64` allocator. Two collections whose
   ids differ by exactly 2^32 alias to the **same grant target** — a silent authorization-aliasing
   hazard. Not reachable at today's id magnitudes; record it before this seam is formalized.
+
+
+== 🔴 `resolve_vector_read_context` degrades to UNFILTERED on any resolution failure (2026-08-11)
+
+Found while wiring the B3 Target guard. `records_read_context`
+(`src/services/operations/vectors/legacy.rs:~734`) maps the resolver's outcome as:
+
+[source,rust]
+----
+Some(Ok(ctx))  => ReadContext::Client(ctx),      // enforced
+Some(Err(_))   => None,                          // deny => fail-closed  ✔
+None           => ReadContext::system(Statistics) // UNFILTERED          ✘
+----
+
+So **every `?` early-return inside `resolve_vector_read_context` is a fail-OPEN path**, not a
+neutral "couldn't decide". Two already exist and predate this work:
+
+* `self.get_or_load_collection(collection_id).await.ok()?` — a collection that fails to load
+  yields an unfiltered System read.
+* `collection.id.parse().ok()?` — a collection whose id does not parse as a `u64` likewise
+  yields an unfiltered System read.
+
+(`self.abac_enforcer.as_ref()?` is legitimate: no enforcer configured genuinely means ABAC is
+off. The other two are failures being reported as absence.)
+
+This is the same defect family TD-SEC-2 catalogues — a mechanism whose FAILURE mode is
+indistinguishable from its "not applicable" mode, so it reads as coverage. The B3 guard added
+here deliberately returns `Some(Err(NoApplicablePolicy))` rather than `None` for exactly this
+reason, and says so at the call site.
+
+**Not fixed here** — changing the two pre-existing `?`s to denials is a behavior change on the
+live read path (a transient collection-load failure would begin denying instead of returning
+unfiltered results) and deserves its own slice with its own ratchet. Sequence it with the L2.2
+`System`-bypass work, which is already the owner of "client-facing reads must not run as
+System".

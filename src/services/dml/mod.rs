@@ -1471,15 +1471,18 @@ impl DmlService {
             ));
         };
         let tenant = identity.tenant_stable_id?;
-        Some(enforcer.predicate_for(
-            &subject,
-            tenant,
-            Target {
-                namespace,
-                table: table as u32,
-                column: None,
-            },
-        ))
+        // B3: build the Target fallibly. `table` is a u64 catalog object id but
+        // `Target.table` is u32, and `scope_covers` matches with `==` — a
+        // truncating `as u32` could WRAP an id onto a different, legitimately
+        // bound table and authorize this read under someone else's policy.
+        // Fold the unrepresentable case into the same fail-closed deny the
+        // missing-id case above already uses.
+        let Some(target) = Target::try_from_object_ids(namespace, table) else {
+            return Some(crate::security::rls::AbacScanResult::Denied(
+                proximadb_abac::DenyReason::NoApplicablePolicy,
+            ));
+        };
+        Some(enforcer.predicate_for(&subject, tenant, target))
     }
 
     /// Scan a catalog table for the relational pipeline (PATH B), pushing the

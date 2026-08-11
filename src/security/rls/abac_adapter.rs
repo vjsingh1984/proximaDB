@@ -248,6 +248,12 @@ impl AbacEnforcer {
                         // "possibly break production", so nobody ever flips it.
                         if !grant_admits_read(
                             self.grant_store.as_deref(),
+                            // owner == acting tenant: L1.2 enforces same-tenant
+                            // reads only, so this is bit-for-bit today's
+                            // behavior. Cross-tenant opens supply the real
+                            // owner (ADR-090 item 3), which is why the
+                            // parameter exists rather than being derived here.
+                            tenant,
                             tenant,
                             &subject.0,
                             &target,
@@ -266,6 +272,12 @@ impl AbacEnforcer {
                     PostureDecision::Enforce => {
                         if !grant_admits_read(
                             self.grant_store.as_deref(),
+                            // owner == acting tenant: L1.2 enforces same-tenant
+                            // reads only, so this is bit-for-bit today's
+                            // behavior. Cross-tenant opens supply the real
+                            // owner (ADR-090 item 3), which is why the
+                            // parameter exists rather than being derived here.
+                            tenant,
                             tenant,
                             &subject.0,
                             &target,
@@ -968,9 +980,20 @@ fn grants_required() -> bool {
 /// enforcement is armed, "required" cannot degrade to "optional" because
 /// wiring is incomplete.
 #[cfg(feature = "abac-policy")]
+/// Does a live grant admit `subject` (a user of `acting_tenant`) to read `target`?
+///
+/// B2 FIX: `owner` and `acting_tenant` are SEPARATE parameters. A grant is
+/// issued BY the resource owner, and `FileSystemGrantStore` is partitioned by
+/// `owner_tenant_stable_id` — so the OWNER's slice is the one that must be
+/// loaded. This previously passed the acting tenant for both, which asks "what
+/// has this tenant granted itself": correct by accident when owner == acting
+/// (the only case L1.2 enforced), and structurally unable to find any
+/// cross-tenant share. Callers that genuinely mean same-tenant pass the acting
+/// tenant for both, which reduces to the previous expression bit-for-bit.
 fn grant_admits_read(
     store: Option<&proximadb_catalog::grants::FileSystemGrantStore>,
-    tenant: u64,
+    owner: u64,
+    acting_tenant: u64,
     subject: &str,
     target: &Target,
 ) -> bool {
@@ -979,9 +1002,9 @@ fn grant_admits_read(
     };
     matches!(
         proximadb_catalog::grants::evaluate_grants(
-            &store.grants_for_owner(tenant),
+            &store.grants_for_owner(owner),
             &proximadb_catalog::grants::GrantSubject {
-                tenant_stable_id: tenant,
+                tenant_stable_id: acting_tenant,
                 subject,
             },
             target,
@@ -1010,10 +1033,62 @@ mod grant_gate_tests {
         }
     }
 
+    /// B2 REGRESSION: a grant is issued BY the resource owner, and the store is
+    /// partitioned by `owner_tenant_stable_id`. Loading the ACTING tenant's
+    /// slice asks "what has this tenant granted itself" — so a cross-tenant
+    /// share is structurally unreachable: the grant written by owner A never
+    /// appears in tenant B's slice.
+    ///
+    /// This test FAILS before the fix (the owner's slice is never loaded) and
+    /// passes after. Same-tenant behavior is unchanged because owner == acting
+    /// there, which is why the defect stayed invisible.
+    #[test]
+    fn a_grant_from_another_owner_is_found() {
+        use proximadb_catalog::grants::{FileSystemGrantStore, GrantAction, Grantee};
+        use std::collections::BTreeSet;
+
+        const OWNER: u64 = 7;
+        const GRANTEE: u64 = 9;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FileSystemGrantStore::open(dir.path()).expect("open");
+
+        // Owner 7 shares its collection with tenant 9.
+        store
+            .grant(
+                OWNER,
+                proximadb_catalog::fc_metamodel::Scope::Table(10),
+                Grantee::Tenant(GRANTEE),
+                BTreeSet::from([GrantAction::Read]),
+                None,
+                None,
+                None,
+            )
+            .expect("grant");
+
+        let target = Target {
+            namespace: 0,
+            table: 10,
+            column: None,
+        };
+
+        assert!(
+            grant_admits_read(Some(&store), OWNER, GRANTEE, "bob", &target),
+            "a grant written by owner {OWNER} for tenant {GRANTEE} must be found \
+             when the OWNER's slice is consulted"
+        );
+
+        // And a tenant with no grant from this owner still gets nothing.
+        assert!(
+            !grant_admits_read(Some(&store), OWNER, 11, "bob", &target),
+            "an ungranted tenant must stay denied"
+        );
+    }
+
     /// Armed with NO store ⇒ deny (fail-closed on incomplete wiring).
     #[test]
     fn no_store_never_admits() {
-        assert!(!grant_admits_read(None, 7, "alice", &target(10)));
+        assert!(!grant_admits_read(None, 7, 7, "alice", &target(10)));
     }
 
     /// No applicable grant ⇒ deny; an applicable grant ⇒ admit; revoke ⇒ deny.
@@ -1021,7 +1096,7 @@ mod grant_gate_tests {
     fn grant_lifecycle_drives_admission() {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = FileSystemGrantStore::open(dir.path()).expect("open");
-        assert!(!grant_admits_read(Some(&store), 7, "alice", &target(10)));
+        assert!(!grant_admits_read(Some(&store), 7, 7, "alice", &target(10)));
 
         let id = store
             .grant(
@@ -1037,14 +1112,14 @@ mod grant_gate_tests {
                 None,
             )
             .expect("grant");
-        assert!(grant_admits_read(Some(&store), 7, "alice", &target(10)));
+        assert!(grant_admits_read(Some(&store), 7, 7, "alice", &target(10)));
         assert!(
-            !grant_admits_read(Some(&store), 7, "mallory", &target(10)),
+            !grant_admits_read(Some(&store), 7, 7, "mallory", &target(10)),
             "another subject must not ride alice's grant"
         );
 
         store.revoke(7, &id).expect("revoke");
-        assert!(!grant_admits_read(Some(&store), 7, "alice", &target(10)));
+        assert!(!grant_admits_read(Some(&store), 7, 7, "alice", &target(10)));
     }
 
     /// The env gate parses the standard truthy set and defaults OFF.
