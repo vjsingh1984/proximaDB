@@ -214,6 +214,45 @@ async fn system_context_does_not_filter() {
 /// resolver's `Target.namespace = 0`) so the assertion is independent of the
 /// collection's generated object id.
 #[tokio::test]
+async fn resolver_denies_rather_than_degrading_to_unfiltered_when_it_cannot_resolve() {
+    // REGRESSION: `resolve_vector_read_context` used to `?` out to `None` when
+    // the collection would not load. `records_read_context` maps `None` to
+    // `ReadContext::system` — an UNFILTERED read — so a failure to authorize
+    // silently became unrestricted access to every row.
+    //
+    // A failure to resolve is a DENIAL, not an absence of policy. This asserts
+    // the distinction that the `Option<Result<..>>` shape makes so easy to get
+    // backwards: `Some(Err(..))` (deny), never `None` (ABAC off ⇒ unfiltered).
+    let env = UnifiedTestEnvironment::new().await.expect("test env");
+    let enforcer = Arc::new(
+        AbacEnforcer::new(
+            Arc::new(InMemoryAttributeAuthority::default()),
+            Arc::new(InMemoryPredicateObjectStore::default()),
+            Arc::new(InMemoryPolicyEpochs::new()),
+        )
+        .with_bindings(vec![]),
+    );
+    let (svc, _collections) = env
+        .vector_operations_service_with_abac(enforcer)
+        .await
+        .expect("vector service with abac");
+
+    // A collection that does not exist cannot be resolved.
+    let outcome = svc
+        .resolve_vector_read_context(&SubjectId("alice".into()), TENANT, "no-such-collection")
+        .await;
+
+    match outcome {
+        Some(Err(_)) => {} // correct: an explicit denial
+        None => panic!(
+            "resolver returned None for an unresolvable collection — that maps to \
+             ReadContext::system (UNFILTERED). A failure to authorize must DENY."
+        ),
+        Some(Ok(_)) => panic!("an unresolvable collection must not be admitted"),
+    }
+}
+
+#[tokio::test]
 async fn resolve_vector_read_context_admits_and_denies() {
     let env = UnifiedTestEnvironment::new().await.expect("test env");
     let mut authority = InMemoryAttributeAuthority::new();
