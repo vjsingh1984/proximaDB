@@ -227,6 +227,18 @@ class ParagraphStrategy(ChunkingStrategyInterface):
 
         return chunks
 
+    def preferred_boundaries(
+        self,
+        text: str,
+        source_id: str,
+        base_metadata: dict[str, Any] | None = None,
+    ) -> list[int]:
+        """Expose every paragraph end without legacy character grouping."""
+        return [
+            *(match.start() for match in self.paragraph_pattern.finditer(text)),
+            len(text),
+        ]
+
     def chunk_stream(
         self,
         text_source: "str | Iterable[str]",

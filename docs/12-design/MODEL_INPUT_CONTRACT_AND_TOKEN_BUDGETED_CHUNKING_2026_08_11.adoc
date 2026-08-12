@@ -1,0 +1,247 @@
+= Model Input Contract and Token-Budgeted Chunking Co-Design
+:toc:
+:toclevels: 3
+
+Status: implemented SDK foundation; xCatalog persistence is a separately gated catalog evolution.
+
+== Outcome
+
+Chunking is constrained by the exact input consumed by an embedding runtime, not by characters and
+not by a tokenizer name alone. The authoritative implementation lives in
+`clients/python/src/proximadb_sdk/chunking_strategies/`. Benchmark scripts consume it; they do not
+own a second splitter.
+
+The design is model-agnostic across WordPiece, BPE, SentencePiece and custom fast Hugging Face
+tokenizers. A model is usable when its runtime can resolve:
+
+* exact tokenizer behavior and immutable fingerprint;
+* effective context limit, intersecting catalog declaration, tokenizer and loaded runtime;
+* document/query rendering, including special tokens and task prefixes;
+* non-text role parameters such as Jina v3's retrieval adapter;
+* native and supported Matryoshka output dimensions;
+* model revision, license and access requirements.
+
+== Incident and invariant
+
+The TD-IVF-3 BGE corpus used 2,000-character windows with a 1,750-character stride as a proxy for
+512 tokens. A 400-chunk audit measured 74..1,585 tokens and found 312/400 inputs above 512. The
+embedding library silently truncated them, leaving source coverage gaps because the character
+stride exceeded the content actually encoded.
+
+The replacement invariant is:
+
+[source,text]
+----
+for every emitted chunk c and every controlled model m:
+  tokens_m(render_m(c, DOCUMENT), add_special_tokens=true)
+    <= min(target_tokens, effective_context_m)
+----
+
+The builder fails rather than publishing a corpus when the invariant is false. Split, drop and
+short-tail policies are explicit manifest fields. The production default for oversized spans is
+`split`; `drop` is never inferred.
+
+== Design patterns and authority
+
+[cols="1,2,3", options="header"]
+|===
+| Pattern | Type | Responsibility
+
+| Strategy
+| `ChunkingStrategyInterface`
+| Proposes structural sentence, paragraph, recursive, semantic or code boundaries.
+
+| Decorator
+| `TokenBudgetStrategy`
+| Owns exact fitting, overlap, source coverage, overflow policy and final validation.
+
+| Adapter
+| `HuggingFaceTokenCounter`
+| Adapts any fast tokenizer to exact counts, source offsets, context declaration and fingerprint.
+
+| Value object
+| `ResolvedInputContract`
+| Binds model revision, tokenizer, effective limit, role rendering, role parameters and dimensions.
+
+| Composite
+| `CompositeInputContract`
+| Emits one byte-identical corpus that is valid for every model in a controlled comparison.
+
+| Factory
+| `ChunkingStrategyFactory`
+| Preserves legacy character behavior unless both a budget and contract are explicitly supplied.
+
+| Seed catalog
+| `embedding_providers/catalog.py`
+| Versioned, source-linked discovery defaults for common open-weight model families.
+
+| Durable authority
+| xCatalog `mlops.*` model-contract asset
+| Tenant-approved resolved revision, contract hash, policy, lineage and collection bindings.
+|===
+
+Structural boundaries are independent of the legacy character grouping. Sentence and paragraph
+strategies expose their atomic ends; the decorator selects the latest boundary that fits. It only
+hard-splits by tokenizer offsets when no structural boundary fits.
+
+== Why tokenizer identity is insufficient
+
+Two models can share a tokenizer and still have different effective limits, prefixes, task
+adapters or output semantics. Conversely, the BGE small/base/large v1.5 models share the same
+tokenizer and 512 cap, so a composite contract correctly permits one controlled corpus.
+
+A pool/cache identity includes the complete budget and contract manifests. A tokenizer fingerprint
+alone cannot key a chunker.
+
+== Open-model pressure-test catalog
+
+The SDK seed catalog covers representative, commonly deployed families rather than claiming every
+Hub checkpoint:
+
+* Sentence Transformers MiniLM and MPNet;
+* BGE v1.5 and BGE-M3;
+* E5 v2 and multilingual E5;
+* Nomic Embed v1.5 and v2 MoE;
+* GTE multilingual;
+* Snowflake Arctic Embed v2;
+* Jina Embeddings v2/v3;
+* Mixedbread mxbai;
+* Qwen3 Embedding 0.6B/4B/8B;
+* Google's gated EmbeddingGemma;
+* IBM Granite Embedding multilingual R2.
+
+Catalog inclusion requires an official model-card source, context and native dimension, role
+semantics, license/access classification, and a SentenceTransformers-compatible runtime path.
+Runtime verification remains authoritative. New variants are data entries, not provider classes.
+
+This review corrected two existing declarations: `all-MiniLM-L6-v2` truncates beyond 256
+WordPieces, and `all-mpnet-base-v2` uses a 384-token SentenceTransformers limit even though the
+underlying tokenizer/model can represent more positions.
+
+Model-card sources:
+
+* https://huggingface.co/BAAI/bge-m3[BGE-M3]
+* https://huggingface.co/intfloat/multilingual-e5-large[multilingual E5]
+* https://huggingface.co/nomic-ai/nomic-embed-text-v1.5[Nomic v1.5]
+* https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe[Nomic v2 MoE]
+* https://huggingface.co/Alibaba-NLP/gte-multilingual-base[GTE multilingual]
+* https://huggingface.co/Snowflake/snowflake-arctic-embed-l-v2.0[Arctic Embed v2]
+* https://huggingface.co/jinaai/jina-embeddings-v3[Jina v3]
+* https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1[mxbai]
+* https://huggingface.co/Qwen/Qwen3-Embedding-0.6B[Qwen3 Embedding]
+* https://huggingface.co/google/embeddinggemma-300m[EmbeddingGemma]
+* https://huggingface.co/ibm-granite/granite-embedding-311m-multilingual-r2[Granite R2]
+
+The seed catalog records Jina v3's non-commercial license and EmbeddingGemma's gated access. A
+model being downloadable is not equivalent to unrestricted production use.
+
+== xCatalog relationship
+
+There should not be two durable catalogs. There are three lifecycle layers:
+
+[source,text]
+----
+SDK seed catalog (discovery defaults, shipped with a client version)
+        |
+        v resolve + approve
+xCatalog mlops model-contract asset (durable authority, tenant policy, versioned)
+        |
+        v reference by stable asset/version + contract hash
+collection / embedding projection / corpus manifest
+----
+
+xCatalog should be omnipresent as the policy and lineage plane, but typed. Model contracts live in
+an `mlops.*` namespace; collection/index objects reference them. They must not be flattened into an
+untyped global property bag. The current collection proto's `embedding_models: repeated string` is
+not rich enough to be this authority.
+
+The native catalog now carries an additive, typed `CatalogMlopsAsset::EmbeddingModel` facet. It
+contains:
+
+* provider/model ID, immutable model and tokenizer revisions;
+* tokenizer and renderer fingerprints, effective context and role parameters;
+* native/allowed dimensions, normalization and pooling contract;
+* license/access/trust policy and approved deployment backends;
+* append-only evaluation evidence and approval/rejection/deprecation decisions;
+* lineage to corpora, embedding projections and collections.
+
+Registered versions are immutable. Aliases and deployment bindings are mutable references, but a
+serving deployment and a collection persist a concrete version, artifact digest and executable
+contract digest. Optimistic registry revisions reject stale control-plane writes. Legacy rows
+deserialize with no MLOps facet, and the old opaque embedding-model name remains the mixed-read
+fallback. See
+link:XCATALOG_MLOPS_MODEL_REGISTRY_2026_08_12.adoc[xCatalog MLOps Model Registry Co-Design].
+
+== Economics: context and dimension are independent
+
+Let `S` be corpus source tokens, `L` raw content tokens per chunk, `r` overlap fraction, `d` output
+dimension and `b` bytes per scalar. Ignoring document boundaries:
+
+[source,text]
+----
+rows N ~= S / ((1-r) * L)
+raw vector bytes ~= N * d * b
+----
+
+Increasing `L` can reduce row count and fixed per-row/index/object overhead. Reducing `d` reduces
+vector bytes without changing row count. A long-context Matryoshka model exposes both levers, but
+neither is a free win:
+
+* full-attention ingestion work grows approximately with `S * L / (1-r)`;
+* longer chunks can dilute retrieval relevance and enlarge reranker/generator payloads;
+* fewer, larger chunks amplify updates and reduce fine-grained access control/citations;
+* model quality at a truncated dimension must be measured, not inferred from native quality.
+
+Choose `(model, L, r, d, index)` by minimizing measured lifecycle cost subject to recall/NDCG,
+latency, citation and policy constraints. Context capacity is a ceiling, not a chunk-size target.
+
+== User paths
+
+List and run catalogued models:
+
+[source,bash]
+----
+python clients/python/examples/token_budgeted_open_rag.py --list-models
+python clients/python/examples/token_budgeted_open_rag.py \
+  --model nomic-ai/nomic-embed-text-v1.5 --dimension 256 README.md
+----
+
+Validate cached or downloadable tokenizers without loading model weights:
+
+[source,bash]
+----
+python scripts/bench/validate_open_embedding_tokenizers.py \
+  --model BAAI/bge-base-en-v1.5 --local-files-only
+----
+
+Build a benchmark corpus from JSONL with one or more pinned contracts:
+
+[source,bash]
+----
+python scripts/bench/build_token_budget_corpus.py \
+  --input documents.jsonl --contracts contracts.toml --output-dir corpus \
+  --target-tokens 480 --overlap-tokens 72 --overflow-policy split
+----
+
+The output includes shared `texts.json`, per-chunk provenance in `chunks.jsonl`, and
+`corpus.manifest.json` with hashes, policies, contract fingerprints, histograms and a zero-truncation
+assertion.
+
+== Verification and migration gates
+
+Unit tests use tokenizer-shaped doubles and cover exact special-token accounting, structural
+boundaries, overlap, composite contracts, overflow/short-tail policies, pool isolation, discrete
+and ranged Matryoshka dimensions, role adapter parameters, and every seed-catalog entry.
+
+The BGE migration gate is:
+
+1. produce a shared BGE small/base corpus at target 480 with 15% overlap and `split` policy;
+2. require every model histogram maximum <= 512 and zero over-target inputs;
+3. persist immutable revisions and tokenizer fingerprints;
+4. re-embed resumably from 20k-row shards;
+5. recompute full-corpus PCA spectrum and compare with the truncated baseline;
+6. keep prior projection-width geometry findings; the rebuild is for realistic RAG quality and
+   corpus guidance, not to relitigate controlled index geometry.
+
+Timing measurements require a quiet machine. Token correctness, recall and GET/query checks do not
+become timing evidence merely because they ran successfully under contention.

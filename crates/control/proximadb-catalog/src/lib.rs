@@ -47,6 +47,8 @@ pub mod tenant_posture;
 // up-edge).
 pub mod manager;
 pub use manager::{CatalogFilesystemResolver, CatalogManager, TableOpLockRegistry};
+/// Typed MLOps/model-registry facet for the unified xCatalog object model.
+pub mod mlops;
 // Catalog federation (Slice 3) — unified view across internal + external
 // catalogs, moved from root src/catalog/federation (now that CatalogManager is
 // in this crate).
@@ -592,6 +594,16 @@ pub struct CatalogEmbeddingConfig {
     /// embedding engine, e.g. `"bge-small"`, `"openai:text-embedding-3-small"`,
     /// or `"byo:https://…"`.
     pub model: String,
+    /// Stable xCatalog object ID of the registered `mlops.*` model. `None`
+    /// preserves the legacy opaque route-name behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_asset_id: Option<u64>,
+    /// Immutable registered-model version selected for this collection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<u64>,
+    /// Executable contract digest pinned with `model_version`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_sha256: Option<String>,
     /// Output dimensionality of the model.
     pub dimension: u32,
     /// Native scalar precision of the model output. Legacy/unset → `Fp32`.
@@ -600,6 +612,56 @@ pub struct CatalogEmbeddingConfig {
     /// Whether the engine L2-normalizes embeddings before they are stored.
     #[serde(default)]
     pub normalize: bool,
+}
+
+impl CatalogEmbeddingConfig {
+    /// Build a collection binding that cannot follow a mutable model alias.
+    pub fn pinned(
+        model: impl Into<String>,
+        dimension: u32,
+        model_asset_id: u64,
+        model_version: u64,
+        contract_sha256: impl Into<String>,
+    ) -> anyhow::Result<Self> {
+        let binding = Self {
+            model: model.into(),
+            model_asset_id: Some(model_asset_id),
+            model_version: Some(model_version),
+            contract_sha256: Some(contract_sha256.into()),
+            dimension,
+            ..Default::default()
+        };
+        binding.validate_model_binding()?;
+        Ok(binding)
+    }
+
+    pub fn validate_model_binding(&self) -> anyhow::Result<()> {
+        let pinned_fields = [
+            self.model_asset_id.is_some(),
+            self.model_version.is_some(),
+            self.contract_sha256.is_some(),
+        ];
+        if pinned_fields.iter().any(|set| *set) && !pinned_fields.iter().all(|set| *set) {
+            return Err(anyhow::anyhow!(
+                "model asset id, model version, and contract sha256 must be set together"
+            ));
+        }
+        if let Some(version) = self.model_version
+            && version == 0
+        {
+            return Err(anyhow::anyhow!("model version must be positive"));
+        }
+        if self.model_asset_id == Some(0) {
+            return Err(anyhow::anyhow!("model asset id must be positive"));
+        }
+        if let Some(digest) = &self.contract_sha256 {
+            mlops::validate_contract_digest(digest)?;
+        }
+        if self.dimension == 0 {
+            return Err(anyhow::anyhow!("embedding dimension must be positive"));
+        }
+        Ok(())
+    }
 }
 
 /// Catalog-authoritative table-level storage descriptor.
@@ -788,6 +850,12 @@ pub struct CatalogTableSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_config: Option<CatalogStorageConfig>,
 
+    /// Typed AI/MLOps facet. `None` for ordinary tables and every legacy
+    /// catalog row. The field is additive and inert until an `mlops.*` asset is
+    /// explicitly created; old readers ignore it and new readers default it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mlops_asset: Option<mlops::CatalogMlopsAsset>,
+
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -849,6 +917,7 @@ impl Default for CatalogTableSchema {
             quantization: None,
             embedding_config: None,
             storage_config: None,
+            mlops_asset: None,
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -865,6 +934,13 @@ impl CatalogTableSchema {
             name: name.into(),
             ..Default::default()
         }
+    }
+
+    /// Attach a validated typed MLOps facet to this catalog object.
+    pub fn with_mlops_asset(mut self, asset: mlops::CatalogMlopsAsset) -> anyhow::Result<Self> {
+        asset.validate().map_err(anyhow::Error::new)?;
+        self.mlops_asset = Some(asset);
+        Ok(self)
     }
 
     /// Add a column
@@ -4103,6 +4179,7 @@ mod tests {
                 dimension: 384,
                 native_precision: proximadb_records::EmbeddingScalarType::Fp32,
                 normalize: true,
+                ..Default::default()
             })
             .with_storage_config(CatalogStorageConfig {
                 compression: Some(CompressionAlgorithm::Zstd),
@@ -4122,6 +4199,7 @@ mod tests {
                 dimension: 384,
                 native_precision: proximadb_records::EmbeddingScalarType::Fp32,
                 normalize: true,
+                ..Default::default()
             })
         );
         assert_eq!(
@@ -4747,6 +4825,21 @@ pub trait Catalog: Send + Sync {
         let _ = (identifier, layouts);
         Err(anyhow::anyhow!(
             "storage layout mutation not supported by this catalog"
+        ))
+    }
+
+    /// Atomically apply one command to a typed `mlops.*` model-registry asset.
+    /// Command-shaped mutation prevents compatibility adapters from replacing
+    /// immutable versions or append-only evidence with stale document writes.
+    async fn apply_model_registry_mutation(
+        &self,
+        identifier: &TableIdentifier,
+        expected_revision: u64,
+        mutation: mlops::CatalogModelRegistryMutation,
+    ) -> anyhow::Result<CatalogTableSchema> {
+        let _ = (identifier, expected_revision, mutation);
+        Err(anyhow::anyhow!(
+            "model registry mutation not supported by this catalog"
         ))
     }
 

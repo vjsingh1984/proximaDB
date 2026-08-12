@@ -150,6 +150,10 @@ pub struct NativeCatalog {
     /// Serializes mint + sidecar persistence. Without this, concurrent mints
     /// can publish whole-map snapshots out of order and lose the later tenant.
     account_registry_write_lock: Mutex<()>,
+    /// Serializes cold control-plane model registry read-modify-write commands.
+    /// This avoids lost alias/evidence updates without touching the serving
+    /// data path.
+    mlops_mutation_lock: Mutex<()>,
     /// u64 lets the allocator report u32 exhaustion instead of wrapping.
     account_floor: AtomicU64,
     /// ADR-031 Phase 4a: transient namespace-key → u16 map, so every collection
@@ -447,6 +451,7 @@ impl NativeCatalog {
             stable_ids: crate::id_allocator::CatalogIdService::new(),
             account_registry: DashMap::new(),
             account_registry_write_lock: Mutex::new(()),
+            mlops_mutation_lock: Mutex::new(()),
             account_floor: AtomicU64::new(1),
             namespace_registry: DashMap::new(),
             namespace_floor: AtomicU32::new(1),
@@ -1788,6 +1793,32 @@ impl Catalog for NativeCatalog {
         let mut meta = self.load_table(identifier).await?;
         meta.schema.storage_layouts = layouts;
         meta.updated_at = Self::now_millis();
+        self.save_table(&meta).await?;
+        self.cache
+            .invalidate_table_in_catalog(&self.name, identifier);
+        Ok(meta.schema)
+    }
+
+    async fn apply_model_registry_mutation(
+        &self,
+        identifier: &TableIdentifier,
+        expected_revision: u64,
+        mutation: crate::mlops::CatalogModelRegistryMutation,
+    ) -> Result<CatalogTableSchema> {
+        let _guard = self.mlops_mutation_lock.lock().await;
+        let mut meta = self.load_table(identifier).await?;
+        let asset = meta
+            .schema
+            .mlops_asset
+            .as_mut()
+            .ok_or_else(|| anyhow!("Catalog object '{}' is not an MLOps asset", identifier))?;
+        asset
+            .apply_model_mutation(expected_revision, mutation)
+            .map_err(anyhow::Error::new)?;
+        asset.validate().map_err(anyhow::Error::new)?;
+        let now = Self::now_millis();
+        meta.schema.updated_at_ms = now;
+        meta.updated_at = now;
         self.save_table(&meta).await?;
         self.cache
             .invalidate_table_in_catalog(&self.name, identifier);

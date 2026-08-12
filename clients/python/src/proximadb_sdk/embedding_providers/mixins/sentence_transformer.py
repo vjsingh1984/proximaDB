@@ -4,6 +4,7 @@ SentenceTransformer mixin
 Provides sentence-transformers integration with model caching.
 """
 
+import json
 import logging
 
 import numpy as np
@@ -65,13 +66,16 @@ class SentenceTransformerMixin:
         device = resolve_device(self.config.device)
         backend = self.config.backend
         prompts = self.config.extra.get("prompts")
+        revision = self.config.model.revision
+        truncate_dim = self.config.extra.get("truncate_dim")
 
         cache = ModelCache()
         # Device + backend + prompts participate in identity: two providers that
         # ask for different runtimes must NOT share a cached instance.
         cache_key = (
             f"st_{self.config.model.name}_{self.config.trust_remote_code}"
-            f"_{device}_{backend}_{sorted(prompts) if prompts else None}"
+            f"_{device}_{backend}_{revision}_{truncate_dim}_"
+            f"{json.dumps(prompts, sort_keys=True) if prompts else None}"
         )
 
         def loader():
@@ -90,9 +94,18 @@ class SentenceTransformerMixin:
                 kwargs["backend"] = backend
             if prompts:
                 kwargs["prompts"] = prompts
+            if revision is not None:
+                kwargs["revision"] = revision
+            if truncate_dim is not None:
+                kwargs["truncate_dim"] = truncate_dim
             try:
                 model = SentenceTransformer(self.config.model.name, **kwargs)
-            except TypeError:
+            except TypeError as exc:
+                if revision is not None or truncate_dim is not None:
+                    raise TypeError(
+                        "the installed sentence-transformers version cannot honor "
+                        "the requested revision/truncate_dim; upgrade the dependency"
+                    ) from exc
                 # Older sentence-transformers without backend/prompts kwargs:
                 # retry with the universally-supported subset.
                 logger.warning(
@@ -111,6 +124,95 @@ class SentenceTransformerMixin:
 
         return cache.get_or_load(cache_key, loader)
 
+    @staticmethod
+    def _prompt_template(prompt: str) -> str:
+        """Convert a SentenceTransformers prefix into an input template."""
+        return prompt if "{text}" in prompt else f"{prompt}{{text}}"
+
+    def get_input_contract(self):
+        """Resolve the exact tokenizer/rendering contract used for chunking.
+
+        Model metadata is a declaration. This method loads the configured runtime
+        and intersects that declaration with the actual tokenizer and model caps.
+        Corpus builders should persist ``contract.to_manifest()`` beside texts.
+        """
+        from ...chunking_strategies.contracts import (
+            InputRenderer,
+            ResolvedInputContract,
+        )
+        from ...chunking_strategies.tokenizers import HuggingFaceTokenCounter
+
+        self.ensure_initialized()
+        tokenizer = getattr(self._model, "tokenizer", None)
+        if tokenizer is None:
+            raise ValueError(
+                f"loaded model {self.config.model.name} exposes no tokenizer"
+            )
+        counter = HuggingFaceTokenCounter(tokenizer)
+
+        declared_limit = self.config.model.max_length
+        runtime_limit = getattr(self._model, "max_seq_length", None)
+        limits = [declared_limit]
+        if isinstance(runtime_limit, int) and runtime_limit > 0:
+            limits.append(runtime_limit)
+        if counter.advertised_limit is not None:
+            limits.append(counter.advertised_limit)
+        effective_limit = min(limits)
+
+        metadata = self.config.model
+        prompts = self.config.extra.get("prompts") or {}
+        if "document" in prompts:
+            document_template = self._prompt_template(prompts["document"])
+        else:
+            document_template = metadata.document_template
+
+        if "query" in prompts:
+            query_template = self._prompt_template(prompts["query"])
+        else:
+            query_template = metadata.query_template
+            if query_template is None and metadata.requires_instruction:
+                legacy = metadata.instruction_template
+                if legacy is not None:
+                    query_template = legacy.replace("{query}", "{text}")
+        if query_template is None:
+            query_template = "{text}"
+
+        configured_dimension = self.get_dimension()
+        dimension_getter = getattr(
+            self._model, "get_sentence_embedding_dimension", None
+        )
+        runtime_dimension = dimension_getter() if callable(dimension_getter) else None
+        if runtime_dimension is not None and runtime_dimension != configured_dimension:
+            raise ValueError(
+                f"configured output dimension {configured_dimension} does not match "
+                f"runtime dimension {runtime_dimension} for {metadata.name}"
+            )
+
+        init_kwargs = getattr(tokenizer, "init_kwargs", {}) or {}
+        resolved_revision = (
+            metadata.revision
+            or counter.resolved_revision
+            or init_kwargs.get("_commit_hash")
+            or init_kwargs.get("commit_hash")
+            or "unresolved"
+        )
+        return ResolvedInputContract(
+            model_id=metadata.name,
+            model_revision=str(resolved_revision),
+            counter=counter,
+            effective_context_limit=effective_limit,
+            renderer=InputRenderer(
+                document_template=document_template,
+                query_template=query_template,
+            ),
+            native_dimension=metadata.dimension,
+            output_dimension=configured_dimension,
+            supported_output_dimensions=metadata.supported_output_dimensions,
+            minimum_output_dimension=metadata.minimum_output_dimension,
+            document_encode_parameters=metadata.document_encode_parameters,
+            query_encode_parameters=metadata.query_encode_parameters,
+        )
+
     def _encode_with_prompt(self, texts: list[str], prompt_name: str) -> np.ndarray:
         """Encode using a registered native ST prompt, falling back to a plain
         encode if the prompt was not configured."""
@@ -118,11 +220,32 @@ class SentenceTransformerMixin:
             return np.array([])
         self.ensure_initialized()
         configured = self.config.extra.get("prompts") or {}
+        if prompt_name not in configured:
+            metadata = self.config.model
+            if prompt_name == "document":
+                template = metadata.document_template
+            else:
+                template = metadata.query_template
+                if template is None and metadata.requires_instruction:
+                    legacy = metadata.instruction_template
+                    template = (
+                        legacy.replace("{query}", "{text}")
+                        if legacy is not None
+                        else None
+                    )
+            if template:
+                texts = [template.format(text=text) for text in texts]
+        role_parameters = (
+            self.config.model.document_encode_parameters
+            if prompt_name == "document"
+            else self.config.model.query_encode_parameters
+        )
         encode_kwargs = {
             "batch_size": self.config.batch_size,
             "normalize_embeddings": self.config.normalize,
             "show_progress_bar": False,
             "convert_to_numpy": True,
+            **dict(role_parameters),
         }
         if prompt_name in configured:
             encode_kwargs["prompt_name"] = prompt_name

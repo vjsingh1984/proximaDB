@@ -27,6 +27,11 @@ class ModelMetadata:
         languages: Supported languages ("en", "multilingual", "100+", etc.)
         description: Human-readable description
         use_case: Recommended use cases
+        revision: Optional immutable model revision requested at load time
+        tokenizer_name: Tokenizer ID when it differs from the model ID
+        document_template: Exact document rendering template
+        query_template: Exact query rendering template
+        supported_output_dimensions: Valid Matryoshka/truncated dimensions
     """
 
     name: str
@@ -39,6 +44,60 @@ class ModelMetadata:
     languages: str = "en"
     description: str = ""
     use_case: str = ""
+    revision: str | None = None
+    tokenizer_name: str | None = None
+    document_template: str = "{text}"
+    query_template: str | None = None
+    supported_output_dimensions: tuple[int, ...] = ()
+    minimum_output_dimension: int | None = None
+    output_dimension_step: int = 1
+    license_id: str = "unknown"
+    access: str = "open"
+    source_url: str = ""
+    document_encode_parameters: tuple[tuple[str, str], ...] = ()
+    query_encode_parameters: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.dimension <= 0:
+            raise ValueError("dimension must be positive")
+        if self.max_length <= 0:
+            raise ValueError("max_length must be positive")
+        if self.document_template.count("{text}") != 1:
+            raise ValueError("document_template must contain exactly one '{text}'")
+        if self.query_template is not None and self.query_template.count("{text}") != 1:
+            raise ValueError("query_template must contain exactly one '{text}'")
+        if any(dimension <= 0 for dimension in self.supported_output_dimensions):
+            raise ValueError("supported_output_dimensions must all be positive")
+        if any(
+            dimension > self.dimension for dimension in self.supported_output_dimensions
+        ):
+            raise ValueError(
+                "supported_output_dimensions cannot exceed native dimension"
+            )
+        if self.minimum_output_dimension is not None:
+            if not 0 < self.minimum_output_dimension <= self.dimension:
+                raise ValueError(
+                    "minimum_output_dimension must be positive and no larger "
+                    "than dimension"
+                )
+        if self.output_dimension_step <= 0:
+            raise ValueError("output_dimension_step must be positive")
+        if self.access not in {"open", "gated"}:
+            raise ValueError("access must be 'open' or 'gated'")
+
+    def supports_dimension(self, dimension: int) -> bool:
+        """Return whether native/Matryoshka output supports ``dimension``."""
+        if dimension == self.dimension:
+            return True
+        if self.supported_output_dimensions:
+            return dimension in self.supported_output_dimensions
+        if self.minimum_output_dimension is None:
+            return False
+        return (
+            self.minimum_output_dimension <= dimension <= self.dimension
+            and (dimension - self.minimum_output_dimension) % self.output_dimension_step
+            == 0
+        )
 
     def __str__(self) -> str:
         """Human-readable representation"""
