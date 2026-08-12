@@ -7,7 +7,7 @@
 // - Query operators: distance, within, intersects
 
 /// Geohash encoding and decoding for spatial partitioning.
-pub mod geohash;
+pub use proximadb_geohash::geohash;
 /// Geo-spatial index implementation (R-tree style).
 pub mod index;
 /// Geo-spatial query types and builders.
