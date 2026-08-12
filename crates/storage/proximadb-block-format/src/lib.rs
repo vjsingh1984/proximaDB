@@ -72,6 +72,7 @@
 
 pub mod coalesced_rabitq;
 pub mod coalesced_sq8;
+pub mod footer_stats;
 pub mod header;
 pub mod prune;
 pub mod ranged;
@@ -95,6 +96,7 @@ pub use coalesced_sq8::{
     decode_codes as sq8_decode_codes, encode_region as encode_sq8_region,
     region_header_len as sq8_region_header_len, region_len as sq8_region_len,
 };
+pub use footer_stats::FooterBlockStats;
 pub use header::{
     BLOCK_MAGIC, BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, flags,
     fnv1a_hash,
