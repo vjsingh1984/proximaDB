@@ -2909,12 +2909,6 @@ impl VectorOperationsService {
         Ok(validated_results)
     }
 
-    /// Get audit logger for security incident reporting
-    fn get_audit_logger(&self) -> Option<&crate::audit::AuditLogger> {
-        // Placeholder - would be injected via dependency injection
-        None
-    }
-
     /// Unified search that returns v1 proto results at the source.
     /// Thin wrapper around `unified_search_v1_inner` that discards the
     /// Phase 5 EXPLAIN payload. Callers that need the explain (the
