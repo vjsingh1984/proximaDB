@@ -1743,6 +1743,14 @@ impl PaxSegmentWriter {
             a0_len,
             opr_off,
             opr_len,
+            // TD-FPRUNE-1 P2: self-describe the shredded user columns so a
+            // filtered read resolves a user-tag field name → col-id with no
+            // catalog lookup. Gated with the footer stats (useless without them).
+            shred_field_map: if footer_stats_enabled() {
+                self.shred_spec.clone()
+            } else {
+                Vec::new()
+            },
         };
         let footer_body = footer.to_bytes()?;
         let footer_off = data_offset + spill.blocks_len;
@@ -2186,6 +2194,13 @@ impl PaxSegmentWriter {
             a0_len,
             opr_off,
             opr_len,
+            // TD-FPRUNE-1 P2: self-describe shredded user columns (see the other
+            // footer builder). Gated with the footer stats.
+            shred_field_map: if footer_stats_enabled() {
+                self.shred_spec.clone()
+            } else {
+                Vec::new()
+            },
         };
         let footer_body = footer.to_bytes()?;
         let footer_off = data_offset + self.file_buf.len() as u64;

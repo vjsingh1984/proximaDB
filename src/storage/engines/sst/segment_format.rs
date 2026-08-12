@@ -257,6 +257,7 @@ fn write_pax_segment_full_internal(
         plan,
         None, // two-level is compaction-only (TD-RDSTRAT-8)
         capture_sq8,
+        &[], // shred spec: the production flush path shreds via record_store
     )
 }
 
@@ -382,6 +383,7 @@ fn write_pax_segment_compacted_internal(
         plan,
         probe_model,
         capture_sq8,
+        &[], // shred spec: the production flush path shreds via record_store
     )
 }
 
@@ -450,6 +452,7 @@ fn write_pax_segment_ordered(
     plan: Option<crate::storage::engines::sst::block_cluster::ClusterPlan>,
     two_level: Option<proximadb_storage_common::coarse_directory::CoarseModel>,
     capture_sq8: Option<bool>,
+    shred_spec: &[(String, i32)],
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     let lossless_clustered = lossless_clustered_enabled() && plan.is_some();
     let lossless_scalar = lossless_scalar_enabled();
@@ -467,6 +470,7 @@ fn write_pax_segment_ordered(
     .with_rerank_quant(rerank_quant)
     .with_lossless_clustered(lossless_clustered)
     .with_lossless_scalar(lossless_scalar)
+    .with_shred_spec(shred_spec.to_vec())
     .with_block_centroids(cluster)
     // ADR-062 / TD-RDSTRAT-6: hoist the RaBitQ binary tier into a coalesced
     // file-level header region for RaBitQ-quantized writes (default ON per the
@@ -817,6 +821,18 @@ pub(crate) async fn pax_filtered_row_allow(
         .await
         .map_err(|e| anyhow::anyhow!("filtered stage-F footer {path}: {e}"))?;
     let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+    // TD-FPRUNE-1 P2 engagement: resolve filter field names → PAX col-ids using
+    // canonical fields first, then the segment's self-describing shred field-map
+    // (written from the P-Shred spec). This lets a USER-TAG filter (e.g.
+    // `partition`) prune blocks — without a catalog lookup. Owned map so the
+    // resolver closure can be a per-call `&dyn Fn` temporary at each
+    // `evaluate_block` (a `&dyn Fn` held across `.await` would make the future
+    // `!Send`); the `HashMap` itself is `Send`.
+    let user_field_map: std::collections::HashMap<String, i32> =
+        footer.shred_field_map.iter().cloned().collect();
+    let resolve_field = |field: &str| -> Option<i32> {
+        pax_field_to_col(field).or_else(|| user_field_map.get(field).copied())
+    };
     let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
     let mut acc = 0u64;
     for b in &footer.blocks {
@@ -861,7 +877,7 @@ pub(crate) async fn pax_filtered_row_allow(
                 payload,
                 footer.blocks[bi].row_count,
             );
-            let keep = evaluate_block(&fstats, filter, &pax_field_to_col)
+            let keep = evaluate_block(&fstats, filter, &resolve_field)
                 != proximadb_block_format::PruneResult::Skip;
             if !keep {
                 stats.blocks_pruned_footer += 1;
@@ -889,11 +905,11 @@ pub(crate) async fn pax_filtered_row_allow(
             let reader = PaxBlockReader::open(block_bytes)
                 .map_err(|e| anyhow::anyhow!("filtered stage-F block open {path}: {e}"))?;
             // Conservative stats prune: provably-no-match blocks skip decode.
-            // NOTE: the `&pax_field_to_col` coercion is a per-call temporary —
-            // a `&dyn Fn` binding held across the fetch `.await` would make
-            // this future (and every async caller up to the REST handlers)
-            // `!Send`.
-            if evaluate_block(&reader, filter, &pax_field_to_col)
+            // NOTE: `&resolve_field` is a per-call temporary — a `&dyn Fn`
+            // binding held across the fetch `.await` would make this future (and
+            // every async caller up to the REST handlers) `!Send`. `resolve_field`
+            // borrows the owned `user_field_map` (Send), which is fine to hold.
+            if evaluate_block(&reader, filter, &resolve_field)
                 == proximadb_block_format::PruneResult::Skip
             {
                 stats.blocks_pruned += 1;
@@ -4423,6 +4439,142 @@ mod tests {
         assert!(
             stats.blocks_pruned_footer < stats.blocks_total,
             "must not prune every block ({} of {})",
+            stats.blocks_pruned_footer,
+            stats.blocks_total,
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_FOOTER_STATS");
+        }
+    }
+
+    /// ADR-089 / TD-FPRUNE-1 P2 ENGAGEMENT: a USER-TAG filter (`partition`)
+    /// footer-prunes blocks end-to-end — the segment self-describes its shredded
+    /// columns (footer `shred_field_map`), so the reader resolves the tag name →
+    /// col-id with NO catalog lookup. This is the piece that makes P2 move the
+    /// benchmark (partition/lang filters), and the allow-set stays EXACT
+    /// (row-match via props is unchanged).
+    #[tokio::test]
+    async fn stage_f_user_tag_footer_prune_via_self_describing_segment() {
+        enable_coalesced_rabitq();
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
+        }
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_block_format::{PaxBlockReader, record::FlatRow};
+        use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
+
+        const DIM: usize = 32;
+        const N: usize = 400;
+        // Two groups disjoint in vector space AND partition: pA (near 0) / pB
+        // (near 10). Clustering keeps blocks partition-homogeneous, so a "pA"
+        // query provably skips the pB-only blocks — once `partition` resolves to
+        // its shredded col-id via the footer field-map.
+        let records: Vec<ProximaRecord> = (0..N)
+            .map(|i| {
+                let low = i < N / 2;
+                let base = if low { 0.0 } else { 10.0 };
+                let v: Vec<f32> = (0..DIM)
+                    .map(|d| base + (((i * 131 + d * 17) % 17) as f32) * 0.001)
+                    .collect();
+                let mut r = rec(&format!("r{i}"), 1000 + i as i64, v);
+                r.props.insert(
+                    "partition".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(
+                            if low { "pA" } else { "pB" }.to_string(),
+                        ),
+                    ),
+                );
+                r
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        // Shred "partition" into user col-id 100 (the P-Shred spec the production
+        // flush path builds from the schema). write_pax_segment_ordered is the
+        // module-internal writer that threads the spec.
+        let shred = vec![("partition".to_string(), 100i32)];
+        let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
+        let plan = if cluster {
+            crate::storage::engines::sst::block_cluster::cluster_order_sq8_morton(&records, 0).map(
+                |order| crate::storage::engines::sst::block_cluster::ClusterPlan {
+                    order,
+                    runs: Vec::new(),
+                },
+            )
+        } else {
+            None
+        };
+        write_pax_segment_ordered(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+            cluster,
+            plan,
+            None,
+            None,
+            &shred,
+        )
+        .unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+
+        // Precondition: the segment self-describes "partition" → col 100.
+        let bytes = std::fs::read(&path).unwrap();
+        let header = SegmentHeaderPrefix::parse(&bytes).unwrap();
+        let foff = header.footer_off as usize;
+        let footer =
+            SegmentFooterIndex::parse(&bytes[foff..foff + header.footer_len as usize]).unwrap();
+        assert!(
+            footer
+                .shred_field_map
+                .iter()
+                .any(|(n, c)| n == "partition" && *c == 100),
+            "footer must self-describe the shredded partition column, got {:?}",
+            footer.shred_field_map
+        );
+
+        let (allow, stats) = pax_filtered_row_allow(&fs, p, &partition_filter("pA"))
+            .await
+            .unwrap()
+            .expect("coalesced segment must produce a stage-F allow-set");
+
+        // Correctness (robust to clustering reorder): allow-set == exactly the
+        // pA rows, verified by independent decode of each row's partition prop.
+        let mut expected = std::collections::BTreeSet::new();
+        let mut g = 0usize;
+        for b in &footer.blocks {
+            let reader = PaxBlockReader::open(
+                &bytes[b.offset as usize..(b.offset + b.size as u64) as usize],
+            )
+            .unwrap();
+            for flat in FlatRow::from_block_reader(&reader).unwrap() {
+                if flat.oid.trim_start_matches('r').parse::<usize>().unwrap() < N / 2 {
+                    expected.insert(g);
+                }
+                g += 1;
+            }
+        }
+        let got: std::collections::BTreeSet<usize> =
+            (0..N).filter(|&row| allow.contains(row)).collect();
+        assert_eq!(
+            got, expected,
+            "allow-set == pA rows exactly (user-tag prune sound)"
+        );
+        assert_eq!(allow.len(), N / 2);
+
+        // The zero-GET win on a USER TAG: ≥1 (but not all) block pruned from the
+        // fetch — proving the footer field-map resolved "partition".
+        assert!(
+            stats.blocks_pruned_footer > 0 && stats.blocks_pruned_footer < stats.blocks_total,
+            "user-tag footer prune must engage (got {} of {} blocks)",
             stats.blocks_pruned_footer,
             stats.blocks_total,
         );

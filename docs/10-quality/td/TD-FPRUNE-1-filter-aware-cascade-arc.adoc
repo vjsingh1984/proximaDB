@@ -111,12 +111,24 @@ filter as the correctness backstop. This TD tracks the phases.
          mixed-read-safe footer section. Recommend (ii). This is the P2-engagement
          follow-up slice (own PR + benchmark evidence), default-OFF, no writer
          behavior change beyond the additive footer section.
-     Until that lands P2 is INFRASTRUCTURE-COMPLETE, engagement-limited to
-     canonical-field filters.
-  ** **Evidence gate (post P-Shred arming):** filtered search `io_trace`
+     *** ✅ **DONE — engagement slice landed (self-describing segment, option
+         ii).** New optional footer section `SECTION_SHRED_FIELD_MAP` (tag 5)
+         carries the writer's P-Shred `(name, col-id)` pairs
+         (`segment_layout.rs`; gated with `PROXIMADB_PAX_FOOTER_STATS`, absent ⇒
+         byte-unchanged). `pax_filtered_row_allow` builds a `resolve_field`
+         closure (canonical via `pax_field_to_col`, else the footer map) used at
+         both `evaluate_block` calls, so a USER-TAG filter (`partition`) now
+         footer-prunes with ZERO catalog lookup. Tests:
+         `footer_index_round_trips` (map round-trip),
+         `stage_f_user_tag_footer_prune_via_self_describing_segment` (partition
+         filter prunes ≥1 block AND allow-set stays exact). `write_pax_segment_ordered`
+         gained a `shred_spec` param so the write path can shred (production flush
+         already shreds via `record_store`).
+  ** **Evidence gate (NEXT):** filtered search `io_trace`
      `object_gets`/`bytes_read` drop with selectivity (pruned blocks
      unfetched), recall unchanged, on the synthetic partition + Wikipedia
-     `lang` corpora.
+     `lang` corpora — run the corridor benchmark with `PROXIMADB_PAX_FILTERED_CASCADE=1`
+     + `PROXIMADB_PAX_FOOTER_STATS=1`.
 * **P3 — per-cell stats (prune before any Region-A byte).** Optional
   footer/A0 section with per-cell dictionary/zone summaries for filterable
   columns; intersect with the geometric nprobe cut
