@@ -6739,6 +6739,7 @@ dependencies = [
  "proximadb-distance-types",
  "proximadb-document",
  "proximadb-document-compression",
+ "proximadb-document-geo-index",
  "proximadb-document-query",
  "proximadb-embedded",
  "proximadb-embedded-common",
@@ -6748,7 +6749,6 @@ dependencies = [
  "proximadb-filter-expression",
  "proximadb-filterable-metadata",
  "proximadb-functions",
- "proximadb-geo-index",
  "proximadb-geo-queries",
  "proximadb-geo-spatial-index",
  "proximadb-geo-types",
@@ -7345,6 +7345,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-document-geo-index"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "proximadb-document-query"
 version = "0.2.0"
 dependencies = [
@@ -7494,13 +7501,6 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-relational-types",
  "serde_json",
-]
-
-[[package]]
-name = "proximadb-geo-index"
-version = "0.2.0"
-dependencies = [
- "anyhow",
 ]
 
 [[package]]
