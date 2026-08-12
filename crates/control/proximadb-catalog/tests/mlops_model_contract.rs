@@ -6,7 +6,7 @@ use proximadb_catalog::mlops::{
     CatalogEmbeddingInputContract, CatalogEmbeddingModelRegistry, CatalogEmbeddingModelVersion,
     CatalogEmbeddingOutputContract, CatalogEvaluationEvidence, CatalogMlopsAsset,
     CatalogModelAccess, CatalogModelDecision, CatalogModelDecisionKind, CatalogModelGovernance,
-    CatalogModelRegistryMutation,
+    CatalogModelRegistryMutation, CatalogModelUsePolicy,
 };
 use proximadb_catalog::native::{NativeCatalog, NativeCatalogConfig};
 use proximadb_catalog::schema::validate_schema;
@@ -428,4 +428,185 @@ async fn native_xcatalog_persists_command_shaped_registry_mutations() {
         schema.mlops_asset_as_typed().unwrap().unwrap();
     assert_eq!(registry.revision, 2);
     assert_eq!(registry.resolve_alias("champion").unwrap().version, 1);
+}
+
+#[test]
+fn model_use_resolution_enforces_digest_dimension_approval_and_runtime() {
+    let mut registry = CatalogEmbeddingModelRegistry::new("search-embedding").unwrap();
+    registry.register_version(version(1)).unwrap();
+    let digest = registry.version(1).unwrap().contract_sha256().unwrap();
+
+    let unapproved = registry
+        .resolve_use(
+            1,
+            &digest,
+            768,
+            &CatalogModelUsePolicy::approved_for_runtime("sentence-transformers"),
+        )
+        .unwrap_err();
+    assert!(unapproved.to_string().contains("not approved"));
+
+    registry
+        .append_evidence(
+            CatalogEvaluationEvidence::new(
+                "eval-bge-1",
+                1,
+                "rag-retrieval-v3",
+                DATASET_DIGEST,
+                "proximadb-eval@2.1.0",
+                BTreeMap::from([("recall_at_10".to_string(), 0.82)]),
+                10,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    registry
+        .record_decision(
+            CatalogModelDecision::new(
+                "approve-bge-1",
+                1,
+                CatalogModelDecisionKind::Approved,
+                vec!["eval-bge-1".to_string()],
+                "principal:ml-reviewers",
+                20,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let resolved = registry
+        .resolve_use(
+            1,
+            &digest,
+            768,
+            &CatalogModelUsePolicy::approved_for_runtime("sentence-transformers"),
+        )
+        .unwrap();
+    assert_eq!(resolved.version, 1);
+
+    let wrong_digest = registry
+        .resolve_use(
+            1,
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            768,
+            &CatalogModelUsePolicy::approved_for_runtime("sentence-transformers"),
+        )
+        .unwrap_err();
+    assert!(wrong_digest.to_string().contains("contract digest"));
+
+    let wrong_dimension = registry
+        .resolve_use(
+            1,
+            &digest,
+            384,
+            &CatalogModelUsePolicy::approved_for_runtime("sentence-transformers"),
+        )
+        .unwrap_err();
+    assert!(wrong_dimension.to_string().contains("dimension 384"));
+
+    let wrong_runtime = registry
+        .resolve_use(
+            1,
+            &digest,
+            768,
+            &CatalogModelUsePolicy::approved_for_runtime("onnx-runtime"),
+        )
+        .unwrap_err();
+    assert!(wrong_runtime.to_string().contains("onnx-runtime"));
+
+    registry
+        .record_decision(
+            CatalogModelDecision::new(
+                "deprecate-bge-1",
+                1,
+                CatalogModelDecisionKind::Deprecated,
+                vec![],
+                "principal:ml-reviewers",
+                30,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let deprecated = registry
+        .resolve_use(
+            1,
+            &digest,
+            768,
+            &CatalogModelUsePolicy::approved_for_runtime("sentence-transformers"),
+        )
+        .unwrap_err();
+    assert!(deprecated.to_string().contains("deprecated"));
+}
+
+#[tokio::test]
+async fn catalog_resolves_a_collection_binding_to_one_immutable_snapshot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = NativeCatalog::new(
+        "test".to_string(),
+        NativeCatalogConfig {
+            storage_url: tmp.path().to_string_lossy().to_string(),
+            metadata_format: "json".to_string(),
+            versioned: false,
+            max_versions: 100,
+        },
+        Arc::new(proximadb_catalog::cache::CatalogCache::new(64, 60)),
+    )
+    .await
+    .unwrap();
+    let namespace = vec!["tenant-a".to_string(), "mlops".to_string()];
+    catalog
+        .create_namespace(&namespace, HashMap::new())
+        .await
+        .unwrap();
+    let id = TableIdentifier::new(namespace, "search-embedding");
+    let created = catalog
+        .create_table(
+            &id,
+            CatalogTableSchema::new("search-embedding")
+                .with_mlops_asset(CatalogMlopsAsset::EmbeddingModel(
+                    CatalogEmbeddingModelRegistry::new("search-embedding").unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let asset_id = created.object_id.unwrap();
+    catalog
+        .apply_model_registry_mutation(
+            &id,
+            0,
+            CatalogModelRegistryMutation::register_version(version(1)),
+        )
+        .await
+        .unwrap();
+    let digest = version(1).contract_sha256().unwrap();
+    let binding =
+        CatalogEmbeddingConfig::pinned("search-embedding", 768, asset_id, 1, digest.clone())
+            .unwrap();
+
+    let resolved = catalog
+        .resolve_embedding_model_binding(&binding, &CatalogModelUsePolicy::registration_only())
+        .await
+        .unwrap();
+    assert_eq!(resolved.asset_id, asset_id);
+    assert_eq!(resolved.registry_name, "search-embedding");
+    assert_eq!(resolved.contract_sha256, digest);
+    assert_eq!(resolved.model.version, 1);
+
+    let mismatched_name = CatalogEmbeddingConfig::pinned(
+        "some-other-route",
+        768,
+        asset_id,
+        1,
+        resolved.contract_sha256,
+    )
+    .unwrap();
+    let error = catalog
+        .resolve_embedding_model_binding(
+            &mismatched_name,
+            &CatalogModelUsePolicy::registration_only(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("some-other-route"));
 }

@@ -227,6 +227,59 @@ The output includes shared `texts.json`, per-chunk provenance in `chunks.jsonl`,
 `corpus.manifest.json` with hashes, policies, contract fingerprints, histograms and a zero-truncation
 assertion.
 
+For deterministic source-tree corpora, export whole documents first; the exporter owns discovery
+only and never tokenization:
+
+[source,bash]
+----
+python scripts/bench/export_source_tree_jsonl.py \
+  --code-root /Users/vijaysingh/code \
+  --repository proximaDB --repository duckdb \
+  --output corpus-sources.jsonl
+
+python scripts/bench/build_token_budget_corpus.py \
+  --input corpus-sources.jsonl \
+  --contracts scripts/bench/bge_v15_projection_contracts.toml \
+  --output-dir /Users/vijaysingh/proximadb-bench-data/token-aware-rebuild-v2/bge768 \
+  --target-tokens 480 --overlap-tokens 72 \
+  --overflow-policy split --deduplicate exact --max-chunks 560000
+----
+
+The BGE contract pins base and small repository revisions independently while producing one shared
+controlled-pair corpus. The 384-d embedding stage reads the 768-d `texts.json`; it does not emit or
+copy another text corpus.
+
+Embedding is a separate resumable transport keyed by the text hash, model revision, resolved
+contract fingerprint and dimension. Both stages consume the same corpus manifest:
+
+[source,bash]
+----
+python scripts/bench/embed_open_corpus.py \
+  --texts /Users/vijaysingh/proximadb-bench-data/token-aware-rebuild-v2/bge768/texts.json \
+  --corpus-manifest /Users/vijaysingh/proximadb-bench-data/token-aware-rebuild-v2/bge768/corpus.manifest.json \
+  --model BAAI/bge-base-en-v1.5 \
+  --revision a5beb1e3e68b9ab74eb54cfd186867f64f240e1a \
+  --dimension 768 --prefix bge768 \
+  --output-dir /Users/vijaysingh/proximadb-bench-data/token-aware-rebuild-v2/bge768
+
+python scripts/bench/embed_open_corpus.py \
+  --texts /Users/vijaysingh/proximadb-bench-data/token-aware-rebuild-v2/bge768/texts.json \
+  --corpus-manifest /Users/vijaysingh/proximadb-bench-data/token-aware-rebuild-v2/bge768/corpus.manifest.json \
+  --model BAAI/bge-small-en-v1.5 \
+  --revision 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a \
+  --dimension 384 --prefix bge384 \
+  --output-dir /Users/vijaysingh/proximadb-bench-data/token-aware-rebuild-v2/bge384
+----
+
+The transport refuses a loaded runtime whose tokenizer/renderer contract differs from the corpus,
+and cached 20k-row shards cannot be reused across a text hash, revision, contract or dimension.
+The example intentionally writes a new root: never overwrite the legacy `bge768`/`bge384` corpus,
+whose hashes remain provenance for the completed TD-IVF-3 geometry study.
+
+Deduplication is also an explicit corpus policy. `none` preserves every source occurrence; `exact`
+removes byte-identical emitted text and records `duplicate_chunk_count`. The BGE migration uses
+`exact` to preserve the prior study's deduplication choice without hiding it in a bespoke builder.
+
 == Verification and migration gates
 
 Unit tests use tokenizer-shaped doubles and cover exact special-token accounting, structural
@@ -242,6 +295,12 @@ The BGE migration gate is:
 5. recompute full-corpus PCA spectrum and compare with the truncated baseline;
 6. keep prior projection-width geometry findings; the rebuild is for realistic RAG quality and
    corpus guidance, not to relitigate controlled index geometry.
+
+The completed TD-IVF-3 factorial (PR 1608) further refutes dimension as the projection-width policy
+key and favors between-centroid variance. That result was measured on the legacy stored-vector bed
+and remains valid index geometry. It does not change chunking. Preserve its corpus hash as
+historical provenance; compare the token-aware rebuild for PCA spectrum, absolute retrieval/RAG
+quality and lifecycle economics only.
 
 Timing measurements require a quiet machine. Token correctness, recall and GET/query checks do not
 become timing evidence merely because they ran successfully under contention.
