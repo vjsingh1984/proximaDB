@@ -81,10 +81,6 @@ fn validate_sha256(value: &str, field: &'static str) -> Result<(), CatalogModelC
     Ok(())
 }
 
-pub(crate) fn validate_contract_digest(value: &str) -> anyhow::Result<()> {
-    validate_sha256(value, "model contract digest").map_err(anyhow::Error::new)
-}
-
 fn validate_template(value: &str, field: &'static str) -> Result<(), CatalogModelContractError> {
     if value.match_indices("{text}").count() != 1 {
         return Err(CatalogModelContractError::InvalidTemplate { field });

@@ -23,8 +23,11 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
 /// ADR-024 Step 4: the storage-plane schema is now the canonical catalog
-/// schema. One struct, one durable authority.
-pub use proximadb_catalog::{CatalogColumn as ProximaColumn, CatalogTableSchema as ProximaSchema};
+/// schema. One struct, one durable authority. The contract types live in the
+/// foundation `proximadb-catalog-schema` crate.
+pub use proximadb_catalog_schema::{
+    CatalogColumn as ProximaColumn, CatalogTableSchema as ProximaSchema,
+};
 
 /// Time unit for temporal types.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

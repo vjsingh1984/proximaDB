@@ -6723,6 +6723,7 @@ dependencies = [
  "proximadb-cache",
  "proximadb-catalog",
  "proximadb-catalog-introspection",
+ "proximadb-catalog-schema",
  "proximadb-catapult",
  "proximadb-cdc",
  "proximadb-cks-local",
@@ -7102,6 +7103,7 @@ dependencies = [
  "prost",
  "proximadb-block-format",
  "proximadb-cache",
+ "proximadb-catalog-schema",
  "proximadb-compression-types",
  "proximadb-data-model",
  "proximadb-distance-types",
@@ -7138,6 +7140,29 @@ dependencies = [
  "sqlparser 0.59.0",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "proximadb-catalog-schema"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "chrono",
+ "futures",
+ "object_store",
+ "proximadb-compression-types",
+ "proximadb-data-model",
+ "proximadb-distance-types",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-quantization-types",
+ "proximadb-records",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -8617,7 +8642,7 @@ dependencies = [
  "parquet",
  "proximadb-block-format",
  "proximadb-cache",
- "proximadb-catalog",
+ "proximadb-catalog-schema",
  "proximadb-codec",
  "proximadb-compression-types",
  "proximadb-data-model",

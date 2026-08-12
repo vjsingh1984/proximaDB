@@ -11,7 +11,8 @@ use proximadb_catalog::mlops::{
 use proximadb_catalog::native::{NativeCatalog, NativeCatalogConfig};
 use proximadb_catalog::schema::validate_schema;
 use proximadb_catalog::{
-    Catalog, CatalogColumn, CatalogEmbeddingConfig, CatalogTableSchema, TableIdentifier,
+    Catalog, CatalogColumn, CatalogEmbeddingConfig, CatalogMlopsAssetExt, CatalogTableSchema,
+    TableIdentifier,
 };
 
 const MODEL_DIGEST: &str =
@@ -423,7 +424,8 @@ async fn native_xcatalog_persists_command_shaped_registry_mutations() {
     .await
     .unwrap();
     let schema = reloaded.get_table(&id).await.unwrap();
-    let CatalogMlopsAsset::EmbeddingModel(registry) = schema.mlops_asset.unwrap();
+    let CatalogMlopsAsset::EmbeddingModel(registry) =
+        schema.mlops_asset_as_typed().unwrap().unwrap();
     assert_eq!(registry.revision, 2);
     assert_eq!(registry.resolve_alias("champion").unwrap().version, 1);
 }

@@ -60,9 +60,9 @@ use tracing::{debug, info, warn};
 use crate::cache::CatalogCache;
 use crate::schema::{apply_evolution, validate_schema};
 use crate::{
-    Catalog, CatalogHealth, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
-    CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
-    TableIdentifier,
+    Catalog, CatalogHealth, CatalogIndex, CatalogMlopsAssetExt, CatalogNamespace,
+    CatalogPartitionSpec, CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema,
+    CatalogTableStatistics, TableIdentifier,
 };
 
 /// Plain Rust configuration for the native catalog.
@@ -1807,15 +1807,15 @@ impl Catalog for NativeCatalog {
     ) -> Result<CatalogTableSchema> {
         let _guard = self.mlops_mutation_lock.lock().await;
         let mut meta = self.load_table(identifier).await?;
-        let asset = meta
+        let mut asset = meta
             .schema
-            .mlops_asset
-            .as_mut()
+            .mlops_asset_as_typed()?
             .ok_or_else(|| anyhow!("Catalog object '{}' is not an MLOps asset", identifier))?;
         asset
             .apply_model_mutation(expected_revision, mutation)
             .map_err(anyhow::Error::new)?;
         asset.validate().map_err(anyhow::Error::new)?;
+        meta.schema.set_mlops_asset_typed(asset);
         let now = Self::now_millis();
         meta.schema.updated_at_ms = now;
         meta.updated_at = now;
