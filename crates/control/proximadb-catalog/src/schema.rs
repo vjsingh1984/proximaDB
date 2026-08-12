@@ -13,8 +13,8 @@ use anyhow::{Result, anyhow};
 use proximadb_data_model::ProximaType;
 
 use crate::{
-    CatalogColumn, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution, CatalogTableSchema,
-    ColumnConstraint, SchemaChange, system_columns,
+    CatalogColumn, CatalogIndex, CatalogIndexType, CatalogMlopsAssetExt, CatalogSchemaEvolution,
+    CatalogTableSchema, ColumnConstraint, SchemaChange, system_columns,
 };
 
 /// Validate a schema for internal consistency.
@@ -27,7 +27,7 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
         return Err(anyhow!("Schema must have at least one column"));
     }
 
-    if let Some(asset) = &schema.mlops_asset {
+    if let Some(asset) = schema.mlops_asset_as_typed()? {
         asset
             .validate()
             .map_err(|error| anyhow!("Invalid MLOps asset: {error}"))?;

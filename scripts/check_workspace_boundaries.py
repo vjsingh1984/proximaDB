@@ -129,17 +129,6 @@ class StorageUpEdge:
 
 STORAGE_UP_EDGE_TARGETS = ("compute", "index", "query", "services")
 
-# Grandfathered control-layer upward edges (TD-DECOMP-63 ratchet).
-# These are KNOWN violations that predate the control-layer boundary rules.
-# Remove entries from this set as the underlying coupling is resolved.
-# When this set is empty, the rules can be upgraded from "warning" to "error".
-KNOWN_CONTROL_UP_EDGES: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("proximadb-storage-common", "proximadb-catalog"),
-    }
-)
-
-
 LAYER_RULES = (
     LayerRule(
         frozenset({"foundation"}),
@@ -164,7 +153,7 @@ LAYER_RULES = (
     LayerRule(
         frozenset({"storage"}),
         frozenset({"control"}),
-        "warning",
+        "error",
         "storage crates must not depend upward into the control plane (catalog/metrics) — invert via port-traits or type extraction (TD-DECOMP ratchet)",
     ),
     LayerRule(
@@ -644,9 +633,6 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
 
             for rule in LAYER_RULES:
                 if rule.applies_to(crate, dep):
-                    # Skip grandfathered control-layer upward edges (TD-DECOMP-63 ratchet)
-                    if (crate.name, dep.name) in KNOWN_CONTROL_UP_EDGES:
-                        continue
                     findings.append(
                         Finding(
                             rule.severity,
