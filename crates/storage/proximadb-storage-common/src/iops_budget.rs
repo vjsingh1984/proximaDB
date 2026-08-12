@@ -45,9 +45,10 @@ impl IopsBudget {
         max: 8 * 1024 * 1024,
     };
 
-    /// Azure Blob Storage budget: 4 MiB target (the SDK chunks ranged reads at
-    /// 4 MiB — a block > 4 MiB uncompressed + overhead could split into 2 GETs).
-    /// zstd compression brings ~4 MiB uncompressed → ~2 MiB on-disk (safe).
+    /// Azure Blob Storage budget: 4 MiB target. This is the conservative
+    /// planner policy being evaluated by TD-SEARCH-3, not a Blob billing
+    /// quantum or a proven SDK range limit. Wire-level Azurite/Azure evidence
+    /// must precede any larger default.
     pub const AZURE: Self = Self {
         min: 512 * 1024,
         target: 4 * 1024 * 1024,
@@ -87,14 +88,14 @@ impl IopsBudget {
 
     /// Resolve the budget from a storage path's URL scheme (ADR-036 / ADR-062 D6).
     ///
-    /// Per-provider: Azure schemes → [`IopsBudget::AZURE`] (4 MiB — SDK chunks
-    /// ranged reads at 4 MiB); S3 / HTTP → [`IopsBudget::S3`] (8 MiB — no hard
+    /// Per-provider: Azure schemes → [`IopsBudget::AZURE`] (conservative 4 MiB
+    /// evaluation policy); S3 / HTTP → [`IopsBudget::S3`] (8 MiB — no hard
     /// limit); GCS → [`IopsBudget::GCS`] (8 MiB); local / `file` / `minio` /
     /// bare paths → [`IopsBudget::LOCAL`]; unknown → [`IopsBudget::DEFAULT`].
     pub fn for_path(path: &str) -> Self {
         let scheme = path.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
         match scheme.as_deref() {
-            // Azure: hard 4 MiB SDK chunk boundary for ranged reads.
+            // Azure: conservative 4 MiB policy pending TD-SEARCH-3 wire sweep.
             Some("azure" | "abfs" | "adls" | "az") => Self::AZURE,
             // S3 / HTTP: no hard range limit; 8 MiB sweet spot.
             Some("s3" | "http" | "https") => Self::S3,
