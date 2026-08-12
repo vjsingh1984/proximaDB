@@ -452,6 +452,15 @@ const OID_RESOLVER_SECTION_LEN: usize = 16;
 /// parsers that predate it skip unknown section tags (same contract as the
 /// A0/OID-resolver sections); absent ⇒ conservative fetch-per-block.
 const SECTION_BLOCK_FILTERABLE_STATS: u8 = 7;
+/// Optional footer section mapping each shredded user column's PROP NAME to its
+/// physical PAX column id (TD-FPRUNE-1 P2 engagement). Written from the writer's
+/// P-Shred spec so a filtered read resolves a user-tag field name (e.g.
+/// `partition`) → col-id WITHOUT a catalog lookup — the segment self-describes
+/// its shredded columns. Additive: predating parsers skip the unknown tag;
+/// absent ⇒ empty map ⇒ user-tag footer-pruning is a no-op (canonical fields
+/// still resolve via `pax_field_to_col`). Payload:
+/// `[n u16] per entry: [name_len u16][name bytes][col_id i32]`.
+const SECTION_SHRED_FIELD_MAP: u8 = 5;
 
 /// The self-describing footer-index (Parquet-style metadata hub): block table +
 /// schema snapshot + per-stripe encoding map + RaBitQ mirror + row count. Located
@@ -532,6 +541,12 @@ pub struct SegmentFooterIndex {
     /// stats payloads coexist and predating parsers skip the unknown tag.
     /// Empty = no section = conservative fetch-per-block (the legacy baseline).
     pub block_filterable_stats: Vec<(u32, Vec<u8>)>,
+    /// TD-FPRUNE-1 P2 engagement: shredded user columns' `(prop_name, col_id)`
+    /// pairs, so a filtered read resolves a user-tag field name → PAX col-id
+    /// without a catalog lookup (the segment self-describes its shredded
+    /// columns). Empty (legacy/no-shred segments) ⇒ user-tag footer-pruning is a
+    /// no-op. Serialized as an optional trailing section (absent ⇒ byte-unchanged).
+    pub shred_field_map: Vec<(String, i32)>,
 }
 
 /// `[footer_len u64][SEGMENT_MAGIC 8B]` — the 16 B tail that locates the footer.
@@ -940,6 +955,9 @@ impl SegmentFooterIndex {
             }
             sections.push((SECTION_BLOCK_FILTERABLE_STATS, payload));
         }
+        if !self.shred_field_map.is_empty() {
+            sections.push((SECTION_SHRED_FIELD_MAP, self.shred_field_map_payload()?));
+        }
         if !sections.is_empty() {
             let section_count = u16::try_from(sections.len())
                 .map_err(|_| anyhow::anyhow!("footer section count exceeds u16"))?;
@@ -954,6 +972,43 @@ impl SegmentFooterIndex {
             }
         }
         Ok(buf)
+    }
+
+    /// TD-FPRUNE-1 P2: `[n u16] per entry: [name_len u16][name bytes][col_id i32]`.
+    fn shred_field_map_payload(&self) -> Result<Vec<u8>> {
+        let n = u16::try_from(self.shred_field_map.len())
+            .map_err(|_| anyhow::anyhow!("shred field-map count exceeds u16"))?;
+        let mut payload = Vec::with_capacity(2 + self.shred_field_map.len() * 16);
+        payload.extend_from_slice(&n.to_le_bytes());
+        for (name, col_id) in &self.shred_field_map {
+            let name_len = u16::try_from(name.len())
+                .map_err(|_| anyhow::anyhow!("shred field name exceeds u16 bytes"))?;
+            payload.extend_from_slice(&name_len.to_le_bytes());
+            payload.extend_from_slice(name.as_bytes());
+            payload.extend_from_slice(&col_id.to_le_bytes());
+        }
+        Ok(payload)
+    }
+
+    fn parse_shred_field_map(section: &[u8]) -> Result<Vec<(String, i32)>> {
+        let mut p = 0usize;
+        let n = read_u16(section, &mut p)? as usize;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let name_len = read_u16(section, &mut p)? as usize;
+            ensure_remaining(
+                section,
+                p,
+                name_len,
+                "shred field-map name overruns section",
+            )?;
+            let name = String::from_utf8(section[p..p + name_len].to_vec())
+                .map_err(|_| anyhow::anyhow!("shred field-map name is not UTF-8"))?;
+            p += name_len;
+            let col_id = read_i32(section, &mut p)?;
+            out.push((name, col_id));
+        }
+        Ok(out)
     }
 
     fn encoding_map_payload(&self) -> Result<Vec<u8>> {
@@ -1084,6 +1139,7 @@ impl SegmentFooterIndex {
         let mut c_off = 0u64;
         let mut c_len = 0u64;
         let mut block_filterable_stats: Vec<(u32, Vec<u8>)> = Vec::new();
+        let mut shred_field_map = Vec::new();
         if p != body.len() {
             let section_count = read_u16(body, &mut p)? as usize;
             if section_count > body.len().saturating_sub(p) / 6 {
@@ -1148,6 +1204,11 @@ impl SegmentFooterIndex {
                             .push((block_idx, section[q..q + len].to_vec()));
                         q += len;
                     }
+                } else if tag == SECTION_SHRED_FIELD_MAP {
+                    if version != SECTION_VERSION_V1 {
+                        bail!("unsupported shred field-map section version {version}");
+                    }
+                    shred_field_map = Self::parse_shred_field_map(section)?;
                 }
             }
             if p != body.len() {
@@ -1177,6 +1238,7 @@ impl SegmentFooterIndex {
             c_off,
             c_len,
             block_filterable_stats,
+            shred_field_map,
         })
     }
 
@@ -1298,6 +1360,9 @@ mod tests {
                 },
             ],
             block_stats: vec![None, None],
+            // TD-FPRUNE-1 P2: two shredded user columns, to exercise the
+            // self-describing footer field-map section round-trip.
+            shred_field_map: vec![("partition".to_string(), 100), ("lang".to_string(), 101)],
         }
     }
 
@@ -1502,6 +1567,7 @@ mod tests {
             c_off: 3_088,
             c_len: 16_384,
             block_filterable_stats: Vec::new(),
+            shred_field_map: Vec::new(),
         };
         let parsed = SegmentFooterIndex::parse(&base.to_bytes().expect("serialize"))
             .expect("parse footer with exact-region section");
@@ -1549,6 +1615,7 @@ mod tests {
             c_off: 0,
             c_len: 0,
             block_filterable_stats: Vec::new(),
+            shred_field_map: Vec::new(),
             blocks: vec![
                 FooterBlockEntry {
                     offset: 1_000,
@@ -1734,6 +1801,11 @@ mod tests {
         assert_eq!(
             parsed.block_filterable_stats[0].1.as_slice(),
             &[1, 0, 42, 7, 255][..]
+        );
+        // TD-FPRUNE-1 P2: the self-describing shred field-map survives round-trip.
+        assert_eq!(
+            parsed.shred_field_map,
+            vec![("partition".to_string(), 100), ("lang".to_string(), 101)]
         );
     }
 
