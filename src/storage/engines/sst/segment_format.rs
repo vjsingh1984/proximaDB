@@ -867,9 +867,13 @@ pub(crate) fn pax_filtered_cascade_enabled() -> bool {
 pub(crate) struct FilteredRowAllowStats {
     pub blocks_total: usize,
     /// Blocks skipped by conservative `ColumnMeta` stats (`evaluate_block`)
-    /// without decoding a row. (P1 prunes DECODE, not fetch — footer-resident
-    /// stats that prune the fetch itself are TD-FPRUNE-1 P2.)
+    /// without decoding a row — but AFTER the block body was fetched (P1 prunes
+    /// DECODE, not fetch).
     pub blocks_pruned: usize,
+    /// TD-FPRUNE-1 P2: blocks pruned from the FETCH plan by footer-resident
+    /// stats — no body GET at all (the zero-GET win). A subset-by-mechanism of
+    /// `blocks_total`, disjoint from `blocks_pruned`.
+    pub blocks_pruned_footer: usize,
     pub rows_matched: usize,
 }
 
@@ -936,7 +940,6 @@ pub(crate) async fn pax_filtered_row_allow(
     //    the DECODE via stats; pruning the FETCH needs footer-resident stats —
     //    TD-FPRUNE-1 P2.) Coalesced D blocks carry no vector stripes (ADR-065),
     //    so these bytes are scalar/metadata only.
-    let all_blocks: Vec<usize> = (0..footer.blocks.len()).collect();
     let iop_target =
         proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
     let defaults =
@@ -944,6 +947,30 @@ pub(crate) async fn pax_filtered_row_allow(
             max_gap_bytes: (iop_target / 4).max(64 * 1024),
             max_range_bytes: iop_target,
         };
+    // TD-FPRUNE-1 P2: prune blocks from the FETCH plan using footer-resident
+    // stats — a block whose footer `FooterBlockStats` provably cannot match is
+    // dropped BEFORE any body GET (the zero-GET win). Blocks with no footer
+    // stats (legacy segments, or footer stats gated OFF at write) stay in,
+    // conservatively fetched. The footer verdict uses the SAME `evaluate_block`
+    // kernel as the post-fetch decode prune, so it can never drop a matching
+    // block (prune.rs soundness contract).
+    let candidate_blocks: Vec<usize> = (0..footer.blocks.len())
+        .filter(|&bi| {
+            let Some(payload) = footer.blocks.get(bi).and_then(|b| b.stats.as_deref()) else {
+                return true; // no footer stats → must fetch
+            };
+            let fstats = proximadb_block_format::FooterBlockStats::from_bytes(
+                payload,
+                footer.blocks[bi].row_count,
+            );
+            let keep = evaluate_block(&fstats, filter, &pax_field_to_col)
+                != proximadb_block_format::PruneResult::Skip;
+            if !keep {
+                stats.blocks_pruned_footer += 1;
+            }
+            keep
+        })
+        .collect();
     let policy = resolve_adaptive_range_policy(
         path,
         "region_d_filter",
@@ -952,7 +979,7 @@ pub(crate) async fn pax_filtered_row_allow(
         defaults,
         |candidate| {
             estimate_coalesced_byte_ranges(
-                all_blocks.iter().filter_map(|&index| {
+                candidate_blocks.iter().filter_map(|&index| {
                     footer
                         .blocks
                         .get(index)
@@ -962,7 +989,7 @@ pub(crate) async fn pax_filtered_row_allow(
             )
         },
     );
-    let fetches = plan_coalesced_block_ranges(&footer, &all_blocks, &policy);
+    let fetches = plan_coalesced_block_ranges(&footer, &candidate_blocks, &policy);
     for fetch in &fetches {
         let buf = fs
             .read_range(path, fetch.start, fetch.end - fetch.start)
@@ -1012,9 +1039,10 @@ pub(crate) async fn pax_filtered_row_allow(
         path,
         blocks_total = stats.blocks_total,
         blocks_pruned = stats.blocks_pruned,
+        blocks_pruned_footer = stats.blocks_pruned_footer,
         rows_matched = stats.rows_matched,
         n_rows,
-        "ADR-089 P1 stage-F row allow-set built"
+        "ADR-089 stage-F row allow-set built (P2: blocks_pruned_footer = zero-GET)"
     );
     Ok(Some((allow, stats)))
 }
@@ -5942,6 +5970,94 @@ mod tests {
             .unwrap()
             .expect("coalesced segment");
         assert!(empty_allow.is_empty());
+    }
+
+    /// ADR-089 / TD-FPRUNE-1 P2: with footer stats armed, a filtered query drops
+    /// provably-empty blocks from the FETCH plan (zero body GET). Exercised on a
+    /// CANONICAL column (`created_at_ns`) — the only fields Stage-F's
+    /// `pax_field_to_col` resolves today. Footer-pruning of USER TAGS
+    /// (partition/lang) is dark until the P-Shred-arming slice shreds filterable
+    /// props into columns AND `pax_field_to_col` resolves them (see TD note): the
+    /// footer-prune (`evaluate_block`/`pax_field_to_col` = canonical columns) and
+    /// the row-match (`evaluate_filter_proxima` = props) currently read disjoint
+    /// field namespaces. Soundness (never drops a matching block) is proven by
+    /// the block-format `footer_prune_matches_body_prune_for_same_metas` unit.
+    #[tokio::test]
+    async fn stage_f_footer_stats_prune_blocks_from_fetch() {
+        enable_coalesced_rabitq();
+        // Arm P2 footer-stats population at write. Process-global env is safe
+        // under nextest's process-per-test isolation (the repo test standard).
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
+        }
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 32;
+        const N: usize = 400;
+        // Two groups DISJOINT in both vector space (near 0 vs near 10) AND
+        // created_at (1000..1199 vs 2000..2199): the writer's centroid clustering
+        // keeps blocks group-homogeneous, so their footer created_at [min,max]
+        // ranges don't overlap — a `created_at >= 2000` query provably skips the
+        // low-group blocks from the fetch.
+        let records: Vec<ProximaRecord> = (0..N)
+            .map(|i| {
+                let low = i < N / 2;
+                let base = if low { 0.0 } else { 10.0 };
+                let v: Vec<f32> = (0..DIM)
+                    .map(|d| base + (((i * 131 + d * 17) % 17) as f32) * 0.001)
+                    .collect();
+                let ts = if low {
+                    1000 + i as i64
+                } else {
+                    2000 + i as i64
+                };
+                rec(&format!("r{i}"), ts, v)
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(16 * 1024),
+        )
+        .unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+
+        // created_at_ns >= 2000 → provably excludes every low-group block.
+        let filter = proximadb_filter_expression::FilterExpression::Comparison {
+            field: "created_at_ns".to_string(),
+            operator: proximadb_filter_expression::ComparisonOperator::GreaterThanOrEqual,
+            value: serde_json::json!(2000),
+        };
+        let (_allow, stats) = pax_filtered_row_allow(&fs, p, &filter)
+            .await
+            .unwrap()
+            .expect("coalesced segment must produce a stage-F allow-set");
+
+        // The zero-GET win: ≥1 block pruned from the FETCH plan by footer stats,
+        // and never all of them (the high-group blocks survive).
+        assert!(
+            stats.blocks_pruned_footer > 0,
+            "footer stats must prune ≥1 block from the fetch (got {} of {} blocks)",
+            stats.blocks_pruned_footer,
+            stats.blocks_total,
+        );
+        assert!(
+            stats.blocks_pruned_footer < stats.blocks_total,
+            "must not prune every block ({} of {})",
+            stats.blocks_pruned_footer,
+            stats.blocks_total,
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_FOOTER_STATS");
+        }
     }
 
     /// ADR-089 / TD-FPRUNE-1 P1: the row-restricted cascade returns ONLY
