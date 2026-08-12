@@ -425,3 +425,43 @@ the code. A search that returns zero is evidence about the SEARCH until the same
 to return non-zero on a known-positive control. Two earlier instances this session: a
 `grep | head -6` that made a guarded read path look unguarded, and a regex that matched zero
 blocks while an assertion caught it.
+
+
+== L2.2 item 1 — VERIFIED ordering constraint: do NOT thread identity first (2026-08-12)
+
+The obvious next slice is "extract identity in `rag_query` and pass `Some(tenant_context)`
+instead of the hardcoded `None`". **That would break RAG reads**, and the reason is verified:
+
+* Passing `Some(..)` activates `validate_search_results_tenant_isolation`
+  (`legacy.rs:2765`), which is currently unreachable because all 6 callers pass `None`.
+* That validator DROPS any result whose metadata lacks a `tenant_id`
+  (`legacy.rs:2826`, "Vector result without tenant_id found!").
+* **No ordinary vector write path stamps `tenant_id` into record metadata.** Searching for the
+  write is decisive: the only occurrences are an audit-details map
+  (`security_coordinator.rs:605`) and a bulk-load SPOOF fixture
+  (`bulk_load.rs:490`). Result metadata is otherwise copied verbatim from the user's own
+  record metadata (`legacy.rs:~5040`).
+
+So ordinary records carry no tenant metadata, and the validator would drop all of them: RAG
+would return EMPTY rather than leaking. Fail-closed, but an outage.
+
+=== Required order
+
+. **Fix the validator's model first.** Metadata-string matching is the wrong mechanism —
+  isolation here should come from the same `ReadContext`/ABAC path the other read surfaces use
+  (`records_read_context`), not from comparing a `tenant_id` string that the write path never
+  writes. While it exists, it must also stop treating "no metadata" as a security verdict in
+  either direction: today absent ⇒ drop, and a non-`StringValue` variant matches no arm and is
+  dropped with NO log at all.
+. **Then** extract identity at the graph surface and thread it.
+. **Then** ABAC on the search path, and the retriever carrying the context.
+
+Reversing steps 1 and 2 produces an immediate regression that looks like a security fix.
+
+=== Status of the surrounding claims
+
+VERIFIED: the handlers extract no identity (33 handlers, zero `Extension`/`TenantContext`/
+`PortIdentity`); the write path does not stamp tenant metadata; the validator drops unlabeled
+results. NOT VERIFIED and still open: whether `graph_operations_service` enforces tenancy
+internally by another route — establish that before characterising the graph surface's
+isolation posture.
