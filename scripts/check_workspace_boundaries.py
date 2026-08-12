@@ -129,6 +129,19 @@ class StorageUpEdge:
 
 STORAGE_UP_EDGE_TARGETS = ("compute", "index", "query", "services")
 
+# Grandfathered control-layer upward edges (TD-DECOMP-63 ratchet).
+# These are KNOWN violations that predate the control-layer boundary rules.
+# Remove entries from this set as the underlying coupling is resolved.
+# When this set is empty, the rules can be upgraded from "warning" to "error".
+KNOWN_CONTROL_UP_EDGES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("proximadb-storage-common", "proximadb-catalog"),
+        ("proximadb-storage-operations", "proximadb-catalog"),
+        ("proximadb-orion-engine", "proximadb-metrics"),
+        ("proximadb-recall-bench", "proximadb-catalog"),
+    }
+)
+
 
 LAYER_RULES = (
     LayerRule(
@@ -152,6 +165,12 @@ LAYER_RULES = (
         "storage-common crates must not depend upward into modality, query, platform, integration, or app layers",
     ),
     LayerRule(
+        frozenset({"storage"}),
+        frozenset({"control"}),
+        "warning",
+        "storage crates must not depend upward into the control plane (catalog/metrics) — invert via port-traits or type extraction (TD-DECOMP ratchet)",
+    ),
+    LayerRule(
         frozenset({"horizontal"}),
         frozenset(
             {
@@ -165,6 +184,12 @@ LAYER_RULES = (
         ),
         "error",
         "horizontal infrastructure crates must stay reusable and not depend on domain, platform, integration, or app layers",
+    ),
+    LayerRule(
+        frozenset({"horizontal"}),
+        frozenset({"control"}),
+        "warning",
+        "horizontal crates must not depend upward into the control plane — reclassify the crate or invert the dep (TD-DECOMP ratchet)",
     ),
     LayerRule(
         frozenset({"control"}),
@@ -187,6 +212,12 @@ LAYER_RULES = (
         frozenset({"platform", "integration", *APPLICATION_LAYERS}),
         "error",
         "modality crates must not depend on platform/integration/root/application/binding crates",
+    ),
+    LayerRule(
+        frozenset({"modality"}),
+        frozenset({"control"}),
+        "warning",
+        "modality crates must not depend upward into the control plane — invert via port-traits (TD-DECOMP ratchet)",
     ),
     LayerRule(
         frozenset({"query-contract"}),
@@ -613,6 +644,9 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
 
             for rule in LAYER_RULES:
                 if rule.applies_to(crate, dep):
+                    # Skip grandfathered control-layer upward edges (TD-DECOMP-63 ratchet)
+                    if (crate.name, dep.name) in KNOWN_CONTROL_UP_EDGES:
+                        continue
                     findings.append(
                         Finding(
                             rule.severity,
