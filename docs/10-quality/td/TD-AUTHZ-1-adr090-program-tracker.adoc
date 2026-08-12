@@ -465,3 +465,52 @@ VERIFIED: the handlers extract no identity (33 handlers, zero `Extension`/`Tenan
 results. NOT VERIFIED and still open: whether `graph_operations_service` enforces tenancy
 internally by another route — establish that before characterising the graph surface's
 isolation posture.
+
+
+== 🔴 CORRECTION (2026-08-12): the graph/RAG surface is NOT production-reachable
+
+Earlier entries in this tracker — and the merged PRs #1585 and #1588 — state that
+`unified_search_with_tenant_context` is "production-reachable via
+`src/graph/rag/engine_impls.rs:53`". **That is wrong**, and it inflated the priority of L2.2
+item 1. Verifying the *route mounting* (rather than the call chain) before writing step-2 code
+established:
+
+* `src/network/rest/canonical/graph.rs:819` defines `create_graph_router()` containing
+  `rag_query` (`:1319`) and its `/graphs/{graph_id}/rag` route (`:852`).
+  **Nothing references that function.** The only mount site,
+  `src/network/rest/canonical/handlers.rs:1690-1694`, imports a DIFFERENT
+  `create_graph_router` — from `proximadb_api::rest`
+  (`crates/platform/proximadb-api/src/rest/canonical/graph.rs:697`).
+* The router that IS mounted routes `/graphs/{graph_id}/rag` to **`not_implemented_handler`**
+  (`crates/platform/proximadb-api/src/rest/canonical/graph.rs:731`).
+
+So the call chain is real but its entry point is not served: `rag_query` — and with it
+`VectorNodeRetriever`, its only constructor — is unmounted dead code. `unified_search`'s six
+callers all pass `tenant_context: None`, and no live route reaches them.
+
+=== What this changes
+
+. **L2.2 item 1 is dead surface, not a live exposure.** It belongs in the same category as B4
+  (`search_v1_with_tenant_context`, deleted in #1575): an unmounted handler with no identity
+  and no authorization. The disposition should be *delete*, not *thread identity through it* —
+  fixing dead code implies it has a purpose.
+. **Step 2 as planned is moot.** There is no live RAG path to extract identity into. Any future
+  RAG implementation must build identity in from the start rather than inherit this handler.
+. The two same-named `create_graph_router` functions are themselves a hazard: one is live, one
+  is dead, and the dead one is the one with the security gap. Worth resolving when the dead
+  router is removed.
+
+=== What is unaffected
+
+The validator-model fix (L2.2 step 1) stands on its own merits: it removed a silent
+no-log drop for non-string labels, and corrected a rule that could not distinguish "unlabelled"
+from "foreign". Those are real defects in reachable code paths regardless of RAG's status — the
+function is called by `unified_search_with_tenant_context`, which is reachable from
+`unified_search` even though the RAG *route* is not.
+
+=== Method note
+
+The original claim came from tracing a CALL CHAIN (`engine_impls.rs` → `unified_search`) without
+checking whether the chain's entry point is ROUTED. A caller existing is not the same as a
+caller being reachable. Verify mounting, not just call sites, before assigning production
+severity.
