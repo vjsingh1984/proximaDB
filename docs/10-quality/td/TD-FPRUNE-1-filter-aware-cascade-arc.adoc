@@ -58,18 +58,37 @@ filter as the correctness backstop. This TD tracks the phases.
      runs unchanged against a footer-backed source. Round-trip + empty-payload
      (all-"may-match", mixed-read-safe) + **footer-prune == body-prune parity**
      are TDD-proven (5 tests). No new pruning logic; reuses the P1 kernel.
-  ** **Remaining wiring:** (a) storage-common footer ser/de — write the payload
-     in `write_block_entry` (currently hardcodes `stats_len=0`,
-     `segment_layout.rs:582`) + parse it in `read_blocks` + carry it on
-     `FooterBlockEntry` (drops `Copy`; only ~4 call sites, all in
-     `pax_block.rs`); (b) writer — populate per-block from filterable-column
-     `ColumnMeta` at footer build (`pax_block.rs:1664/2100`), `stats_kind =
-     MinMax`, behind a default-OFF gate until baked; (c) Stage F
-     (`pax_filtered_row_allow`) — `evaluate_block` over `FooterBlockStats`
-     FIRST, fetch+decode only the survivors (pruned blocks cost zero body GET).
-  ** **Evidence gate:** filtered search `io_trace` `object_gets`/`bytes_read`
-     drop with selectivity (pruned blocks unfetched), recall unchanged, on both
-     the synthetic partition and Wikipedia `lang` corpora.
+  ** **Wiring DONE:** (a) storage-common footer ser/de — `FooterBlockEntry`
+     carries an optional `stats: Option<Vec<u8>>` on the existing `stats_len`
+     frame; `write_block_entry`/`read_blocks` round-trip it (test
+     `footer_index_round_trips`); dropped `Copy`. (b) writer — at flush, behind
+     default-OFF `PROXIMADB_PAX_FOOTER_STATS`, lifts each block's bounded-column
+     `ColumnMeta` into `BlockIndexEntry.footer_stats` → footer (`stats_kind =
+     MinMax`). (c) Stage F (`pax_filtered_row_allow`) — decodes each block's
+     footer `FooterBlockStats` and runs `evaluate_block` to drop provably-empty
+     blocks from the coalesced FETCH plan BEFORE any body GET; counts them in
+     `FilteredRowAllowStats.blocks_pruned_footer`. Test
+     `stage_f_footer_stats_prune_blocks_from_fetch` asserts ≥1 block (and not
+     all) pruned-from-fetch on a canonical `created_at_ns` filter.
+  ** **⚠️ FIELD-NAMESPACE GAP (found during P2 c; the true blocker to the
+     benchmark win):** footer-prune resolves fields via `pax_field_to_col`,
+     which today maps ONLY canonical columns (`id`, `tenant_id`, `created_at`,
+     `valid_to`, …) → `None` for any user tag. The row-accurate match runs
+     `evaluate_filter_proxima` over **props**. So the two stages read *disjoint
+     field namespaces*: footer-prune engages for canonical-field filters, while
+     the benchmark's user-tag filters (`partition`, `lang`) prune nothing
+     (conservative — correctness preserved, but zero GET saved). Making
+     footer-prune deliver end-to-end for user tags is the **P-Shred-arming
+     slice**: (1) shred `filterable` schema columns into PAX columns with bounds
+     at flush (today only canonical columns are shredded), (2) extend
+     `pax_field_to_col` to resolve those user columns, (3) ensure the row-match
+     and footer-prune agree on the field (props value ⇔ shredded column). Until
+     then P2 is INFRASTRUCTURE-COMPLETE but engagement-limited to canonical
+     filters.
+  ** **Evidence gate (post P-Shred arming):** filtered search `io_trace`
+     `object_gets`/`bytes_read` drop with selectivity (pruned blocks
+     unfetched), recall unchanged, on the synthetic partition + Wikipedia
+     `lang` corpora.
 * **P3 — per-cell stats (prune before any Region-A byte).** Optional
   footer/A0 section with per-cell dictionary/zone summaries for filterable
   columns; intersect with the geometric nprobe cut
