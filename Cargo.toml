@@ -69,7 +69,7 @@ members = [
     "crates/horizontal/proximadb-audit",
     "crates/horizontal/proximadb-cross-modal-fusion",
     "crates/horizontal/proximadb-utility-scorer",
-    "crates/horizontal/proximadb-geo-index",
+    "crates/horizontal/proximadb-document-geo-index",
     "crates/horizontal/proximadb-geo-spatial-index",
     "crates/horizontal/proximadb-connectors-types",
     "crates/horizontal/proximadb-type-validators",
@@ -312,7 +312,7 @@ proximadb-automl = { path = "crates/horizontal/proximadb-automl" }
 proximadb-audit = { path = "crates/horizontal/proximadb-audit" }
 proximadb-cross-modal-fusion = { path = "crates/horizontal/proximadb-cross-modal-fusion" }
 proximadb-utility-scorer = { path = "crates/horizontal/proximadb-utility-scorer" }
-proximadb-geo-index = { path = "crates/horizontal/proximadb-geo-index" }
+proximadb-document-geo-index = { path = "crates/horizontal/proximadb-document-geo-index" }
 proximadb-connectors-types = { path = "crates/horizontal/proximadb-connectors-types" }
 proximadb-type-validators = { path = "crates/horizontal/proximadb-type-validators" }
 proximadb-tcp-multiplexer = { path = "crates/horizontal/proximadb-tcp-multiplexer" }
@@ -459,7 +459,7 @@ proximadb-automl = { workspace = true }
 proximadb-audit = { workspace = true }
 proximadb-cross-modal-fusion = { workspace = true }
 proximadb-utility-scorer = { workspace = true }
-proximadb-geo-index = { workspace = true }
+proximadb-document-geo-index = { workspace = true }
 proximadb-connectors-types = { workspace = true }
 proximadb-type-validators = { workspace = true }
 proximadb-tcp-multiplexer = { workspace = true }
