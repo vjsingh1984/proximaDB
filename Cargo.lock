@@ -6749,6 +6749,7 @@ dependencies = [
  "proximadb-filterable-metadata",
  "proximadb-functions",
  "proximadb-geo-index",
+ "proximadb-geo-types",
  "proximadb-graph",
  "proximadb-graph-arrow",
  "proximadb-graph-engine-traits",
@@ -7497,6 +7498,13 @@ name = "proximadb-geo-index"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+]
+
+[[package]]
+name = "proximadb-geo-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
