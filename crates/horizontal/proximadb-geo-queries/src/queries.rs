@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::types::{GeoBoundingBox, GeoDistanceUnit, GeoPoint, GeoPolygon};
+use proximadb_geo_types::types::{GeoBoundingBox, GeoDistanceUnit, GeoPoint, GeoPolygon};
 
 /// A geospatial query
 #[derive(Debug, Clone)]

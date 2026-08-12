@@ -11,7 +11,7 @@ pub use proximadb_geohash::geohash;
 /// Geo-spatial index implementation (R-tree style).
 pub mod index;
 /// Geo-spatial query types and builders.
-pub mod queries;
+pub use proximadb_geo_queries::queries;
 /// Core geo-spatial types (points, bounding boxes, polygons).
 pub use proximadb_geo_types::types;
 
