@@ -136,3 +136,38 @@ the introspection projection**. It is in the wiring between them.
 
 Related: TD-AUTHZ-1 (ADR-090 program), TD-SEC-2 (the pressure-test register that catalogues
 this same "reports success while covering nothing" defect class).
+
+
+== 2026-08-12 — the live server does not use `NativeCatalog` at all
+
+The 2026-08-09 entry exonerated `NativeCatalog` with a round-trip test (#1559): it mints
+`object_id`, persists it, and returns it from `get_table`. That result stands — but it was
+**an exoneration of a component that is not in the live path**, which is why the defect
+survived it.
+
+`src/network/shared_services.rs:803-815`: the default catalog registered at boot is the
+WAL-backed **`SystemCatalog`** (in-RAM authority + canonical WAL), *not* `NativeCatalog`. The
+comment there is explicit — `NativeCatalog` is the file-per-object implementation, and
+`PROXIMADB_DISABLE_SYSTEM_CATALOG` is a kill-switch back to it "for the duration of the
+cutover".
+
+So the empty `object_id` on SQL-created relational tables is almost certainly a
+`SystemCatalog` minting/projection gap. The earlier hypothesis ("two instances over one data
+dir") was close but wrong in kind: it is two **implementations**, not two instances.
+
+=== Next step (narrowed to a named component)
+
+. Inspect `SystemCatalog`'s table-creation path: does it mint `schema.object_id` the way
+  `NativeCatalog::create_table` does (`native.rs:~1507`, `mint_object_id`), or does it leave
+  it `None` for tables created through SQL DDL?
+. If it does not mint, that is the fix — and the round-trip test added in #1559 should gain a
+  `SystemCatalog` sibling so the invariant is pinned for the implementation that actually
+  serves.
+. Only then un-ignore the three tests carrying `#[ignore = "TD-AUTHZ-2: ..."]`.
+
+=== Method note
+
+This is the second time in this program that a verified-true finding was scoped to the wrong
+component: `NativeCatalog` was exonerated correctly and irrelevantly, exactly as the graph/RAG
+surface was analysed correctly and irrelevantly before discovering its router was never
+mounted. **Establish which implementation actually serves the path before testing one.**
