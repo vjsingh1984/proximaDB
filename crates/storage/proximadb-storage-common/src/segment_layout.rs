@@ -248,7 +248,12 @@ impl StatsKind {
 /// One block-table entry in the footer-index: the byte extent + row count of a
 /// data block. The read path maps survivor rows → blocks via cumulative row
 /// counts, then plans coalesced ranged GETs over these extents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// TD-FPRUNE-1 P2: an optional `stats` payload (opaque here — the block-format
+/// `FooterBlockStats` bytes) rides the entry's existing `stats_len` frame, so a
+/// filtered query can prune the block from the footer without fetching its body.
+/// `None` (the legacy default, `stats_len == 0`) is the mixed-read-safe baseline.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FooterBlockEntry {
     /// Absolute byte offset of the block in the segment.
     pub offset: u64,
@@ -256,9 +261,12 @@ pub struct FooterBlockEntry {
     pub size: u32,
     /// Number of rows in this block (for global row → block mapping).
     pub row_count: u32,
-    /// The block's stats kind (PR1: always [`StatsKind::None`]; the payload
-    /// length is zero). Forward-compatible hook for the PR3 OID bloom.
+    /// The block's stats kind. `None` (legacy) carries no payload; `MinMax`
+    /// carries the `stats` bytes below (TD-FPRUNE-1 P2); `BloomOid` is the PR3 hook.
     pub stats_kind: StatsKind,
+    /// Serialized per-block stats payload (opaque bytes; decoded by the reader as
+    /// `proximadb_block_format::FooterBlockStats`). `None` ⇔ `stats_kind == None`.
+    pub stats: Option<Vec<u8>>,
 }
 
 macro_rules! footer_tag_enum {
@@ -579,7 +587,16 @@ fn write_block_entry(output: &mut Vec<u8>, block: &FooterBlockEntry) {
     output.extend_from_slice(&block.size.to_le_bytes());
     output.extend_from_slice(&block.row_count.to_le_bytes());
     output.push(block.stats_kind as u8);
-    output.extend_from_slice(&0u32.to_le_bytes());
+    // TD-FPRUNE-1 P2: the reserved stats_len frame now carries the optional
+    // per-block stats payload. `None` ⇒ len 0 (byte-identical to the legacy
+    // writer), so old readers/segments are unaffected.
+    match &block.stats {
+        Some(payload) => {
+            output.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            output.extend_from_slice(payload);
+        }
+        None => output.extend_from_slice(&0u32.to_le_bytes()),
+    }
 }
 
 fn read_blocks(input: &[u8], position: &mut usize) -> Result<Vec<FooterBlockEntry>> {
@@ -600,12 +617,20 @@ fn read_blocks(input: &[u8], position: &mut usize) -> Result<Vec<FooterBlockEntr
             stats_len,
             "footer-index stats payload overruns body",
         )?;
+        // TD-FPRUNE-1 P2: capture the payload bytes (opaque here) instead of
+        // skipping them, so the read path can decode + prune from the footer.
+        let stats = if stats_len > 0 {
+            Some(input[*position..*position + stats_len].to_vec())
+        } else {
+            None
+        };
         *position += stats_len;
         blocks.push(FooterBlockEntry {
             offset,
             size,
             row_count,
             stats_kind: StatsKind::from_tag(stats_tag),
+            stats,
         });
     }
     Ok(blocks)
@@ -1108,12 +1133,16 @@ mod tests {
                     size: 8_000,
                     row_count: 128,
                     stats_kind: StatsKind::None,
+                    stats: None,
                 },
                 FooterBlockEntry {
                     offset: 160_056,
                     size: 7_900,
                     row_count: 127,
-                    stats_kind: StatsKind::None,
+                    // TD-FPRUNE-1 P2: a block carrying a MinMax stats payload,
+                    // to exercise the `stats_len`-framed round-trip.
+                    stats_kind: StatsKind::MinMax,
+                    stats: Some(vec![1, 0, 42, 7, 255]),
                 },
             ],
         }
@@ -1433,6 +1462,15 @@ mod tests {
         assert_eq!(parsed.blocks.len(), 2);
         assert_eq!(parsed.blocks[0].offset, 152_056);
         assert_eq!(parsed.blocks[1].row_count, 127);
+        // TD-FPRUNE-1 P2: the per-block stats payload survives the round-trip,
+        // and an absent payload stays absent (mixed-read-safe baseline).
+        assert_eq!(parsed.blocks[0].stats_kind, StatsKind::None);
+        assert_eq!(parsed.blocks[0].stats, None);
+        assert_eq!(parsed.blocks[1].stats_kind, StatsKind::MinMax);
+        assert_eq!(
+            parsed.blocks[1].stats.as_deref(),
+            Some(&[1, 0, 42, 7, 255][..])
+        );
     }
 
     #[test]
