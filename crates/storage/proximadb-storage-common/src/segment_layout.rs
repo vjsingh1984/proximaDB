@@ -292,7 +292,7 @@ impl FooterRowGroupStats {
 /// One block-table entry in the footer-index: the byte extent + row count of a
 /// data block. The read path maps survivor rows → blocks via cumulative row
 /// counts, then plans coalesced ranged GETs over these extents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FooterBlockEntry {
     /// Absolute byte offset of the block in the segment.
     pub offset: u64,
@@ -300,8 +300,11 @@ pub struct FooterBlockEntry {
     pub size: u32,
     /// Number of rows in this block (for global row → block mapping).
     pub row_count: u32,
-    /// The block's stats kind (PR1: always [`StatsKind::None`]; the payload
-    /// length is zero). Forward-compatible hook for the PR3 OID bloom.
+    /// The block's stats kind. `None` (legacy) carries no payload; `MinMax`
+    /// carries the typed `FooterRowGroupStats` payload (TD-PAXRG-1), decoded
+    /// by `read_blocks`. TD-FPRUNE-1 P2's filterable-column stats do NOT ride
+    /// this per-entry frame — they live in the optional
+    /// `SECTION_BLOCK_FILTERABLE_STATS` footer section so both payloads coexist.
     pub stats_kind: StatsKind,
 }
 
@@ -439,6 +442,16 @@ const COARSE_DIRECTORY_SECTION_LEN: usize = 16;
 const SECTION_OID_RESOLVER: u8 = 4;
 /// `[opr_off u64][opr_len u64]`.
 const OID_RESOLVER_SECTION_LEN: usize = 16;
+/// Optional footer section carrying TD-FPRUNE-1 P2's per-block
+/// filterable-column stats (`proximadb_block_format::FooterBlockStats`
+/// bytes), so a filtered query prunes blocks from the FETCH plan without a
+/// body GET. Deliberately a SECTION, not the per-entry `stats_len` frame —
+/// that frame carries the typed `FooterRowGroupStats` (TD-PAXRG-1), and the
+/// two payloads must coexist. Sparse + index-tagged:
+/// `[n u32] per entry: [block_idx u32][len u32][stats bytes]`. Additive:
+/// parsers that predate it skip unknown section tags (same contract as the
+/// A0/OID-resolver sections); absent ⇒ conservative fetch-per-block.
+const SECTION_BLOCK_FILTERABLE_STATS: u8 = 7;
 
 /// The self-describing footer-index (Parquet-style metadata hub): block table +
 /// schema snapshot + per-stripe encoding map + RaBitQ mirror + row count. Located
@@ -511,6 +524,14 @@ pub struct SegmentFooterIndex {
     /// `pax_f32_tier` opt-in). Serialized as an optional trailing section.
     pub c_off: u64,
     pub c_len: u64,
+    /// TD-FPRUNE-1 P2: per-block filterable-column stats payloads
+    /// (`proximadb_block_format::FooterBlockStats` bytes), tagged by block
+    /// index. Deliberately OUTSIDE the per-entry `stats_len` frame — that frame
+    /// carries the typed `FooterRowGroupStats` (TD-PAXRG-1) — and serialized as
+    /// an optional trailing section (`SECTION_BLOCK_FILTERABLE_STATS`), so both
+    /// stats payloads coexist and predating parsers skip the unknown tag.
+    /// Empty = no section = conservative fetch-per-block (the legacy baseline).
+    pub block_filterable_stats: Vec<(u32, Vec<u8>)>,
 }
 
 /// `[footer_len u64][SEGMENT_MAGIC 8B]` — the 16 B tail that locates the footer.
@@ -903,6 +924,22 @@ impl SegmentFooterIndex {
             payload.extend_from_slice(&self.c_len.to_le_bytes());
             sections.push((SECTION_EXACT_REGION, payload));
         }
+        // TD-FPRUNE-1 P2: sparse per-block filterable-column stats. Only the
+        // blocks whose footer stats were populated carry an entry.
+        if !self.block_filterable_stats.is_empty() {
+            let count = u32::try_from(self.block_filterable_stats.len())
+                .map_err(|_| anyhow::anyhow!("filterable-stats count exceeds u32"))?;
+            let mut payload = Vec::with_capacity(4 + self.block_filterable_stats.len() * 8);
+            payload.extend_from_slice(&count.to_le_bytes());
+            for (block_idx, stats) in &self.block_filterable_stats {
+                let len =
+                    u32::try_from(stats.len()).map_err(|_| anyhow::anyhow!("stats exceeds u32"))?;
+                payload.extend_from_slice(&block_idx.to_le_bytes());
+                payload.extend_from_slice(&len.to_le_bytes());
+                payload.extend_from_slice(stats);
+            }
+            sections.push((SECTION_BLOCK_FILTERABLE_STATS, payload));
+        }
         if !sections.is_empty() {
             let section_count = u16::try_from(sections.len())
                 .map_err(|_| anyhow::anyhow!("footer section count exceeds u16"))?;
@@ -1046,6 +1083,7 @@ impl SegmentFooterIndex {
         let mut opr_len = 0u64;
         let mut c_off = 0u64;
         let mut c_len = 0u64;
+        let mut block_filterable_stats: Vec<(u32, Vec<u8>)> = Vec::new();
         if p != body.len() {
             let section_count = read_u16(body, &mut p)? as usize;
             if section_count > body.len().saturating_sub(p) / 6 {
@@ -1092,6 +1130,24 @@ impl SegmentFooterIndex {
                     }
                     c_off = u64::from_le_bytes(section[..8].try_into()?);
                     c_len = u64::from_le_bytes(section[8..16].try_into()?);
+                } else if tag == SECTION_BLOCK_FILTERABLE_STATS {
+                    if version != SECTION_VERSION_V1 {
+                        bail!("unsupported filterable-stats section version {version}");
+                    }
+                    let mut q = 0usize;
+                    let count = read_u32(section, &mut q)? as usize;
+                    if count > section.len() / 8 {
+                        bail!("filterable-stats count exceeds section bytes");
+                    }
+                    block_filterable_stats = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let block_idx = read_u32(section, &mut q)?;
+                        let len = read_u32(section, &mut q)? as usize;
+                        ensure_remaining(section, q, len, "filterable-stats entry overruns")?;
+                        block_filterable_stats
+                            .push((block_idx, section[q..q + len].to_vec()));
+                        q += len;
+                    }
                 }
             }
             if p != body.len() {
@@ -1120,6 +1176,7 @@ impl SegmentFooterIndex {
             opr_len,
             c_off,
             c_len,
+            block_filterable_stats,
         })
     }
 
@@ -1222,6 +1279,10 @@ mod tests {
             a0_len: 0,
             opr_off: 0,
             opr_len: 0,
+            // TD-FPRUNE-1 P2: a sparse filterable-stats section entry for
+            // block 1, to exercise the SECTION_BLOCK_FILTERABLE_STATS
+            // round-trip (block 0 stays absent — the mixed-read baseline).
+            block_filterable_stats: vec![(1u32, vec![1, 0, 42, 7, 255])],
             blocks: vec![
                 FooterBlockEntry {
                     offset: 152_056,
@@ -1440,6 +1501,7 @@ mod tests {
             opr_len: 0,
             c_off: 3_088,
             c_len: 16_384,
+            block_filterable_stats: Vec::new(),
         };
         let parsed = SegmentFooterIndex::parse(&base.to_bytes().expect("serialize"))
             .expect("parse footer with exact-region section");
@@ -1486,6 +1548,7 @@ mod tests {
             has_f32_tier: false,
             c_off: 0,
             c_len: 0,
+            block_filterable_stats: Vec::new(),
             blocks: vec![
                 FooterBlockEntry {
                     offset: 1_000,
@@ -1664,6 +1727,14 @@ mod tests {
         assert_eq!(parsed.blocks.len(), 2);
         assert_eq!(parsed.blocks[0].offset, 152_056);
         assert_eq!(parsed.blocks[1].row_count, 127);
+        // TD-FPRUNE-1 P2: the sparse filterable-stats section survives the
+        // round-trip, and an absent entry stays absent (mixed-read baseline).
+        assert_eq!(parsed.block_filterable_stats.len(), 1);
+        assert_eq!(parsed.block_filterable_stats[0].0, 1u32);
+        assert_eq!(
+            parsed.block_filterable_stats[0].1.as_slice(),
+            &[1, 0, 42, 7, 255][..]
+        );
     }
 
     #[test]

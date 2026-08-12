@@ -311,6 +311,31 @@ pub struct BlockIndexEntry {
     /// per-block metadata read).
     #[serde(default)]
     pub zone: Option<BlockZoneSummary>,
+    /// TD-FPRUNE-1 P2: serialized `FooterBlockStats` for this block's
+    /// bounded columns, captured at flush (when the block's `ColumnMeta` is in
+    /// hand) and lifted into the segment footer so a filtered query prunes the
+    /// block without a body GET. `None` (default) when footer stats are gated OFF.
+    #[serde(default)]
+    pub footer_stats: Option<Vec<u8>>,
+}
+
+impl BlockIndexEntry {}
+
+/// TD-FPRUNE-1 P2 (default-OFF): `PROXIMADB_PAX_FOOTER_STATS=1|on|true|yes`
+/// makes the writer lift per-block bounded-column `ColumnMeta` into the segment
+/// footer, so a filtered query can prune a block without a body GET. OFF keeps
+/// the footer byte-identical to today (mixed-read-safe: the reader treats an
+/// absent payload as "may match").
+fn footer_stats_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_FOOTER_STATS")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "on" | "true" | "yes")
+    )
 }
 
 /// Index appended at the tail of a segment file.
@@ -396,6 +421,7 @@ impl SegmentIndex {
                 offset,
                 size,
                 zone: None,
+                footer_stats: None,
             });
         }
         Ok(Self { blocks })
@@ -426,6 +452,7 @@ impl SegmentIndex {
                 offset,
                 size,
                 zone: Some(zone),
+                footer_stats: None,
             });
         }
         Ok(Self { blocks })
@@ -1566,10 +1593,29 @@ impl PaxSegmentWriter {
                 .unwrap_or((0u32, 0u32, 0u8, false));
             self.rg_oid_chunks.push(oid_chunk);
         }
+        // TD-FPRUNE-1 P2 (default-OFF): lift this block's bounded columns'
+        // ColumnMeta into a footer stats payload while the reader is open (the
+        // only point the metas are in hand). Region-D coalesced blocks carry no
+        // vector stripes, so these are scalar/metadata columns only. Populated
+        // for ALL columns with usable bounds — the filter simply ignores
+        // columns it doesn't query, and this avoids threading the filterable-
+        // column set through the writer.
+        let footer_stats = if footer_stats_enabled() {
+            let keep: Vec<i32> = reader.column_metas().iter().map(|m| m.column_id).collect();
+            let stats = proximadb_block_format::FooterBlockStats::from_column_metas(
+                row_count,
+                reader.column_metas(),
+                &keep,
+            );
+            (!stats.is_empty()).then(|| stats.to_bytes())
+        } else {
+            None
+        };
         self.index.blocks.push(BlockIndexEntry {
             offset,
             size: block_size,
             zone,
+            footer_stats,
         });
         if self.local_spill.is_none() {
             self.file_buf.extend_from_slice(&block_bytes);
@@ -1842,6 +1888,16 @@ impl PaxSegmentWriter {
                 stats_kind: StatsKind::None,
             })
             .collect::<Vec<_>>();
+        // TD-FPRUNE-1 P2: the filterable stats ride the sparse
+        // SECTION_BLOCK_FILTERABLE_STATS footer section (NOT the per-entry
+        // frame, which carries the typed row-group stats).
+        let block_filterable_stats: Vec<(u32, Vec<u8>)> = self
+            .index
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(i, block)| block.footer_stats.clone().map(|p| (i as u32, p)))
+            .collect();
         let (encoding_map, block_tier_assignments) = self.footer_encoding_map()?;
         // TD-PAXRG-1: per-RG stats ride the footer's opaque MinMax payload —
         // the zone summary for the DataFusion ranged prune + the OID-chunk
@@ -1883,6 +1939,7 @@ impl PaxSegmentWriter {
             has_f32_tier: self.f32_tier,
             blocks,
             block_stats: rg_block_stats,
+            block_filterable_stats,
             encoding_map,
             block_tier_assignments,
             a0_off,
@@ -2341,6 +2398,15 @@ impl PaxSegmentWriter {
                 stats_kind: StatsKind::None,
             })
             .collect();
+        // TD-FPRUNE-1 P2: filterable stats as the sparse footer section (spill
+        // twin — identical geometry assembly is a pinned invariant).
+        let block_filterable_stats: Vec<(u32, Vec<u8>)> = self
+            .index
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| b.footer_stats.clone().map(|p| (i as u32, p)))
+            .collect();
 
         // 3. Footer-index body + header-prefix offsets. The footer sits after the
         //    blocks; its length is known once serialized.
@@ -2386,6 +2452,7 @@ impl PaxSegmentWriter {
             has_f32_tier: self.f32_tier,
             blocks,
             block_stats: rg_block_stats,
+            block_filterable_stats,
             encoding_map,
             block_tier_assignments,
             a0_off,
@@ -2674,6 +2741,7 @@ impl PaxSegmentScanner {
                 offset: b.offset,
                 size: b.size,
                 zone: Some(BlockZoneSummary::empty(b.row_count)),
+                footer_stats: None,
             })
             .collect();
         Ok(SegmentIndex { blocks })
@@ -4000,11 +4068,13 @@ mod tests {
                     offset: 0,
                     size: 4096,
                     zone: None,
+                    footer_stats: None,
                 },
                 BlockIndexEntry {
                     offset: 4096,
                     size: 8192,
                     zone: None,
+                    footer_stats: None,
                 },
             ],
         };
@@ -4035,11 +4105,13 @@ mod tests {
                     offset: 0,
                     size: 4096,
                     zone: None,
+                    footer_stats: None,
                 },
                 BlockIndexEntry {
                     offset: 4096,
                     size: 8192,
                     zone: None,
+                    footer_stats: None,
                 },
             ],
         };
@@ -4068,11 +4140,13 @@ mod tests {
                     offset: 0,
                     size: 4096,
                     zone: Some(zone.clone()),
+                    footer_stats: None,
                 },
                 BlockIndexEntry {
                     offset: 4096,
                     size: 8192,
                     zone: Some(BlockZoneSummary::empty(3)),
+                    footer_stats: None,
                 },
             ],
         };
