@@ -70,6 +70,7 @@ members = [
     "crates/horizontal/proximadb-cross-modal-fusion",
     "crates/horizontal/proximadb-utility-scorer",
     "crates/horizontal/proximadb-geo-index",
+    "crates/horizontal/proximadb-geo-spatial-index",
     "crates/horizontal/proximadb-connectors-types",
     "crates/horizontal/proximadb-type-validators",
     "crates/horizontal/proximadb-tcp-multiplexer",
@@ -322,6 +323,7 @@ proximadb-llm-config = { path = "crates/horizontal/proximadb-llm-config" }
 proximadb-subscription = { path = "crates/horizontal/proximadb-subscription" }
 proximadb-geo-types = { path = "crates/horizontal/proximadb-geo-types" }
 proximadb-geohash = { path = "crates/horizontal/proximadb-geohash" }
+proximadb-geo-spatial-index = { path = "crates/horizontal/proximadb-geo-spatial-index" }
 proximadb-implicit-id-generator = { path = "crates/horizontal/proximadb-implicit-id-generator" }
 proximadb-document-compression = { path = "crates/horizontal/proximadb-document-compression" }
 proximadb-arrow-block-index = { path = "crates/horizontal/proximadb-arrow-block-index" }
@@ -468,6 +470,7 @@ proximadb-llm-config = { workspace = true }
 proximadb-subscription = { workspace = true }
 proximadb-geo-types = { workspace = true }
 proximadb-geohash = { workspace = true }
+proximadb-geo-spatial-index = { workspace = true }
 proximadb-implicit-id-generator = { workspace = true }
 proximadb-document-compression = { workspace = true }
 proximadb-arrow-block-index = { workspace = true }

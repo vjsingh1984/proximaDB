@@ -10,9 +10,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::RwLock;
 
-use super::geohash::{encode_geohash, geohash_neighbors, geohashes_in_bbox};
-use super::queries::{GeoQuery, GeoQueryResult};
-use super::types::{GeoBoundingBox, GeoDistanceUnit, GeoPoint};
+use proximadb_geo_queries::queries::{GeoQuery, GeoQueryResult};
+use proximadb_geo_types::types::{GeoBoundingBox, GeoDistanceUnit, GeoPoint};
+use proximadb_geohash::geohash::{encode_geohash, geohash_neighbors, geohashes_in_bbox};
 
 /// Configuration for the geo index
 #[derive(Debug, Clone)]
@@ -281,7 +281,10 @@ impl GeoIndex {
     }
 
     /// Find all points within a polygon
-    fn search_within_polygon(&self, polygon: &super::types::GeoPolygon) -> Vec<GeoQueryResult> {
+    fn search_within_polygon(
+        &self,
+        polygon: &proximadb_geo_types::types::GeoPolygon,
+    ) -> Vec<GeoQueryResult> {
         // Use polygon's bounding box for initial filtering
         let bbox = polygon.bounding_box();
         let candidates = self.search_within_box(&bbox);
