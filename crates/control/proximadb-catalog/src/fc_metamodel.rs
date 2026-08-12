@@ -902,6 +902,31 @@ pub struct Target {
     pub column: Option<u32>,
 }
 
+impl Target {
+    /// Build a `Target` from a catalog object id, refusing rather than truncating.
+    ///
+    /// `CollectionId` is `u32` while catalog object ids come from a global
+    /// monotonic **u64** allocator. Casting `as u32` silently wraps, and
+    /// [`scope_covers`] compares with `==` — so a wrapped id can COLLIDE with a
+    /// legitimately-bound table and be authorized by someone else's policy or
+    /// grant. That is an authorization-correctness bug, not a lossy cast.
+    ///
+    /// Widening `CollectionId` to u64 is the eventual fix but is a persisted
+    /// format migration: `Scope` is serde-persisted in policy bindings and
+    /// `grants.json`, so a widened writer would emit values an older reader
+    /// cannot parse. Until then this constructor makes the unrepresentable case
+    /// **fail closed** — callers map `None` onto their existing deny path, so an
+    /// id that cannot be represented can never be authorized.
+    pub fn try_from_object_ids(namespace: NamespaceId, object_id: u64) -> Option<Self> {
+        let table = CollectionId::try_from(object_id).ok()?;
+        Some(Self {
+            namespace,
+            table,
+            column: None,
+        })
+    }
+}
+
 /// The composed policy for a [`Target`] — the **model** output. It records the
 /// effect-level decision (assuming every predicate holds), the row-predicate refs
 /// to AND, and the field masks. It does **not** evaluate predicates against a
@@ -926,7 +951,7 @@ pub struct EffectivePolicy {
 
 /// Does a binding's [`Scope`] cover the [`Target`] (broader-or-equal in the
 /// namespace ⊇ table ⊇ column hierarchy)?
-fn scope_covers(scope: &Scope, target: &Target) -> bool {
+pub(crate) fn scope_covers(scope: &Scope, target: &Target) -> bool {
     match *scope {
         Scope::Namespace(ns) => ns == target.namespace,
         Scope::Table(t) => t == target.table,
@@ -1114,6 +1139,32 @@ impl SubjectAttributes {
 
 #[cfg(test)]
 mod tests {
+    /// B3: a `Target` must never be built by truncation. `scope_covers` matches
+    /// with `==`, so a wrapped object id could collide with a legitimately-bound
+    /// table and be authorized by someone else's binding.
+    #[test]
+    fn target_refuses_object_ids_that_do_not_fit() {
+        // Representable ids build normally.
+        let ok = Target::try_from_object_ids(0, 42).expect("small id fits");
+        assert_eq!(ok.table, 42);
+        let max = Target::try_from_object_ids(0, u32::MAX as u64).expect("u32::MAX fits");
+        assert_eq!(max.table, u32::MAX);
+
+        // One past the boundary must REFUSE, not wrap to 0.
+        assert_eq!(
+            Target::try_from_object_ids(0, u32::MAX as u64 + 1),
+            None,
+            "an id one past u32::MAX must fail closed, not alias to 0"
+        );
+
+        // The aliasing pair the old `as u32` produced: N and N + 2^32 both
+        // truncated to N. They must not both resolve to the same target.
+        let a = Target::try_from_object_ids(0, 7);
+        let aliased = Target::try_from_object_ids(0, 7u64 + (1u64 << 32));
+        assert!(a.is_some());
+        assert_eq!(aliased, None, "the 2^32 alias must be refused outright");
+    }
+
     use super::*;
 
     fn pk(keyspace: &str, col: &str) -> CompositeKeySpec {

@@ -674,18 +674,41 @@ impl VectorOperationsService {
         tenant_stable_id: u64,
         collection_id: &str,
     ) -> Option<Result<proximadb_abac::AuthorizedReadContext, proximadb_abac::DenyReason>> {
+        // `None` here means "ABAC is not configured" and is the ONLY legitimate
+        // absence: `records_read_context` maps `None` to `ReadContext::system`,
+        // an UNFILTERED read. Every other early return must therefore be a
+        // DENIAL (`Some(Err(..))`), never `None` — otherwise a failure to
+        // resolve silently becomes unrestricted access.
         let enforcer = self.abac_enforcer.as_ref()?;
-        let collection = self.get_or_load_collection(collection_id).await.ok()?;
-        let object_id: crate::core::stable_id::CollectionObjectId = collection.id.parse().ok()?;
-        Some(enforcer.resolve_read_context(
-            subject,
-            tenant_stable_id,
-            proximadb_catalog::fc_metamodel::Target {
-                namespace: 0,
-                table: object_id as u32,
-                column: None,
-            },
-        ))
+
+        // A collection that will not load, or whose id will not parse, is a
+        // FAILURE to authorize — not an absence of authorization. Both used to
+        // `?` out to `None` and hand back an unfiltered System read; they now
+        // deny, so the caller returns empty results instead of every row.
+        let Ok(collection) = self.get_or_load_collection(collection_id).await else {
+            return Some(Err(proximadb_abac::DenyReason::NoApplicablePolicy));
+        };
+        let Ok(object_id) = collection
+            .id
+            .parse::<crate::core::stable_id::CollectionObjectId>()
+        else {
+            return Some(Err(proximadb_abac::DenyReason::NoApplicablePolicy));
+        };
+        // B3: build the Target FALLIBLY rather than truncating `object_id as u32`.
+        // `Target.table` is u32 while catalog object ids come from a global u64
+        // allocator, and `scope_covers` matches with `==` — a wrapped id can
+        // collide with a different, legitimately bound table.
+        //
+        // The deny MUST be `Some(Err(..))`, never `None`: `records_read_context`
+        // maps `None` to `ReadContext::system(..)`, i.e. an UNFILTERED read. A
+        // `?` here would turn an unrepresentable id into unfiltered access —
+        // the exact inverse of this fix.
+        let Some(target) =
+            proximadb_catalog::fc_metamodel::Target::try_from_object_ids(0, object_id)
+        else {
+            return Some(Err(proximadb_abac::DenyReason::NoApplicablePolicy));
+        };
+        Some(enforcer.resolve_read_context(subject, tenant_stable_id, target))
     }
 
     /// **The ONE read-context composition rule** (ADR-087): resolve
@@ -856,21 +879,6 @@ impl VectorOperationsService {
         Ok(object_id)
     }
 
-    /// Execute a v1 vector search after validating that the caller has access to the collection
-    /// under the provided tenant context.
-    pub async fn search_v1_with_tenant_context(
-        &self,
-        mut req: crate::proto::proximadb_v1::VectorSearchRequest,
-        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        req.collection_id = self
-            .validate_tenant_collection_access(&req.collection_id, tenant_context)
-            .await?
-            .to_string();
-        self.search_v1(req, proximadb_runtime::PortIdentity::anonymous())
-            .await
-    }
-
     /// Execute canonical rich-record vector search.
     ///
     /// The caller supplies `ProximaValue` predicates. The temporary v1 filter
@@ -914,7 +922,8 @@ impl VectorOperationsService {
         tenant_stable_id: Option<u64>,
         auth_class: proximadb_tenant::AuthClass,
     ) -> Result<RichSearchResponse> {
-        // Authorize before touching data, matching `search_v1_with_tenant_context`.
+        // Authorize before touching data (collection-level) BEFORE the ABAC
+        // row/vector decision below — deny at the cheaper boundary first.
         let collection_id = self
             .validate_tenant_collection_access(&request.collection_id, tenant_context)
             .await?
@@ -1312,6 +1321,17 @@ impl VectorOperationsService {
         let storage_records = engine
             .read_all_records(&collection_id, Some(&storage_url))
             .await?;
+        // Both halves are logged because a zero from either is silent by nature: an
+        // empty WAL is normal after a flush, and an empty storage read is normal for a
+        // new collection — but together they mean "this collection looks empty", and
+        // when that is wrong there is otherwise nothing to inspect.
+        tracing::debug!(
+            "list_all_records: collection={} storage_url={} wal_records={} storage_records={}",
+            collection_id,
+            storage_url,
+            wal_records.len(),
+            storage_records.len()
+        );
 
         // Merge by oid: storage baseline, then WAL overrides on >= updated_at_ns
         // so the freshest version (WAL) wins ties.
@@ -1606,16 +1626,38 @@ impl VectorOperationsService {
     pub async fn vector_batch_v1(
         &self,
         req: crate::proto::proximadb_v1::VectorBatchRequest,
+        tenant_id: Option<&str>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let start_time = std::time::Instant::now();
         let collection_id = req.collection_id.clone();
 
         // Convert v1 wire VectorRecord → ProximaRecord at the protocol boundary.
+        //
+        // The v1 `VectorRecord` has no tenant field, so the bridge cannot carry one:
+        // `From<&VectorRecord> for ProximaRecord` leaves `tenant_id` as `String::new()`.
+        // An empty tenant is NOT a safe resting state — the read filters in this file
+        // treat it as matching every tenant, so an untenanted record would be readable
+        // cross-tenant. Isolation must be structural, never a sentinel value that
+        // happens to match (CLAUDE.md mandate #3).
+        //
+        // Fall back to the canonical `DEFAULT_TENANT` for insecure/dev deployments that
+        // run without tenant resolution — the same value REST middleware already assigns
+        // to unauthenticated requests (`network/middleware/tenant.rs`). "Anonymous" is an
+        // explicit tenant that matches only itself, never a wildcard.
+        let resolved_tenant = tenant_id
+            .filter(|t| !t.is_empty())
+            .unwrap_or(proximadb_tenant::DEFAULT_TENANT);
+
         let mut native_vectors: Vec<proximadb_records::ProximaRecord> = req
             .vectors
             .into_iter()
             .map(crate::proto::defaults::vector_record_to_proxima_record)
             .collect();
+
+        // Reuse the canonical stamper rather than assigning inline: it also REJECTS a
+        // record that already carries a different tenant (cross-tenant write attempt),
+        // which a bare assignment would silently overwrite.
+        super::write::ensure_tenant_on_records(&mut native_vectors, resolved_tenant)?;
 
         // Coerce embeddings to the collection's canonical precision so
         // REST / gRPC inserts into a non-fp32 collection produce the
@@ -6521,9 +6563,12 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn batch_upsert(
         &self,
         request: crate::proto::proximadb_v1::VectorBatchRequest,
-        _tenant_id: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        self.vector_batch_v1(request).await
+        // Was `_tenant_id` — the caller's tenant was plumbed the whole way down this
+        // port and then discarded here, so every record inserted through it landed with
+        // an empty `tenant_id`, which the read filters treat as matching every tenant.
+        self.vector_batch_v1(request, tenant_id).await
     }
 
     async fn get_vector(

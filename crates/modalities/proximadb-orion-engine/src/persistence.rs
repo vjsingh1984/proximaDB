@@ -135,6 +135,14 @@ pub struct OrionPersistence {
     /// segments were actually reclaimed (and operators can see truncation work).
     last_truncate_reclaimed: std::sync::atomic::AtomicU64,
 
+    /// True while `replay_wal` is applying recovered frames through the engine's
+    /// public insert/delete paths. Those paths unconditionally append to the WAL,
+    /// so without this gate every restart re-logged the whole history — doubling
+    /// the WAL per restart and, worse, poisoning it with duplicate `CreateEdge`
+    /// frames whose replay aborted the NEXT recovery on the CSR's duplicate-edge
+    /// check (#1524). All `write_*_operation` methods no-op while this is set.
+    replaying: std::sync::atomic::AtomicBool,
+
     /// Base URL for storage (e.g., "file:///data", "s3://bucket", etc.)
     base_url: String,
 
@@ -325,7 +333,15 @@ impl OrionPersistence {
             incremental_snapshots: false,
             last_replay_applied: std::sync::atomic::AtomicU64::new(0),
             last_truncate_reclaimed: std::sync::atomic::AtomicU64::new(0),
+            replaying: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// True while `replay_wal` is re-applying recovered frames (see the
+    /// `replaying` field). WAL appends are suppressed for the duration so
+    /// recovery never re-logs what it reads.
+    fn is_replaying(&self) -> bool {
+        self.replaying.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Inject the path to the shared canonical WAL
@@ -862,6 +878,9 @@ impl OrionPersistence {
 
     /// Write node operation to WAL
     pub async fn write_node_operation(&self, node: Node) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
         if let Some(ref wal_writer) = self.wal_writer {
             tracing::debug!("Writing node operation to WAL for node: {}", node.id);
 
@@ -892,6 +911,9 @@ impl OrionPersistence {
 
     /// Write edge operation to WAL
     pub async fn write_edge_operation(&self, edge: Edge) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
         if let Some(ref wal_writer) = self.wal_writer {
             let graph_op = GraphOperation::CreateEdge {
                 graph_id: self.graph_id.clone(),
@@ -915,6 +937,9 @@ impl OrionPersistence {
 
     /// Write a batch of edge operations to WAL in a single record
     pub async fn write_edge_batch_operation(&self, edges: &[Edge]) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
         if edges.is_empty() {
             return Ok(());
         }
@@ -949,6 +974,9 @@ impl OrionPersistence {
 
     /// Write a batch of node operations to WAL in a single record
     pub async fn write_node_batch_operation(&self, nodes: &[Node]) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
         if nodes.is_empty() {
             return Ok(());
         }
@@ -984,6 +1012,9 @@ impl OrionPersistence {
     /// Write node update operation to WAL
     /// For updates, we write the full updated node (upsert semantic)
     pub async fn write_update_node_operation(&self, node: Node) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
         if let Some(ref wal_writer) = self.wal_writer {
             tracing::debug!("Writing update node operation to WAL for node: {}", node.id);
 
@@ -1017,6 +1048,9 @@ impl OrionPersistence {
 
     /// Write node delete operation to WAL
     pub async fn write_delete_node_operation(&self, node_id: &NodeId) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
         if let Some(ref wal_writer) = self.wal_writer {
             tracing::debug!("Writing delete node operation to WAL for node: {}", node_id);
 
@@ -1050,6 +1084,9 @@ impl OrionPersistence {
     /// Write edge update operation to WAL
     /// For updates, we write the full updated edge (upsert semantic)
     pub async fn write_update_edge_operation(&self, edge: Edge) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
         if let Some(ref wal_writer) = self.wal_writer {
             tracing::debug!("Writing update edge operation to WAL for edge: {}", edge.id);
 
@@ -1083,6 +1120,9 @@ impl OrionPersistence {
 
     /// Write edge delete operation to WAL
     pub async fn write_delete_edge_operation(&self, edge_id: &EdgeId) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
         if let Some(ref wal_writer) = self.wal_writer {
             tracing::debug!("Writing delete edge operation to WAL for edge: {}", edge_id);
 
@@ -1214,20 +1254,47 @@ impl OrionPersistence {
                 }
             }
 
+            // Replay drives the engine's public insert/delete paths, which
+            // append to this same WAL. Suppress those appends for the duration
+            // — otherwise every restart re-logs the whole history (#1524).
+            // Cleared before every return path below; replay runs during
+            // startup recovery, before the engine serves traffic.
+            self.replaying
+                .store(true, std::sync::atomic::Ordering::Release);
+
             let mut replayed: u64 = 0;
+            let mut skipped_failed: u64 = 0;
             for entry in entries.into_iter().skip(start_index) {
                 // `entries` is already projected to graph records; apply the
                 // data ops and skip the canonical-sync markers (they carry no
                 // engine state to reapply).
                 if let GraphWalRecord::Op(graph_op) = entry.record {
-                    self.apply_graph_operation(engine, *graph_op).await?;
-                    replayed += 1;
+                    // Apply per-entry, warn-and-continue on failure: aborting
+                    // the whole replay on one bad frame leaves the graph EMPTY
+                    // (strictly worse than a partial recovery), and WALs
+                    // written before the re-append fix above legitimately
+                    // contain duplicate CreateEdge frames that must not poison
+                    // recovery.
+                    match self.apply_graph_operation(engine, *graph_op).await {
+                        Ok(()) => replayed += 1,
+                        Err(e) => {
+                            skipped_failed += 1;
+                            tracing::warn!(
+                                graph_id = %self.graph_id,
+                                error = %e,
+                                "WAL replay: frame failed to apply; continuing with remaining frames"
+                            );
+                        }
+                    }
                 }
             }
+            self.replaying
+                .store(false, std::sync::atomic::Ordering::Release);
             tracing::info!(
                 graph_id = %self.graph_id,
                 skipped = start_index,
                 replayed,
+                skipped_failed,
                 "WAL replay completed for graph"
             );
             self.last_replay_applied
@@ -1249,7 +1316,18 @@ impl OrionPersistence {
                     engine.create_node(node).await?;
                 }
                 GraphOperation::CreateEdge { graph_id: _, edge } => {
-                    engine.create_edge(edge).await?;
+                    // Idempotent: WALs written before replay suppressed its own
+                    // re-appends carry duplicate CreateEdge frames; re-applying
+                    // one would trip the CSR's duplicate-edge check and (before
+                    // the per-frame tolerance in `replay_wal`) abort recovery.
+                    if engine.memory_pool.get_edge(&edge.id).is_some() {
+                        debug!(
+                            "WAL replay: edge {} already applied; skipping duplicate frame",
+                            edge.id
+                        );
+                    } else {
+                        engine.create_edge(edge).await?;
+                    }
                 }
                 GraphOperation::UpdateNode {
                     graph_id: _,

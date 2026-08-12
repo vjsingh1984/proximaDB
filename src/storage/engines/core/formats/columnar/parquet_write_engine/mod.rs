@@ -5,7 +5,7 @@
 
 pub mod batch_writer;
 pub mod bloom_filter_builder;
-pub mod implicit_id_generator;
+pub use proximadb_implicit_id_generator::implicit_id_generator;
 pub mod schema_builder;
 pub mod streaming_writer;
 pub mod writer_config;

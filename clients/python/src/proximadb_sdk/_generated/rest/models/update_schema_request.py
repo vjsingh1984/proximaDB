@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -44,25 +46,25 @@ class UpdateSchemaRequest:
     ```
 
         Attributes:
-            columns (list['RestColumnDefinition']): Column definitions
-            allow_additional_fields (Union[None, Unset, bool]): Allow additional fields not defined in schema
+            columns (list[RestColumnDefinition]): Column definitions
+            allow_additional_fields (bool | None | Unset): Allow additional fields not defined in schema
 
                 Only applies in "hybrid" mode.
                 Default: true
-            enforcement (Union[None, Unset, str]): Schema enforcement mode
+            enforcement (None | str | Unset): Schema enforcement mode
 
                 - "strict": All columns must match schema exactly
                 - "flexible": Schema on read, no validation at insert
                 - "hybrid": Core columns enforced, additional fields allowed (default)
-            force (Union[None, Unset, bool]): Force update even if validation warnings exist
+            force (bool | None | Unset): Force update even if validation warnings exist
 
                 Use with caution - may cause data compatibility issues.
     """
 
-    columns: list["RestColumnDefinition"]
-    allow_additional_fields: Union[None, Unset, bool] = UNSET
-    enforcement: Union[None, Unset, str] = UNSET
-    force: Union[None, Unset, bool] = UNSET
+    columns: list[RestColumnDefinition]
+    allow_additional_fields: bool | None | Unset = UNSET
+    enforcement: None | str | Unset = UNSET
+    force: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,19 +75,19 @@ class UpdateSchemaRequest:
             columns_item = columns_item_data.to_dict()
             columns.append(columns_item)
 
-        allow_additional_fields: Union[None, Unset, bool]
+        allow_additional_fields: bool | None | Unset
         if isinstance(self.allow_additional_fields, Unset):
             allow_additional_fields = UNSET
         else:
             allow_additional_fields = self.allow_additional_fields
 
-        enforcement: Union[None, Unset, str]
+        enforcement: None | str | Unset
         if isinstance(self.enforcement, Unset):
             enforcement = UNSET
         else:
             enforcement = self.enforcement
 
-        force: Union[None, Unset, bool]
+        force: bool | None | Unset
         if isinstance(self.force, Unset):
             force = UNSET
         else:
@@ -119,32 +121,32 @@ class UpdateSchemaRequest:
 
             columns.append(columns_item)
 
-        def _parse_allow_additional_fields(data: object) -> Union[None, Unset, bool]:
+        def _parse_allow_additional_fields(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         allow_additional_fields = _parse_allow_additional_fields(
             d.pop("allow_additional_fields", UNSET)
         )
 
-        def _parse_enforcement(data: object) -> Union[None, Unset, str]:
+        def _parse_enforcement(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         enforcement = _parse_enforcement(d.pop("enforcement", UNSET))
 
-        def _parse_force(data: object) -> Union[None, Unset, bool]:
+        def _parse_force(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         force = _parse_force(d.pop("force", UNSET))
 

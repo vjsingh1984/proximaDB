@@ -12,6 +12,12 @@ description = "Embedded mode for ProximaDB — in-process database with language
 [lib]
 name = "proximadb_embedded"
 path = "src/lib.rs"
+# `cdylib` is what maturin packages as the Python extension module
+# (`proximadb_embedded._proximadb_embedded`); the PyO3 entry point lives in
+# `src/python.rs` behind the `python` feature. `rlib` must stay: this crate is a
+# normal Rust dependency of `proximadb-spark-jni` and a dev-dependency of the
+# root crate's integration tests. Dropping either breaks one of those consumers.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Depends on the root proximadb library (one-directional: embedded -> root, no cycle).
@@ -22,6 +28,12 @@ path = "src/lib.rs"
 # apps — the PAX-exact-scan direction (TD-AXIS-4, ADR-082). Because embedded's `axis`
 # feature forwards `proximadb/axis`, embedded's axis cfg is always in sync with the
 # root's, so the flush→AXIS reap's cross-crate type stays consistent in every build.
+#
+# CI cost note: this edge makes `-p proximadb-embedded` compile the whole root
+# monolith, so this crate is excluded from the advisory touched-crate fast lane
+# (`rust-affected-fast` in ci.yml, via `affected_crates.py
+# --exclude-dependents-of proximadb`). It stays covered by the required
+# `rust-test` job. It becomes fast-lane-eligible again if this edge ever goes.
 proximadb = { path = "../../..", default-features = false }
 # FA-b: optional, behind the `abac-policy` feature. Embedded mode is abac-OFF by
 # design (in-process; the host app owns authorization) — this dep exists only so
@@ -38,7 +50,7 @@ proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 arrow = { workspace = true }
 proximadb-records = { path = "../../foundation/proximadb-records" }
 serde_json = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 arrow-ipc = { version = "58", default-features = false, features = ["lz4", "zstd"] }
 libc = "0.2"
@@ -54,6 +66,15 @@ proximadb-tenant = { path = "../../foundation/proximadb-tenant" }
 # server binary no longer compiles embedded bindings.
 pyo3 = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
+# `python.rs` / `python_dataframe.rs` use these DIRECTLY (`use datafusion::prelude::*`,
+# `tracing_subscriber::…`). Having them only as transitive deps of the root crate is
+# not enough — a transitive dependency is not in scope — so the `python` feature
+# could never compile. Optional + feature-gated so non-Python builds are unaffected.
+datafusion = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+# `python_dataframe.rs` uses `proximadb_storage_common::proxima_schema::ProximaSchema`
+# directly when inferring a DataFrame schema from a collection.
+proximadb-storage-common = { workspace = true, optional = true }
 jni = { version = "0.21", optional = true }
 napi = { version = "2.14", features = ["napi9"], optional = true }
 napi-derive = { version = "2.14", optional = true }
@@ -89,7 +110,18 @@ axis = ["proximadb/axis"]
 # `--features abac-policy,proximadb-embedded/abac-policy`.
 abac-policy = ["proximadb/abac-policy", "dep:proximadb-abac"]
 # Python bindings (PyO3 + zero-copy numpy).
-python = ["dep:pyo3", "dep:numpy"]
+# `arrow/pyarrow` is required by the `arrow::pyarrow::{PyArrowType, ToPyArrow}`
+# conversions in the binding; without it those items are configured out and the
+# feature does not build. It is enabled here rather than on the base `arrow`
+# dependency so non-Python builds do not pull pyo3 in through arrow.
+python = [
+    "dep:pyo3",
+    "dep:numpy",
+    "dep:datafusion",
+    "dep:tracing-subscriber",
+    "dep:proximadb-storage-common",
+    "arrow/pyarrow",
+]
 # Java bindings (JNI).
 java = ["dep:jni"]
 # Node.js bindings (NAPI-RS).

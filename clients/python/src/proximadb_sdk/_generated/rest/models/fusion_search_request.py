@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -20,46 +22,46 @@ class FusionSearchRequest:
     Attributes:
         query_vector (list[float]): Query embedding for the ANN seed.
         vector_collection (str): Vector collection to seed from (its records co-indexed with this graph by `oid`).
-        consensus_beta (Union[None, Unset, float]): Consensus boost added to any `oid` present in ≥2 sources.
-        document_collection (Union[None, Unset, str]): Collection whose document index to BM25-search. Defaults to
+        consensus_beta (float | None | Unset): Consensus boost added to any `oid` present in ≥2 sources.
+        document_collection (None | str | Unset): Collection whose document index to BM25-search. Defaults to
             `vector_collection` (documents
             co-indexed with the vectors share the record `oid`, so they merge by `oid`).
-        document_weight (Union[None, Unset, float]): Document modality weight (mirrors `vector_weight` /
-            `graph_weight`). Defaults to 1.0.
-        edge_types (Union[Unset, list[str]]):
-        grain (Union[None, Unset, str]): Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
-        graph_weight (Union[None, Unset, float]):
-        limit (Union[Unset, int]):
-        max_depth (Union[Unset, int]): k-hop expansion depth (bounded; default 1 — the validated sweet spot).
-        max_seeds (Union[Unset, int]): How many of the top vector seeds to expand from (bounded expansion).
-        min_weight_fraction (Union[None, Unset, float]): Cost-routing policy inputs (TD-141): drop negligible modalities
+        document_weight (float | None | Unset): Document modality weight (mirrors `vector_weight` / `graph_weight`).
+            Defaults to 1.0.
+        edge_types (list[str] | Unset):
+        grain (None | str | Unset): Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
+        graph_weight (float | None | Unset):
+        limit (int | Unset):
+        max_depth (int | Unset): k-hop expansion depth (bounded; default 1 — the validated sweet spot).
+        max_seeds (int | Unset): How many of the top vector seeds to expand from (bounded expansion).
+        min_weight_fraction (float | None | Unset): Cost-routing policy inputs (TD-141): drop negligible modalities
             (weight fraction) and budget each.
             When absent, fusion is unbounded.
-        rrf (Union[Unset, bool]): Use the rank-based RRF fallback instead of PIT-calibrated linear.
-        text_query (Union[None, Unset, str]): Optional BM25/full-text query (TD-138). When present (and non-empty),
-            fusion also searches the
+        rrf (bool | Unset): Use the rank-based RRF fallback instead of PIT-calibrated linear.
+        text_query (None | str | Unset): Optional BM25/full-text query (TD-138). When present (and non-empty), fusion
+            also searches the
             collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
             (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
-        total_budget (Union[None, Unset, int]):
-        vector_weight (Union[None, Unset, float]):
+        total_budget (int | None | Unset):
+        vector_weight (float | None | Unset):
     """
 
     query_vector: list[float]
     vector_collection: str
-    consensus_beta: Union[None, Unset, float] = UNSET
-    document_collection: Union[None, Unset, str] = UNSET
-    document_weight: Union[None, Unset, float] = UNSET
-    edge_types: Union[Unset, list[str]] = UNSET
-    grain: Union[None, Unset, str] = UNSET
-    graph_weight: Union[None, Unset, float] = UNSET
-    limit: Union[Unset, int] = UNSET
-    max_depth: Union[Unset, int] = UNSET
-    max_seeds: Union[Unset, int] = UNSET
-    min_weight_fraction: Union[None, Unset, float] = UNSET
-    rrf: Union[Unset, bool] = UNSET
-    text_query: Union[None, Unset, str] = UNSET
-    total_budget: Union[None, Unset, int] = UNSET
-    vector_weight: Union[None, Unset, float] = UNSET
+    consensus_beta: float | None | Unset = UNSET
+    document_collection: None | str | Unset = UNSET
+    document_weight: float | None | Unset = UNSET
+    edge_types: list[str] | Unset = UNSET
+    grain: None | str | Unset = UNSET
+    graph_weight: float | None | Unset = UNSET
+    limit: int | Unset = UNSET
+    max_depth: int | Unset = UNSET
+    max_seeds: int | Unset = UNSET
+    min_weight_fraction: float | None | Unset = UNSET
+    rrf: bool | Unset = UNSET
+    text_query: None | str | Unset = UNSET
+    total_budget: int | None | Unset = UNSET
+    vector_weight: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,35 +69,35 @@ class FusionSearchRequest:
 
         vector_collection = self.vector_collection
 
-        consensus_beta: Union[None, Unset, float]
+        consensus_beta: float | None | Unset
         if isinstance(self.consensus_beta, Unset):
             consensus_beta = UNSET
         else:
             consensus_beta = self.consensus_beta
 
-        document_collection: Union[None, Unset, str]
+        document_collection: None | str | Unset
         if isinstance(self.document_collection, Unset):
             document_collection = UNSET
         else:
             document_collection = self.document_collection
 
-        document_weight: Union[None, Unset, float]
+        document_weight: float | None | Unset
         if isinstance(self.document_weight, Unset):
             document_weight = UNSET
         else:
             document_weight = self.document_weight
 
-        edge_types: Union[Unset, list[str]] = UNSET
+        edge_types: list[str] | Unset = UNSET
         if not isinstance(self.edge_types, Unset):
             edge_types = self.edge_types
 
-        grain: Union[None, Unset, str]
+        grain: None | str | Unset
         if isinstance(self.grain, Unset):
             grain = UNSET
         else:
             grain = self.grain
 
-        graph_weight: Union[None, Unset, float]
+        graph_weight: float | None | Unset
         if isinstance(self.graph_weight, Unset):
             graph_weight = UNSET
         else:
@@ -107,7 +109,7 @@ class FusionSearchRequest:
 
         max_seeds = self.max_seeds
 
-        min_weight_fraction: Union[None, Unset, float]
+        min_weight_fraction: float | None | Unset
         if isinstance(self.min_weight_fraction, Unset):
             min_weight_fraction = UNSET
         else:
@@ -115,19 +117,19 @@ class FusionSearchRequest:
 
         rrf = self.rrf
 
-        text_query: Union[None, Unset, str]
+        text_query: None | str | Unset
         if isinstance(self.text_query, Unset):
             text_query = UNSET
         else:
             text_query = self.text_query
 
-        total_budget: Union[None, Unset, int]
+        total_budget: int | None | Unset
         if isinstance(self.total_budget, Unset):
             total_budget = UNSET
         else:
             total_budget = self.total_budget
 
-        vector_weight: Union[None, Unset, float]
+        vector_weight: float | None | Unset
         if isinstance(self.vector_weight, Unset):
             vector_weight = UNSET
         else:
@@ -179,52 +181,52 @@ class FusionSearchRequest:
 
         vector_collection = d.pop("vector_collection")
 
-        def _parse_consensus_beta(data: object) -> Union[None, Unset, float]:
+        def _parse_consensus_beta(data: object) -> float | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, float], data)
+            return cast(float | None | Unset, data)
 
         consensus_beta = _parse_consensus_beta(d.pop("consensus_beta", UNSET))
 
-        def _parse_document_collection(data: object) -> Union[None, Unset, str]:
+        def _parse_document_collection(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         document_collection = _parse_document_collection(
             d.pop("document_collection", UNSET)
         )
 
-        def _parse_document_weight(data: object) -> Union[None, Unset, float]:
+        def _parse_document_weight(data: object) -> float | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, float], data)
+            return cast(float | None | Unset, data)
 
         document_weight = _parse_document_weight(d.pop("document_weight", UNSET))
 
         edge_types = cast(list[str], d.pop("edge_types", UNSET))
 
-        def _parse_grain(data: object) -> Union[None, Unset, str]:
+        def _parse_grain(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         grain = _parse_grain(d.pop("grain", UNSET))
 
-        def _parse_graph_weight(data: object) -> Union[None, Unset, float]:
+        def _parse_graph_weight(data: object) -> float | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, float], data)
+            return cast(float | None | Unset, data)
 
         graph_weight = _parse_graph_weight(d.pop("graph_weight", UNSET))
 
@@ -234,12 +236,12 @@ class FusionSearchRequest:
 
         max_seeds = d.pop("max_seeds", UNSET)
 
-        def _parse_min_weight_fraction(data: object) -> Union[None, Unset, float]:
+        def _parse_min_weight_fraction(data: object) -> float | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, float], data)
+            return cast(float | None | Unset, data)
 
         min_weight_fraction = _parse_min_weight_fraction(
             d.pop("min_weight_fraction", UNSET)
@@ -247,30 +249,30 @@ class FusionSearchRequest:
 
         rrf = d.pop("rrf", UNSET)
 
-        def _parse_text_query(data: object) -> Union[None, Unset, str]:
+        def _parse_text_query(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         text_query = _parse_text_query(d.pop("text_query", UNSET))
 
-        def _parse_total_budget(data: object) -> Union[None, Unset, int]:
+        def _parse_total_budget(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         total_budget = _parse_total_budget(d.pop("total_budget", UNSET))
 
-        def _parse_vector_weight(data: object) -> Union[None, Unset, float]:
+        def _parse_vector_weight(data: object) -> float | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, float], data)
+            return cast(float | None | Unset, data)
 
         vector_weight = _parse_vector_weight(d.pop("vector_weight", UNSET))
 

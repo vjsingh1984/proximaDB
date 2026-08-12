@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -40,34 +42,34 @@ class RestColumnDefinition:
             - "geo_point": Latitude/longitude point
             - "vector": Fixed-dimension vector (specify dimension)
         name (str): Column name
-        filterable (Union[None, Unset, bool]): Enable filtering on this column
+        filterable (bool | None | Unset): Enable filtering on this column
 
             When true, the column can be used in WHERE clauses.
             Default: true for indexed columns, false otherwise
-        indexed (Union[None, Unset, bool]): Create secondary index for this column
+        indexed (bool | None | Unset): Create secondary index for this column
 
             Improves query performance for equality/range filters.
             Default: false
-        max_length (Union[None, Unset, int]): Maximum length for TEXT/BINARY columns
+        max_length (int | None | Unset): Maximum length for TEXT/BINARY columns
 
             Default: no limit
-        nullable (Union[None, Unset, bool]): Whether null values are allowed
+        nullable (bool | None | Unset): Whether null values are allowed
 
             Default: true
-        precision (Union[None, Unset, int]): Precision for DECIMAL type (1-38)
-        scale (Union[None, Unset, int]): Scale for DECIMAL type (0-precision)
-        vector_dimension (Union[None, Unset, int]): Dimension for VECTOR type
+        precision (int | None | Unset): Precision for DECIMAL type (1-38)
+        scale (int | None | Unset): Scale for DECIMAL type (0-precision)
+        vector_dimension (int | None | Unset): Dimension for VECTOR type
     """
 
     data_type: str
     name: str
-    filterable: Union[None, Unset, bool] = UNSET
-    indexed: Union[None, Unset, bool] = UNSET
-    max_length: Union[None, Unset, int] = UNSET
-    nullable: Union[None, Unset, bool] = UNSET
-    precision: Union[None, Unset, int] = UNSET
-    scale: Union[None, Unset, int] = UNSET
-    vector_dimension: Union[None, Unset, int] = UNSET
+    filterable: bool | None | Unset = UNSET
+    indexed: bool | None | Unset = UNSET
+    max_length: int | None | Unset = UNSET
+    nullable: bool | None | Unset = UNSET
+    precision: int | None | Unset = UNSET
+    scale: int | None | Unset = UNSET
+    vector_dimension: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,43 +77,43 @@ class RestColumnDefinition:
 
         name = self.name
 
-        filterable: Union[None, Unset, bool]
+        filterable: bool | None | Unset
         if isinstance(self.filterable, Unset):
             filterable = UNSET
         else:
             filterable = self.filterable
 
-        indexed: Union[None, Unset, bool]
+        indexed: bool | None | Unset
         if isinstance(self.indexed, Unset):
             indexed = UNSET
         else:
             indexed = self.indexed
 
-        max_length: Union[None, Unset, int]
+        max_length: int | None | Unset
         if isinstance(self.max_length, Unset):
             max_length = UNSET
         else:
             max_length = self.max_length
 
-        nullable: Union[None, Unset, bool]
+        nullable: bool | None | Unset
         if isinstance(self.nullable, Unset):
             nullable = UNSET
         else:
             nullable = self.nullable
 
-        precision: Union[None, Unset, int]
+        precision: int | None | Unset
         if isinstance(self.precision, Unset):
             precision = UNSET
         else:
             precision = self.precision
 
-        scale: Union[None, Unset, int]
+        scale: int | None | Unset
         if isinstance(self.scale, Unset):
             scale = UNSET
         else:
             scale = self.scale
 
-        vector_dimension: Union[None, Unset, int]
+        vector_dimension: int | None | Unset
         if isinstance(self.vector_dimension, Unset):
             vector_dimension = UNSET
         else:
@@ -149,66 +151,66 @@ class RestColumnDefinition:
 
         name = d.pop("name")
 
-        def _parse_filterable(data: object) -> Union[None, Unset, bool]:
+        def _parse_filterable(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         filterable = _parse_filterable(d.pop("filterable", UNSET))
 
-        def _parse_indexed(data: object) -> Union[None, Unset, bool]:
+        def _parse_indexed(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         indexed = _parse_indexed(d.pop("indexed", UNSET))
 
-        def _parse_max_length(data: object) -> Union[None, Unset, int]:
+        def _parse_max_length(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         max_length = _parse_max_length(d.pop("max_length", UNSET))
 
-        def _parse_nullable(data: object) -> Union[None, Unset, bool]:
+        def _parse_nullable(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         nullable = _parse_nullable(d.pop("nullable", UNSET))
 
-        def _parse_precision(data: object) -> Union[None, Unset, int]:
+        def _parse_precision(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         precision = _parse_precision(d.pop("precision", UNSET))
 
-        def _parse_scale(data: object) -> Union[None, Unset, int]:
+        def _parse_scale(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         scale = _parse_scale(d.pop("scale", UNSET))
 
-        def _parse_vector_dimension(data: object) -> Union[None, Unset, int]:
+        def _parse_vector_dimension(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         vector_dimension = _parse_vector_dimension(d.pop("vector_dimension", UNSET))
 

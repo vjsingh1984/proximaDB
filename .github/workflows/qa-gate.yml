@@ -57,6 +57,54 @@ jobs:
           fi
           echo "ok: main PR originates from qa"
 
+  # Catch a SEVERED promotion ancestry before it compounds.
+  #
+  # develop -> qa promotions were squash-merged for several cycles. A squash gives
+  # qa develop's *content* with no link to its *history*, so the merge-base between
+  # the branches stops advancing: it sat at 1ab38bac7 (2026-07-21) while develop ran
+  # 377 commits ahead, and git recomputed that whole diff on every promotion —
+  # 47 conflicts, essentially all phantom, growing worse each cycle.
+  #
+  # Nothing on the feature -> develop path can see this; it is a property of how the
+  # promotion PR itself is merged. So assert it here, where promotions are gated.
+  # A promotion opened from a current base has a merge-base at (or very near) the
+  # base tip; a severed one is hundreds of commits back.
+  promotion-ancestry-guard:
+    name: Promotion Ancestry Guard (merge-base is current)
+    if: github.event_name == 'pull_request' && (github.base_ref == 'qa' || github.base_ref == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: the target must be fully contained in this branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_REF" >/dev/null 2>&1
+          base_tip="$(git rev-parse "origin/$BASE_REF")"
+          merge_base="$(git merge-base "$base_tip" HEAD)"
+          behind="$(git rev-list --count "$merge_base..$base_tip")"
+          echo "base=$BASE_REF tip=${base_tip:0:9} merge-base=${merge_base:0:9} behind=$behind"
+          # The invariant is exact, so assert it exactly rather than pick a
+          # threshold: the merge-base must BE the base tip, i.e. the target is an
+          # ancestor of this branch. Anything else means the target holds commits
+          # this branch has never seen, which is precisely when a promotion
+          # explodes into phantom conflicts.
+          #
+          # Calibrated against real history: promotion branches that had merged the
+          # target in measure 0; the r5 branch cut as a bare develop snapshot
+          # measured 44. An earlier draft of this guard allowed 150 and would have
+          # passed the broken case — hence the exact check.
+          if [ "$behind" -ne 0 ]; then
+            echo "::error::'$BASE_REF' is $behind commits ahead of this branch's merge-base — the target is not fully merged in."
+            echo "::error::Fix: 'git merge origin/$BASE_REF' (or 'git merge -s ours origin/$BASE_REF' if you have verified the target carries no unique work), then push."
+            echo "::error::If this recurs every cycle, the previous promotion was SQUASHED. Squashing discards the merge that reconciled the branches, so the target never gains the source's ancestry and the next promotion re-diffs from the last real merge. Promotion PRs must be merged with a MERGE COMMIT."
+            exit 1
+          fi
+          echo "ok: '$BASE_REF' is fully contained in this branch"
+
   # SINGLE combined job: compile all pgwire + recall test binaries ONCE on this
   # runner, then run them. Same runner => the compiled target/ is reused across
   # the runs (cargo sees its own artifacts as up-to-date, no recompile between
@@ -81,7 +129,7 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -92,8 +140,8 @@ jobs:
           prefix-key: "v1-qa-integration"
       # sccache complements rust-cache: content-addressed per-rustc-invocation, so
       # it hits even when the target/ artifact cache misses (Cargo.lock churn).
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -165,7 +213,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -175,7 +223,7 @@ jobs:
         with:
           prefix-key: "v1-qa-sift"
       - name: Cache SIFT1M corpus (TEXMEX .fvecs — no native dep)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/sift1m
           key: sift1m-texmem-fvecs-v1
@@ -239,7 +287,7 @@ jobs:
             /usr/local/.ghcup \
             /usr/local/share/boost || true
           echo "Disk after reclaim:"; df -h /
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -248,8 +296,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-objstore-qa-tier"
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-qa-tier-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -281,7 +329,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -292,8 +340,8 @@ jobs:
           prefix-key: "v1-qa-cloud-emulator"
       # sccache complements rust-cache: content-addressed per-rustc-invocation, so
       # it hits even when the target/ artifact cache misses (Cargo.lock churn).
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -326,7 +374,7 @@ jobs:
     # baseline AND it stays green.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: llvm-tools-preview
@@ -364,7 +412,7 @@ jobs:
             echo "::warning::no rust baseline yet — emitting current as artifact to seed it"
             cp /tmp/rust-current.json rust-coverage-seed.json
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rust-coverage

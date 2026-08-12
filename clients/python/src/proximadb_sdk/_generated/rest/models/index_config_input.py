@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -26,19 +28,19 @@ class IndexConfigInput:
 
     Attributes:
         algorithm (str): Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh".
-        hnsw_config (Union['HnswConfigInput', None, Unset]):
-        index_name (Union[None, Unset, str]): Optional index name (defaults to `index_<n>`).
-        is_primary (Union[None, Unset, bool]): Mark this index as the collection's primary ANN index (gRPC-v2 parity).
-        ivf_config (Union['IvfConfigInput', None, Unset]):
-        parameters (Union[Unset, IndexConfigInputParameters]): Free-form algorithm parameters.
+        hnsw_config (HnswConfigInput | None | Unset):
+        index_name (None | str | Unset): Optional index name (defaults to `index_<n>`).
+        is_primary (bool | None | Unset): Mark this index as the collection's primary ANN index (gRPC-v2 parity).
+        ivf_config (IvfConfigInput | None | Unset):
+        parameters (IndexConfigInputParameters | Unset): Free-form algorithm parameters.
     """
 
     algorithm: str
-    hnsw_config: Union["HnswConfigInput", None, Unset] = UNSET
-    index_name: Union[None, Unset, str] = UNSET
-    is_primary: Union[None, Unset, bool] = UNSET
-    ivf_config: Union["IvfConfigInput", None, Unset] = UNSET
-    parameters: Union[Unset, "IndexConfigInputParameters"] = UNSET
+    hnsw_config: HnswConfigInput | None | Unset = UNSET
+    index_name: None | str | Unset = UNSET
+    is_primary: bool | None | Unset = UNSET
+    ivf_config: IvfConfigInput | None | Unset = UNSET
+    parameters: IndexConfigInputParameters | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,7 +50,7 @@ class IndexConfigInput:
 
         algorithm = self.algorithm
 
-        hnsw_config: Union[None, Unset, dict[str, Any]]
+        hnsw_config: dict[str, Any] | None | Unset
         if isinstance(self.hnsw_config, Unset):
             hnsw_config = UNSET
         elif isinstance(self.hnsw_config, HnswConfigInput):
@@ -56,19 +58,19 @@ class IndexConfigInput:
         else:
             hnsw_config = self.hnsw_config
 
-        index_name: Union[None, Unset, str]
+        index_name: None | str | Unset
         if isinstance(self.index_name, Unset):
             index_name = UNSET
         else:
             index_name = self.index_name
 
-        is_primary: Union[None, Unset, bool]
+        is_primary: bool | None | Unset
         if isinstance(self.is_primary, Unset):
             is_primary = UNSET
         else:
             is_primary = self.is_primary
 
-        ivf_config: Union[None, Unset, dict[str, Any]]
+        ivf_config: dict[str, Any] | None | Unset
         if isinstance(self.ivf_config, Unset):
             ivf_config = UNSET
         elif isinstance(self.ivf_config, IvfConfigInput):
@@ -76,7 +78,7 @@ class IndexConfigInput:
         else:
             ivf_config = self.ivf_config
 
-        parameters: Union[Unset, dict[str, Any]] = UNSET
+        parameters: dict[str, Any] | Unset = UNSET
         if not isinstance(self.parameters, Unset):
             parameters = self.parameters.to_dict()
 
@@ -109,7 +111,7 @@ class IndexConfigInput:
         d = dict(src_dict)
         algorithm = d.pop("algorithm")
 
-        def _parse_hnsw_config(data: object) -> Union["HnswConfigInput", None, Unset]:
+        def _parse_hnsw_config(data: object) -> HnswConfigInput | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -120,31 +122,31 @@ class IndexConfigInput:
                 hnsw_config_type_1 = HnswConfigInput.from_dict(data)
 
                 return hnsw_config_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["HnswConfigInput", None, Unset], data)
+            return cast(HnswConfigInput | None | Unset, data)
 
         hnsw_config = _parse_hnsw_config(d.pop("hnsw_config", UNSET))
 
-        def _parse_index_name(data: object) -> Union[None, Unset, str]:
+        def _parse_index_name(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         index_name = _parse_index_name(d.pop("index_name", UNSET))
 
-        def _parse_is_primary(data: object) -> Union[None, Unset, bool]:
+        def _parse_is_primary(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         is_primary = _parse_is_primary(d.pop("is_primary", UNSET))
 
-        def _parse_ivf_config(data: object) -> Union["IvfConfigInput", None, Unset]:
+        def _parse_ivf_config(data: object) -> IvfConfigInput | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -155,14 +157,14 @@ class IndexConfigInput:
                 ivf_config_type_1 = IvfConfigInput.from_dict(data)
 
                 return ivf_config_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["IvfConfigInput", None, Unset], data)
+            return cast(IvfConfigInput | None | Unset, data)
 
         ivf_config = _parse_ivf_config(d.pop("ivf_config", UNSET))
 
         _parameters = d.pop("parameters", UNSET)
-        parameters: Union[Unset, IndexConfigInputParameters]
+        parameters: IndexConfigInputParameters | Unset
         if isinstance(_parameters, Unset):
             parameters = UNSET
         else:

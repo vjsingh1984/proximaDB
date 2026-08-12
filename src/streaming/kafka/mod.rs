@@ -57,9 +57,9 @@
 //! }
 //! ```
 
-pub mod config;
+pub use proximadb_kafka_config::config;
 pub mod consumer;
-pub mod deserializer;
+pub use proximadb_kafka_deserializer::deserializer;
 
 pub use config::{
     CommitStrategy, ConsumerGroupConfig, DeserializationFormat, DlqConfig, KafkaConsumerConfig,

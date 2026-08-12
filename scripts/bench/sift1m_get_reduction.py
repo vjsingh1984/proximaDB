@@ -1041,9 +1041,41 @@ def parse_prometheus(text: str) -> dict[str, float]:
     return totals
 
 
+# A settle poll is a LIVENESS probe against a server that is deliberately busy:
+# training compaction is CPU-bound k-means and can stall the metrics handler for
+# far longer than a single request timeout. A 30s ceiling with no retry made one
+# slow response fatal to a multi-hour bed build — observed killing a 3.3M build
+# twice, and again once PROXIMADB_IVF_TRAIN_SAMPLE was doubled (more training =
+# longer stalls). Retry with backoff so a transient stall is survivable, but
+# still raise once the budget is spent so a genuinely dead server fails loudly.
+SCRAPE_TIMEOUT_SECONDS = 120
+SCRAPE_ATTEMPTS = 4
+
+# Graceful-shutdown budget. Scales with collection size because SIGTERM triggers
+# a flush of everything still unflushed; see ServerProcess.stop().
+SHUTDOWN_GRACE_SECONDS = 120
+
+
 def scrape_text(server: str) -> str:
-    with urllib.request.urlopen(server + "/metrics/prometheus", timeout=30) as response:
-        return response.read().decode()
+    last: Exception | None = None
+    for attempt in range(SCRAPE_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(
+                server + "/metrics/prometheus", timeout=SCRAPE_TIMEOUT_SECONDS
+            ) as response:
+                return response.read().decode()
+        except (TimeoutError, OSError, urllib.error.URLError) as error:
+            last = error
+            if attempt + 1 < SCRAPE_ATTEMPTS:
+                print(
+                    f"scrape: transient failure ({error!r}); "
+                    f"retry {attempt + 1}/{SCRAPE_ATTEMPTS - 1}",
+                    flush=True,
+                )
+                time.sleep(5 * (attempt + 1))
+    raise RuntimeError(
+        f"metrics scrape failed after {SCRAPE_ATTEMPTS} attempts: {last!r}"
+    )
 
 
 def scrape(server: str) -> dict[str, float]:
@@ -1332,7 +1364,6 @@ write_buffer_directory = "file://{data / "wal"}"
 enable_wal = true
 sync_mode = "PerBatch"
 write_buffer_size_mb = {write_buffer_mb}
-vector_count_threshold = {flush_vector_threshold}
 flush_interval_secs = {flush_interval_secs}
 flush_floor_predicted_mb = {flush_floor_predicted_mb}
 
@@ -1472,7 +1503,12 @@ class OwnedServer:
         if self.process.poll() is None:
             self.process.send_signal(signal.SIGTERM)
             try:
-                self.process.wait(timeout=30)
+                # Graceful shutdown flushes unflushed data, so the time needed
+                # scales with collection size — a 30M bed logged "Storage engine
+                # stop timeout" with a collection still draining. SIGKILL during
+                # that drain leaves a half-written bed that only fails later, at
+                # geometry validation, after the ingest cost is already sunk.
+                self.process.wait(timeout=SHUTDOWN_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=10)
@@ -2006,8 +2042,8 @@ def main() -> int:
         type=int,
         default=100_000,
         help=(
-            "WAL vector-count threshold; the predicted-byte floor may defer "
-            "its size flush, so this does not guarantee segment cardinality"
+            "RETIRED no-op (#1526): the server-side vector_count_threshold knob "
+            "was removed; kept only for checkpoint-identity stability"
         ),
     )
     parser.add_argument(
@@ -2266,10 +2302,17 @@ def main() -> int:
     gt_count, truth_width = count_truth_records(
         groundtruth_path, args.groundtruth_format
     )
-    if args.rows > base_count or base_dimension != 128:
+    if args.rows > base_count:
         raise RuntimeError(
-            f"invalid SIFT base: rows={base_count}, dim={base_dimension}"
+            f"base corpus too small: rows={base_count} < requested {args.rows}"
         )
+    # Dimension is validated for plausibility, not pinned to SIFT's 128: the
+    # geometry beds now cover neural-embedding corpora (384/768/1024-d) where
+    # k_c = rows*dim/iop_target and the coarse-PCA width behave very differently.
+    # Base/query agreement is asserted separately below and is the check that
+    # actually protects correctness.
+    if not 2 <= base_dimension <= 4096:
+        raise RuntimeError(f"implausible base dimension: {base_dimension}")
     measured_queries = args.queries * 3
     if measured_queries > query_count or measured_queries > gt_count:
         raise RuntimeError(

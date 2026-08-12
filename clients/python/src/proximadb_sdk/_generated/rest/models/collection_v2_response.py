@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -31,19 +33,19 @@ class CollectionV2Response:
         dimension (int): Vector dimension
         distance_metric (str): Distance metric
         engine (str): Storage engine
-        index_specs (list['IndexSpecOutput']): Per-index config (HNSW/IVF params, is_primary) as persisted at create
+        index_specs (list[IndexSpecOutput]): Per-index config (HNSW/IVF params, is_primary) as persisted at create
             time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
         name (str): Collection name
         proxima_record_enabled (bool): Whether ProximaRecord is enabled
         stats (CollectionStatsV2): Collection statistics for v2 API
-        canonical_embedding_precision (Union[None, Unset, str]): Canonical embedding precision label for stored vectors.
+        canonical_embedding_precision (None | str | Unset): Canonical embedding precision label for stored vectors.
 
             Stable string matching the proto `EmbeddingPrecision::as_str_name()`
             (e.g. "EMBEDDING_PRECISION_FP16"). `None` when the collection didn't
             set a non-default (Unspecified/Fp32) precision.
-        quantization (Union['QuantizationConfigOutput', None, Unset]):
-        schema (Union['SchemaDefinition', None, Unset]):
-        updated_at (Union[None, Unset, str]): Last update timestamp
+        quantization (None | QuantizationConfigOutput | Unset):
+        schema (None | SchemaDefinition | Unset):
+        updated_at (None | str | Unset): Last update timestamp
     """
 
     collection_id: str
@@ -51,14 +53,14 @@ class CollectionV2Response:
     dimension: int
     distance_metric: str
     engine: str
-    index_specs: list["IndexSpecOutput"]
+    index_specs: list[IndexSpecOutput]
     name: str
     proxima_record_enabled: bool
-    stats: "CollectionStatsV2"
-    canonical_embedding_precision: Union[None, Unset, str] = UNSET
-    quantization: Union["QuantizationConfigOutput", None, Unset] = UNSET
-    schema: Union["SchemaDefinition", None, Unset] = UNSET
-    updated_at: Union[None, Unset, str] = UNSET
+    stats: CollectionStatsV2
+    canonical_embedding_precision: None | str | Unset = UNSET
+    quantization: None | QuantizationConfigOutput | Unset = UNSET
+    schema: None | SchemaDefinition | Unset = UNSET
+    updated_at: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,13 +90,13 @@ class CollectionV2Response:
 
         stats = self.stats.to_dict()
 
-        canonical_embedding_precision: Union[None, Unset, str]
+        canonical_embedding_precision: None | str | Unset
         if isinstance(self.canonical_embedding_precision, Unset):
             canonical_embedding_precision = UNSET
         else:
             canonical_embedding_precision = self.canonical_embedding_precision
 
-        quantization: Union[None, Unset, dict[str, Any]]
+        quantization: dict[str, Any] | None | Unset
         if isinstance(self.quantization, Unset):
             quantization = UNSET
         elif isinstance(self.quantization, QuantizationConfigOutput):
@@ -102,7 +104,7 @@ class CollectionV2Response:
         else:
             quantization = self.quantization
 
-        schema: Union[None, Unset, dict[str, Any]]
+        schema: dict[str, Any] | None | Unset
         if isinstance(self.schema, Unset):
             schema = UNSET
         elif isinstance(self.schema, SchemaDefinition):
@@ -110,7 +112,7 @@ class CollectionV2Response:
         else:
             schema = self.schema
 
-        updated_at: Union[None, Unset, str]
+        updated_at: None | str | Unset
         if isinstance(self.updated_at, Unset):
             updated_at = UNSET
         else:
@@ -173,14 +175,12 @@ class CollectionV2Response:
 
         stats = CollectionStatsV2.from_dict(d.pop("stats"))
 
-        def _parse_canonical_embedding_precision(
-            data: object,
-        ) -> Union[None, Unset, str]:
+        def _parse_canonical_embedding_precision(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         canonical_embedding_precision = _parse_canonical_embedding_precision(
             d.pop("canonical_embedding_precision", UNSET)
@@ -188,7 +188,7 @@ class CollectionV2Response:
 
         def _parse_quantization(
             data: object,
-        ) -> Union["QuantizationConfigOutput", None, Unset]:
+        ) -> None | QuantizationConfigOutput | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -199,13 +199,13 @@ class CollectionV2Response:
                 quantization_type_1 = QuantizationConfigOutput.from_dict(data)
 
                 return quantization_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["QuantizationConfigOutput", None, Unset], data)
+            return cast(None | QuantizationConfigOutput | Unset, data)
 
         quantization = _parse_quantization(d.pop("quantization", UNSET))
 
-        def _parse_schema(data: object) -> Union["SchemaDefinition", None, Unset]:
+        def _parse_schema(data: object) -> None | SchemaDefinition | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -216,18 +216,18 @@ class CollectionV2Response:
                 schema_type_1 = SchemaDefinition.from_dict(data)
 
                 return schema_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["SchemaDefinition", None, Unset], data)
+            return cast(None | SchemaDefinition | Unset, data)
 
         schema = _parse_schema(d.pop("schema", UNSET))
 
-        def _parse_updated_at(data: object) -> Union[None, Unset, str]:
+        def _parse_updated_at(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         updated_at = _parse_updated_at(d.pop("updated_at", UNSET))
 

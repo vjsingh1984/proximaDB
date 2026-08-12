@@ -374,7 +374,10 @@ def test_prepare_text_minimal():
 # ---------------------------------------------------------------------------
 
 
-def test_insert_records_uses_insert_records():
+def test_insert_records_uses_insert_records(monkeypatch):
+    # Exercise the legacy symbol_id path; the ADR-044 canonical oid (default-on) is
+    # a separate concern with its own coverage.
+    monkeypatch.setenv("VICTOR_CODEGRAPH_STABLE_OID", "0")
     client, collection, _ = make_client()
     b = make_builder(client)
     chunks = [
@@ -418,7 +421,10 @@ def test_insert_records_empty_noop():
     collection.insert_records.assert_not_awaited()
 
 
-def test_insert_records_default_symbol_id_uses_chunk_id():
+def test_insert_records_default_symbol_id_uses_chunk_id(monkeypatch):
+    # Legacy id fallback (symbol_id -> chunk_id); the ADR-044 canonical oid is gated
+    # off here so we exercise that fallback path.
+    monkeypatch.setenv("VICTOR_CODEGRAPH_STABLE_OID", "0")
     client, collection, _ = make_client()
     b = make_builder(client)
     run(

@@ -102,6 +102,11 @@ lazy_static! {
         "Count of write-backpressure engagements at the critical watermark, per collection (ADR-069 D3)",
         &["collection"],
     );
+    static ref FLUSH_CATALOG_UNRESOLVED_TOTAL: IntCounterVec = build_counter(
+        "proximadb_wal_flush_catalog_unresolved_total",
+        "Auto-flush ticks that could not resolve a WAL collection id in the catalog (TD-FLUSH-8: identity-invariant violation — the flush is skipped and the unflushed window keeps growing)",
+        &["collection"],
+    );
     static ref FLUSH_ADMISSION_TOTAL: IntCounterVec = build_counter(
         "proximadb_wal_flush_admission_total",
         "Flush pre-materialization admission verdicts (ADR-081)",
@@ -290,6 +295,15 @@ pub fn set_backpressure_active(collection: &str, active: bool) {
 /// Count a backpressure engagement (paired with `set_backpressure_active(.., true)`).
 pub fn inc_backpressure(collection: &str) {
     BACKPRESSURE_TOTAL.with_label_values(&[collection]).inc();
+}
+
+/// Count an auto-flush tick that could not resolve a WAL collection id in the
+/// catalog (TD-FLUSH-8). A non-zero rate on this counter is a durability
+/// incident signal: the collection's unflushed window can grow without bound.
+pub fn inc_catalog_unresolved(collection: &str) {
+    FLUSH_CATALOG_UNRESOLVED_TOTAL
+        .with_label_values(&[collection])
+        .inc();
 }
 
 /// Record an engine admission verdict before source records are materialized.

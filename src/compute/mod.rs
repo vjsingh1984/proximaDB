@@ -167,7 +167,7 @@
 // paths (storage + 50+ consumers) resolve unchanged.
 pub use proximadb_distance_kernel as distance_computation;
 pub mod gpu;
-pub mod montecarlo;
+pub use proximadb_montecarlo::montecarlo;
 pub mod pipeline_executor;
 pub mod proximacodec;
 pub mod quantization;

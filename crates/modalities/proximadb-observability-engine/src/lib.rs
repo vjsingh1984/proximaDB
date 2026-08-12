@@ -90,6 +90,7 @@ pub mod route_explain;
 pub mod search_plan_trace;
 /// Post-execution SearchPlanTrace builder.
 pub mod search_plan_trace_builder;
+pub mod search_rank_metrics;
 /// Tenant Prometheus label resolver — bounded cardinality-safe label resolution.
 pub mod tenant_label;
 /// Trace batcher — bundles N traces into one POST for the async billing sink.

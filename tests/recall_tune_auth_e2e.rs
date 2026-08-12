@@ -107,6 +107,7 @@ fn auth_config_with_dev_key() -> SecurityConfig {
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            audit_fail_closed: false,
         },
         rbac: RBACConfig::default(),
         audit: AuditConfig::default(),

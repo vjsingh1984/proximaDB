@@ -308,6 +308,16 @@ impl FlatRow {
     /// dropped (catalog-resolution). Segments that still store the column keep their
     /// own value, so this is mixed-read-safe (old and new segments both reconstruct
     /// the correct tenant). Pass `None` to keep the stored value verbatim.
+    /// Decode this row's props msgpack into a `ProximaTree` WITHOUT building a
+    /// full `ProximaRecord` — the filter-aware cascade's Stage-F row predicate
+    /// (ADR-089 P1) only needs props for `evaluate_filter_proxima`.
+    pub fn props_tree(&self) -> anyhow::Result<proximadb_records::ProximaTree> {
+        match &self.props_bytes {
+            Some(b) => Ok(rmp_serde::from_slice(b)?),
+            None => Ok(Default::default()),
+        }
+    }
+
     pub fn into_record(
         self,
         embedding_model_ids: &[String],

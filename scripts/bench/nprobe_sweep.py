@@ -11,6 +11,7 @@ from write geometry and avoids paying to retrain identical cells.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import importlib.util
 import json
 import subprocess
@@ -157,6 +158,30 @@ def require_config_port(config: Path, expected_port: int) -> None:
         )
 
 
+# Local-filesystem metadata recorded while materialising the geometry snapshot.
+# These describe OUR copy of the segment, not the segment itself, and are
+# regenerated on every materialisation, so they must not take part in the
+# immutable-provenance comparison. Segment identity is already pinned by
+# blob_etag + bytes + path.
+_VOLATILE_SEGMENT_KEYS = ("mtime_ns",)
+
+
+def stable_geometry(geometry: dict) -> dict:
+    """Drop locally-derived, per-materialisation fields from a geometry dict.
+
+    `materialize()` re-downloads the segment into the run's `pax-snapshot/`
+    directory, so the snapshot's mtime differs on every invocation. Including it
+    in `checkpoint_identity` made resume impossible: the identity could never
+    match, even for a byte-identical segment on the same binary and bed.
+    """
+    stable = dict(geometry)
+    stable["segments"] = [
+        {k: v for k, v in segment.items() if k not in _VOLATILE_SEGMENT_KEYS}
+        for segment in geometry.get("segments", [])
+    ]
+    return stable
+
+
 def checkpoint_identity(result: dict) -> dict:
     """Return the immutable provenance/configuration of a matrix run."""
     matrix = result["matrix"]
@@ -169,7 +194,7 @@ def checkpoint_identity(result: dict) -> dict:
         "dataset": result["dataset"],
         "filesystem_profile": result["filesystem_profile"],
         "compute_profile": result["compute_profile"],
-        "settled_geometry": result["settled_geometry"],
+        "settled_geometry": stable_geometry(result["settled_geometry"]),
         "matrix_config": {
             "nprobes": matrix["nprobes"],
             "top_k_values": matrix["top_k_values"],
@@ -202,6 +227,49 @@ def validate_resume(existing: dict, expected: dict) -> set[tuple[int, int]]:
             raise RuntimeError(f"checkpoint contains duplicate point {identity}")
         completed.add(identity)
     return completed
+
+
+def load_resumable_checkpoint(output: Path) -> dict | None:
+    """Load an interrupted matrix, or return ``None`` for a new sweep.
+
+    The matrix file is the atomic checkpoint.  Requiring an additional CLI flag
+    to acknowledge that file made outer stage runners prone to treating
+    ``exists`` as ``complete`` and either skipping or deleting valid partial
+    measurements.  Resume is therefore automatic only for the two explicitly
+    non-terminal states.  Terminal results and malformed checkpoints remain
+    fail-closed.
+    """
+    if not output.exists():
+        return None
+    try:
+        existing = json.loads(output.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot read matrix checkpoint {output}: {error}") from error
+    status = existing.get("status")
+    if status not in {"running", "incomplete"}:
+        raise RuntimeError(
+            f"matrix checkpoint is terminal or invalid ({status!r}); "
+            "refusing to overwrite it"
+        )
+    return existing
+
+
+def acquire_matrix_lock(output: Path):
+    """Acquire the single-writer lock for ``output`` until the handle closes.
+
+    The lock file may remain after a crash, but the kernel lock does not. This
+    makes interruption recoverable without allowing concurrent checkpoint
+    writers.
+    """
+    output.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = output.with_name(f".{output.name}.lock")
+    handle = lock_path.open("a+b")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        handle.close()
+        raise RuntimeError(f"matrix sweep already owns checkpoint: {output}") from error
+    return handle
 
 
 def write_checkpoint(
@@ -319,14 +387,6 @@ def main() -> int:
         ),
     )
     parser.add_argument("--azurite", action="store_true")
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help=(
-            "resume an incomplete atomic checkpoint only when binary, dataset, "
-            "storage geometry, query slice, and sweep configuration all match"
-        ),
-    )
     args = parser.parse_args()
 
     repository = Path(__file__).resolve().parents[2]
@@ -334,13 +394,12 @@ def main() -> int:
     config = args.config.resolve()
     run_root = args.run_root.resolve()
     output = args.output.resolve()
+    # Keep the handle live for all checkpoint reads and writes. The OS releases
+    # it even if the process is interrupted or killed.
+    _matrix_lock = acquire_matrix_lock(output)
     groundtruth_path = args.groundtruth_path.resolve()
     nprobes = comma_separated_ints(args.nprobes, "--nprobes")
     top_k_values = comma_separated_ints(args.top_k_values, "--top-k-values")
-    if output.exists() and not args.resume:
-        raise RuntimeError(f"refusing to overwrite matrix result: {output}")
-    if args.resume and not output.exists():
-        raise RuntimeError(f"resume checkpoint does not exist: {output}")
     if not config.is_file():
         raise RuntimeError(f"benchmark config not found: {config}")
     require_config_port(config, args.port)
@@ -379,10 +438,14 @@ def main() -> int:
     truth_count, truth_width = ACCEPTANCE.count_truth_records(
         groundtruth_path, args.groundtruth_format
     )
-    if args.rows > base_count or dimension != 128:
+    if args.rows > base_count:
         raise RuntimeError(
-            f"invalid base corpus: rows={base_count}, dimension={dimension}"
+            f"base corpus too small: rows={base_count} < requested {args.rows}"
         )
+    # Not pinned to SIFT's 128 — see the matching note in sift1m_get_reduction.py.
+    # Base/query agreement below is the check that protects correctness.
+    if not 2 <= dimension <= 4096:
+        raise RuntimeError(f"implausible base dimension: {dimension}")
     if query_dimension != dimension:
         raise RuntimeError("base and query dimensions differ")
     query_end = args.query_start + args.queries
@@ -470,8 +533,8 @@ def main() -> int:
         "quality_outcomes": [],
     }
 
-    if args.resume:
-        existing = json.loads(output.read_text())
+    existing = load_resumable_checkpoint(output)
+    if existing is not None:
         completed = validate_resume(existing, result)
         result = existing
         result["checkpoint"]["incomplete_reason"] = None

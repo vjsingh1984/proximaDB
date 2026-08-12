@@ -12,7 +12,7 @@ rust-version = "1.88"
 
 [dependencies]
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 
 # Serialization
@@ -39,6 +39,10 @@ url = "2.4"
 
 # Reference to main proximadb crate for embedded mode
 proximadb = { path = "../..", optional = true }
+# NOTE: non-optional, and it path-depends on the root monolith — so `-p
+# proximadb-sdk` compiles the whole monolith even with the `proximadb` feature
+# off. That is why this crate is excluded from the advisory touched-crate fast
+# lane (`rust-affected-fast` in ci.yml); the required `rust-test` job covers it.
 proximadb-embedded = { path = "../../crates/binding/proximadb-embedded" }
 
 [features]

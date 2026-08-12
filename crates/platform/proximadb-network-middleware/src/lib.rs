@@ -8,5 +8,7 @@
 //! `serde`/`tokio`/`tracing` (no `proximadb_*` deps), keeping them a clean platform-tier
 //! leaf and letting their 46 inline tests run in this crate's own binary.
 
+pub mod backpressure;
 pub mod cors;
 pub mod rate_limit;
+pub mod timeout;

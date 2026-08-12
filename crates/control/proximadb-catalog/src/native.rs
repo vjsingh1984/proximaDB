@@ -2520,6 +2520,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn object_id_survives_the_get_table_round_trip() {
+        // TD-AUTHZ-2. `create_table_assigns_distinct_monotonic_object_ids`
+        // asserts only on the schema `create_table` RETURNS — it never reads the
+        // table back, so nothing covered whether the minted id survives
+        // persistence. `xcatalog.tables` renders an EMPTY object_id for
+        // SQL-created relational tables in the live server, and the defect can
+        // only live in that untested gap: mint (proven) -> persist -> load.
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let ns = vec!["t".to_string()];
+        cat.create_namespace(&ns, HashMap::new()).await.unwrap();
+        let identifier = TableIdentifier::new(ns.clone(), "roundtrip_probe");
+
+        let created = cat
+            .create_table(&identifier, schema_with_id_col("roundtrip_probe"))
+            .await
+            .expect("create_table");
+        let minted = created.object_id.expect("create_table mints an object_id");
+
+        let fetched = cat.get_table(&identifier).await.expect("get_table");
+        assert_eq!(
+            fetched.object_id,
+            Some(minted),
+            "the minted object_id must survive persistence and be readable via \
+             get_table — this is what xcatalog.tables projects, and an empty \
+             value there is what TD-AUTHZ-2 reports"
+        );
+    }
+
+    #[tokio::test]
     async fn create_table_assigns_distinct_monotonic_object_ids() {
         let tmp = tempfile::tempdir().unwrap();
         let cat = fresh_catalog(&tmp).await;

@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -20,7 +21,7 @@ def _get_kwargs(
     collection_id: str,
     *,
     body: InsertRecordsRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -29,13 +30,12 @@ def _get_kwargs(
     _kwargs: dict[str, Any] = {
         "method": "post",
         "url": "/api/v2/collections/{collection_id}/records/batch".format(
-            collection_id=collection_id,
+            collection_id=quote(str(collection_id), safe=""),
         ),
     }
 
-    _body = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
-    _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
@@ -43,16 +43,18 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[ErrorResponse, InsertRecordsResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorResponse | InsertRecordsResponse | None:
     if response.status_code == 200:
         response_200 = InsertRecordsResponse.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -60,8 +62,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[ErrorResponse, InsertRecordsResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorResponse | InsertRecordsResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -73,10 +75,10 @@ def _build_response(
 def sync_detailed(
     collection_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: InsertRecordsRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, InsertRecordsResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | InsertRecordsResponse]:
     """Insert or upsert ProximaRecord batches.
 
      Insert ProximaRecords into a collection with typed field support.
@@ -97,7 +99,7 @@ def sync_detailed(
 
     Args:
         collection_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (InsertRecordsRequest): Request to insert ProximaRecords
 
             ## Example JSON
@@ -137,7 +139,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, InsertRecordsResponse]]
+        Response[ErrorResponse | InsertRecordsResponse]
     """
 
     kwargs = _get_kwargs(
@@ -156,10 +158,10 @@ def sync_detailed(
 def sync(
     collection_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: InsertRecordsRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, InsertRecordsResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | InsertRecordsResponse | None:
     """Insert or upsert ProximaRecord batches.
 
      Insert ProximaRecords into a collection with typed field support.
@@ -180,7 +182,7 @@ def sync(
 
     Args:
         collection_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (InsertRecordsRequest): Request to insert ProximaRecords
 
             ## Example JSON
@@ -220,7 +222,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, InsertRecordsResponse]
+        ErrorResponse | InsertRecordsResponse
     """
 
     return sync_detailed(
@@ -234,10 +236,10 @@ def sync(
 async def asyncio_detailed(
     collection_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: InsertRecordsRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, InsertRecordsResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | InsertRecordsResponse]:
     """Insert or upsert ProximaRecord batches.
 
      Insert ProximaRecords into a collection with typed field support.
@@ -258,7 +260,7 @@ async def asyncio_detailed(
 
     Args:
         collection_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (InsertRecordsRequest): Request to insert ProximaRecords
 
             ## Example JSON
@@ -298,7 +300,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, InsertRecordsResponse]]
+        Response[ErrorResponse | InsertRecordsResponse]
     """
 
     kwargs = _get_kwargs(
@@ -315,10 +317,10 @@ async def asyncio_detailed(
 async def asyncio(
     collection_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: InsertRecordsRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, InsertRecordsResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | InsertRecordsResponse | None:
     """Insert or upsert ProximaRecord batches.
 
      Insert ProximaRecords into a collection with typed field support.
@@ -339,7 +341,7 @@ async def asyncio(
 
     Args:
         collection_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (InsertRecordsRequest): Request to insert ProximaRecords
 
             ## Example JSON
@@ -379,7 +381,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, InsertRecordsResponse]
+        ErrorResponse | InsertRecordsResponse
     """
 
     return (

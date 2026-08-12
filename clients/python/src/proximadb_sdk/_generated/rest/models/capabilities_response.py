@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -25,18 +27,18 @@ T = TypeVar("T", bound="CapabilitiesResponse")
 class CapabilitiesResponse:
     """
     Attributes:
-        api_version (Union[Unset, str]):
-        error_envelope (Union[Unset, CapabilitiesResponseErrorEnvelope]):
-        features (Union[Unset, list[str]]):
-        limits (Union[Unset, CapabilitiesResponseLimits]):
-        surface (Union[Unset, str]):
+        api_version (str | Unset):
+        error_envelope (CapabilitiesResponseErrorEnvelope | Unset):
+        features (list[str] | Unset):
+        limits (CapabilitiesResponseLimits | Unset):
+        surface (str | Unset):
     """
 
-    api_version: Union[Unset, str] = UNSET
-    error_envelope: Union[Unset, "CapabilitiesResponseErrorEnvelope"] = UNSET
-    features: Union[Unset, list[str]] = UNSET
-    limits: Union[Unset, "CapabilitiesResponseLimits"] = UNSET
-    surface: Union[Unset, str] = UNSET
+    api_version: str | Unset = UNSET
+    error_envelope: CapabilitiesResponseErrorEnvelope | Unset = UNSET
+    features: list[str] | Unset = UNSET
+    limits: CapabilitiesResponseLimits | Unset = UNSET
+    surface: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,15 +49,15 @@ class CapabilitiesResponse:
 
         api_version = self.api_version
 
-        error_envelope: Union[Unset, dict[str, Any]] = UNSET
+        error_envelope: dict[str, Any] | Unset = UNSET
         if not isinstance(self.error_envelope, Unset):
             error_envelope = self.error_envelope.to_dict()
 
-        features: Union[Unset, list[str]] = UNSET
+        features: list[str] | Unset = UNSET
         if not isinstance(self.features, Unset):
             features = self.features
 
-        limits: Union[Unset, dict[str, Any]] = UNSET
+        limits: dict[str, Any] | Unset = UNSET
         if not isinstance(self.limits, Unset):
             limits = self.limits.to_dict()
 
@@ -88,7 +90,7 @@ class CapabilitiesResponse:
         api_version = d.pop("api_version", UNSET)
 
         _error_envelope = d.pop("error_envelope", UNSET)
-        error_envelope: Union[Unset, CapabilitiesResponseErrorEnvelope]
+        error_envelope: CapabilitiesResponseErrorEnvelope | Unset
         if isinstance(_error_envelope, Unset):
             error_envelope = UNSET
         else:
@@ -99,7 +101,7 @@ class CapabilitiesResponse:
         features = cast(list[str], d.pop("features", UNSET))
 
         _limits = d.pop("limits", UNSET)
-        limits: Union[Unset, CapabilitiesResponseLimits]
+        limits: CapabilitiesResponseLimits | Unset
         if isinstance(_limits, Unset):
             limits = UNSET
         else:

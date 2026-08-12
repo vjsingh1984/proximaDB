@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -18,12 +20,12 @@ T = TypeVar("T", bound="DeleteNodeResponse")
 class DeleteNodeResponse:
     """
     Attributes:
-        id (Union[Unset, str]):
-        success (Union[Unset, bool]):
+        id (str | Unset):
+        success (bool | Unset):
     """
 
-    id: Union[Unset, str] = UNSET
-    success: Union[Unset, bool] = UNSET
+    id: str | Unset = UNSET
+    success: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -22,16 +24,14 @@ T = TypeVar("T", bound="SearchEntitiesRequest")
 class SearchEntitiesRequest:
     """
     Attributes:
-        filters (Union[Unset, SearchEntitiesRequestFilters]): Equality metadata filters as a `{field: value}` JSON
-            object.
-        query_vector (Union[Unset, list[float]]): Query embedding for vector similarity search. Omit for metadata-only
-            search.
-        top_k (Union[Unset, int]):
+        filters (SearchEntitiesRequestFilters | Unset): Equality metadata filters as a `{field: value}` JSON object.
+        query_vector (list[float] | Unset): Query embedding for vector similarity search. Omit for metadata-only search.
+        top_k (int | Unset):
     """
 
-    filters: Union[Unset, "SearchEntitiesRequestFilters"] = UNSET
-    query_vector: Union[Unset, list[float]] = UNSET
-    top_k: Union[Unset, int] = UNSET
+    filters: SearchEntitiesRequestFilters | Unset = UNSET
+    query_vector: list[float] | Unset = UNSET
+    top_k: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,11 +39,11 @@ class SearchEntitiesRequest:
             SearchEntitiesRequestFilters,
         )
 
-        filters: Union[Unset, dict[str, Any]] = UNSET
+        filters: dict[str, Any] | Unset = UNSET
         if not isinstance(self.filters, Unset):
             filters = self.filters.to_dict()
 
-        query_vector: Union[Unset, list[float]] = UNSET
+        query_vector: list[float] | Unset = UNSET
         if not isinstance(self.query_vector, Unset):
             query_vector = self.query_vector
 
@@ -69,7 +69,7 @@ class SearchEntitiesRequest:
 
         d = dict(src_dict)
         _filters = d.pop("filters", UNSET)
-        filters: Union[Unset, SearchEntitiesRequestFilters]
+        filters: SearchEntitiesRequestFilters | Unset
         if isinstance(_filters, Unset):
             filters = UNSET
         else:

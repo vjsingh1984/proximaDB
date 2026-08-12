@@ -8,7 +8,7 @@
 
 pub mod block_filter;
 pub mod block_pruning;
-pub mod morsel_scheduler;
+pub use proximadb_storage_common::morsel_scheduler;
 pub mod predictive_prefetcher;
 pub mod sst_query_engine; // High-level query logic (formerly sst_query_engine) // TD-039: Morsel-driven parallelism
 

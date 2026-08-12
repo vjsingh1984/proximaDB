@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -40,26 +42,26 @@ class TypedSearchRequest:
         Attributes:
             top_k (int): Number of results to return
             vector (list[float]): Query vector
-            debug (Union[None, Unset, bool]): Return the SearchPlanTrace + a human-readable route explain
+            debug (bool | None | Unset): Return the SearchPlanTrace + a human-readable route explain
                 in the response (LLD §1 contract). Defaults to `false` so
                 non-debug requests don't pay the JSON serialization cost of
                 the ~30-field trace envelope.
-            filters (Union[None, Unset, list['TypedFilter']]): Typed filters with operator support
-            include_text (Union[None, Unset, bool]): Whether to include TEXT fields in results (default: false)
+            filters (list[TypedFilter] | None | Unset): Typed filters with operator support
+            include_text (bool | None | Unset): Whether to include TEXT fields in results (default: false)
 
                 TEXT fields can be large, so they are excluded by default.
                 Set to true to include them in the response.
-            include_vector (Union[None, Unset, bool]): Whether to include the vector in results (default: false)
+            include_vector (bool | None | Unset): Whether to include the vector in results (default: false)
 
                 Vector data can be large, so it is excluded by default.
     """
 
     top_k: int
     vector: list[float]
-    debug: Union[None, Unset, bool] = UNSET
-    filters: Union[None, Unset, list["TypedFilter"]] = UNSET
-    include_text: Union[None, Unset, bool] = UNSET
-    include_vector: Union[None, Unset, bool] = UNSET
+    debug: bool | None | Unset = UNSET
+    filters: list[TypedFilter] | None | Unset = UNSET
+    include_text: bool | None | Unset = UNSET
+    include_vector: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,13 +71,13 @@ class TypedSearchRequest:
 
         vector = self.vector
 
-        debug: Union[None, Unset, bool]
+        debug: bool | None | Unset
         if isinstance(self.debug, Unset):
             debug = UNSET
         else:
             debug = self.debug
 
-        filters: Union[None, Unset, list[dict[str, Any]]]
+        filters: list[dict[str, Any]] | None | Unset
         if isinstance(self.filters, Unset):
             filters = UNSET
         elif isinstance(self.filters, list):
@@ -87,13 +89,13 @@ class TypedSearchRequest:
         else:
             filters = self.filters
 
-        include_text: Union[None, Unset, bool]
+        include_text: bool | None | Unset
         if isinstance(self.include_text, Unset):
             include_text = UNSET
         else:
             include_text = self.include_text
 
-        include_vector: Union[None, Unset, bool]
+        include_vector: bool | None | Unset
         if isinstance(self.include_vector, Unset):
             include_vector = UNSET
         else:
@@ -127,16 +129,16 @@ class TypedSearchRequest:
 
         vector = cast(list[float], d.pop("vector"))
 
-        def _parse_debug(data: object) -> Union[None, Unset, bool]:
+        def _parse_debug(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         debug = _parse_debug(d.pop("debug", UNSET))
 
-        def _parse_filters(data: object) -> Union[None, Unset, list["TypedFilter"]]:
+        def _parse_filters(data: object) -> list[TypedFilter] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -154,27 +156,27 @@ class TypedSearchRequest:
                     filters_type_0.append(filters_type_0_item)
 
                 return filters_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list["TypedFilter"]], data)
+            return cast(list[TypedFilter] | None | Unset, data)
 
         filters = _parse_filters(d.pop("filters", UNSET))
 
-        def _parse_include_text(data: object) -> Union[None, Unset, bool]:
+        def _parse_include_text(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         include_text = _parse_include_text(d.pop("include_text", UNSET))
 
-        def _parse_include_vector(data: object) -> Union[None, Unset, bool]:
+        def _parse_include_vector(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         include_vector = _parse_include_vector(d.pop("include_vector", UNSET))
 

@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -19,7 +20,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     body: CreateCollectionV2Request,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -30,9 +31,8 @@ def _get_kwargs(
         "url": "/api/v2/collections",
     }
 
-    _body = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
-    _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
@@ -40,16 +40,18 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[CreateCollectionV2Response, ErrorResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> CreateCollectionV2Response | ErrorResponse | None:
     if response.status_code == 200:
         response_200 = CreateCollectionV2Response.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -57,8 +59,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[CreateCollectionV2Response, ErrorResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[CreateCollectionV2Response | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -69,10 +71,10 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateCollectionV2Request,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[CreateCollectionV2Response, ErrorResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[CreateCollectionV2Response | ErrorResponse]:
     """Create a collection with optional schema.
 
      Create a new collection with optional schema support.
@@ -92,7 +94,7 @@ def sync_detailed(
     - `500 Internal Server Error`: Creation failed
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateCollectionV2Request): Request to create a collection with schema support
 
             ## Example JSON
@@ -120,7 +122,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[CreateCollectionV2Response, ErrorResponse]]
+        Response[CreateCollectionV2Response | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -137,10 +139,10 @@ def sync_detailed(
 
 def sync(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateCollectionV2Request,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[CreateCollectionV2Response, ErrorResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> CreateCollectionV2Response | ErrorResponse | None:
     """Create a collection with optional schema.
 
      Create a new collection with optional schema support.
@@ -160,7 +162,7 @@ def sync(
     - `500 Internal Server Error`: Creation failed
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateCollectionV2Request): Request to create a collection with schema support
 
             ## Example JSON
@@ -188,7 +190,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[CreateCollectionV2Response, ErrorResponse]
+        CreateCollectionV2Response | ErrorResponse
     """
 
     return sync_detailed(
@@ -200,10 +202,10 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateCollectionV2Request,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[CreateCollectionV2Response, ErrorResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[CreateCollectionV2Response | ErrorResponse]:
     """Create a collection with optional schema.
 
      Create a new collection with optional schema support.
@@ -223,7 +225,7 @@ async def asyncio_detailed(
     - `500 Internal Server Error`: Creation failed
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateCollectionV2Request): Request to create a collection with schema support
 
             ## Example JSON
@@ -251,7 +253,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[CreateCollectionV2Response, ErrorResponse]]
+        Response[CreateCollectionV2Response | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -266,10 +268,10 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateCollectionV2Request,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[CreateCollectionV2Response, ErrorResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> CreateCollectionV2Response | ErrorResponse | None:
     """Create a collection with optional schema.
 
      Create a new collection with optional schema support.
@@ -289,7 +291,7 @@ async def asyncio(
     - `500 Internal Server Error`: Creation failed
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateCollectionV2Request): Request to create a collection with schema support
 
             ## Example JSON
@@ -317,7 +319,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[CreateCollectionV2Response, ErrorResponse]
+        CreateCollectionV2Response | ErrorResponse
     """
 
     return (

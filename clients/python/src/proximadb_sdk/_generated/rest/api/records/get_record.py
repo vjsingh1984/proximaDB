@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -19,9 +20,9 @@ def _get_kwargs(
     collection_id: str,
     record_id: str,
     *,
-    include_vector: Union[Unset, bool] = UNSET,
-    include_text: Union[Unset, bool] = UNSET,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    include_vector: bool | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -38,8 +39,8 @@ def _get_kwargs(
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/api/v2/collections/{collection_id}/records/{record_id}".format(
-            collection_id=collection_id,
-            record_id=record_id,
+            collection_id=quote(str(collection_id), safe=""),
+            record_id=quote(str(record_id), safe=""),
         ),
         "params": params,
     }
@@ -49,16 +50,18 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[ErrorResponse, RecordV2Response]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorResponse | RecordV2Response | None:
     if response.status_code == 200:
         response_200 = RecordV2Response.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 404:
         response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -66,8 +69,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[ErrorResponse, RecordV2Response]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorResponse | RecordV2Response]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,11 +83,11 @@ def sync_detailed(
     collection_id: str,
     record_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    include_vector: Union[Unset, bool] = UNSET,
-    include_text: Union[Unset, bool] = UNSET,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, RecordV2Response]]:
+    client: AuthenticatedClient | Client,
+    include_vector: bool | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | RecordV2Response]:
     """Get a record by ID.
 
      Get a single record by ID.
@@ -111,16 +114,16 @@ def sync_detailed(
     Args:
         collection_id (str):
         record_id (str):
-        include_vector (Union[Unset, bool]):
-        include_text (Union[Unset, bool]):
-        x_tenant_id (Union[Unset, str]):
+        include_vector (bool | Unset):
+        include_text (bool | Unset):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, RecordV2Response]]
+        Response[ErrorResponse | RecordV2Response]
     """
 
     kwargs = _get_kwargs(
@@ -142,11 +145,11 @@ def sync(
     collection_id: str,
     record_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    include_vector: Union[Unset, bool] = UNSET,
-    include_text: Union[Unset, bool] = UNSET,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, RecordV2Response]]:
+    client: AuthenticatedClient | Client,
+    include_vector: bool | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | RecordV2Response | None:
     """Get a record by ID.
 
      Get a single record by ID.
@@ -173,16 +176,16 @@ def sync(
     Args:
         collection_id (str):
         record_id (str):
-        include_vector (Union[Unset, bool]):
-        include_text (Union[Unset, bool]):
-        x_tenant_id (Union[Unset, str]):
+        include_vector (bool | Unset):
+        include_text (bool | Unset):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, RecordV2Response]
+        ErrorResponse | RecordV2Response
     """
 
     return sync_detailed(
@@ -199,11 +202,11 @@ async def asyncio_detailed(
     collection_id: str,
     record_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    include_vector: Union[Unset, bool] = UNSET,
-    include_text: Union[Unset, bool] = UNSET,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, RecordV2Response]]:
+    client: AuthenticatedClient | Client,
+    include_vector: bool | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | RecordV2Response]:
     """Get a record by ID.
 
      Get a single record by ID.
@@ -230,16 +233,16 @@ async def asyncio_detailed(
     Args:
         collection_id (str):
         record_id (str):
-        include_vector (Union[Unset, bool]):
-        include_text (Union[Unset, bool]):
-        x_tenant_id (Union[Unset, str]):
+        include_vector (bool | Unset):
+        include_text (bool | Unset):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, RecordV2Response]]
+        Response[ErrorResponse | RecordV2Response]
     """
 
     kwargs = _get_kwargs(
@@ -259,11 +262,11 @@ async def asyncio(
     collection_id: str,
     record_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    include_vector: Union[Unset, bool] = UNSET,
-    include_text: Union[Unset, bool] = UNSET,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, RecordV2Response]]:
+    client: AuthenticatedClient | Client,
+    include_vector: bool | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | RecordV2Response | None:
     """Get a record by ID.
 
      Get a single record by ID.
@@ -290,16 +293,16 @@ async def asyncio(
     Args:
         collection_id (str):
         record_id (str):
-        include_vector (Union[Unset, bool]):
-        include_text (Union[Unset, bool]):
-        x_tenant_id (Union[Unset, str]):
+        include_vector (bool | Unset):
+        include_text (bool | Unset):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, RecordV2Response]
+        ErrorResponse | RecordV2Response
     """
 
     return (

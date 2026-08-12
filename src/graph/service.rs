@@ -1070,8 +1070,46 @@ impl GraphOperationsService {
         };
 
         // Store in graphs map
+        let engine = Arc::new(engine_impl);
         self.graphs
-            .insert(graph_id.to_string(), Arc::new(engine_impl));
+            .insert(graph_id.to_string(), Arc::clone(&engine));
+
+        // #1524: engine recovery rebuilt the ENGINE's state, but endpoint-bound
+        // edge reads are served from the service-level adjacency projection +
+        // CSR-freshness epoch, and count surfaces from the service-level
+        // counters — all process-local and empty after a restart. Rebuild them
+        // from the recovered engine (mirroring what create_edge maintains per
+        // write); otherwise every edge read answers empty for a graph whose
+        // data survived, while re-creating the same edge is rejected as a
+        // duplicate — no client-side repair path exists.
+        let recovered_edges = engine.get_all_edges()?;
+        if !recovered_edges.is_empty() {
+            let records: Vec<_> = recovered_edges
+                .iter()
+                .map(|edge| edge_to_canonical_record(graph_id, edge))
+                .collect();
+            self.adjacency_projection(graph_id).apply_edges(&records)?;
+            for edge in &recovered_edges {
+                self.edge_type_counts
+                    .entry(edge.edge_type.clone())
+                    .or_insert_with(|| AtomicU64::new(0))
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            self.stats_edges
+                .fetch_add(recovered_edges.len() as u64, Ordering::Relaxed);
+            self.advance_edge_epoch(graph_id);
+            // Rebuild the CSR from the projection and mark it fresh (stores the
+            // rebuild epoch) so endpoint-bound queries serve from engine
+            // topology instead of falling through to a projection that, before
+            // this block, was empty.
+            self.rebuild_orion_csr_from_adjacency_projection(graph_id)
+                .await?;
+            tracing::info!(
+                graph_id,
+                edges = recovered_edges.len(),
+                "read projections rebuilt from recovered graph state"
+            );
+        }
 
         // TD-066 Part 2 (gated, default-OFF): engine-WAL replay above rebuilt the
         // in-memory engine, but the canonical/cold record store — a buffered store

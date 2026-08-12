@@ -197,7 +197,7 @@ pub mod recall_drift_sweeper;
 pub mod recall_observer;
 pub mod record_memtable;
 pub mod record_store;
-pub mod scan_cursor;
+pub use proximadb_scan_cursor::scan_cursor;
 pub mod schema;
 pub mod search;
 pub mod shutdown_registry;
@@ -208,7 +208,7 @@ pub mod system_catalog_state;
 pub mod tenant_access;
 pub mod timeseries_service;
 pub mod transaction;
-pub mod write_intent;
+pub use proximadb_write_intent::write_intent;
 
 // Re-export main service types with cleaner names
 pub use audit_sink::{AuditEventSink, AuditRecord, EventLogAuditSink};

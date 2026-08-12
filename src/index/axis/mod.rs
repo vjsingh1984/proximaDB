@@ -80,7 +80,7 @@ pub mod management; // Management and orchestration
 pub mod storage; // Storage and serialization // Integration with other systems
 
 // TD-064: Filterable metadata for predicate-aware HNSW
-pub mod filterable_metadata;
+pub use proximadb_filterable_metadata::filterable_metadata;
 
 // Storage↔index decoupling contract (DIP/ISP): boundary impl of the
 // `proximadb-index-traits` role traits for `AxisManager`.
@@ -98,7 +98,7 @@ pub mod flush_integration_simple;
 pub mod index_factory;
 pub mod pattern_analyzer;
 /// Graph-tunneling predicate gate (LLD §4, GateANN arXiv 2603.21466).
-pub mod tunnel;
+pub use proximadb_axis_tunnel::tunnel;
 pub mod types;
 pub mod utils;
 pub mod zero_overhead_vector;

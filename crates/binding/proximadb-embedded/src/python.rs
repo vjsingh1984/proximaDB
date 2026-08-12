@@ -4577,7 +4577,11 @@ fn notebook_is_simple_ident(value: &str) -> bool {
 fn notebook_partitions_to_json(
     collection: &str,
     requested: u32,
-    partitions: &[proximadb::connectors::spark::SparkInputPartition],
+    // `SparkInputPartition` lives in THIS crate's `spark` module, not in the root
+    // crate's `connectors` — #1021 moved the bindings here. The stale path only
+    // failed to surface because the `#[pymodule] fn proximadb` shadowing above
+    // made every `proximadb::…` path in this file fail first.
+    partitions: &[crate::spark::SparkInputPartition],
 ) -> serde_json::Value {
     serde_json::json!({
         "collection": collection,
@@ -4596,9 +4600,7 @@ fn notebook_partitions_to_json(
     })
 }
 
-fn notebook_partition_to_json(
-    partition: &proximadb::connectors::spark::SparkInputPartition,
-) -> serde_json::Value {
+fn notebook_partition_to_json(partition: &crate::spark::SparkInputPartition) -> serde_json::Value {
     serde_json::json!({
         "partition_id": partition.partition_id,
         "preferred_locations": &partition.preferred_locations,
@@ -4825,8 +4827,15 @@ fn register_python_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Python module definition
 /// This exports as "proximadb" which is the module name used by benchmarks
-#[pymodule]
-fn proximadb(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+///
+/// The Rust function is deliberately NOT named `proximadb`. `#[pymodule]` defines
+/// an item in this module's scope, and a function named `proximadb` shadows the
+/// `proximadb` *crate* — every `proximadb::…` path in this file then resolves
+/// against the pymodule instead and fails (`E0659: ambiguous`, plus one
+/// `cannot find X in proximadb` per use site). The `name = "proximadb"` attribute
+/// keeps the Python-visible module name identical, so benchmarks are unaffected.
+#[pymodule(name = "proximadb")]
+fn proximadb_legacy_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_python_module(m)
 }
 

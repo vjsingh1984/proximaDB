@@ -127,6 +127,7 @@ class ProximaDBClient:
         api_key: str | None = None,
         protocol: Protocol | str = Protocol.AUTO,
         port_mode: PortMode | str = PortMode.UNIFIED,
+        uds_path: str | None = None,
         config: ClientConfig | None = None,
         auth_config: AuthConfig | None = None,
         auth_method: AuthMethod | None = None,
@@ -210,6 +211,11 @@ class ProximaDBClient:
         elif port_mode != PortMode.UNIFIED:
             # Override port_mode if explicitly specified
             config.port_mode = port_mode
+
+        # Portless embedded servers expose a Unix-domain socket rather than a
+        # TCP port; an explicit uds_path wins over whatever load_config resolved.
+        if uds_path is not None:
+            config.uds_path = uds_path
 
         # Setup authentication
         self._setup_authentication(

@@ -93,7 +93,7 @@ jobs:
           fi
 
       - name: Restore Cached Artifacts
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         id: restore
         with:
           path: |
@@ -161,7 +161,7 @@ jobs:
       built-count: ${{ steps.summary.outputs.count }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@1.95.0
@@ -238,7 +238,7 @@ jobs:
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}.zip" >> $env:GITHUB_ENV
 
       - name: Save to Build Cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             proximadb-*.${{ matrix.archive }}
@@ -247,7 +247,7 @@ jobs:
 
       - name: Upload Binary Artifact
         if: inputs.upload-artifacts == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binaries-${{ matrix.target }}
           path: |
@@ -350,10 +350,10 @@ jobs:
   #     built-count: ${{ steps.summary.outputs.count }}
   #   steps:
   #     - name: Checkout
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v7
   #
   #     - name: Setup Python
-  #       uses: actions/setup-python@v5
+  #       uses: actions/setup-python@v7
   #       with:
   #         python-version: ${{ matrix.python }}
   #
@@ -400,14 +400,14 @@ jobs:
   #       shell: bash
   #
   #     - name: Save to Build Cache
-  #       uses: actions/cache/save@v4
+  #       uses: actions/cache/save@v6
   #       with:
   #         path: dist/*.whl
   #         key: wheel-${{ inputs.cache-key }}-${{ matrix.os }}-${{ matrix.target }}-py${{ matrix.python }}-${{ github.run_id }}
   #
   #     - name: Upload Wheel Artifact
   #       if: inputs.upload-artifacts == 'true'
-  #       uses: actions/upload-artifact@v4
+  #       uses: actions/upload-artifact@v7
   #       with:
   #         name: wheel-${{ matrix.os }}-${{ matrix.target }}-py${{ matrix.python }}
   #         path: dist/*.whl
@@ -448,10 +448,10 @@ jobs:
   #           target: x64
   #   steps:
   #     - name: Checkout
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v7
   #
   #     - name: Setup Python
-  #       uses: actions/setup-python@v5
+  #       uses: actions/setup-python@v7
   #       with:
   #         python-version: "3.11"
   #
@@ -501,14 +501,14 @@ jobs:
   #       shell: bash
   #
   #     - name: Save to Build Cache
-  #       uses: actions/cache/save@v4
+  #       uses: actions/cache/save@v6
   #       with:
   #         path: clients/python-embedded/dist/*.whl
   #         key: embedded-wheel-${{ inputs.cache-key }}-${{ matrix.os }}-${{ matrix.target }}-${{ github.run_id }}
   #
   #     - name: Upload Embedded Wheel Artifact
   #       if: inputs.upload-artifacts == 'true'
-  #       uses: actions/upload-artifact@v4
+  #       uses: actions/upload-artifact@v7
   #       with:
   #         name: embedded-wheel-${{ matrix.os }}-${{ matrix.target }}
   #         path: clients/python-embedded/dist/*.whl
@@ -526,10 +526,10 @@ jobs:
       built-count: ${{ steps.summary.outputs.count }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -546,7 +546,7 @@ jobs:
       #   run: maturin sdist --out dist
 
       - name: Save to Build Cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           # NOTE: embedded sdist temporarily disabled - see above
           path: dist/*.tar.gz
@@ -554,7 +554,7 @@ jobs:
 
       - name: Upload sdist Artifact
         if: inputs.upload-artifacts == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           # NOTE: embedded sdist temporarily disabled - see above
@@ -583,7 +583,7 @@ jobs:
           echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> build-cache/manifest.txt
 
       - name: Save Primary Cache Entry
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: build-cache/
           key: ${{ needs.cache-check.outputs.cache-key }}

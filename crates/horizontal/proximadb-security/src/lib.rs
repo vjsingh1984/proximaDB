@@ -7,6 +7,7 @@
 pub mod audit;
 pub mod audit_config;
 pub mod audit_storage;
+pub mod key_store;
 
 pub use audit::{
     AuditEvent, AuditEventType, AuditResource, AuditResult, SecurityAlert, SecurityAlertSeverity,
