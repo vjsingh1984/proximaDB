@@ -78,13 +78,41 @@ filter as the correctness backstop. This TD tracks the phases.
      field namespaces*: footer-prune engages for canonical-field filters, while
      the benchmark's user-tag filters (`partition`, `lang`) prune nothing
      (conservative — correctness preserved, but zero GET saved). Making
-     footer-prune deliver end-to-end for user tags is the **P-Shred-arming
-     slice**: (1) shred `filterable` schema columns into PAX columns with bounds
-     at flush (today only canonical columns are shredded), (2) extend
-     `pax_field_to_col` to resolve those user columns, (3) ensure the row-match
-     and footer-prune agree on the field (props value ⇔ shredded column). Until
-     then P2 is INFRASTRUCTURE-COMPLETE but engagement-limited to canonical
-     filters.
+     footer-prune deliver end-to-end for user tags is SMALLER than first
+     thought — scoped by investigation (2026-08-12):
+     *** ✅ **Shredding already works.** P-Shred (ADR-055) already shreds
+         `filterable` props into typed PAX column stripes with `ColumnMeta`
+         min/max bounds at their catalog col-id (≥100), driven by
+         `schema.props_auto_promotion.promoted_keys` →
+         `PaxSegmentWriter::with_shred_spec` (`record_store.rs` write_mutations;
+         `writer.rs:454-464,672-679`). The value STAYS in props (duplicate index,
+         not extraction), so my P2 writer already lifts these bounds into the
+         footer. NOTE: the `write_pax_segment` TEST helper does NOT set a shred
+         spec, which is why the P2 unit test uses a canonical field.
+     *** ✅ **Row-match already works.** Because the shredded value stays in
+         props, `evaluate_filter_proxima` finds it — no change needed.
+     *** ❌ **Only gap: field resolution.** `pax_field_to_col`
+         (`segment_format.rs:730`) is a stateless fn that maps only canonical
+         names; it returns `None` for user tags because segments store physical
+         col-ids, not names. Fix = resolve a `name→col-id` map for the segment's
+         shredded columns and use it (canonical first, then the user map) in the
+         two `evaluate_block` calls in `pax_filtered_row_allow`.
+     *** **Follow-up design choice for the map source (the real decision):**
+         (i) *Catalog lookup* — `ctx.collection` (`Arc<Collection>`) is in scope
+         at `fallback_to_direct_search`, but the proto `FilterableColumnSpec`
+         carries only the column NAME, not its PAX col-id (that lives in the
+         catalog `CatalogTableSchema.columns[].id`, which the WRITER used via
+         `promoted_keys`). So this path needs a catalog-schema lookup, and one
+         caller (`scan_single_file`, `search/mod.rs:1651`) has no collection
+         context to thread. (ii) *Self-describing segment (preferred, co-design)*
+         — embed the shred `name→col-id` map in the segment footer/A0 at write
+         (the writer already has the shred spec), so the reader resolves user
+         fields with ZERO catalog dependency and no hot-path plumbing; a small,
+         mixed-read-safe footer section. Recommend (ii). This is the P2-engagement
+         follow-up slice (own PR + benchmark evidence), default-OFF, no writer
+         behavior change beyond the additive footer section.
+     Until that lands P2 is INFRASTRUCTURE-COMPLETE, engagement-limited to
+     canonical-field filters.
   ** **Evidence gate (post P-Shred arming):** filtered search `io_trace`
      `object_gets`/`bytes_read` drop with selectivity (pruned blocks
      unfetched), recall unchanged, on the synthetic partition + Wikipedia
