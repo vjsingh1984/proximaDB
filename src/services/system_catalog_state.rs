@@ -301,6 +301,33 @@ impl SystemCatalogState {
         self.inner.read().account_ids.values().copied().max()
     }
 
+    /// The highest `object_id` folded into state, across tables AND the columns
+    /// and indexes they carry (they all draw from one sequence).
+    ///
+    /// The allocator floor is DERIVED from recovered state rather than persisted
+    /// separately — the same shape as `max_account_id` above. Object ids already
+    /// ride inside the persisted schemas, so WAL replay and snapshot load yield
+    /// the floor for free: no second durable structure, no extra fsync, and no
+    /// way for a floor record to disagree with the objects it governs.
+    ///
+    /// This is authorization-critical, not bookkeeping: policy bindings and
+    /// grants are keyed on `object_id`, so re-issuing one after a restart would
+    /// hand a NEW table the DEAD table's permissions.
+    pub fn max_object_id(&self) -> Option<u64> {
+        let guard = self.inner.read();
+        guard
+            .tables
+            .values()
+            .flat_map(|schema| {
+                schema
+                    .object_id
+                    .into_iter()
+                    .chain(schema.columns.iter().filter_map(|c| c.object_id))
+                    .chain(schema.indexes.iter().filter_map(|i| i.object_id))
+            })
+            .max()
+    }
+
     /// The highest WAL sequence number folded in (replay watermark / snapshot
     /// cutover LSN).
     pub fn applied_seq(&self) -> u64 {
