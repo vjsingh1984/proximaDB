@@ -4,7 +4,7 @@
 // geographic coordinates into a short string. Adjacent geohashes
 // share common prefixes, enabling efficient range queries.
 
-use super::types::{GeoBoundingBox, GeoPoint};
+use proximadb_geo_types::types::{GeoBoundingBox, GeoPoint};
 
 /// Base32 alphabet for geohash encoding
 const BASE32: &[u8] = b"0123456789bcdefghjkmnpqrstuvwxyz";
