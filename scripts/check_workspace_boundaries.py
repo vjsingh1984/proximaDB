@@ -136,9 +136,6 @@ STORAGE_UP_EDGE_TARGETS = ("compute", "index", "query", "services")
 KNOWN_CONTROL_UP_EDGES: frozenset[tuple[str, str]] = frozenset(
     {
         ("proximadb-storage-common", "proximadb-catalog"),
-        ("proximadb-storage-operations", "proximadb-catalog"),
-        ("proximadb-orion-engine", "proximadb-metrics"),
-        ("proximadb-recall-bench", "proximadb-catalog"),
     }
 )
 
@@ -188,8 +185,8 @@ LAYER_RULES = (
     LayerRule(
         frozenset({"horizontal"}),
         frozenset({"control"}),
-        "warning",
-        "horizontal crates must not depend upward into the control plane — reclassify the crate or invert the dep (TD-DECOMP ratchet)",
+        "error",
+        "horizontal crates must not depend upward into the control plane — reclassify the crate or invert the dep (TD-DECOMP-66: resolved via port-traits + dev-dep exclusion)",
     ),
     LayerRule(
         frozenset({"control"}),
@@ -216,8 +213,8 @@ LAYER_RULES = (
     LayerRule(
         frozenset({"modality"}),
         frozenset({"control"}),
-        "warning",
-        "modality crates must not depend upward into the control plane — invert via port-traits (TD-DECOMP ratchet)",
+        "error",
+        "modality crates must not depend upward into the control plane — invert via port-traits (TD-DECOMP-66: resolved)",
     ),
     LayerRule(
         frozenset({"query-contract"}),
@@ -534,15 +531,18 @@ def load_toml(path: Path) -> dict:
 
 
 def dependency_names(manifest: dict) -> tuple[str, ...]:
+    """Return RUNTIME dependency names (excludes dev-deps + build-deps).
+
+    Dev-deps are test-only and don't form runtime coupling edges — they're
+    architecturally distinct from production dependencies (TD-DECOMP-66 edge 4).
+    """
     names: set[str] = set()
-    for section in ("dependencies", "dev-dependencies", "build-dependencies"):
-        for name in manifest.get(section, {}):
-            names.add(name)
+    for name in manifest.get("dependencies", {}):
+        names.add(name)
 
     for target in manifest.get("target", {}).values():
-        for section in ("dependencies", "dev-dependencies", "build-dependencies"):
-            for name in target.get(section, {}):
-                names.add(name)
+        for name in target.get("dependencies", {}):
+            names.add(name)
 
     return tuple(sorted(names))
 
