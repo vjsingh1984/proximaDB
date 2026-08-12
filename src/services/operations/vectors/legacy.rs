@@ -674,9 +674,26 @@ impl VectorOperationsService {
         tenant_stable_id: u64,
         collection_id: &str,
     ) -> Option<Result<proximadb_abac::AuthorizedReadContext, proximadb_abac::DenyReason>> {
+        // `None` here means "ABAC is not configured" and is the ONLY legitimate
+        // absence: `records_read_context` maps `None` to `ReadContext::system`,
+        // an UNFILTERED read. Every other early return must therefore be a
+        // DENIAL (`Some(Err(..))`), never `None` — otherwise a failure to
+        // resolve silently becomes unrestricted access.
         let enforcer = self.abac_enforcer.as_ref()?;
-        let collection = self.get_or_load_collection(collection_id).await.ok()?;
-        let object_id: crate::core::stable_id::CollectionObjectId = collection.id.parse().ok()?;
+
+        // A collection that will not load, or whose id will not parse, is a
+        // FAILURE to authorize — not an absence of authorization. Both used to
+        // `?` out to `None` and hand back an unfiltered System read; they now
+        // deny, so the caller returns empty results instead of every row.
+        let Ok(collection) = self.get_or_load_collection(collection_id).await else {
+            return Some(Err(proximadb_abac::DenyReason::NoApplicablePolicy));
+        };
+        let Ok(object_id) = collection
+            .id
+            .parse::<crate::core::stable_id::CollectionObjectId>()
+        else {
+            return Some(Err(proximadb_abac::DenyReason::NoApplicablePolicy));
+        };
         // B3: build the Target FALLIBLY rather than truncating `object_id as u32`.
         // `Target.table` is u32 while catalog object ids come from a global u64
         // allocator, and `scope_covers` matches with `==` — a wrapped id can

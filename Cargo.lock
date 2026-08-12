@@ -6712,6 +6712,7 @@ dependencies = [
  "proximadb-abac",
  "proximadb-admin-ui",
  "proximadb-api",
+ "proximadb-arrow-block-index",
  "proximadb-audit",
  "proximadb-auth-sso",
  "proximadb-automl",
@@ -6748,6 +6749,10 @@ dependencies = [
  "proximadb-filterable-metadata",
  "proximadb-functions",
  "proximadb-geo-index",
+ "proximadb-geo-queries",
+ "proximadb-geo-spatial-index",
+ "proximadb-geo-types",
+ "proximadb-geohash",
  "proximadb-graph",
  "proximadb-graph-arrow",
  "proximadb-graph-engine-traits",
@@ -6830,6 +6835,7 @@ dependencies = [
  "proximadb-storage-tenant",
  "proximadb-storage-traits",
  "proximadb-storage-transaction",
+ "proximadb-subscription",
  "proximadb-tcp-multiplexer",
  "proximadb-telemetry",
  "proximadb-tenant",
@@ -6954,6 +6960,15 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-arrow-block-index"
+version = "0.2.0"
+dependencies = [
+ "bincode",
+ "bytes",
+ "serde",
 ]
 
 [[package]]
@@ -7486,6 +7501,37 @@ name = "proximadb-geo-index"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+]
+
+[[package]]
+name = "proximadb-geo-queries"
+version = "0.2.0"
+dependencies = [
+ "proximadb-geo-types",
+ "serde",
+]
+
+[[package]]
+name = "proximadb-geo-spatial-index"
+version = "0.2.0"
+dependencies = [
+ "proximadb-geo-queries",
+ "proximadb-geo-types",
+ "proximadb-geohash",
+]
+
+[[package]]
+name = "proximadb-geo-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "proximadb-geohash"
+version = "0.2.0"
+dependencies = [
+ "proximadb-geo-types",
 ]
 
 [[package]]
@@ -8736,6 +8782,14 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-subscription"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "tokio",
 ]
 
 [[package]]

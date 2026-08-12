@@ -63,7 +63,7 @@
 //! ```
 
 pub mod config;
-pub mod index;
+pub use proximadb_arrow_block_index::index;
 pub mod reader;
 pub mod writer;
 

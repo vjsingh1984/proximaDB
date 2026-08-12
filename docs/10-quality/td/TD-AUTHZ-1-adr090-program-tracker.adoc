@@ -385,3 +385,83 @@ live read path (a transient collection-load failure would begin denying instead 
 unfiltered results) and deserves its own slice with its own ratchet. Sequence it with the L2.2
 `System`-bypass work, which is already the owner of "client-facing reads must not run as
 System".
+
+
+== L2.2 item 1 RE-SCOPED (2026-08-11): the graph/RAG REST surface extracts no identity
+
+The tracker framed this as "`unified_search_with_tenant_context` has no ABAC". Tracing its
+production caller shows the fix is not where that framing points.
+
+* `unified_search` ← `src/graph/rag/engine_impls.rs:53`, on `VectorNodeRetriever`, whose fields
+  are only `{ vector_ops, collection, limit }` — no identity.
+* `VectorNodeRetriever` is constructed at `src/network/rest/canonical/graph.rs:1348`, inside
+  `pub async fn rag_query(State(app_state), Path(graph_id), Json(request))` — **no identity
+  extractor in the signature**.
+
+VERIFIED (by mechanism, not by pattern-guessing): `src/network/rest/v2/records.rs` obtains
+identity as `Extension(tenant): Extension<TenantContext>` (`:1107`, importing
+`crate::network::middleware::tenant::TenantContext`). `src/network/rest/canonical/graph.rs`
+contains **zero** occurrences of `Extension`, `TenantContext`, or `PortIdentity` across its
+**33** handlers.
+
+So there is no identity at the graph REST boundary to thread anywhere. Adding a `ReadContext`
+parameter to `unified_search` would produce a parameter with nothing to put in it. **The fix is
+identity extraction at the graph surface**, mirroring the records surface — then ABAC on the
+search path, then the RAG retriever carrying it.
+
+=== NOT verified — do not conclude the surface is unisolated
+
+Whether `graph_operations_service` enforces tenancy internally by some other route was NOT
+checked. The verified claim is narrow and specific: *the handlers do not extract the
+middleware's `TenantContext`*. Establish the internal behavior before characterising the graph
+surface's isolation posture — the B1 entry in this tracker is a standing reminder of what
+overclaiming here costs.
+
+=== Method note (third occurrence this session)
+
+The first pass used `grep -A 6 "^pub async fn" | grep -c Extension...` and reported **0 for
+`records.rs` too** — a file that demonstrably does thread identity. The pattern was wrong, not
+the code. A search that returns zero is evidence about the SEARCH until the same search is shown
+to return non-zero on a known-positive control. Two earlier instances this session: a
+`grep | head -6` that made a guarded read path look unguarded, and a regex that matched zero
+blocks while an assertion caught it.
+
+
+== L2.2 item 1 — VERIFIED ordering constraint: do NOT thread identity first (2026-08-12)
+
+The obvious next slice is "extract identity in `rag_query` and pass `Some(tenant_context)`
+instead of the hardcoded `None`". **That would break RAG reads**, and the reason is verified:
+
+* Passing `Some(..)` activates `validate_search_results_tenant_isolation`
+  (`legacy.rs:2765`), which is currently unreachable because all 6 callers pass `None`.
+* That validator DROPS any result whose metadata lacks a `tenant_id`
+  (`legacy.rs:2826`, "Vector result without tenant_id found!").
+* **No ordinary vector write path stamps `tenant_id` into record metadata.** Searching for the
+  write is decisive: the only occurrences are an audit-details map
+  (`security_coordinator.rs:605`) and a bulk-load SPOOF fixture
+  (`bulk_load.rs:490`). Result metadata is otherwise copied verbatim from the user's own
+  record metadata (`legacy.rs:~5040`).
+
+So ordinary records carry no tenant metadata, and the validator would drop all of them: RAG
+would return EMPTY rather than leaking. Fail-closed, but an outage.
+
+=== Required order
+
+. **Fix the validator's model first.** Metadata-string matching is the wrong mechanism —
+  isolation here should come from the same `ReadContext`/ABAC path the other read surfaces use
+  (`records_read_context`), not from comparing a `tenant_id` string that the write path never
+  writes. While it exists, it must also stop treating "no metadata" as a security verdict in
+  either direction: today absent ⇒ drop, and a non-`StringValue` variant matches no arm and is
+  dropped with NO log at all.
+. **Then** extract identity at the graph surface and thread it.
+. **Then** ABAC on the search path, and the retriever carrying the context.
+
+Reversing steps 1 and 2 produces an immediate regression that looks like a security fix.
+
+=== Status of the surrounding claims
+
+VERIFIED: the handlers extract no identity (33 handlers, zero `Extension`/`TenantContext`/
+`PortIdentity`); the write path does not stamp tenant metadata; the validator drops unlabeled
+results. NOT VERIFIED and still open: whether `graph_operations_service` enforces tenancy
+internally by another route — establish that before characterising the graph surface's
+isolation posture.
