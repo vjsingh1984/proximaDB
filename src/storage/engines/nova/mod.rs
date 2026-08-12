@@ -193,20 +193,16 @@ pub use streaming_processor::{StreamingConfig, StreamingRowGroupProcessor};
 pub use streaming_search::{StreamingSearchConfig, StreamingSearchEngine};
 pub use zone_maps::{AdvancedZoneMap, CostBasedOptimizer, ZoneMapConfig};
 
-use anyhow::Result;
 use arrow_schema::{DataType, Field, Schema};
 // These parquet metadata types are used internally for low-level operations
 // The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::RowGroupMetaData;
 use std::sync::Arc;
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::FilterCondition;
 
 // Import shared columnar infrastructure
-use crate::storage::engines::core::formats::columnar::{
-    ColumnarFileMetadata, MetadataFilter, QuantizationConfig,
-};
+use crate::storage::engines::core::formats::columnar::{ColumnarFileMetadata, QuantizationConfig};
 
 // Use columnar types directly - no aliases needed
 
@@ -233,40 +229,6 @@ pub struct NovaFile {
 
     /// Schema with quantized columns
     pub schema: Arc<Schema>,
-}
-
-/// Main NOVA operations trait with streaming optimizations
-#[allow(async_fn_in_trait)]
-pub trait NovaOperations {
-    /// Streaming progressive search with all optimizations
-    async fn search_streaming(
-        &self,
-        query: &[f32],
-        top_k: usize,
-        filter: Option<MetadataFilter>,
-        config: Option<StreamingSearchConfig>,
-    ) -> Result<streaming_search::StreamingSearchResult>;
-
-    /// Progressive similarity search (legacy compatibility)
-    async fn progressive_search(
-        &self,
-        query: &[f32],
-        top_k: usize,
-        filter: Option<MetadataFilter>,
-    ) -> Result<Vec<VectorRecord>>;
-
-    /// Get vectors by IDs using columnar scanning (no separate index)
-    async fn get_by_ids_columnar(&self, ids: &[String]) -> Result<Vec<VectorRecord>>;
-
-    /// Get enhanced row group statistics
-    fn get_enhanced_stats(&self) -> &[EnhancedRowGroupStats];
-
-    /// Get SuperBlock hierarchy
-    fn get_superblocks(&self) -> &[SuperBlock];
-
-    /// Update statistics based on query patterns
-    async fn update_adaptive_stats(&self, query_patterns: &[zone_maps::QueryPattern])
-    -> Result<()>;
 }
 
 /// Backwards-compat alias for [`NovaRowGroupStats`].

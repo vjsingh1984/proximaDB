@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -26,14 +28,14 @@ class IndexSpecOutput:
     Attributes:
         algorithm (str): Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh".
         is_primary (bool): Whether this is the collection's primary ANN index.
-        hnsw (Union['HnswConfigOutput', None, Unset]):
-        ivf (Union['IvfConfigOutput', None, Unset]):
+        hnsw (HnswConfigOutput | None | Unset):
+        ivf (IvfConfigOutput | None | Unset):
     """
 
     algorithm: str
     is_primary: bool
-    hnsw: Union["HnswConfigOutput", None, Unset] = UNSET
-    ivf: Union["IvfConfigOutput", None, Unset] = UNSET
+    hnsw: HnswConfigOutput | None | Unset = UNSET
+    ivf: IvfConfigOutput | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,7 +46,7 @@ class IndexSpecOutput:
 
         is_primary = self.is_primary
 
-        hnsw: Union[None, Unset, dict[str, Any]]
+        hnsw: dict[str, Any] | None | Unset
         if isinstance(self.hnsw, Unset):
             hnsw = UNSET
         elif isinstance(self.hnsw, HnswConfigOutput):
@@ -52,7 +54,7 @@ class IndexSpecOutput:
         else:
             hnsw = self.hnsw
 
-        ivf: Union[None, Unset, dict[str, Any]]
+        ivf: dict[str, Any] | None | Unset
         if isinstance(self.ivf, Unset):
             ivf = UNSET
         elif isinstance(self.ivf, IvfConfigOutput):
@@ -85,7 +87,7 @@ class IndexSpecOutput:
 
         is_primary = d.pop("is_primary")
 
-        def _parse_hnsw(data: object) -> Union["HnswConfigOutput", None, Unset]:
+        def _parse_hnsw(data: object) -> HnswConfigOutput | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -96,13 +98,13 @@ class IndexSpecOutput:
                 hnsw_type_1 = HnswConfigOutput.from_dict(data)
 
                 return hnsw_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["HnswConfigOutput", None, Unset], data)
+            return cast(HnswConfigOutput | None | Unset, data)
 
         hnsw = _parse_hnsw(d.pop("hnsw", UNSET))
 
-        def _parse_ivf(data: object) -> Union["IvfConfigOutput", None, Unset]:
+        def _parse_ivf(data: object) -> IvfConfigOutput | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -113,9 +115,9 @@ class IndexSpecOutput:
                 ivf_type_1 = IvfConfigOutput.from_dict(data)
 
                 return ivf_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["IvfConfigOutput", None, Unset], data)
+            return cast(IvfConfigOutput | None | Unset, data)
 
         ivf = _parse_ivf(d.pop("ivf", UNSET))
 

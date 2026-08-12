@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -29,15 +31,15 @@ class ProximaRecordInput:
 
         Attributes:
             vector (list[float]): Vector embedding (required)
-            id (Union[None, Unset, str]): Record ID (optional, will be auto-generated if not provided)
-            props (Union['ProximaRecordInputPropsType0', None, Unset]): Canonical rich property map.
-            text_fields (Union[None, Unset, list['TextFieldInput']]): Dedicated TEXT fields with storage hints
+            id (None | str | Unset): Record ID (optional, will be auto-generated if not provided)
+            props (None | ProximaRecordInputPropsType0 | Unset): Canonical rich property map.
+            text_fields (list[TextFieldInput] | None | Unset): Dedicated TEXT fields with storage hints
     """
 
     vector: list[float]
-    id: Union[None, Unset, str] = UNSET
-    props: Union["ProximaRecordInputPropsType0", None, Unset] = UNSET
-    text_fields: Union[None, Unset, list["TextFieldInput"]] = UNSET
+    id: None | str | Unset = UNSET
+    props: None | ProximaRecordInputPropsType0 | Unset = UNSET
+    text_fields: list[TextFieldInput] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,13 +50,13 @@ class ProximaRecordInput:
 
         vector = self.vector
 
-        id: Union[None, Unset, str]
+        id: None | str | Unset
         if isinstance(self.id, Unset):
             id = UNSET
         else:
             id = self.id
 
-        props: Union[None, Unset, dict[str, Any]]
+        props: dict[str, Any] | None | Unset
         if isinstance(self.props, Unset):
             props = UNSET
         elif isinstance(self.props, ProximaRecordInputPropsType0):
@@ -62,7 +64,7 @@ class ProximaRecordInput:
         else:
             props = self.props
 
-        text_fields: Union[None, Unset, list[dict[str, Any]]]
+        text_fields: list[dict[str, Any]] | None | Unset
         if isinstance(self.text_fields, Unset):
             text_fields = UNSET
         elif isinstance(self.text_fields, list):
@@ -100,18 +102,16 @@ class ProximaRecordInput:
         d = dict(src_dict)
         vector = cast(list[float], d.pop("vector"))
 
-        def _parse_id(data: object) -> Union[None, Unset, str]:
+        def _parse_id(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         id = _parse_id(d.pop("id", UNSET))
 
-        def _parse_props(
-            data: object,
-        ) -> Union["ProximaRecordInputPropsType0", None, Unset]:
+        def _parse_props(data: object) -> None | ProximaRecordInputPropsType0 | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -122,15 +122,13 @@ class ProximaRecordInput:
                 props_type_0 = ProximaRecordInputPropsType0.from_dict(data)
 
                 return props_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["ProximaRecordInputPropsType0", None, Unset], data)
+            return cast(None | ProximaRecordInputPropsType0 | Unset, data)
 
         props = _parse_props(d.pop("props", UNSET))
 
-        def _parse_text_fields(
-            data: object,
-        ) -> Union[None, Unset, list["TextFieldInput"]]:
+        def _parse_text_fields(data: object) -> list[TextFieldInput] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -148,9 +146,9 @@ class ProximaRecordInput:
                     text_fields_type_0.append(text_fields_type_0_item)
 
                 return text_fields_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list["TextFieldInput"]], data)
+            return cast(list[TextFieldInput] | None | Unset, data)
 
         text_fields = _parse_text_fields(d.pop("text_fields", UNSET))
 

@@ -1270,6 +1270,7 @@ mod tests {
                     azure_ad: None,
                 },
                 mtls: MtlsConfig::default(),
+                audit_fail_closed: false,
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),

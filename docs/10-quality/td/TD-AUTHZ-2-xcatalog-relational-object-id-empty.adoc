@@ -1,0 +1,138 @@
+= TD-AUTHZ-2: xcatalog.tables returns an empty object_id for SQL-created relational tables
+:status: Open
+:dim: D4
+:pillar: SEC
+
+== Symptom
+
+`SELECT * FROM xcatalog.tables WHERE table_name = '<t>'` over pgwire returns a row whose
+`object_id` column is **empty** when `<t>` is a relational table created through SQL DDL. The
+same column carries a numeric stable id for a vector collection.
+
+Three tests in `tests/abac_relational_transport_e2e.rs` fail on it, all at the same helper
+(`table_object_id`, which parses that column):
+
+* `pgwire_reads_follow_live_rest_policy_provision_and_revoke`
+* `grpc_reads_follow_live_rest_policy_provision_and_revoke`
+* `rest_sql_reads_follow_live_policy_provision_and_revoke`
+
+`ParseIntError { kind: Empty }` — the column is present but blank, not absent.
+
+== How it surfaced (and why it matters beyond three tests)
+
+This suite is `#![cfg(feature = "abac-policy")]` and **had never run in CI**: the integration
+lanes match it with no glob, and no lane passed the feature — without which the file compiles
+to *zero tests* and a run exits 0 having verified nothing. Wiring the lane in #1544 executed
+these tests for the first time and they failed immediately.
+
+So the defect is not new; it is newly *visible*. Anything that depends on a relational
+table's stable object id — policy bindings and grants are both scoped by it — cannot be
+provisioned for a SQL-created table through the introspection path these tests use. Whether
+the object id is genuinely unpopulated for relational tables, or merely not projected into
+`xcatalog.tables`, is the first question to answer; the two have very different blast radii.
+
+NOTE: the test helper reads the column by hardcoded position (`row.get(9)` against
+`SELECT *`), so a projection change would also produce this. That must be ruled out before
+concluding the id itself is missing — the vector-collection path parses the same position
+successfully, which argues for a data difference rather than an index drift, but it is not
+proof.
+
+== Disposition
+
+The three tests carry `#[ignore = "TD-AUTHZ-2: ..."]` with the full reason, so they remain
+visible in every run's ignored count rather than being silently dropped from the lane. They
+must be un-ignored as part of the fix — an ignore that outlives its defect is how a suite goes
+dormant in the first place.
+
+== Investigation 2026-08-08 — five explanations RULED OUT
+
+Static tracing eliminated the cheap explanations. Each is recorded so nobody re-walks them:
+
+. **Positional column drift — RULED OUT.** The helper's `row.get(9)` is correct: the
+  `xcatalog.tables` row is built in
+  `crates/binding/proximadb-catalog-introspection/src/lib.rs:391-427` as
+  `0` catalog, `1` namespace, `2` table_name, `3` schema_kind, `4` storage_engine, `5` layout,
+  `6` table_format, `7` xcatalog_namespace, `8` schema_version, **`9` object_id**. Index 9 IS
+  the object id. (This was the TD's own leading alternative; it is wrong.)
+. **Not persisted — RULED OUT.** `object_id` carries
+  `#[serde(default, skip_serializing_if = "Option::is_none")]`
+  (`crates/control/proximadb-catalog/src/lib.rs:218`), so it round-trips whenever it is `Some`.
+. **Minted after persistence — RULED OUT.** In `NativeCatalog::create_table`
+  (`native.rs:1488`) the mint at `:1507` precedes `save_table` (~`:1551`); the persisted copy
+  therefore carries the id.
+. **SQL DDL bypassing the minting path — RULED OUT.** Both DDL call sites
+  (`src/services/ddl/mod.rs:966`, `:1357`) go through `catalog.create_table`.
+. **Introspection reading a derived/stale source — RULED OUT.** `cataloged_tables`
+  (introspection `lib.rs:1249-1256`) reads `catalog.get_table(&table_id)` directly, and
+  `NativeCatalog::get_table` (`native.rs:~1662`) returns the cached or loaded schema without
+  re-normalizing — so it does not strip the id on read.
+
+The blank is therefore a genuine `schema.object_id == None` reaching
+`unwrap_or_default()`, on a path where all of the above should have set it. That narrows the
+question to something only runtime evidence can answer.
+
+== Runtime evidence 2026-08-09 — NativeCatalog EXONERATED
+
+Two probes ran; both narrow the defect decisively.
+
+**1. Ground truth from the live server.** A temporary probe issued
+`CREATE TABLE probe_… (id INT PRIMARY KEY, value INT)` over pgwire and printed the whole
+`xcatalog.tables` row:
+
+----
+cols=10  [0]="default" [1]="public" [2]="probe_…" [3]="relational"
+         [4]="" [5]="" [6]="" [7]="" [8]="1" [9]=""
+----
+
+The row carries **exactly the 10 columns the projection builds**, so nothing reshapes it on
+the wire — `[9]` is genuinely empty, and `[8]` (schema_version) proves the row is otherwise
+populated. `[4]`–`[7]` are empty because they read `schema.properties` keys a relational table
+does not set; that is expected, not part of this defect.
+
+**2. `NativeCatalog` does NOT lose the id.** The pre-existing
+`create_table_assigns_distinct_monotonic_object_ids` asserts only on the schema `create_table`
+*returns* — it never reads the table back, so **nothing covered the persistence round-trip**.
+The new `object_id_survives_the_get_table_round_trip` closes that gap and **passes**:
+create → persist → load → `get_table` preserves the minted id.
+
+So the mint works, persistence works, the read-back works, and the projection shape is right —
+yet the live server renders empty. The defect is therefore **not in `NativeCatalog` and not in
+the introspection projection**. It is in the wiring between them.
+
+== Next probe (start here, narrowed)
+
+. **Which `Catalog` instance serves each side?** Introspection iterates
+  `catalog_manager.list_catalogs()` → `get_catalog("default")` (the probe row confirms the
+  catalog name is `default`). Establish whether the pgwire DDL path writes to that *same*
+  instance. Two instances over the same data dir would explain everything: one mints and
+  persists, the other answers reads from its own in-memory `self.tables` populated by a
+  different route.
+. **Which impl is behind `default`?** `NativeCatalog` mints; `unity.rs:490` / `polaris.rs:614`
+  do not. Now exonerated as an implementation, `NativeCatalog` being *absent* from that path is
+  the leading hypothesis rather than it being buggy.
+
+== Superseded probe list
+
+== Next probe (runtime, start here)
+
+. Boot the live server the suite uses, `CREATE TABLE` over pgwire, then log the
+  `CatalogTableSchema` that `get_table` returns for it — is `object_id` `None` at the source,
+  or lost between the catalog and the introspection projection?
+. Confirm which `Catalog` impl is actually serving that server. `NativeCatalog` mints; the
+  external impls (`unity.rs:490`, `polaris.rs:614`) do not. If the live server resolves to a
+  non-native catalog for SQL-created tables, that alone explains the blank and the fix belongs
+  at that seam rather than in the projection.
+. Only if both come back clean, suspect the cache: `get_table` returns
+  `self.cache.get_table(..)` before `load_table`, so a schema cached *before* minting would
+  present exactly this way.
+
+== Next action
+
+. Determine whether `object_id` is unpopulated for relational tables or merely unprojected in
+  `xcatalog.tables`.
+. Fix at whichever layer owns it, then remove the three `#[ignore]` attributes in the same PR.
+. Consider replacing the positional `row.get(9)` with a name-addressed lookup so the helper
+  cannot drift silently again.
+
+Related: TD-AUTHZ-1 (ADR-090 program), TD-SEC-2 (the pressure-test register that catalogues
+this same "reports success while covering nothing" defect class).

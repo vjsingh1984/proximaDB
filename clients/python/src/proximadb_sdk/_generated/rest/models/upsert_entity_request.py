@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -27,18 +29,18 @@ T = TypeVar("T", bound="UpsertEntityRequest")
 class UpsertEntityRequest:
     """
     Attributes:
-        embeddings (Union[Unset, list['EntityEmbeddingInput']]):
-        flexible_metadata (Union[Unset, UpsertEntityRequestFlexibleMetadata]):
-        id (Union[Unset, str]): Empty ⇒ the server generates a UUID.
-        provenance (Union['EntityProvenanceInput', None, Unset]):
-        relations (Union[Unset, list['EntityRelationInput']]):
+        embeddings (list[EntityEmbeddingInput] | Unset):
+        flexible_metadata (UpsertEntityRequestFlexibleMetadata | Unset):
+        id (str | Unset): Empty ⇒ the server generates a UUID.
+        provenance (EntityProvenanceInput | None | Unset):
+        relations (list[EntityRelationInput] | Unset):
     """
 
-    embeddings: Union[Unset, list["EntityEmbeddingInput"]] = UNSET
-    flexible_metadata: Union[Unset, "UpsertEntityRequestFlexibleMetadata"] = UNSET
-    id: Union[Unset, str] = UNSET
-    provenance: Union["EntityProvenanceInput", None, Unset] = UNSET
-    relations: Union[Unset, list["EntityRelationInput"]] = UNSET
+    embeddings: list[EntityEmbeddingInput] | Unset = UNSET
+    flexible_metadata: UpsertEntityRequestFlexibleMetadata | Unset = UNSET
+    id: str | Unset = UNSET
+    provenance: EntityProvenanceInput | None | Unset = UNSET
+    relations: list[EntityRelationInput] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,20 +51,20 @@ class UpsertEntityRequest:
             UpsertEntityRequestFlexibleMetadata,
         )
 
-        embeddings: Union[Unset, list[dict[str, Any]]] = UNSET
+        embeddings: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.embeddings, Unset):
             embeddings = []
             for embeddings_item_data in self.embeddings:
                 embeddings_item = embeddings_item_data.to_dict()
                 embeddings.append(embeddings_item)
 
-        flexible_metadata: Union[Unset, dict[str, Any]] = UNSET
+        flexible_metadata: dict[str, Any] | Unset = UNSET
         if not isinstance(self.flexible_metadata, Unset):
             flexible_metadata = self.flexible_metadata.to_dict()
 
         id = self.id
 
-        provenance: Union[None, Unset, dict[str, Any]]
+        provenance: dict[str, Any] | None | Unset
         if isinstance(self.provenance, Unset):
             provenance = UNSET
         elif isinstance(self.provenance, EntityProvenanceInput):
@@ -70,7 +72,7 @@ class UpsertEntityRequest:
         else:
             provenance = self.provenance
 
-        relations: Union[Unset, list[dict[str, Any]]] = UNSET
+        relations: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.relations, Unset):
             relations = []
             for relations_item_data in self.relations:
@@ -103,15 +105,17 @@ class UpsertEntityRequest:
         )
 
         d = dict(src_dict)
-        embeddings = []
         _embeddings = d.pop("embeddings", UNSET)
-        for embeddings_item_data in _embeddings or []:
-            embeddings_item = EntityEmbeddingInput.from_dict(embeddings_item_data)
+        embeddings: list[EntityEmbeddingInput] | Unset = UNSET
+        if _embeddings is not UNSET:
+            embeddings = []
+            for embeddings_item_data in _embeddings:
+                embeddings_item = EntityEmbeddingInput.from_dict(embeddings_item_data)
 
-            embeddings.append(embeddings_item)
+                embeddings.append(embeddings_item)
 
         _flexible_metadata = d.pop("flexible_metadata", UNSET)
-        flexible_metadata: Union[Unset, UpsertEntityRequestFlexibleMetadata]
+        flexible_metadata: UpsertEntityRequestFlexibleMetadata | Unset
         if isinstance(_flexible_metadata, Unset):
             flexible_metadata = UNSET
         else:
@@ -121,9 +125,7 @@ class UpsertEntityRequest:
 
         id = d.pop("id", UNSET)
 
-        def _parse_provenance(
-            data: object,
-        ) -> Union["EntityProvenanceInput", None, Unset]:
+        def _parse_provenance(data: object) -> EntityProvenanceInput | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -134,18 +136,20 @@ class UpsertEntityRequest:
                 provenance_type_1 = EntityProvenanceInput.from_dict(data)
 
                 return provenance_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["EntityProvenanceInput", None, Unset], data)
+            return cast(EntityProvenanceInput | None | Unset, data)
 
         provenance = _parse_provenance(d.pop("provenance", UNSET))
 
-        relations = []
         _relations = d.pop("relations", UNSET)
-        for relations_item_data in _relations or []:
-            relations_item = EntityRelationInput.from_dict(relations_item_data)
+        relations: list[EntityRelationInput] | Unset = UNSET
+        if _relations is not UNSET:
+            relations = []
+            for relations_item_data in _relations:
+                relations_item = EntityRelationInput.from_dict(relations_item_data)
 
-            relations.append(relations_item)
+                relations.append(relations_item)
 
         upsert_entity_request = cls(
             embeddings=embeddings,

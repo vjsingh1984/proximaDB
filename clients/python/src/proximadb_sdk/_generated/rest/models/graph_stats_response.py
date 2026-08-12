@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -18,18 +20,18 @@ T = TypeVar("T", bound="GraphStatsResponse")
 class GraphStatsResponse:
     """
     Attributes:
-        density (Union[None, Unset, float]):
-        edge_count (Union[Unset, int]):
-        node_count (Union[Unset, int]):
+        density (float | None | Unset):
+        edge_count (int | Unset):
+        node_count (int | Unset):
     """
 
-    density: Union[None, Unset, float] = UNSET
-    edge_count: Union[Unset, int] = UNSET
-    node_count: Union[Unset, int] = UNSET
+    density: float | None | Unset = UNSET
+    edge_count: int | Unset = UNSET
+    node_count: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        density: Union[None, Unset, float]
+        density: float | None | Unset
         if isinstance(self.density, Unset):
             density = UNSET
         else:
@@ -55,12 +57,12 @@ class GraphStatsResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
 
-        def _parse_density(data: object) -> Union[None, Unset, float]:
+        def _parse_density(data: object) -> float | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, float], data)
+            return cast(float | None | Unset, data)
 
         density = _parse_density(d.pop("density", UNSET))
 

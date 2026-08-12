@@ -92,9 +92,9 @@
 //! - **Graph Layer**: ORION handles graph traversal pushdown
 //! - **WAL System**: Writers integrate with WAL for transactional guarantees
 
-pub mod pushdown;
+pub use proximadb_pushdown::pushdown;
 pub mod traits;
-pub mod types;
+pub use proximadb_connectors_types::types;
 
 // Compute engine connectors
 pub mod duckdb;

@@ -589,7 +589,9 @@ def test_search_numpy_query(adapter):
     adapter._client._search_ret = [SearchResult(id="a", score=0.1)]
     results = adapter.search("c1", np.array([0.1, 0.2]))
     assert results[0].id == "a"
-    assert isinstance(adapter._client.last_search["query_vector"], list)
+    # The REST search payload uses the `vector` key (not `query_vector`); a numpy
+    # array is normalized to a plain list on the wire.
+    assert isinstance(adapter._client.last_search["vector"], list)
 
 
 def test_search_object_results(adapter):

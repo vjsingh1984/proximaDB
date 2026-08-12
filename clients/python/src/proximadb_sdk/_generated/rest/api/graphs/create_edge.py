@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -20,7 +21,7 @@ def _get_kwargs(
     graph_id: str,
     *,
     body: CreateEdgeRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -29,13 +30,12 @@ def _get_kwargs(
     _kwargs: dict[str, Any] = {
         "method": "post",
         "url": "/api/v2/graphs/{graph_id}/edges".format(
-            graph_id=graph_id,
+            graph_id=quote(str(graph_id), safe=""),
         ),
     }
 
-    _body = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
-    _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
@@ -43,20 +43,23 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[EdgeResponse, ErrorResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> EdgeResponse | ErrorResponse | None:
     if response.status_code == 200:
         response_200 = EdgeResponse.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
+
     if response.status_code == 404:
         response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -64,8 +67,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[EdgeResponse, ErrorResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[EdgeResponse | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -77,15 +80,15 @@ def _build_response(
 def sync_detailed(
     graph_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateEdgeRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[EdgeResponse, ErrorResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[EdgeResponse | ErrorResponse]:
     """Create an edge in a graph.
 
     Args:
         graph_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateEdgeRequest): Wrapped envelope: server expects `{"edge": EdgeInput}`.
 
     Raises:
@@ -93,7 +96,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[EdgeResponse, ErrorResponse]]
+        Response[EdgeResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -112,15 +115,15 @@ def sync_detailed(
 def sync(
     graph_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateEdgeRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[EdgeResponse, ErrorResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> EdgeResponse | ErrorResponse | None:
     """Create an edge in a graph.
 
     Args:
         graph_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateEdgeRequest): Wrapped envelope: server expects `{"edge": EdgeInput}`.
 
     Raises:
@@ -128,7 +131,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[EdgeResponse, ErrorResponse]
+        EdgeResponse | ErrorResponse
     """
 
     return sync_detailed(
@@ -142,15 +145,15 @@ def sync(
 async def asyncio_detailed(
     graph_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateEdgeRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[EdgeResponse, ErrorResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[EdgeResponse | ErrorResponse]:
     """Create an edge in a graph.
 
     Args:
         graph_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateEdgeRequest): Wrapped envelope: server expects `{"edge": EdgeInput}`.
 
     Raises:
@@ -158,7 +161,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[EdgeResponse, ErrorResponse]]
+        Response[EdgeResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -175,15 +178,15 @@ async def asyncio_detailed(
 async def asyncio(
     graph_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: CreateEdgeRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[EdgeResponse, ErrorResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> EdgeResponse | ErrorResponse | None:
     """Create an edge in a graph.
 
     Args:
         graph_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (CreateEdgeRequest): Wrapped envelope: server expects `{"edge": EdgeInput}`.
 
     Raises:
@@ -191,7 +194,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[EdgeResponse, ErrorResponse]
+        EdgeResponse | ErrorResponse
     """
 
     return (

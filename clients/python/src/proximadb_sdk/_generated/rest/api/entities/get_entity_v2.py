@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -19,7 +20,7 @@ def _get_kwargs(
     collection_id: str,
     entity_id: str,
     *,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -28,8 +29,8 @@ def _get_kwargs(
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/api/v2/collections/{collection_id}/entities/{entity_id}".format(
-            collection_id=collection_id,
-            entity_id=entity_id,
+            collection_id=quote(str(collection_id), safe=""),
+            entity_id=quote(str(entity_id), safe=""),
         ),
     }
 
@@ -38,20 +39,23 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[EntityDto, ErrorResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> EntityDto | ErrorResponse | None:
     if response.status_code == 200:
         response_200 = EntityDto.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 404:
         response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -59,8 +63,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[EntityDto, ErrorResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[EntityDto | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -73,21 +77,21 @@ def sync_detailed(
     collection_id: str,
     entity_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[EntityDto, ErrorResponse]]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[EntityDto | ErrorResponse]:
     """
     Args:
         collection_id (str):
         entity_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[EntityDto, ErrorResponse]]
+        Response[EntityDto | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -107,21 +111,21 @@ def sync(
     collection_id: str,
     entity_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[EntityDto, ErrorResponse]]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> EntityDto | ErrorResponse | None:
     """
     Args:
         collection_id (str):
         entity_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[EntityDto, ErrorResponse]
+        EntityDto | ErrorResponse
     """
 
     return sync_detailed(
@@ -136,21 +140,21 @@ async def asyncio_detailed(
     collection_id: str,
     entity_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[EntityDto, ErrorResponse]]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[EntityDto | ErrorResponse]:
     """
     Args:
         collection_id (str):
         entity_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[EntityDto, ErrorResponse]]
+        Response[EntityDto | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -168,21 +172,21 @@ async def asyncio(
     collection_id: str,
     entity_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[EntityDto, ErrorResponse]]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> EntityDto | ErrorResponse | None:
     """
     Args:
         collection_id (str):
         entity_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[EntityDto, ErrorResponse]
+        EntityDto | ErrorResponse
     """
 
     return (

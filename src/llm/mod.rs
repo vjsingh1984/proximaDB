@@ -78,7 +78,7 @@
 //! results = await provider.search_similar(query)
 //! ```
 
-pub mod config;
+pub use proximadb_llm_config::config;
 pub mod embedding;
 pub mod rag;
 pub mod semantic_cache;

@@ -325,7 +325,7 @@ def test_config_preserves_object_store_url(tmp_path: Path) -> None:
     config = config_path.read_text()
     assert f'url = "{storage_url}"' in config
     assert "[storage.optimization]\nenable_mmap = false" in config
-    assert "vector_count_threshold = 20000" in config
+    assert "vector_count_threshold" not in config  # retired knob (#1526)
     assert "flush_floor_predicted_mb = 128" in config
     assert "memory_amplification_factor = 12.0" in config
     assert "memory_budget_fraction = 0.25" in config

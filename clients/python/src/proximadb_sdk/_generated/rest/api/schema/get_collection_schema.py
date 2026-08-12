@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -18,7 +19,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     collection_id: str,
     *,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -27,7 +28,7 @@ def _get_kwargs(
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/api/v2/collections/{collection_id}/schema".format(
-            collection_id=collection_id,
+            collection_id=quote(str(collection_id), safe=""),
         ),
     }
 
@@ -36,16 +37,18 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[ErrorResponse, SchemaResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorResponse | SchemaResponse | None:
     if response.status_code == 200:
         response_200 = SchemaResponse.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 404:
         response_404 = ErrorResponse.from_dict(response.json())
 
         return response_404
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -53,8 +56,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[ErrorResponse, SchemaResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorResponse | SchemaResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -66,9 +69,9 @@ def _build_response(
 def sync_detailed(
     collection_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, SchemaResponse]]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | SchemaResponse]:
     """Get collection schema.
 
      Retrieve the schema definition for a collection.
@@ -88,14 +91,14 @@ def sync_detailed(
 
     Args:
         collection_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, SchemaResponse]]
+        Response[ErrorResponse | SchemaResponse]
     """
 
     kwargs = _get_kwargs(
@@ -113,9 +116,9 @@ def sync_detailed(
 def sync(
     collection_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, SchemaResponse]]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | SchemaResponse | None:
     """Get collection schema.
 
      Retrieve the schema definition for a collection.
@@ -135,14 +138,14 @@ def sync(
 
     Args:
         collection_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, SchemaResponse]
+        ErrorResponse | SchemaResponse
     """
 
     return sync_detailed(
@@ -155,9 +158,9 @@ def sync(
 async def asyncio_detailed(
     collection_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, SchemaResponse]]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | SchemaResponse]:
     """Get collection schema.
 
      Retrieve the schema definition for a collection.
@@ -177,14 +180,14 @@ async def asyncio_detailed(
 
     Args:
         collection_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, SchemaResponse]]
+        Response[ErrorResponse | SchemaResponse]
     """
 
     kwargs = _get_kwargs(
@@ -200,9 +203,9 @@ async def asyncio_detailed(
 async def asyncio(
     collection_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, SchemaResponse]]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | SchemaResponse | None:
     """Get collection schema.
 
      Retrieve the schema definition for a collection.
@@ -222,14 +225,14 @@ async def asyncio(
 
     Args:
         collection_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, SchemaResponse]
+        ErrorResponse | SchemaResponse
     """
 
     return (

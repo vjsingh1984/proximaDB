@@ -13,6 +13,50 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// File-based audit storage implementation
+/// A sink that stores nothing and returns nothing.
+///
+/// Used when auditing is deliberately disabled in a **development** deployment
+/// so the server still boots (see `AuditLogger::noop`). Queries return empty,
+/// which means `count_recent_auth_failures` is always 0 and no alert can fire —
+/// that is the honest consequence of running without audit, and it is why
+/// production mode refuses to start instead of using this sink.
+#[derive(Debug, Default)]
+pub struct NoopAuditStorage;
+
+#[async_trait]
+impl AuditStorage for NoopAuditStorage {
+    async fn store_audit_event(&self, _event: &AuditEvent) -> Result<()> {
+        Ok(())
+    }
+
+    async fn query_events(
+        &self,
+        _event_type: Option<AuditEventType>,
+        _user_id: Option<String>,
+        _since: Option<DateTime<Utc>>,
+        _until: Option<DateTime<Utc>>,
+        _limit: Option<usize>,
+    ) -> Result<Vec<AuditEvent>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_audit_statistics(&self, since: DateTime<Utc>) -> Result<AuditStatistics> {
+        Ok(AuditStatistics {
+            total_events: 0,
+            events_by_type: std::collections::HashMap::new(),
+            unique_users: 0,
+            unique_tenants: 0,
+            success_rate: 0.0,
+            period_start: since,
+            period_end: Utc::now(),
+        })
+    }
+
+    async fn cleanup_old_logs(&self, _retention_days: u32) -> Result<usize> {
+        Ok(0)
+    }
+}
+
 pub struct FileAuditStorage {
     /// Base directory for audit log files
     base_directory: String,
@@ -136,19 +180,19 @@ impl AuditStorage for FileAuditStorage {
                     )
                     .await?;
                 events.extend(file_events);
-
-                // Apply limit if specified
-                if let Some(limit) = limit
-                    && events.len() >= limit
-                {
-                    events.truncate(limit);
-                    break;
-                }
             }
         }
 
-        // Sort by timestamp (newest first)
+        // Sort by timestamp (newest first) BEFORE applying the limit.
+        // Previously the limit truncated during directory iteration and the
+        // sort ran afterwards, so a bounded query returned an ARBITRARY subset
+        // rather than the newest events — which silently defeated
+        // `count_recent_auth_failures` (it asks for the newest 100 to evaluate
+        // the brute-force threshold).
         events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
+        if let Some(limit) = limit {
+            events.truncate(limit);
+        }
 
         debug!("🔍 Queried {} audit events matching criteria", events.len());
         Ok(events)
@@ -1126,5 +1170,55 @@ mod tests {
         for event in &events {
             assert!(event.timestamp == now);
         }
+    }
+}
+
+#[cfg(test)]
+mod td_sec_2_query_tests {
+    use super::*;
+    use proximadb_security::AuditResource;
+
+    /// REGRESSION (TD-SEC-2 A3): `query_events` truncated to `limit` while
+    /// iterating the directory and sorted only afterwards, so a bounded query
+    /// returned an ARBITRARY subset instead of the newest events. That silently
+    /// defeated `count_recent_auth_failures`, which asks for the newest 100 to
+    /// evaluate the brute-force threshold: with enough older events present,
+    /// recent failures could be entirely absent from the sample and the
+    /// threshold could never trip.
+    #[tokio::test]
+    async fn bounded_query_returns_the_newest_events_not_an_arbitrary_subset() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let storage = FileAuditStorage::new(dir.path().to_string_lossy().to_string())
+            .await
+            .expect("storage");
+
+        // 30 events spread over 30 hours; the newest 5 are the ones a bounded
+        // query must return.
+        let now = Utc::now();
+        for age_hours in (0..30).rev() {
+            let mut event = AuditEvent::new(
+                AuditEventType::Authentication,
+                AuditResource::new("authentication".to_string(), "s".to_string()),
+                "authenticate".to_string(),
+                AuditResult::Success,
+            );
+            event.timestamp = now - chrono::Duration::hours(age_hours);
+            event.user_id = Some(format!("user_{age_hours}"));
+            storage.store_audit_event(&event).await.expect("store");
+        }
+
+        let newest = storage
+            .query_events(None, None, None, None, Some(5))
+            .await
+            .expect("query");
+        assert_eq!(newest.len(), 5);
+        // age 0 is the newest; ages 0..4 must be exactly what came back.
+        let mut ages: Vec<i64> = newest
+            .iter()
+            .filter_map(|e| e.user_id.as_ref())
+            .filter_map(|u| u.strip_prefix("user_").and_then(|n| n.parse().ok()))
+            .collect();
+        ages.sort_unstable();
+        assert_eq!(ages, vec![0, 1, 2, 3, 4], "must be the NEWEST five");
     }
 }

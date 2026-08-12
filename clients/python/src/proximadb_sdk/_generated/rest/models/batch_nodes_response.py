@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,18 +25,18 @@ class BatchNodesResponse:
     """Server returns a `GraphResponse<BatchResults<Node>>` envelope.
 
     Attributes:
-        data (Union[Unset, BatchNodesResponseData]):
-        success (Union[Unset, bool]):
+        data (BatchNodesResponseData | Unset):
+        success (bool | Unset):
     """
 
-    data: Union[Unset, "BatchNodesResponseData"] = UNSET
-    success: Union[Unset, bool] = UNSET
+    data: BatchNodesResponseData | Unset = UNSET
+    success: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.batch_nodes_response_data import BatchNodesResponseData
 
-        data: Union[Unset, dict[str, Any]] = UNSET
+        data: dict[str, Any] | Unset = UNSET
         if not isinstance(self.data, Unset):
             data = self.data.to_dict()
 
@@ -56,7 +58,7 @@ class BatchNodesResponse:
 
         d = dict(src_dict)
         _data = d.pop("data", UNSET)
-        data: Union[Unset, BatchNodesResponseData]
+        data: BatchNodesResponseData | Unset
         if isinstance(_data, Unset):
             data = UNSET
         else:

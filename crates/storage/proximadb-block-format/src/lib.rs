@@ -77,6 +77,7 @@ pub mod prune;
 pub mod ranged;
 pub mod reader;
 pub mod record;
+pub mod row_allow;
 pub mod row_dir;
 pub mod rowgroup;
 pub mod stripe;
@@ -87,7 +88,7 @@ pub mod writer;
 
 pub use coalesced_rabitq::{
     CoalescedRaBitQHeader, RABITQ_SEED_BASE, REGION_FIXED_HEADER_LEN, RaBitQRegion, code_stride,
-    encode_region, rank_probed_rows, region_header_len, region_len,
+    encode_region, rank_probed_rows, rank_probed_rows_allowed, region_header_len, region_len,
 };
 pub use coalesced_sq8::{
     CoalescedSq8Header, REGION_SQ8_FIXED_HEADER_LEN, Sq8Region, codes_offset as sq8_codes_offset,
@@ -105,6 +106,7 @@ pub use record::{
     ColumnDescriptor, FlatRow, canonical_columns, col_id, encode_f32_vec_col, encode_i64_col,
     encode_str_col, update_i64_bounds,
 };
+pub use row_allow::RowAllow;
 pub use row_dir::{ROW_ENTRY_SIZE, RowDirectory, RowEntry, row_flags};
 pub use rowgroup::{ROW_GROUP_SIZE, RowGroupBlock, RowGroupEntry};
 pub use stripe::{BlockStats, COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe, SegmentMeta};

@@ -1,0 +1,93 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-FPRUNE-1: filter-aware PAX cascade — phased arc (ADR-089)
+:status: Open
+:dim: D3/D5 (compute-per-modality, object storage)
+:pillar: PERF
+
+Problem: filtered vector search on the PAX path is a whole-object brute-force
+scan — the coalesced cascade declines any query with a filter
+(`src/storage/engines/sst/search/mod.rs:420`) and falls to
+`search_pax_file_exact` (whole-object read, decode-all, per-record post-filter,
+`mod.rs:2448-2553`). Measured vs Qdrant on identical data (TD-CTXCORR-1
+harness): filtered p50 8.0→52.3 ms from 20k→80k rows (O(N)) vs 1.2→1.4 ms
+(flat); **38x at 80k and widening**. Recall parity — the brute force buys
+nothing. ADR-089 decides the fix: metadata-first cell/block pruning (Region-D
+columnar stats) composed with the geometric A0 probe, one pipeline, residual
+filter as the correctness backstop. This TD tracks the phases.
+
+== Phases (each evidence-gated; mixed-read-safe; default-OFF until baked)
+
+* **P1 — wire what exists (no format change): IMPLEMENTED (engine level).**
+  Landed as: `RowAllow` bitset + allow-aware ranking (`rank_allowed`,
+  `rank_probed_rows_allowed`) in `proximadb-block-format`; Stage-F builder
+  `pax_filtered_row_allow` (header/footer → coalesced D-block fetch →
+  conservative `evaluate_block` stats prune (skips DECODE; fetch pruning is
+  P2) → row-accurate `evaluate_filter_proxima` per row — the SAME evaluator as
+  the exact path, so match semantics are identical by construction);
+  `rabitq_search_segment_coalesced_allowed` (pool sized on the allowed count;
+  geometric probe bypassed under a filter — probe∩filter nprobe policy is P3);
+  the `mod.rs:420` gate now routes filtered queries through Stage-F + the
+  restricted cascade behind default-OFF `PROXIMADB_PAX_FILTERED_CASCADE`
+  (fail-safe: any stage-F failure or non-coalesced segment falls back to the
+  exact path; a provably-empty allow-set short-circuits to an empty per-file
+  result). TDD: allow-aware rank equivalence tests (block-format), Stage-F
+  exactness vs an independent decode, filtered-cascade recall vs filtered
+  brute force, gate default-off. Evidence: the engine-level A/B harness
+  (`p1_evidence_filtered_exact_vs_cascade`, ignored — run in release).
+  **P1 residual scope:** P-Shred arming for `filterable` schema columns (user
+  tags live in opaque PROPS msgpack, so stats pruning currently helps only
+  canonical columns — row accuracy comes from the per-row eval either way),
+  and the D-resolve residual check (defense-in-depth; the P1 row set is
+  already row-accurate). **End-to-end server evidence is BLOCKED by
+  TD-FLUSH-8** (auto-flush cannot resolve REST-created collections in the
+  catalog — segments are never produced from the public API, so all corridor
+  measurements to date were memtable-scan measurements).
+* **P2 — footer-resident block stats (zero-GET pruning).** Populate the
+  reserved `StatsKind::MinMax`/`BloomOid` slots in the segment footer block
+  table (`segment_layout.rs:222-262`; today always `StatsKind::None`,
+  `pax_block.rs:2104` — the ADR-062 D5 deferral, now lifted) for filterable
+  columns. Pruning then costs nothing beyond the footer the cascade already
+  reads. Mixed-read-safe by the stats_kind marker.
+* **P3 — per-cell stats (prune before any Region-A byte).** Optional
+  footer/A0 section with per-cell dictionary/zone summaries for filterable
+  columns; intersect with the geometric nprobe cut
+  (`coarse_probe_survivors`, `segment_format.rs:2130-2204`) so metadata-dead
+  cells are never fetched. Strongest when metadata correlates with clustering
+  (tenant/lang); measure the uncorrelated case honestly — P2 block stats carry
+  it. Budget-check against A0's ~120-300 KB envelope.
+* **P4 — stats-driven selectivity policy.** Distinct-hint HLL + null counts +
+  dictionary domains → per-segment selectivity estimate → route: ultra-selective
+  ⇒ direct row fetch + exact rank (no ANN); moderate ⇒ pruned cascade;
+  unselective ⇒ cascade + residual only. This is the real auto
+  `AnnFilteringMode` (closes the TD-073 deferral) and subsumes the AXIS
+  PreFilter/Inline/PostFilter modes as policy over capability.
+
+== Gates (per phase)
+
+* `filtered_recall_at_10` vs exact ground truth (TD-CTXCORR-1 harness) —
+  pruning is conservative; recall must match the unpruned path.
+* Filtered p50/p99 at 20k/80k/1M vs the recorded Qdrant baseline
+  (8.0/52.3 ms → target flat-ish scaling), synthetic partition (uncorrelated)
+  AND Wikipedia lang filter (correlated).
+* `io_trace` `object_gets`/`bytes_read` per filtered query — the pruning win
+  must be visible in the physical-cost counters (feeds TD-CTXCORR-1 Slice 4
+  economics).
+* Mixed-read: new-stats segments and legacy segments coexist in one
+  collection; recovery/readers default to legacy when markers absent.
+
+== Related (non-goals here)
+
+* AXIS REST `ann_filtering_mode` override (WIP branch
+  `feat/axis-rest-filter-mode`; compiles, unit-tested): a diagnostic/benchmark
+  lever for AXIS-indexed collections — NOT this fix. Landing it requires the
+  OpenAPI spec regen + all SDK regens in the same PR (mandate #15) since
+  `TypedSearchRequest` is utoipa-emitted.
+* WAL/unflushed side already filters at scan time
+  (`search_unflushed_vectors`: bloom pre-filter + per-record eval before
+  scoring) — no work needed there.
+* In-memory per-tag payload indexes (Qdrant-style): possible future cache
+  layer above this design; not the foundation (ADR-089 Alternatives).
+
+Refs: ADR-089 (decision + full file:line evidence), ADR-026/-055/-062/-065,
+TD-RDSTRAT-8, TD-CTXCORR-1, TD-073, TD-064, TD-FILT-1.

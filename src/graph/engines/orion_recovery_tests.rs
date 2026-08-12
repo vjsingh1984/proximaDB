@@ -236,6 +236,233 @@ mod td066_replay_scope_tests {
 }
 
 #[cfg(test)]
+mod read_after_restart_tests {
+    //! #1524: ORION edges survived a restart but every read surface answered
+    //! empty, while re-creating the same edge was rejected as a duplicate.
+    //! Three compounding defects, each pinned by a test below:
+    //! 1. WAL replay drove the engine's public insert paths, which re-appended
+    //!    every replayed frame — doubling the WAL per restart.
+    //! 2. The re-appended duplicate `CreateEdge` frame tripped the CSR's
+    //!    duplicate-edge check on the NEXT restart, aborting that graph's
+    //!    recovery entirely (reads then hit a lazily-created empty engine).
+    //! 3. Even when recovery succeeded, the service-level read state
+    //!    (adjacency projection, CSR-freshness epoch, edge counters) was never
+    //!    rebuilt, so endpoint-bound queries and count surfaces stayed blind.
+    use crate::graph::engines::orion::OrionGraphEngine;
+    use crate::graph::service::GraphOperationsService;
+    use crate::proto::proximadb_v1::CreateGraphRequest;
+    use proximadb_graph_model::{Edge, EdgeQuery, Node};
+    use std::sync::Arc;
+
+    fn node(id: &str) -> Node {
+        Node {
+            id: id.to_string(),
+            labels: vec!["Sym".to_string()],
+            ..Default::default()
+        }
+    }
+
+    fn edge(id: &str, from: &str, to: &str) -> Edge {
+        Edge {
+            id: id.to_string(),
+            from_node_id: from.to_string(),
+            to_node_id: to.to_string(),
+            edge_type: "CALLS".to_string(),
+            ..Default::default()
+        }
+    }
+
+    async fn engine(graph_id: &str, base_url: &str) -> OrionGraphEngine {
+        OrionGraphEngine::with_persistence_for_graph(
+            graph_id.to_string(),
+            base_url.to_string(),
+            true,
+            crate::graph::unified_wal_factory(),
+        )
+        .await
+        .expect("engine with persistence")
+    }
+
+    /// Defects 1+2 at the engine layer: replay must not re-append what it
+    /// reads, so a graph recovers identically on EVERY restart, not just the
+    /// first. Before the fix the second recovery replayed a doubled WAL and
+    /// aborted on its own duplicate `CreateEdge` frame.
+    #[tokio::test]
+    async fn repeated_recovery_does_not_amplify_wal() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base_url = format!("file://{}", tmp.path().display());
+        let gid = "restart_amplify";
+
+        {
+            let e = engine(gid, &base_url).await;
+            e.create_node(node("n1")).await.expect("n1");
+            e.create_node(node("n2")).await.expect("n2");
+            e.create_edge(edge("n1|calls|n2", "n1", "n2"))
+                .await
+                .expect("edge");
+            e.flush_wal().await.expect("flush");
+        }
+
+        for restart in 1..=3u32 {
+            let e = engine(gid, &base_url).await;
+            e.recover()
+                .await
+                .expect("recovery must succeed on every restart");
+            assert_eq!(e.memory_pool.nodes.len(), 2, "restart {restart}: nodes");
+            assert_eq!(
+                e.memory_pool.edges.len(),
+                1,
+                "restart {restart}: the edge must be readable after recovery"
+            );
+            let replayed = e
+                .persistence()
+                .expect("persistence configured")
+                .last_replay_applied();
+            assert_eq!(
+                replayed, 3,
+                "restart {restart}: exactly the 3 original frames replay; more means \
+                 replay re-appended frames to the WAL on an earlier restart"
+            );
+            e.flush_wal().await.expect("flush");
+        }
+    }
+
+    /// WALs written BEFORE the re-append fix already carry duplicate
+    /// `CreateEdge` frames. Replay must treat them as no-ops instead of
+    /// aborting recovery and leaving the graph empty.
+    #[tokio::test]
+    async fn recovery_tolerates_poisoned_wal_with_duplicate_edge_frames() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base_url = format!("file://{}", tmp.path().display());
+        let gid = "restart_poisoned";
+
+        {
+            let e = engine(gid, &base_url).await;
+            e.create_node(node("n1")).await.expect("n1");
+            e.create_node(node("n2")).await.expect("n2");
+            let dup = edge("n1|calls|n2", "n1", "n2");
+            e.create_edge(dup.clone()).await.expect("edge");
+            // Poison the WAL the way pre-fix replay did: a second CreateEdge
+            // frame for the same edge.
+            e.persistence()
+                .expect("persistence configured")
+                .write_edge_operation(dup)
+                .await
+                .expect("duplicate frame");
+            e.flush_wal().await.expect("flush");
+        }
+
+        let e = engine(gid, &base_url).await;
+        e.recover()
+            .await
+            .expect("recovery must survive duplicate CreateEdge frames");
+        assert_eq!(e.memory_pool.nodes.len(), 2);
+        assert_eq!(
+            e.memory_pool.edges.len(),
+            1,
+            "duplicate frame applies as a no-op, not an abort"
+        );
+    }
+
+    /// Defect 3 at the service layer: after recovery, endpoint-bound edge
+    /// queries, the adjacency projection, and the stats counters must see the
+    /// recovered edges. Before the fix all three answered zero while the
+    /// engine held the data (and re-creating the edge was rejected as a
+    /// duplicate — no client-side repair path).
+    #[tokio::test]
+    async fn recovered_graph_serves_edge_reads_and_counts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base_url = format!("file://{}", tmp.path().display());
+        let gid = "restart_reads";
+        let collection_service = Arc::new(
+            crate::services::graph_collection::GraphCollectionService::new_with_path(
+                tmp.path().join("graph_collections.json"),
+            ),
+        );
+
+        let service_over =
+            |collection: Arc<crate::services::graph_collection::GraphCollectionService>| {
+                let mut svc = GraphOperationsService::new_with_collection_service(collection);
+                svc.set_base_storage_url(base_url.clone());
+                svc
+            };
+
+        // Session 1: create graph + 3 nodes + 1 edge, verify live read, flush.
+        {
+            let svc = service_over(collection_service.clone());
+            svc.create_graph_collection(CreateGraphRequest {
+                graph_id: gid.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+            for id in ["n1", "n2", "n3"] {
+                svc.create_node(gid, node(id)).await.expect("node");
+            }
+            svc.create_edge(gid, edge("n1|calls|n2", "n1", "n2"))
+                .await
+                .expect("edge");
+            let live = svc
+                .query_edges(
+                    gid,
+                    EdgeQuery {
+                        from_node_id: Some("n1".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("live query");
+            assert_eq!(live.len(), 1, "live endpoint-bound read sees the edge");
+            svc.flush_wal(gid).await.expect("flush");
+        }
+
+        // Sessions 2 and 3: fresh service over the same storage — reads must
+        // see the recovered edge on every restart, not just the first.
+        for restart in 1..=2u32 {
+            let svc = service_over(collection_service.clone());
+            svc.recover_all_graphs().await.expect("recover");
+
+            let recovered = svc
+                .query_edges(
+                    gid,
+                    EdgeQuery {
+                        from_node_id: Some("n1".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .expect("recovered query");
+            assert_eq!(
+                recovered.len(),
+                1,
+                "restart {restart}: endpoint-bound read must see the recovered edge"
+            );
+            assert_eq!(recovered[0].id, "n1|calls|n2");
+
+            assert_eq!(
+                svc.adjacency_projection_edge_count(gid)
+                    .expect("projection count"),
+                1,
+                "restart {restart}: adjacency projection rebuilt from recovery"
+            );
+
+            let stats = svc.get_stats(gid).await.expect("stats");
+            assert_eq!(stats.total_nodes, 3, "restart {restart}: node count");
+            assert_eq!(
+                stats.total_edges, 1,
+                "restart {restart}: edge count surface must not report 0 for a \
+                 populated collection"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod topology_only_snapshot_tests {
     use crate::graph::engines::orion::OrionGraphEngine;
     use proximadb_graph_engine_traits::GraphEngine;

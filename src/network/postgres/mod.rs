@@ -18,9 +18,9 @@ pub mod relational_pipeline;
 /// Session management for PostgreSQL client connections
 pub mod session;
 /// SQL-to-ProximaDB query translator (pgvector compatibility)
-pub mod translator;
+pub use proximadb_pgwire_translator::translator;
 /// PostgreSQL type system mapping and conversions
-pub mod types;
+pub use proximadb_pgwire_translator::types;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

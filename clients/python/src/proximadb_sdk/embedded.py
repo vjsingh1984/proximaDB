@@ -463,6 +463,32 @@ def create_embedding_model(
         )
 
 
+def _collection_field(entry: Any, field: str) -> Any:
+    """Read a collection descriptor field across both payload shapes.
+
+    The v2 REST API returns collection descriptors **flat**::
+
+        {"collection_id": "1", "name": "docs", "dimension": 384, ...}
+
+    Older payloads nested the same fields under ``config``::
+
+        {"config": {"name": "docs", "dimension": 384}}
+
+    This SDK previously assumed the nested form unconditionally, so
+    ``list_collections()`` raised ``KeyError('config')`` and ``get_collection()``
+    returned ``None`` even on a 200 against a live v2 server. Reading either
+    shape keeps both server versions working.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if field in entry:
+        return entry[field]
+    config = entry.get("config")
+    if isinstance(config, dict):
+        return config.get(field)
+    return None
+
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -883,7 +909,6 @@ tags = ["embedded"]
 [storage.wal_config]
 enable_wal = true
 memory_flush_size_bytes = {self.config.memory_flush_size_mb * 1024 * 1024}
-vector_count_threshold = 50000
 
 [storage.sst_config]
 cache_size_mb = {self.config.cache_size_mb}
@@ -1009,6 +1034,7 @@ prefetch_budget = 4
         dimension: int | None = None,
         distance_metric: str = "cosine",
         embedding_model: BaseEmbeddingModel | str | None = None,
+        engine: str | None = None,
     ) -> EmbeddedCollection:
         """Create a new collection.
 
@@ -1016,6 +1042,9 @@ prefetch_budget = 4
             name: Collection name
             dimension: Vector dimension (auto-detected from embedding model if not provided)
             distance_metric: Distance metric (cosine, euclidean, dot)
+            engine: Storage engine ("sst", "helix", "viper", "auto"). Defaults to
+                ``EmbeddedConfig.vector_engine``. Previously never sent, so the
+                server silently applied "auto".
             embedding_model: Embedding model for auto-embedding. Can be:
                 - BaseEmbeddingModel instance
                 - String model name (uses sentence-transformers)
@@ -1062,12 +1091,20 @@ prefetch_budget = 4
         # The canonical v2 endpoint takes a flat body with a STRING distance
         # metric and returns the created collection record (no {success} envelope).
         # An already-existing collection responds 409/CONFLICT, which is benign.
+        # `EmbeddedConfig.vector_engine` existed but was never transmitted, so the
+        # server fell back to `engine = "auto"` and every embedded collection was
+        # created on HELIX regardless of what the caller configured. That is not a
+        # cosmetic default: engine choice gates real capability (for example
+        # `object_economy_eligible` requires "sst"), and PAX-based features such as
+        # the filter-aware cascade only exist on the SST path. Send it.
+        selected_engine = engine or self.config.vector_engine
         async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/collections",
                 json={
                     "name": name,
                     "dimension": dimension,
+                    "engine": selected_engine.lower(),
                     "distance_metric": distance_metric.lower(),
                 },
                 timeout=30.0,
@@ -1100,19 +1137,21 @@ prefetch_budget = 4
         if name in self._collections:
             return self._collections[name]
 
-        async with self._http_client() as client:
-            response = await client.get(
-                f"{self.rest_url}/api/v2/collections/{name}",
-                timeout=10.0,
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("collection"):
-                    dim = data["collection"]["config"]["dimension"]
-                    collection = EmbeddedCollection(name, dim, self)
-                    self._collections[name] = collection
-                    return collection
+        # Resolved from the LIST endpoint rather than GET /collections/{name},
+        # for two reasons:
+        #
+        # 1. GET returns 200 for a collection that does not exist, with
+        #    dimension 0 and a created_at equal to the request instant. Trusting
+        #    it hands back a phantom handle that silently writes nowhere.
+        #    LIST reports only collections that actually exist.
+        # 2. LIST already carries the dimension, so this needs one request, not
+        #    two (GET to fetch + LIST to verify).
+        for entry in await self._collection_entries():
+            if _collection_field(entry, "name") == name:
+                dim = _collection_field(entry, "dimension") or 0
+                collection = EmbeddedCollection(name, int(dim), self)
+                self._collections[name] = collection
+                return collection
 
         return None
 
@@ -1139,12 +1178,8 @@ prefetch_budget = 4
 
             return response.status_code in (200, 204, 404)
 
-    async def list_collections(self) -> list[str]:
-        """List all collections.
-
-        Returns:
-            List of collection names
-        """
+    async def _collection_entries(self) -> list[dict[str, Any]]:
+        """Return the raw collection descriptors from the LIST endpoint."""
         if not self._started:
             await self.start()
 
@@ -1153,13 +1188,16 @@ prefetch_budget = 4
                 f"{self.rest_url}/api/v2/collections",
                 timeout=10.0,
             )
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            entries = data.get("collections", [])
+            return [e for e in entries if isinstance(e, dict)]
 
-            if response.status_code == 200:
-                data = response.json()
-                collections = data.get("collections", [])
-                return [c["config"]["name"] for c in collections]
-
-        return []
+    async def list_collections(self) -> list[str]:
+        """List all collection names."""
+        names = [_collection_field(e, "name") for e in await self._collection_entries()]
+        return [n for n in names if n]
 
     def _to_sql_value(self, value: Any) -> dict[str, Any]:
         """Convert Python value to SqlValue format."""

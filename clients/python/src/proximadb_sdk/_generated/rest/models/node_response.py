@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,13 +25,13 @@ class NodeResponse:
     """
     Attributes:
         id (str):
-        labels (Union[None, Unset, list[str]]):
-        properties (Union['NodeResponsePropertiesType0', None, Unset]):
+        labels (list[str] | None | Unset):
+        properties (NodeResponsePropertiesType0 | None | Unset):
     """
 
     id: str
-    labels: Union[None, Unset, list[str]] = UNSET
-    properties: Union["NodeResponsePropertiesType0", None, Unset] = UNSET
+    labels: list[str] | None | Unset = UNSET
+    properties: NodeResponsePropertiesType0 | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,7 +39,7 @@ class NodeResponse:
 
         id = self.id
 
-        labels: Union[None, Unset, list[str]]
+        labels: list[str] | None | Unset
         if isinstance(self.labels, Unset):
             labels = UNSET
         elif isinstance(self.labels, list):
@@ -46,7 +48,7 @@ class NodeResponse:
         else:
             labels = self.labels
 
-        properties: Union[None, Unset, dict[str, Any]]
+        properties: dict[str, Any] | None | Unset
         if isinstance(self.properties, Unset):
             properties = UNSET
         elif isinstance(self.properties, NodeResponsePropertiesType0):
@@ -75,7 +77,7 @@ class NodeResponse:
         d = dict(src_dict)
         id = d.pop("id")
 
-        def _parse_labels(data: object) -> Union[None, Unset, list[str]]:
+        def _parse_labels(data: object) -> list[str] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -86,15 +88,15 @@ class NodeResponse:
                 labels_type_0 = cast(list[str], data)
 
                 return labels_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list[str]], data)
+            return cast(list[str] | None | Unset, data)
 
         labels = _parse_labels(d.pop("labels", UNSET))
 
         def _parse_properties(
             data: object,
-        ) -> Union["NodeResponsePropertiesType0", None, Unset]:
+        ) -> NodeResponsePropertiesType0 | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -105,9 +107,9 @@ class NodeResponse:
                 properties_type_0 = NodeResponsePropertiesType0.from_dict(data)
 
                 return properties_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["NodeResponsePropertiesType0", None, Unset], data)
+            return cast(NodeResponsePropertiesType0 | None | Unset, data)
 
         properties = _parse_properties(d.pop("properties", UNSET))
 

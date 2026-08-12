@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -22,13 +24,13 @@ class TextFieldOutput:
         content (str): Text content (may be truncated for large content)
         name (str): Field name
         truncated (bool): Whether content was truncated
-        chunk_count (Union[None, Unset, int]): Number of chunks (for chunked storage)
+        chunk_count (int | None | Unset): Number of chunks (for chunked storage)
     """
 
     content: str
     name: str
     truncated: bool
-    chunk_count: Union[None, Unset, int] = UNSET
+    chunk_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,7 +40,7 @@ class TextFieldOutput:
 
         truncated = self.truncated
 
-        chunk_count: Union[None, Unset, int]
+        chunk_count: int | None | Unset
         if isinstance(self.chunk_count, Unset):
             chunk_count = UNSET
         else:
@@ -67,12 +69,12 @@ class TextFieldOutput:
 
         truncated = d.pop("truncated")
 
-        def _parse_chunk_count(data: object) -> Union[None, Unset, int]:
+        def _parse_chunk_count(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         chunk_count = _parse_chunk_count(d.pop("chunk_count", UNSET))
 

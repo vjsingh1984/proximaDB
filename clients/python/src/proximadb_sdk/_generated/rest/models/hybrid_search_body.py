@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -19,17 +21,17 @@ class HybridSearchBody:
     """
     Attributes:
         collection (str):
-        fusion_strategy (Union[Unset, str]):
-        text_query (Union[Unset, str]):
-        top_k (Union[Unset, int]):
-        vector (Union[Unset, list[float]]):
+        fusion_strategy (str | Unset):
+        text_query (str | Unset):
+        top_k (int | Unset):
+        vector (list[float] | Unset):
     """
 
     collection: str
-    fusion_strategy: Union[Unset, str] = UNSET
-    text_query: Union[Unset, str] = UNSET
-    top_k: Union[Unset, int] = UNSET
-    vector: Union[Unset, list[float]] = UNSET
+    fusion_strategy: str | Unset = UNSET
+    text_query: str | Unset = UNSET
+    top_k: int | Unset = UNSET
+    vector: list[float] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,7 +43,7 @@ class HybridSearchBody:
 
         top_k = self.top_k
 
-        vector: Union[Unset, list[float]] = UNSET
+        vector: list[float] | Unset = UNSET
         if not isinstance(self.vector, Unset):
             vector = self.vector
 

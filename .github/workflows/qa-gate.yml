@@ -81,7 +81,7 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -92,8 +92,8 @@ jobs:
           prefix-key: "v1-qa-integration"
       # sccache complements rust-cache: content-addressed per-rustc-invocation, so
       # it hits even when the target/ artifact cache misses (Cargo.lock churn).
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -165,7 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -175,7 +175,7 @@ jobs:
         with:
           prefix-key: "v1-qa-sift"
       - name: Cache SIFT1M corpus (TEXMEX .fvecs — no native dep)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/sift1m
           key: sift1m-texmem-fvecs-v1
@@ -239,7 +239,7 @@ jobs:
             /usr/local/.ghcup \
             /usr/local/share/boost || true
           echo "Disk after reclaim:"; df -h /
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -248,8 +248,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-objstore-qa-tier"
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-qa-tier-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -281,7 +281,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -292,8 +292,8 @@ jobs:
           prefix-key: "v1-qa-cloud-emulator"
       # sccache complements rust-cache: content-addressed per-rustc-invocation, so
       # it hits even when the target/ artifact cache misses (Cargo.lock churn).
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -326,7 +326,7 @@ jobs:
     # baseline AND it stays green.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: llvm-tools-preview
@@ -364,7 +364,7 @@ jobs:
             echo "::warning::no rust baseline yet — emitting current as artifact to seed it"
             cp /tmp/rust-current.json rust-coverage-seed.json
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rust-coverage

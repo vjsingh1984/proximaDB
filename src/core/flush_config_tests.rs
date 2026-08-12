@@ -11,7 +11,6 @@ mod tests {
         // Test size thresholds
         assert_eq!(config.write_buffer_size_mb, 8192); // 8GB global
         assert_eq!(config.memory_flush_size_bytes, 16 * 1024 * 1024); // 16MB per collection
-        assert_eq!(config.vector_count_threshold, 100_000); // 100k vectors per collection
 
         // Test other settings
         assert_eq!(config.memtable_type, "BTree");
@@ -43,7 +42,6 @@ mod tests {
         let config = WriteBufferUserConfig {
             write_buffer_size_mb: 16384,               // 16GB
             memory_flush_size_bytes: 32 * 1024 * 1024, // 32MB
-            vector_count_threshold: 50_000,            // 50k vectors
             memtable_type: "SkipList".to_string(),
             sync_mode: "Periodic".to_string(),
             write_buffer_directory: "/custom/path".to_string(),
@@ -60,7 +58,6 @@ mod tests {
 
         assert_eq!(config.write_buffer_size_mb, 16384);
         assert_eq!(config.memory_flush_size_bytes, 32 * 1024 * 1024);
-        assert_eq!(config.vector_count_threshold, 50_000);
         assert_eq!(config.memtable_type, "SkipList");
         assert_eq!(config.sync_mode, "Periodic");
         assert!(!config.enable_wal);
@@ -117,7 +114,6 @@ mod tests {
         let toml_config = WriteBufferUserConfig {
             write_buffer_size_mb: 8192,
             memory_flush_size_bytes: 16777216, // 16MB
-            vector_count_threshold: 20000,
             memtable_type: "BTree".to_string(),
             sync_mode: "perbatch".to_string(),
             write_buffer_directory: "./test_data/write_buffer".to_string(),
@@ -132,7 +128,6 @@ mod tests {
             toml_config.write_buffer_size_mb * 1024 * 1024,
             8192 * 1024 * 1024
         );
-        assert_eq!(toml_config.vector_count_threshold, 20000);
         assert!(toml_config.enable_wal);
         assert_eq!(
             toml_config.write_buffer_directory,
@@ -198,7 +193,6 @@ mod tests {
         // Per-collection thresholds
         let per_collection_size_mb = config.memory_flush_size_bytes / (1024 * 1024);
         assert_eq!(per_collection_size_mb, 16);
-        assert_eq!(config.vector_count_threshold, 100_000); // Default is 100k
 
         // Global thresholds
         let global_size_mb = config.write_buffer_size_mb;

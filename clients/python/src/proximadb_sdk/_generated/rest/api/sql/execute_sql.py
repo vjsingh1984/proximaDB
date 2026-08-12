@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -19,7 +20,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     body: SqlRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -30,9 +31,8 @@ def _get_kwargs(
         "url": "/api/v2/sql",
     }
 
-    _body = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
-    _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
@@ -40,28 +40,33 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[ErrorResponse, SqlResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorResponse | SqlResponse | None:
     if response.status_code == 200:
         response_200 = SqlResponse.from_dict(response.json())
 
         return response_200
+
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
 
         return response_400
+
     if response.status_code == 408:
         response_408 = ErrorResponse.from_dict(response.json())
 
         return response_408
+
     if response.status_code == 409:
         response_409 = ErrorResponse.from_dict(response.json())
 
         return response_409
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
         return response_500
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -69,8 +74,8 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[ErrorResponse, SqlResponse]]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorResponse | SqlResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -81,10 +86,10 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: SqlRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, SqlResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | SqlResponse]:
     """Execute one authenticated SQL statement.
 
      The required foundation identity is inserted by the root tenant middleware
@@ -92,7 +97,7 @@ def sync_detailed(
     at extraction instead of constructing an anonymous authorization carrier.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (SqlRequest): One SQL statement executed through the shared SQL authority.
 
             Parameter binding is intentionally not advertised yet: the relational
@@ -104,7 +109,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, SqlResponse]]
+        Response[ErrorResponse | SqlResponse]
     """
 
     kwargs = _get_kwargs(
@@ -121,10 +126,10 @@ def sync_detailed(
 
 def sync(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: SqlRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, SqlResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | SqlResponse | None:
     """Execute one authenticated SQL statement.
 
      The required foundation identity is inserted by the root tenant middleware
@@ -132,7 +137,7 @@ def sync(
     at extraction instead of constructing an anonymous authorization carrier.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (SqlRequest): One SQL statement executed through the shared SQL authority.
 
             Parameter binding is intentionally not advertised yet: the relational
@@ -144,7 +149,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, SqlResponse]
+        ErrorResponse | SqlResponse
     """
 
     return sync_detailed(
@@ -156,10 +161,10 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: SqlRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Response[Union[ErrorResponse, SqlResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> Response[ErrorResponse | SqlResponse]:
     """Execute one authenticated SQL statement.
 
      The required foundation identity is inserted by the root tenant middleware
@@ -167,7 +172,7 @@ async def asyncio_detailed(
     at extraction instead of constructing an anonymous authorization carrier.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (SqlRequest): One SQL statement executed through the shared SQL authority.
 
             Parameter binding is intentionally not advertised yet: the relational
@@ -179,7 +184,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[ErrorResponse, SqlResponse]]
+        Response[ErrorResponse | SqlResponse]
     """
 
     kwargs = _get_kwargs(
@@ -194,10 +199,10 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: SqlRequest,
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[Union[ErrorResponse, SqlResponse]]:
+    x_tenant_id: str | Unset = UNSET,
+) -> ErrorResponse | SqlResponse | None:
     """Execute one authenticated SQL statement.
 
      The required foundation identity is inserted by the root tenant middleware
@@ -205,7 +210,7 @@ async def asyncio(
     at extraction instead of constructing an anonymous authorization carrier.
 
     Args:
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
         body (SqlRequest): One SQL statement executed through the shared SQL authority.
 
             Parameter binding is intentionally not advertised yet: the relational
@@ -217,7 +222,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[ErrorResponse, SqlResponse]
+        ErrorResponse | SqlResponse
     """
 
     return (

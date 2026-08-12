@@ -53,12 +53,13 @@ pub struct ProximaDB {
 
 async fn initialize_configured_security(
     config: Option<security::SecurityConfig>,
+    identity_dir: Option<std::path::PathBuf>,
 ) -> anyhow::Result<Option<Arc<security::SecurityCoordinator>>> {
     let Some(config) = config.filter(|config| config.enabled) else {
         return Ok(None);
     };
 
-    let coordinator = security::initialize_security(config)
+    let coordinator = security::initialize_security_with_identity(config, identity_dir)
         .await
         .map_err(|error| anyhow::anyhow!("enabled security initialization failed: {error:#}"))?;
     Ok(Some(Arc::new(coordinator)))
@@ -534,7 +535,11 @@ impl ProximaDB {
 
         // Initialize security coordinator if configured
         let security_config = config.security.clone().filter(|sec_cfg| sec_cfg.enabled);
-        let security = initialize_configured_security(config.security.clone()).await?;
+        let security = initialize_configured_security(
+            config.security.clone(),
+            Some(config.server.data_dir.join("identity")),
+        )
+        .await?;
 
         // Initialize LLM engine if configured
         let llm_engine = if let Some(llm_cfg) = config.llm.clone() {
@@ -1712,6 +1717,7 @@ mod security_initialization_tests {
                     require_client_cert: true,
                     cn_role_mapping: HashMap::new(),
                 },
+                audit_fail_closed: false,
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),
@@ -1736,7 +1742,7 @@ mod security_initialization_tests {
 
     #[tokio::test]
     async fn enabled_security_initialization_failure_is_fatal() {
-        let error = match initialize_configured_security(Some(security_config(true))).await {
+        let error = match initialize_configured_security(Some(security_config(true)), None).await {
             Ok(_) => panic!("enabled invalid security must fail startup"),
             Err(error) => error,
         };
@@ -1746,7 +1752,7 @@ mod security_initialization_tests {
 
     #[tokio::test]
     async fn disabled_security_remains_an_explicit_oss_posture() {
-        let security = initialize_configured_security(Some(security_config(false)))
+        let security = initialize_configured_security(Some(security_config(false)), None)
             .await
             .expect("disabled security must not initialize its invalid providers");
 

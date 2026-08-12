@@ -121,7 +121,7 @@
 
 pub mod execution;
 pub mod optimizer;
-pub mod parser;
+pub use proximadb_query_fusion::parser;
 
 // Re-exports
 pub use execution::{ExecutionResult, FederatedExecutor};

@@ -4,7 +4,8 @@
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
 from http import HTTPStatus
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -18,7 +19,7 @@ def _get_kwargs(
     collection_id: str,
     record_id: str,
     *,
-    x_tenant_id: Union[Unset, str] = UNSET,
+    x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_tenant_id, Unset):
@@ -27,8 +28,8 @@ def _get_kwargs(
     _kwargs: dict[str, Any] = {
         "method": "delete",
         "url": "/api/v2/collections/{collection_id}/records/{record_id}".format(
-            collection_id=collection_id,
-            record_id=record_id,
+            collection_id=quote(str(collection_id), safe=""),
+            record_id=quote(str(record_id), safe=""),
         ),
     }
 
@@ -37,12 +38,13 @@ def _get_kwargs(
 
 
 def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[DeleteRecordV2Response]:
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> DeleteRecordV2Response | None:
     if response.status_code == 200:
         response_200 = DeleteRecordV2Response.from_dict(response.json())
 
         return response_200
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -50,7 +52,7 @@ def _parse_response(
 
 
 def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+    *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Response[DeleteRecordV2Response]:
     return Response(
         status_code=HTTPStatus(response.status_code),
@@ -64,8 +66,8 @@ def sync_detailed(
     collection_id: str,
     record_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
 ) -> Response[DeleteRecordV2Response]:
     """Delete a record by ID.
 
@@ -74,7 +76,7 @@ def sync_detailed(
     Args:
         collection_id (str):
         record_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -101,9 +103,9 @@ def sync(
     collection_id: str,
     record_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[DeleteRecordV2Response]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> DeleteRecordV2Response | None:
     """Delete a record by ID.
 
      Delete a single record by writing a tombstone through the rich record path.
@@ -111,7 +113,7 @@ def sync(
     Args:
         collection_id (str):
         record_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,8 +135,8 @@ async def asyncio_detailed(
     collection_id: str,
     record_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
 ) -> Response[DeleteRecordV2Response]:
     """Delete a record by ID.
 
@@ -143,7 +145,7 @@ async def asyncio_detailed(
     Args:
         collection_id (str):
         record_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,9 +170,9 @@ async def asyncio(
     collection_id: str,
     record_id: str,
     *,
-    client: Union[AuthenticatedClient, Client],
-    x_tenant_id: Union[Unset, str] = UNSET,
-) -> Optional[DeleteRecordV2Response]:
+    client: AuthenticatedClient | Client,
+    x_tenant_id: str | Unset = UNSET,
+) -> DeleteRecordV2Response | None:
     """Delete a record by ID.
 
      Delete a single record by writing a tombstone through the rich record path.
@@ -178,7 +180,7 @@ async def asyncio(
     Args:
         collection_id (str):
         record_id (str):
-        x_tenant_id (Union[Unset, str]):
+        x_tenant_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

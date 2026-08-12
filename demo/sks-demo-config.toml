@@ -20,7 +20,6 @@ tags = ["local", "sks"]
 [storage.wal_config]
 write_buffer_size_mb = 2048
 memory_flush_size_bytes = 16777216  # 16MB
-vector_count_threshold = 50000
 memtable_type = "BTree"
 sync_mode = "PerBatch"
 write_buffer_directory = "./data/sks-demo/wal"

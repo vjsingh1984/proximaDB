@@ -374,6 +374,17 @@ pub struct SharedServices {
     #[cfg(feature = "abac-policy")]
     pub abac_binding_store: Option<Arc<proximadb_abac::FileSystemPolicyBindingStore>>,
 
+    /// Durable ADR-090 grant store handle (L1.1/L1.2). Shared with the live
+    /// enforcer; the admin grant endpoints write through this handle so a
+    /// grant/revoke is hot-visible without restart. `None` when ABAC is off.
+    #[cfg(feature = "abac-policy")]
+    pub abac_grant_store: Option<Arc<proximadb_catalog::grants::FileSystemGrantStore>>,
+
+    /// TD-SEC-2 Slice C: per-tenant security posture store handle.
+    #[cfg(feature = "abac-policy")]
+    pub abac_posture_store:
+        Option<Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>>,
+
     /// Durable ABAC predicate-object store handle (TD-ABAC control-plane /
     /// `abac-policy`). Shared with the live enforcer; the admin predicate-object
     /// endpoints register/revoke through this handle. `None` when ABAC is off.
@@ -498,6 +509,10 @@ struct AbacDurableStores {
     authority: Arc<proximadb_abac::FileSystemAttributeAuthority>,
     bindings: Arc<proximadb_abac::FileSystemPolicyBindingStore>,
     predicate_objects: Arc<proximadb_abac::FileSystemPredicateObjectStore>,
+    /// ADR-090 L1.2: the grant (entitlement) store, in the same durable dir.
+    grants: Arc<proximadb_catalog::grants::FileSystemGrantStore>,
+    /// TD-SEC-2 Slice C: per-tenant security posture, same durable dir.
+    posture: Arc<proximadb_catalog::tenant_posture::FileSystemTenantPostureStore>,
 }
 
 impl SharedServices {
@@ -639,10 +654,29 @@ impl SharedServices {
             "abac-policy: durable ABAC stores active at {} (authority + policy binding store + predicate object store)",
             abac_dir.display()
         );
+        let grants = match proximadb_catalog::grants::FileSystemGrantStore::open(&abac_dir) {
+            Ok(store) => Arc::new(store),
+            Err(error) => {
+                tracing::warn!("abac-policy: could not open grant store: {error}");
+                return None;
+            }
+        };
+        let posture = match proximadb_catalog::tenant_posture::FileSystemTenantPostureStore::open(
+            &abac_dir,
+        ) {
+            Ok(store) => Arc::new(store),
+            Err(error) => {
+                tracing::warn!("abac-policy: could not open tenant posture store: {error}");
+                return None;
+            }
+        };
+
         Some(AbacDurableStores {
             authority,
             bindings,
             predicate_objects,
+            grants,
+            posture,
         })
     }
 
@@ -660,7 +694,9 @@ impl SharedServices {
             stores.predicate_objects.clone(),
             Arc::new(InMemoryPolicyEpochs::new()),
         )
-        .with_binding_store(stores.bindings.clone());
+        .with_binding_store(stores.bindings.clone())
+        .with_grant_store(stores.grants.clone())
+        .with_posture_store(stores.posture.clone());
         Arc::new(enforcer)
     }
 
@@ -2987,6 +3023,10 @@ impl SharedServices {
                 abac_authority: abac_stores.as_ref().map(|s| s.authority.clone()),
                 #[cfg(feature = "abac-policy")]
                 abac_binding_store: abac_stores.as_ref().map(|s| s.bindings.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_grant_store: abac_stores.as_ref().map(|s| s.grants.clone()),
+                #[cfg(feature = "abac-policy")]
+                abac_posture_store: abac_stores.as_ref().map(|s| s.posture.clone()),
                 #[cfg(feature = "abac-policy")]
                 abac_predicate_store: abac_stores.as_ref().map(|s| s.predicate_objects.clone()),
                 #[cfg(feature = "abac-policy")]

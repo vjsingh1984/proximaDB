@@ -33,6 +33,14 @@ try:
 except ImportError:  # pragma: no cover - exercised on Windows runners.
     resource = None  # type: ignore[assignment]
 
+# corpus_io is a sibling module in scripts/bench/. Inject that directory so the
+# import works both when run as a script and when loaded via importlib in tests.
+_BENCH_DIR = str(Path(__file__).resolve().parent)
+if _BENCH_DIR not in sys.path:
+    sys.path.insert(0, _BENCH_DIR)
+
+import corpus_io  # noqa: E402  — path-injected sibling bench module
+
 SCENARIO_ID = "context-corridor-v1"
 TOP_K = 10
 REQUIRED_METRICS = (
@@ -254,7 +262,7 @@ class DatasetDescriptor:
     distance: str  # "cosine" | "l2" — the contract that drives adapter config
     record_count: int
     dataset_hash: str
-    filter_field: str  # the metadata field the filtered corridor filters on
+    filter_field: str | None  # the filter field, or None if the dataset has none
     query_count: int
 
 
@@ -344,6 +352,183 @@ class SyntheticDatasetProvider:
         rng = random.Random(self._seed)
         for index in range(self._record_count):
             yield make_record(index, self._dimension, rng)
+
+    def queries(self) -> list[QueryGroundTruth]:
+        if self._queries is None:
+            self._build()
+        assert self._queries is not None
+        return self._queries
+
+
+class SiftDatasetProvider:
+    """SIFT1M-family provider: the canonical *unfiltered* recall reference.
+
+    Reads local `.fvecs` base/query vectors and `.ivecs` precomputed neighbours
+    (TD-CTXCORR-1 Slice 2b). SIFT has no metadata, so `filter_field` is None and
+    the harness runs unfiltered-only. Distance is L2, per the SIFT convention.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_path: Path | str,
+        query_path: Path | str,
+        groundtruth_path: Path | str,
+        top_k: int,
+    ) -> None:
+        self._base_path = Path(base_path)
+        self._query_path = Path(query_path)
+        self._groundtruth_path = Path(groundtruth_path)
+        self._top_k = top_k
+        self._descriptor: DatasetDescriptor | None = None
+        self._queries: list[QueryGroundTruth] | None = None
+
+    def _dimension_and_count(self) -> tuple[int, int]:
+        first = next(corpus_io.read_fvecs(self._base_path), None)
+        if first is None:
+            return 0, 0
+        dimension = len(first)
+        # int32 header + dimension * float32 per record.
+        record_size = 4 + 4 * dimension
+        return dimension, self._base_path.stat().st_size // record_size
+
+    def _build(self) -> None:
+        query_vectors = list(corpus_io.read_fvecs(self._query_path))
+        groundtruth = list(corpus_io.read_ivecs(self._groundtruth_path))
+        if len(groundtruth) != len(query_vectors):
+            raise ValueError(
+                "SIFT ground-truth row count does not match the query count"
+            )
+        self._queries = [
+            QueryGroundTruth(
+                query={
+                    "id": f"query-{index}",
+                    "vector": vector,
+                    "props": {"ordinal": -1},
+                },
+                unfiltered_truth=frozenset(
+                    f"sift-{neighbour}" for neighbour in neighbours[: self._top_k]
+                ),
+                filtered_truth=frozenset(),
+            )
+            for index, (vector, neighbours) in enumerate(
+                zip(query_vectors, groundtruth)
+            )
+        ]
+        dimension, record_count = self._dimension_and_count()
+        self._descriptor = DatasetDescriptor(
+            name="sift1m",
+            dimension=dimension,
+            distance="l2",
+            record_count=record_count,
+            dataset_hash=corpus_io.sha256_file(self._base_path),
+            filter_field=None,
+            query_count=len(self._queries),
+        )
+
+    def descriptor(self) -> DatasetDescriptor:
+        if self._descriptor is None:
+            self._build()
+        assert self._descriptor is not None
+        return self._descriptor
+
+    def corpus(self) -> Iterator[dict[str, Any]]:
+        for index, vector in enumerate(corpus_io.read_fvecs(self._base_path)):
+            yield {"id": f"sift-{index}", "vector": vector, "props": {"ordinal": index}}
+
+    def queries(self) -> list[QueryGroundTruth]:
+        if self._queries is None:
+            self._build()
+        assert self._queries is not None
+        return self._queries
+
+
+class WikipediaDatasetProvider:
+    """Wikipedia passage-embedding provider: the filtered-corridor driver.
+
+    Reads local `.fvecs` base vectors, a parallel `.jsonl` metadata file (one JSON
+    object per base vector carrying the categorical filter field), and a
+    `queries.jsonl` cache (each query: vector, filter value, and precomputed
+    unfiltered + filtered ground-truth ids). Distance is cosine; the filter is a
+    real content-correlated field (`lang`/`category`) — the differentiating
+    filtered-corridor measurement (TD-CTXCORR-1 Slice 2b-ii-B).
+    """
+
+    system_distance = "cosine"
+
+    def __init__(
+        self,
+        *,
+        base_path: Path | str,
+        meta_path: Path | str,
+        queries_path: Path | str,
+        top_k: int,
+        filter_field: str = "lang",
+    ) -> None:
+        self._base_path = Path(base_path)
+        self._meta_path = Path(meta_path)
+        self._queries_path = Path(queries_path)
+        self._top_k = top_k
+        self._filter_field = filter_field
+        self._descriptor: DatasetDescriptor | None = None
+        self._queries: list[QueryGroundTruth] | None = None
+
+    def _build(self) -> None:
+        queries: list[QueryGroundTruth] = []
+        with open(self._queries_path, encoding="utf-8") as handle:
+            for index, line in enumerate(handle):
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                queries.append(
+                    QueryGroundTruth(
+                        query={
+                            "id": f"query-{index}",
+                            "vector": record["vector"],
+                            "props": {
+                                self._filter_field: record["filter_value"],
+                                "ordinal": -1,
+                            },
+                        },
+                        unfiltered_truth=frozenset(record["unfiltered_truth"]),
+                        filtered_truth=frozenset(record["filtered_truth"]),
+                    )
+                )
+        self._queries = queries
+        first = next(corpus_io.read_fvecs(self._base_path), None)
+        dimension = len(first) if first is not None else 0
+        record_count = (
+            self._base_path.stat().st_size // (4 + 4 * dimension)
+            if dimension
+            else 0
+        )
+        self._descriptor = DatasetDescriptor(
+            name="wikipedia",
+            dimension=dimension,
+            distance=self.system_distance,
+            record_count=record_count,
+            dataset_hash=corpus_io.sha256_file(self._base_path),
+            filter_field=self._filter_field,
+            query_count=len(queries),
+        )
+
+    def descriptor(self) -> DatasetDescriptor:
+        if self._descriptor is None:
+            self._build()
+        assert self._descriptor is not None
+        return self._descriptor
+
+    def corpus(self) -> Iterator[dict[str, Any]]:
+        with open(self._meta_path, encoding="utf-8") as meta_handle:
+            for index, (vector, meta_line) in enumerate(
+                zip(corpus_io.read_fvecs(self._base_path), meta_handle)
+            ):
+                metadata = json.loads(meta_line)
+                yield {
+                    "id": f"wiki-{index}",
+                    "vector": vector,
+                    "props": {**metadata, "ordinal": index},
+                }
 
     def queries(self) -> list[QueryGroundTruth]:
         if self._queries is None:
@@ -648,8 +833,12 @@ class PgvectorAdapter:
             self.connection.close()
 
 
+_QDRANT_DISTANCE = {"cosine": "Cosine", "l2": "Euclid"}
+
+
 class QdrantAdapter:
     system_id = "qdrant"
+    supported_distances = ("cosine", "l2")
 
     def __init__(
         self,
@@ -657,12 +846,19 @@ class QdrantAdapter:
         api_key: str,
         timeout: float,
         collection: str,
+        distance: str = "cosine",
+        filter_field: str | None = "partition",
     ) -> None:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", collection):
             raise ValueError("generated Qdrant collection name is not safe")
+        if distance not in _QDRANT_DISTANCE:
+            raise ValueError(f"unsupported Qdrant distance: {distance}")
         self.base_url = base_url
         self.timeout = timeout
         self.collection = collection
+        self.distance = distance
+        self.filter_field = filter_field
+        self._qdrant_distance = _QDRANT_DISTANCE[distance]
         self.headers = {"api-key": api_key} if api_key else {}
         self.version = "unknown"
         self.query_usage: dict[str, float] = {}
@@ -688,17 +884,19 @@ class QdrantAdapter:
             "PUT",
             f"/collections/{self.collection}",
             {
-                "vectors": {"size": dimension, "distance": "Cosine"},
+                "vectors": {"size": dimension, "distance": self._qdrant_distance},
                 "hnsw_config": {"m": 16, "ef_construct": 100},
             },
         )
         # Qdrant recommends creating payload indexes before ingest so filtered
-        # queries never measure an unindexed payload scan.
-        self._request(
-            "PUT",
-            f"/collections/{self.collection}/index?wait=true",
-            {"field_name": "partition", "field_schema": "keyword"},
-        )
+        # queries never measure an unindexed payload scan. Datasets without a
+        # filter field (e.g. SIFT) skip this.
+        if self.filter_field is not None:
+            self._request(
+                "PUT",
+                f"/collections/{self.collection}/index?wait=true",
+                {"field_name": self.filter_field, "field_schema": "keyword"},
+            )
 
     def insert_batch(self, records: list[dict[str, Any]]) -> None:
         points = [
@@ -769,12 +967,12 @@ class QdrantAdapter:
             "with_payload": ["record_id"],
             "params": {"hnsw_ef": 40, "exact": False},
         }
-        if filtered:
+        if filtered and self.filter_field is not None:
             body["filter"] = {
                 "must": [
                     {
-                        "key": "partition",
-                        "match": {"value": record["props"]["partition"]},
+                        "key": self.filter_field,
+                        "match": {"value": record["props"][self.filter_field]},
                     }
                 ]
             }
@@ -813,10 +1011,14 @@ class QdrantAdapter:
         return {
             "base_url": self.base_url,
             "server_version": self.version,
-            "distance": "cosine",
+            "distance": self.distance,
             "index": "hnsw(m=16,ef_construct=100)",
             "hnsw_ef_search": 40,
-            "filter_index": "keyword(partition)",
+            "filter_index": (
+                f"keyword({self.filter_field})"
+                if self.filter_field is not None
+                else "none"
+            ),
             "query_endpoint": "/points/query",
             "write_visibility": "wait=true per batch",
             "readiness_fence": "green status and empty update queue",
@@ -1461,34 +1663,46 @@ def run_queries(
     queries: list[QueryGroundTruth],
     *,
     warmup_count: int,
-) -> tuple[dict[str, float], list[float]]:
+    supports_filter: bool = True,
+) -> tuple[dict[str, float | None], list[float]]:
+    # When the dataset has no filter field (descriptor.filter_field is None), the
+    # filtered corridor does not apply: run unfiltered-only and report
+    # filtered_recall_at_10 as unavailable (None).
     unfiltered_recall = 0.0
     filtered_recall = 0.0
     measured = 0
-    filtered_latencies: list[float] = []
+    latencies: list[float] = []
     for ordinal, ground_truth in enumerate(queries):
-        unfiltered_ids, _ = adapter.search(ground_truth.query, filtered=False)
-        filtered_ids, filtered_latency = adapter.search(
-            ground_truth.query, filtered=True
+        unfiltered_ids, unfiltered_latency = adapter.search(
+            ground_truth.query, filtered=False
         )
+        if supports_filter:
+            filtered_ids, filtered_latency = adapter.search(
+                ground_truth.query, filtered=True
+            )
+        else:
+            filtered_ids, filtered_latency = [], unfiltered_latency
         if ordinal < warmup_count:
             continue
         measured += 1
-        filtered_latencies.append(filtered_latency)
+        latencies.append(filtered_latency)
         unfiltered_recall += recall_at_k(
             unfiltered_ids[:TOP_K], ground_truth.unfiltered_truth
         )
-        filtered_recall += recall_at_k(
-            filtered_ids[:TOP_K], ground_truth.filtered_truth
-        )
+        if supports_filter:
+            filtered_recall += recall_at_k(
+                filtered_ids[:TOP_K], ground_truth.filtered_truth
+            )
     if measured == 0:
         raise RuntimeError("benchmark produced no measured queries")
     return (
         {
             "recall_at_10": round(unfiltered_recall / measured, 6),
-            "filtered_recall_at_10": round(filtered_recall / measured, 6),
+            "filtered_recall_at_10": (
+                round(filtered_recall / measured, 6) if supports_filter else None
+            ),
         },
-        filtered_latencies,
+        latencies,
     )
 
 
@@ -1580,17 +1794,24 @@ def write_report(path: Path, report: dict[str, Any]) -> None:
     )
 
 
-def make_adapter(args: argparse.Namespace, run_name: str) -> Adapter:
+def make_adapter(
+    args: argparse.Namespace, run_name: str, descriptor: DatasetDescriptor
+) -> Adapter:
     if args.system == "proximadb":
         return ProximaAdapter(args.base_url, args.timeout, run_name)
     if args.system == "pgvector":
         return PgvectorAdapter(args.pg_dsn, run_name)
     if args.system == "qdrant":
+        # Qdrant is descriptor-driven (distance + filter field from the dataset);
+        # other adapters gain this in TD-CTXCORR-1 Slice 2b-ii and stay cosine +
+        # "partition" for now (guarded below).
         return QdrantAdapter(
             args.qdrant_url,
             args.qdrant_api_key,
             args.timeout,
             run_name,
+            distance=descriptor.distance,
+            filter_field=descriptor.filter_field,
         )
     if args.system == "milvus":
         return MilvusAdapter(
@@ -1628,15 +1849,22 @@ def build_provider(args: argparse.Namespace) -> DatasetProvider:
             query_count=args.warmup + args.queries,
             top_k=TOP_K,
         )
-    # SIFT1M (unfiltered reference) and Wikipedia (filtered driver) load local,
-    # checksummed, memory-mapped vectors + precomputed ground truth, and drive the
-    # adapters' distance/filter-field from the descriptor. That IO and the
-    # adapter re-parameterization are TD-CTXCORR-1 Slice 2b.
-    raise NotImplementedError(
-        f"dataset {args.dataset!r} is not wired yet: it needs the fetch + "
-        "precomputed ground-truth loaders and descriptor-driven adapter config "
-        "(TD-CTXCORR-1 Slice 2b)"
-    )
+    if args.dataset == "sift1m":
+        return SiftDatasetProvider(
+            base_path=args.sift_base,
+            query_path=args.sift_query,
+            groundtruth_path=args.sift_groundtruth,
+            top_k=TOP_K,
+        )
+    if args.dataset == "wikipedia":
+        return WikipediaDatasetProvider(
+            base_path=args.wiki_base,
+            meta_path=args.wiki_meta,
+            queries_path=args.wiki_queries,
+            top_k=TOP_K,
+            filter_field=args.wiki_filter_field,
+        )
+    raise ValueError(f"unknown dataset {args.dataset!r}")
 
 
 def main() -> int:
@@ -1702,8 +1930,19 @@ def main() -> int:
         "--dataset",
         choices=("synthetic", "sift1m", "wikipedia"),
         default="synthetic",
-        help="synthetic (deterministic CI/smoke); sift1m/wikipedia = TD-CTXCORR-1 Slice 2b",
+        help="synthetic (deterministic CI/smoke); sift1m (unfiltered reference); wikipedia = Slice 2b-ii-B",
     )
+    parser.add_argument("--sift-base", type=Path, help="SIFT base .fvecs (local, gitignored)")
+    parser.add_argument("--sift-query", type=Path, help="SIFT query .fvecs")
+    parser.add_argument("--sift-groundtruth", type=Path, help="SIFT ground-truth .ivecs")
+    parser.add_argument("--wiki-base", type=Path, help="Wikipedia base .fvecs (local, gitignored)")
+    parser.add_argument("--wiki-meta", type=Path, help="Wikipedia per-vector metadata .jsonl")
+    parser.add_argument(
+        "--wiki-queries",
+        type=Path,
+        help="Wikipedia queries .jsonl (vector + filter_value + precomputed truth)",
+    )
+    parser.add_argument("--wiki-filter-field", default="lang", help="Wikipedia filter field")
     parser.add_argument("--records", type=int, default=1000)
     parser.add_argument("--dimension", type=int, default=32)
     parser.add_argument("--queries", type=int, default=200)
@@ -1732,7 +1971,15 @@ def main() -> int:
     provider = build_provider(args)
     descriptor = provider.descriptor()
     run_name = f"context_bench_{int(time.time())}_{run_rng.randrange(100000):05d}"
-    adapter = make_adapter(args, run_name)
+    adapter = make_adapter(args, run_name, descriptor)
+    supported = getattr(type(adapter), "supported_distances", ("cosine",))
+    if descriptor.distance not in supported:
+        parser.error(
+            f"the {args.system} adapter does not support distance "
+            f"'{descriptor.distance}' required by dataset '{descriptor.name}' yet "
+            "(TD-CTXCORR-1 Slice 2b-ii)"
+        )
+    supports_filter = descriptor.filter_field is not None
     try:
         ingest_seconds = ingest_stream(
             adapter,
@@ -1743,6 +1990,7 @@ def main() -> int:
             adapter,
             provider.queries(),
             warmup_count=args.warmup,
+            supports_filter=supports_filter,
         )
         report = build_report(
             adapter,

@@ -392,16 +392,40 @@ impl UnifiedStorageFormat for SstEngine {
         };
         let fs = self.filesystem().get_filesystem(storage_url)?;
 
+        // A listing failure must not read as "this collection is empty". Discarding
+        // the error here made an unreadable segment directory indistinguishable from
+        // a genuinely empty one, and every caller of this function — scan, and the
+        // TD-112 AXIS rebuild — would then report zero rows with no signal at all.
+        // That silence is expensive: it is usable as a false durability oracle, which
+        // is exactly how it was hit (anvai-labs/proximaDB#1524).
         let mut files = Vec::new();
-        if let Ok(entries) = fs.list(storage_url).await {
-            for entry in &entries {
-                if !entry.metadata.is_directory
-                    && (entry.url.ends_with(".sst")
-                        || entry.url.ends_with(".proximablock")
-                        || entry.url.ends_with(".pax"))
-                {
-                    files.push(entry.url.clone());
+        match fs.list(storage_url).await {
+            Ok(entries) => {
+                for entry in &entries {
+                    if !entry.metadata.is_directory
+                        && (entry.url.ends_with(".sst")
+                            || entry.url.ends_with(".proximablock")
+                            || entry.url.ends_with(".pax"))
+                    {
+                        files.push(entry.url.clone());
+                    }
                 }
+                tracing::debug!(
+                    "sst.read_all_records: {} listed {} entries, {} segment files",
+                    storage_url,
+                    entries.len(),
+                    files.len()
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "sst.read_all_records: cannot list segment directory {} ({}); \
+                     reporting no stored records for collection {} — callers will see \
+                     an empty result that reflects the listing failure, not the data",
+                    storage_url,
+                    e,
+                    collection_id
+                );
             }
         }
         if files.is_empty() {

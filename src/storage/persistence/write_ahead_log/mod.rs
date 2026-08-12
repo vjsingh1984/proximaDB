@@ -115,7 +115,7 @@ pub mod simple_atomic_sync;
 pub mod wal_operations; // WAL operations for vector and graph
 
 // Embedding-precision rollout (PR 4 of EMBEDDING_PRECISION_LLD_2026_05_22).
-pub mod v2_segment_header;
+pub use proximadb_wal_segment_header::v2_segment_header;
 // RETIRED (#1270 + TD-CONFIG-CONSOLIDATE-1 step 3): optimized_path_resolver +
 // atomic_write_buffer_sync modules + their files deleted. They used the removed
 // assignment_service and were commented out ('MARKED FOR REMOVAL') since #1270;
@@ -1062,11 +1062,13 @@ pub(crate) async fn resolve_collection_from_catalog(
         return Some(collection);
     }
 
-    // Fallback: the identifier is an opaque collection id (UUID). Scan the
-    // catalog and match by id or name.
+    // Fallback: the identifier is an opaque collection id. Scan the catalog and
+    // match by id or name. TD-FLUSH-8: use the `["default"]`-guaranteed namespace
+    // walk so this agrees with the write path even when `list_namespaces(None)`
+    // omits `["default"]`.
     let catalog = catalog_manager.default_catalog().await.ok()?;
-    for namespace in catalog.list_namespaces(None).await.ok()? {
-        let Ok(table_ids) = catalog.list_tables(&namespace.levels).await else {
+    for namespace in catalog_default_namespaces(catalog.as_ref()).await {
+        let Ok(table_ids) = catalog.list_tables(&namespace).await else {
             continue;
         };
         for table_id in table_ids {
@@ -1102,12 +1104,25 @@ pub(crate) async fn list_collections_from_catalog() -> Vec<crate::proto::proxima
     let Ok(catalog) = catalog_manager.default_catalog().await else {
         return Vec::new();
     };
+    collections_from_catalog_walk(catalog.as_ref()).await
+}
+
+/// TD-FLUSH-8: the catalog walk behind [`list_collections_from_catalog`],
+/// factored over `&dyn Catalog` so the flush-side listing is testable without
+/// global state. Enumerates namespaces the SAME way the write path's
+/// `read_collections_from_catalog` does — always including `["default"]`, even
+/// when `list_namespaces(None)` omits it (a reload/visibility gap) — and dedups
+/// by id. Without the fallback this walk was strictly weaker than the write
+/// path: a collection that resolved on INSERT was invisible to the auto-flush
+/// driver (`no catalog metadata for '1'`), so time-triggered (RPO) flushes for
+/// it never fired. The catalog is the identity authority; both paths must agree.
+async fn collections_from_catalog_walk(
+    catalog: &dyn proximadb_catalog::Catalog,
+) -> Vec<crate::proto::proximadb_v1::Collection> {
     let mut collections = Vec::new();
-    let Ok(namespaces) = catalog.list_namespaces(None).await else {
-        return collections;
-    };
-    for namespace in namespaces {
-        let Ok(table_ids) = catalog.list_tables(&namespace.levels).await else {
+    let mut seen_ids = std::collections::HashSet::new();
+    for namespace in catalog_default_namespaces(catalog).await {
+        let Ok(table_ids) = catalog.list_tables(&namespace).await else {
             continue;
         };
         for table_id in table_ids {
@@ -1118,12 +1133,32 @@ pub(crate) async fn list_collections_from_catalog() -> Vec<crate::proto::proxima
                 crate::storage::metadata::collection_mapping::collection_from_catalog_schema(
                     &table_id, &schema,
                 )
+                && seen_ids.insert(collection.id.clone())
             {
                 collections.push(collection);
             }
         }
     }
     collections
+}
+
+/// TD-FLUSH-8: the namespaces to walk when the catalog is the authority for the
+/// full collection set — every namespace `list_namespaces(None)` reports, plus a
+/// guaranteed `["default"]` even when the listing omits it (mirrors the write
+/// path's `read_collections_from_catalog`, `manager.rs:2592-2601`). Shared by the
+/// list + resolve free functions so they can never disagree with the write path.
+async fn catalog_default_namespaces(catalog: &dyn proximadb_catalog::Catalog) -> Vec<Vec<String>> {
+    let mut namespaces: Vec<Vec<String>> = catalog
+        .list_namespaces(None)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|namespace| namespace.levels)
+        .collect();
+    if !namespaces.iter().any(|namespace| namespace == &["default"]) {
+        namespaces.push(vec!["default".to_string()]);
+    }
+    namespaces
 }
 
 /// Get the global write buffer behavior singleton if it has been initialized
@@ -3951,5 +3986,108 @@ mod optimization_validation_tests {
         debug!("   Batch hint: {:?}", context.batch_size_hint);
         debug!("   Priority: {:?}", context.priority);
         debug!("🎉 Context contains all required metadata for background operations!");
+    }
+}
+
+#[cfg(test)]
+mod td_flush_8_catalog_walk_tests {
+    use super::{catalog_default_namespaces, collections_from_catalog_walk};
+    use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
+
+    /// Build the exact production gap shape (TD-FLUSH-8): a collection table
+    /// registered under `["default"]` while `list_namespaces(None)` does NOT
+    /// report the `default` namespace (here: the mock's configured database is
+    /// `other`, and `create_table` — like a reload/visibility gap — does not
+    /// re-register the namespace).
+    async fn catalog_with_unlisted_default_collection() -> proximadb_catalog::hive::HiveCatalog {
+        let cache = std::sync::Arc::new(proximadb_catalog::cache::CatalogCache::new(16, 60));
+        let config = proximadb_catalog::hive::HiveCatalogConfig {
+            database: "other".to_string(),
+            ..Default::default()
+        };
+        let catalog = proximadb_catalog::hive::HiveCatalog::new("t".to_string(), config, cache)
+            .await
+            .expect("mock hive catalog");
+
+        let mut schema = CatalogTableSchema {
+            name: "diag_coll".to_string(),
+            // `validate_schema` requires at least one column.
+            columns: vec![proximadb_catalog::CatalogColumn {
+                id: 1,
+                object_id: None,
+                name: "oid".to_string(),
+                data_type: proximadb_data_model::ProximaType::String,
+                nullable: false,
+                default_value: None,
+                comment: None,
+                properties: Default::default(),
+                is_deleted: false,
+                original_id: None,
+            }],
+            ..Default::default()
+        };
+        schema
+            .properties
+            .insert("asset.kind".to_string(), "collection".to_string());
+        schema
+            .properties
+            .insert("collection.id".to_string(), "1".to_string());
+        schema
+            .properties
+            .insert("collection.name".to_string(), "diag_coll".to_string());
+        let table_id = TableIdentifier::new(vec!["default".to_string()], "diag_coll");
+        catalog
+            .create_table(&table_id, schema)
+            .await
+            .expect("register collection table under default");
+        catalog
+    }
+
+    /// The namespace walk must ALWAYS include `["default"]`, mirroring the
+    /// write path's `read_collections_from_catalog` — this is the mechanism
+    /// that keeps the flush-side listing in agreement with the write path.
+    #[tokio::test]
+    async fn namespace_walk_always_includes_default() {
+        let catalog = catalog_with_unlisted_default_collection().await;
+
+        // Precondition: the fixture really reproduces the gap — the namespace
+        // listing omits `default` while the table under it is resolvable.
+        let listed: Vec<Vec<String>> = catalog
+            .list_namespaces(None)
+            .await
+            .expect("list namespaces")
+            .into_iter()
+            .map(|namespace| namespace.levels)
+            .collect();
+        assert!(
+            !listed.iter().any(|namespace| namespace == &["default"]),
+            "fixture must omit the default namespace from the listing, got {listed:?}"
+        );
+
+        let walked = catalog_default_namespaces(&catalog).await;
+        assert!(
+            walked.iter().any(|namespace| namespace == &["default"]),
+            "the walk must include [\"default\"] even when the listing omits it"
+        );
+    }
+
+    /// TD-FLUSH-8 regression: the flush-side catalog list must find a
+    /// collection whose namespace is missing from `list_namespaces` — the
+    /// exact state where the auto-flush driver previously logged
+    /// `no catalog metadata for '1'` every tick and never flushed (while the
+    /// write path resolved the same collection fine).
+    #[tokio::test]
+    async fn flush_side_list_finds_collection_in_unlisted_default_namespace() {
+        let catalog = catalog_with_unlisted_default_collection().await;
+
+        let collections = collections_from_catalog_walk(&catalog).await;
+        assert!(
+            collections.iter().any(|collection| collection.id == "1"),
+            "the WAL id '1' must be catalog-resolvable by the flush-side walk; got ids {:?}",
+            collections
+                .iter()
+                .map(|collection| collection.id.clone())
+                .collect::<Vec<_>>()
+        );
     }
 }

@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -24,7 +26,7 @@ class TextFieldInput:
         Attributes:
             content (str): Text content
             name (str): Field name
-            storage_hint (Union[None, Unset, str]): Storage strategy hint
+            storage_hint (None | str | Unset): Storage strategy hint
 
                 - "inline": Store inline in main column (<4KB)
                 - "chunked": Split into chunks with embeddings (4KB-1MB)
@@ -34,7 +36,7 @@ class TextFieldInput:
 
     content: str
     name: str
-    storage_hint: Union[None, Unset, str] = UNSET
+    storage_hint: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,7 +44,7 @@ class TextFieldInput:
 
         name = self.name
 
-        storage_hint: Union[None, Unset, str]
+        storage_hint: None | str | Unset
         if isinstance(self.storage_hint, Unset):
             storage_hint = UNSET
         else:
@@ -68,12 +70,12 @@ class TextFieldInput:
 
         name = d.pop("name")
 
-        def _parse_storage_hint(data: object) -> Union[None, Unset, str]:
+        def _parse_storage_hint(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         storage_hint = _parse_storage_hint(d.pop("storage_hint", UNSET))
 

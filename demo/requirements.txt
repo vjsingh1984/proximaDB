@@ -42,8 +42,8 @@ mypy>=1.0.0
 
 # BERT embeddings for real-world demos
 sentence-transformers>=2.2.0
-torch>=1.13.0
+torch>=2.13.0
 
 # LLM support for RAG demo
-transformers>=4.30.0
+transformers>=5.14.1
 sentencepiece>=0.1.99

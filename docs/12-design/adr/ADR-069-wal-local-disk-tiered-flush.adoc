@@ -62,8 +62,11 @@ current implementation inventory. The reconciled shipped/residual inventory is i
   `memory_flush_size_bytes` (`bincode_serialization_strategy.rs:279`, `memtable_manager.rs:177`) or via
   `Database::force_flush_collection()`. `WalPerformanceConfig` (`write_ahead_log/config.rs:78`) carries a
   `global_flush_threshold` (enforcement unclear) and — importantly — **no time-based and no
-  disk-capacity/watermark trigger exists**. (`vector_count_threshold` is parsed but is *not* wired as a
-  flush trigger; `sync_interval_seconds` controls fsync cadence, **not** memtable flush.)
+  disk-capacity/watermark trigger exists**. (`vector_count_threshold` was parsed but *never* wired as a
+  flush trigger — **retired 2026-08 (#1526)**: the field and its dead `batch_threshold` copy were removed
+  rather than wired, since a record-count trigger would fight the TD-FLUSH-3 predicted-byte segment floor,
+  and this ADR's size/time/capacity envelope covers the intent; old TOMLs carrying the key still parse
+  (unknown keys are ignored). `sync_interval_seconds` controls fsync cadence, **not** memtable flush.)
 * **Truncation exists but is marker-gated.** `UnifiedWALWriter::truncate_through_canonical_marker(lsn)`
   (`wal_operations.rs:692`) deletes WAL segments below a `CanonicalEmission` marker — but the marker is
   emitted after downstream durability confirmation, so **under sustained flush lag without marker emission

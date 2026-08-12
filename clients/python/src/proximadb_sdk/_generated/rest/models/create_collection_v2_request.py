@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -48,18 +50,18 @@ class CreateCollectionV2Request:
         Attributes:
             dimension (int): Vector dimension (required)
             name (str): Collection name (required)
-            canonical_embedding_precision (Union[None, Unset, str]): Canonical embedding precision for stored vectors
+            canonical_embedding_precision (None | str | Unset): Canonical embedding precision for stored vectors
 
                 Options: "fp32" (default), "fp16", "bf16", "int8", "uint8".
                 Accepts the same string forms as the gRPC / Arrow Flight surfaces
                 (e.g. "half", "float16", "EMBEDDING_PRECISION_FP16"). The DDL
                 service applies the same normalisation, so SDKs and pgwire
                 converge on the same enum discriminant.
-            distance_metric (Union[None, Unset, str]): Distance metric for vector similarity
+            distance_metric (None | str | Unset): Distance metric for vector similarity
 
                 Options: "cosine", "euclidean", "dot_product"
                 Default: "cosine"
-            enable_proxima_record (Union[None, Unset, bool]): Enable ProximaRecord support for this collection
+            enable_proxima_record (bool | None | Unset): Enable ProximaRecord support for this collection
 
                 When enabled:
                 - Records can use rich props and text_fields
@@ -67,37 +69,37 @@ class CreateCollectionV2Request:
                 - TEXT columns are stored in dedicated columnar format
 
                 Default: false (backward compatible with v1)
-            engine (Union[None, Unset, str]): Storage engine selection
+            engine (None | str | Unset): Storage engine selection
 
                 Options: "auto", "sst", "helix", "viper", "swift", "nova", "raptor", "tst"
                 Default: "auto" (system selects optimal engine)
-            index_configs (Union[None, Unset, list['IndexConfigInput']]): Index configurations (e.g. an explicit IVF or HNSW
+            index_configs (list[IndexConfigInput] | None | Unset): Index configurations (e.g. an explicit IVF or HNSW
                 index).
 
                 Restores v1 parity: the v1 proto create accepted `index_configs`, which
                 drive `active_algorithm_for` (e.g. an IVF index → recall-tune dispatches
                 to the IVF arm). When omitted, the engine selects a default (HNSW).
-            index_policy (Union['IndexPolicyInput', None, Unset]):
-            initial_capacity (Union[None, Unset, int]): Initial capacity hint for pre-allocation
-            quantization (Union['QuantizationConfigInput', None, Unset]):
-            schema (Union['SchemaDefinition', None, Unset]):
-            tags (Union[None, Unset, list[str]]): Operator metadata tags, e.g. `"recall_target:0.95"`,
+            index_policy (IndexPolicyInput | None | Unset):
+            initial_capacity (int | None | Unset): Initial capacity hint for pre-allocation
+            quantization (None | QuantizationConfigInput | Unset):
+            schema (None | SchemaDefinition | Unset):
+            tags (list[str] | None | Unset): Operator metadata tags, e.g. `"recall_target:0.95"`,
                 `"target_vector_count:1000"`, `"modalities:text,image"`. Consumed by the
                 recall advisor / route-health (`services/collection/recall_target.rs`).
     """
 
     dimension: int
     name: str
-    canonical_embedding_precision: Union[None, Unset, str] = UNSET
-    distance_metric: Union[None, Unset, str] = UNSET
-    enable_proxima_record: Union[None, Unset, bool] = UNSET
-    engine: Union[None, Unset, str] = UNSET
-    index_configs: Union[None, Unset, list["IndexConfigInput"]] = UNSET
-    index_policy: Union["IndexPolicyInput", None, Unset] = UNSET
-    initial_capacity: Union[None, Unset, int] = UNSET
-    quantization: Union["QuantizationConfigInput", None, Unset] = UNSET
-    schema: Union["SchemaDefinition", None, Unset] = UNSET
-    tags: Union[None, Unset, list[str]] = UNSET
+    canonical_embedding_precision: None | str | Unset = UNSET
+    distance_metric: None | str | Unset = UNSET
+    enable_proxima_record: bool | None | Unset = UNSET
+    engine: None | str | Unset = UNSET
+    index_configs: list[IndexConfigInput] | None | Unset = UNSET
+    index_policy: IndexPolicyInput | None | Unset = UNSET
+    initial_capacity: int | None | Unset = UNSET
+    quantization: None | QuantizationConfigInput | Unset = UNSET
+    schema: None | SchemaDefinition | Unset = UNSET
+    tags: list[str] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,31 +112,31 @@ class CreateCollectionV2Request:
 
         name = self.name
 
-        canonical_embedding_precision: Union[None, Unset, str]
+        canonical_embedding_precision: None | str | Unset
         if isinstance(self.canonical_embedding_precision, Unset):
             canonical_embedding_precision = UNSET
         else:
             canonical_embedding_precision = self.canonical_embedding_precision
 
-        distance_metric: Union[None, Unset, str]
+        distance_metric: None | str | Unset
         if isinstance(self.distance_metric, Unset):
             distance_metric = UNSET
         else:
             distance_metric = self.distance_metric
 
-        enable_proxima_record: Union[None, Unset, bool]
+        enable_proxima_record: bool | None | Unset
         if isinstance(self.enable_proxima_record, Unset):
             enable_proxima_record = UNSET
         else:
             enable_proxima_record = self.enable_proxima_record
 
-        engine: Union[None, Unset, str]
+        engine: None | str | Unset
         if isinstance(self.engine, Unset):
             engine = UNSET
         else:
             engine = self.engine
 
-        index_configs: Union[None, Unset, list[dict[str, Any]]]
+        index_configs: list[dict[str, Any]] | None | Unset
         if isinstance(self.index_configs, Unset):
             index_configs = UNSET
         elif isinstance(self.index_configs, list):
@@ -146,7 +148,7 @@ class CreateCollectionV2Request:
         else:
             index_configs = self.index_configs
 
-        index_policy: Union[None, Unset, dict[str, Any]]
+        index_policy: dict[str, Any] | None | Unset
         if isinstance(self.index_policy, Unset):
             index_policy = UNSET
         elif isinstance(self.index_policy, IndexPolicyInput):
@@ -154,13 +156,13 @@ class CreateCollectionV2Request:
         else:
             index_policy = self.index_policy
 
-        initial_capacity: Union[None, Unset, int]
+        initial_capacity: int | None | Unset
         if isinstance(self.initial_capacity, Unset):
             initial_capacity = UNSET
         else:
             initial_capacity = self.initial_capacity
 
-        quantization: Union[None, Unset, dict[str, Any]]
+        quantization: dict[str, Any] | None | Unset
         if isinstance(self.quantization, Unset):
             quantization = UNSET
         elif isinstance(self.quantization, QuantizationConfigInput):
@@ -168,7 +170,7 @@ class CreateCollectionV2Request:
         else:
             quantization = self.quantization
 
-        schema: Union[None, Unset, dict[str, Any]]
+        schema: dict[str, Any] | None | Unset
         if isinstance(self.schema, Unset):
             schema = UNSET
         elif isinstance(self.schema, SchemaDefinition):
@@ -176,7 +178,7 @@ class CreateCollectionV2Request:
         else:
             schema = self.schema
 
-        tags: Union[None, Unset, list[str]]
+        tags: list[str] | None | Unset
         if isinstance(self.tags, Unset):
             tags = UNSET
         elif isinstance(self.tags, list):
@@ -228,51 +230,47 @@ class CreateCollectionV2Request:
 
         name = d.pop("name")
 
-        def _parse_canonical_embedding_precision(
-            data: object,
-        ) -> Union[None, Unset, str]:
+        def _parse_canonical_embedding_precision(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         canonical_embedding_precision = _parse_canonical_embedding_precision(
             d.pop("canonical_embedding_precision", UNSET)
         )
 
-        def _parse_distance_metric(data: object) -> Union[None, Unset, str]:
+        def _parse_distance_metric(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         distance_metric = _parse_distance_metric(d.pop("distance_metric", UNSET))
 
-        def _parse_enable_proxima_record(data: object) -> Union[None, Unset, bool]:
+        def _parse_enable_proxima_record(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, bool], data)
+            return cast(bool | None | Unset, data)
 
         enable_proxima_record = _parse_enable_proxima_record(
             d.pop("enable_proxima_record", UNSET)
         )
 
-        def _parse_engine(data: object) -> Union[None, Unset, str]:
+        def _parse_engine(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         engine = _parse_engine(d.pop("engine", UNSET))
 
-        def _parse_index_configs(
-            data: object,
-        ) -> Union[None, Unset, list["IndexConfigInput"]]:
+        def _parse_index_configs(data: object) -> list[IndexConfigInput] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -290,13 +288,13 @@ class CreateCollectionV2Request:
                     index_configs_type_0.append(index_configs_type_0_item)
 
                 return index_configs_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list["IndexConfigInput"]], data)
+            return cast(list[IndexConfigInput] | None | Unset, data)
 
         index_configs = _parse_index_configs(d.pop("index_configs", UNSET))
 
-        def _parse_index_policy(data: object) -> Union["IndexPolicyInput", None, Unset]:
+        def _parse_index_policy(data: object) -> IndexPolicyInput | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -307,24 +305,22 @@ class CreateCollectionV2Request:
                 index_policy_type_1 = IndexPolicyInput.from_dict(data)
 
                 return index_policy_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["IndexPolicyInput", None, Unset], data)
+            return cast(IndexPolicyInput | None | Unset, data)
 
         index_policy = _parse_index_policy(d.pop("index_policy", UNSET))
 
-        def _parse_initial_capacity(data: object) -> Union[None, Unset, int]:
+        def _parse_initial_capacity(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         initial_capacity = _parse_initial_capacity(d.pop("initial_capacity", UNSET))
 
-        def _parse_quantization(
-            data: object,
-        ) -> Union["QuantizationConfigInput", None, Unset]:
+        def _parse_quantization(data: object) -> None | QuantizationConfigInput | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -335,13 +331,13 @@ class CreateCollectionV2Request:
                 quantization_type_1 = QuantizationConfigInput.from_dict(data)
 
                 return quantization_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["QuantizationConfigInput", None, Unset], data)
+            return cast(None | QuantizationConfigInput | Unset, data)
 
         quantization = _parse_quantization(d.pop("quantization", UNSET))
 
-        def _parse_schema(data: object) -> Union["SchemaDefinition", None, Unset]:
+        def _parse_schema(data: object) -> None | SchemaDefinition | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -352,13 +348,13 @@ class CreateCollectionV2Request:
                 schema_type_1 = SchemaDefinition.from_dict(data)
 
                 return schema_type_1
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union["SchemaDefinition", None, Unset], data)
+            return cast(None | SchemaDefinition | Unset, data)
 
         schema = _parse_schema(d.pop("schema", UNSET))
 
-        def _parse_tags(data: object) -> Union[None, Unset, list[str]]:
+        def _parse_tags(data: object) -> list[str] | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -369,9 +365,9 @@ class CreateCollectionV2Request:
                 tags_type_0 = cast(list[str], data)
 
                 return tags_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(Union[None, Unset, list[str]], data)
+            return cast(list[str] | None | Unset, data)
 
         tags = _parse_tags(d.pop("tags", UNSET))
 

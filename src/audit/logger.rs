@@ -63,6 +63,30 @@ impl std::fmt::Debug for AuditLogger {
 }
 
 impl AuditLogger {
+    /// An audit logger that discards events.
+    ///
+    /// Deliberately NOT reachable by simply disabling auditing: [`Self::new`]
+    /// still returns `Err` for a disabled config (a contract other code and
+    /// tests rely on). The composition root chooses this sink only for a
+    /// **development** deployment, so that `security.enabled = true` with the
+    /// shipped default `enable_audit_logging = false` boots instead of failing
+    /// hard — while a production deployment keeps failing fast, because
+    /// security without accountability is a misconfiguration there.
+    pub fn noop(config: AuditConfig) -> Self {
+        Self {
+            storage: Arc::new(super::storage::NoopAuditStorage),
+            config,
+            // Encryption is irrelevant for a sink that stores nothing; the
+            // disabled path is infallible, and the unwrap_or keeps `noop`
+            // total (no Result) without an unwrap/expect.
+            encryption_key: Arc::new(EncryptionKey::new(false).unwrap_or(EncryptionKey {
+                key: [0u8; 32],
+                algorithm: EncryptionAlgorithm::AES256GCM,
+            })),
+            alert_sender: None,
+        }
+    }
+
     /// Create new audit logger with configuration
     pub async fn new(config: AuditConfig) -> Result<Self> {
         if !config.enable_audit_logging {
@@ -164,6 +188,7 @@ impl AuditLogger {
                 resource_type: "authentication".to_string(),
                 resource_id: "system".to_string(),
                 parent_resource: None,
+                resource_tenant_id: None,
             },
             action: format!("authenticate_{}", authentication_method),
             result,
@@ -391,7 +416,13 @@ impl AuditLogger {
         }
 
         // Check for cross-tenant access attempts
-        if let (Some(user_tenant), Some(resource_tenant)) = (&event.tenant_id, &event.tenant_id)
+        // Was `(&event.tenant_id, &event.tenant_id)` — the same field twice, so
+        // `user_tenant != resource_tenant` was unsatisfiable and this alert
+        // could NEVER fire. The resource's owning tenant now rides on
+        // `AuditResource.resource_tenant_id`; emitters that know it populate it,
+        // and events without it simply do not trigger the check.
+        if let (Some(user_tenant), Some(resource_tenant)) =
+            (&event.tenant_id, &event.resource.resource_tenant_id)
             && user_tenant != resource_tenant
         {
             alerts.push(SecurityAlert {
@@ -438,6 +469,7 @@ impl AuditLogger {
                 resource_type: "security_alert".to_string(),
                 resource_id: alert.alert_id.clone(),
                 parent_resource: None,
+                resource_tenant_id: None,
             },
             action: format!("security_alert_{:?}", alert.alert_type),
             result: AuditResult::Success,

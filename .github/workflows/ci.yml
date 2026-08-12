@@ -106,6 +106,7 @@ jobs:
       storage_changes: ${{ steps.filter.outputs.storage_changes }}
       graph_changes: ${{ steps.filter.outputs.graph_changes }}
       core_changes: ${{ steps.filter.outputs.core_changes }}
+      authz_changes: ${{ steps.filter.outputs.authz_changes }}
       network_changes: ${{ steps.filter.outputs.network_changes }}
       pgwire_accuracy_changes: ${{ steps.filter.outputs.pgwire_accuracy_changes }}
       object_store_cloud_changes: ${{ steps.filter.outputs.object_store_cloud_changes }}
@@ -128,7 +129,7 @@ jobs:
       # into their `if:`.
       sweep: ${{ github.event_name == 'push' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so dorny/paths-filter can reach the merge-base across a
           # large develop→main gap (shallow --deepen fails: "shallow file has changed").
@@ -260,6 +261,20 @@ jobs:
               - 'src/network/**'
               - 'src/api_handlers/**'
               - 'proto/**'
+            # ADR-090 / TD-AUTHZ-1 authorization e2e. Filters track the OUTCOME
+            # (an authorization decision changing) rather than code ownership —
+            # the #1430 lesson, where a recall lane skipped on the very PR that
+            # broke recall because the changed path matched no filter.
+            authz_changes:
+              - 'src/security/**'
+              - 'src/services/operations/vectors/**'
+              - 'crates/control/proximadb-abac/**'
+              - 'crates/control/proximadb-catalog/**'
+              - 'src/network/rest/canonical/abac_admin.rs'
+              - 'src/network/rest/canonical/handlers.rs'
+              - 'src/network/shared_services.rs'
+              - 'tests/abac_*.rs'
+              - '.github/workflows/ci.yml'
             # Multi-modal pgwire value-accuracy e2e suite (TD-182 P0). The suite
             # exercises the SQL/pgwire + relational + DML + cold-path-merge code,
             # so re-run it when any of those change, when the suite files change,
@@ -315,7 +330,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check for tracked artifact files
         run: |
           bad_files=$(git ls-files | grep -E '(^|/)\.victor($|/)|\.bak[0-9]*$|\.disabled$' || true)
@@ -331,7 +346,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate deterministic guard wiring
         run: python3 scripts/check_deterministic_commit_contract.py
 
@@ -340,7 +355,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Reject stale pre-organization URLs and publish gates
         run: python3 scripts/check_repository_identity.py
 
@@ -350,7 +365,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.docs == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Lint customer-facing docs vs the support contract
         run: python3 scripts/check_doc_authority.py
       - name: Cross-check perf claims vs BENCHMARK_EVIDENCE.toml
@@ -362,7 +377,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate risk→test→tier contract (risk tests are wired into a required tier)
         run: python3 scripts/check_risk_coverage.py
 
@@ -371,7 +386,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Block commercial $-content in OSS docs
         # ProximaDB OSS ships mechanism + neutral meters; $-policy lives in anvaiops.
         # See docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc + scripts/check_no_commercial_docs.sh.
@@ -383,7 +398,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
@@ -403,7 +418,7 @@ jobs:
     # weakens those banners must trip this gate too.
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate capability matrix
         run: python3 scripts/validate_capability_matrix.py
       # Benchmark evidence ledger: keeps perf/capability claims tied to a runnable
@@ -415,6 +430,12 @@ jobs:
         run: python3 scripts/check_mvp_trust_corridor.py
       - name: Test canonical MVP smoke client
         run: python3 -m unittest discover -s tests/scripts -p 'test_mvp_smoke.py'
+      # Guards the touched-crate fast lane's cost invariant (see the
+      # rust-affected-fast job header): the monolith-dependent closure must keep
+      # excluding crates whose graph pulls in the root crate. Pure-python, no
+      # toolchain needed.
+      - name: Test affected-crate selection
+        run: python3 -m unittest discover -s tests/scripts -p 'test_affected_crates.py'
       - name: Validate context-corridor benchmark contract
         run: make context-benchmark-check
 
@@ -431,7 +452,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.proto == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           # Match rust-toolchain.toml's declared components + target so `cargo
@@ -444,7 +465,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install Python SDK (editable) and test deps
@@ -482,7 +503,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install System Dependencies
         run: |
@@ -510,12 +531,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.go_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install Python deps for the 3.1->3.0 down-conversion
@@ -542,8 +563,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.nodejs_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Install dependencies
@@ -569,7 +590,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
@@ -578,7 +599,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install Python deps for the 3.1->3.0 down-conversion
@@ -619,8 +640,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       # The SDK's own black + isort run the deterministic formatting pass inside
@@ -651,7 +672,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.openapi_spec == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install System Dependencies
         run: |
@@ -662,7 +683,7 @@ jobs:
           prefix-key: "v1-python-sdk-round-trip"
       - name: Build server binary
         run: cargo build --release --package proximadb-server --bin proximadb-server
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install SDK + pytest
@@ -693,7 +714,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.panic_policy == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Generate panic-policy metrics report
         run: |
           mkdir -p artifacts/panic_policy
@@ -703,7 +724,7 @@ jobs:
             --write artifacts/panic_policy/panic_policy_report.json \
             --format text
       - name: Upload panic-policy report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: panic-policy-report
           path: artifacts/panic_policy/panic_policy_report.json
@@ -715,7 +736,7 @@ jobs:
     needs: [changes, panic-policy-report]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.panic_policy == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Enforce no-regression baseline
         run: |
           mkdir -p artifacts/panic_policy
@@ -731,7 +752,7 @@ jobs:
     needs: [changes, panic-policy-report]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.panic_policy == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Enforce critical module guardrails
         run: |
           mkdir -p artifacts/panic_policy
@@ -751,7 +772,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.v1_proto_usage == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Generate v1 proto usage report
         run: |
           mkdir -p artifacts/v1_proto_usage
@@ -761,7 +782,7 @@ jobs:
             --write artifacts/v1_proto_usage/v1_proto_usage_report.json \
             --format text
       - name: Upload v1 proto usage report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: v1-proto-usage-report
           path: artifacts/v1_proto_usage/v1_proto_usage_report.json
@@ -773,7 +794,7 @@ jobs:
     needs: [changes, v1-proto-usage-report]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.v1_proto_usage == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Enforce no v1 proto usage increase
         run: |
           mkdir -p artifacts/v1_proto_usage
@@ -789,7 +810,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
@@ -867,7 +888,7 @@ jobs:
           # step loops over every package in the list.
           - { label: "small-crates",         pkg: "proximadb-mongodb-parser proximadb-catalog-introspection", args: "" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install System Dependencies
         # g++ provides libstdc++ for the onnxruntime (ort) build script.
@@ -895,7 +916,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -909,8 +930,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.proto == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -946,8 +967,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.go_sdk == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
       - name: Run go vet
@@ -968,8 +989,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.nodejs_sdk == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Install dependencies
@@ -985,7 +1006,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sweep == 'true' || needs.changes.outputs.rust_sdk == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt, clippy
@@ -1031,7 +1052,7 @@ jobs:
           - sdk: typescript
             setup: node
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Toolchain setup — one branch per matrix cell
       - if: matrix.setup == 'rust'
@@ -1043,12 +1064,12 @@ jobs:
           workspaces: "clients/rust -> target"
 
       - if: matrix.setup == 'go'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.25'
 
       - if: matrix.setup == 'node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -1102,7 +1123,7 @@ jobs:
       matrix:
         kind: [rest, flight]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install System Dependencies
         run: |
@@ -1144,9 +1165,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.spark_jni == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '19'
@@ -1173,7 +1194,7 @@ jobs:
       needs.changes.outputs.nodejs_sdk == 'true' ||
       needs.changes.outputs.rust_sdk == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run Trivy on Python SDK
         if: needs.changes.outputs.python == 'true'
@@ -1253,8 +1274,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       # Backstop against concurrent sessions colliding on a TD/ADR id (e.g. two
@@ -1318,7 +1339,7 @@ jobs:
           - shape: test
             args: "--workspace --lib --bins --tests"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.95.0
 
@@ -1329,8 +1350,8 @@ jobs:
 
       # sccache complements rust-cache: caches individual rustc invocations
       # (content-addressed), so it hits even when the target/ artifact cache misses.
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -1361,7 +1382,7 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1372,8 +1393,8 @@ jobs:
       # The step was missing while the env + stats step were present — the job is
       # gated on medium_tier, so it only runs on develop→qa promotions and the gap
       # went unexercised until it hard-failed #1378 across every rerun.
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -1420,7 +1441,7 @@ jobs:
           sudo docker image prune --all --force >/dev/null 2>&1 || true
           echo "Disk after reclaim:"; df -h /
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.95.0
 
@@ -1452,7 +1473,7 @@ jobs:
 
       - name: Upload Server Binary
         if: matrix.profile == 'release' && needs.changes.outputs.medium_tier == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: proximadb-server-linux-x64
           path: target/release/proximadb-server
@@ -1499,7 +1520,7 @@ jobs:
           sudo docker image prune --all --force >/dev/null 2>&1 || true
           echo "Disk after reclaim:"; df -h /
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.95.0
 
@@ -1565,6 +1586,27 @@ jobs:
   # where it pays off — more so as TD-DECOMP-1 follow-ups move logic DOWN into
   # leaf crates. rust-cache only (no sccache): leaf crates are small, and sccache
   # adds the #920 OOM risk for no gain at this scale.
+  #
+  # SKIPPING THE ROOT CRATE BY NAME IS NOT ENOUGH (fixed here). `-p <crate>`
+  # compiles that crate's WHOLE dependency graph, and 8 workspace members
+  # path-depend on the root monolith (the 3 crates/binding/* bindings, the 4
+  # apps/*, and clients/rust `proximadb-sdk` via a non-optional
+  # `proximadb-embedded`). So a diff touching e.g. proximadb-embedded selected
+  # `-p proximadb-embedded` and dragged the entire monolith back in — the exact
+  # cost this lane exists to avoid. Measured: such runs compiled 600+ third-party
+  # crates from cold and were still on tantivy/tokenizers/lalrpop when the
+  # timeout killed them, burning a full runner slot for ZERO signal (~39% of the
+  # runs that actually ran, all at the timeout wall). The cache could never
+  # amortize it either: rust-cache saves only on success, and the ONLY cache a
+  # PR can inherit — the develop-branch one — is written by develop pushes where
+  # `git diff origin/develop...HEAD` is empty by construction, so that cache
+  # holds a cargo registry and no compiled artifacts. Every real run therefore
+  # started at "No cache found."
+  # The fix is to make the selection honor the lane's own name: exclude the root
+  # monolith AND its transitive workspace dependents (9 of 124 crates; 115 stay
+  # eligible), so this lane only ever compiles genuinely cheap graphs. The 9
+  # excluded crates remain covered by the required rust-test job; they become
+  # eligible again as TD-DECOMP-1 moves logic out of the monolith.
   # ============================================================================
   rust-affected-fast:
     name: Rust touched-crate fast check (advisory)
@@ -1572,9 +1614,13 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true        # advisory — never a merge gate (also not in ci-success.needs)
-    timeout-minutes: 15
+    # 10m is a CANARY, not a budget: with the selection fixed this lane is a
+    # cheap leaf compile (observed 58-165s from cold), so ~4x headroom. If a
+    # future dependency edge makes a "leaf" crate heavy again, we want to find
+    # out after 10 wasted minutes, not 15.
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so affected_crates.py's `git diff origin/develop...HEAD`
           # (three-dot, merge-base) resolves across a large develop→main gap.
@@ -1586,6 +1632,10 @@ jobs:
         with:
           prefix-key: "v1-rust-affected-fast"
           shared-key: "build"
+          # A genuine test/compile FAILURE here is the signal this lane exists to
+          # give; saving its (small, leaf-only) target/ means the fix push on the
+          # same PR rebuilds warm instead of repeating the cold compile.
+          cache-on-failure: true
 
       - name: Install Dependencies
         run: |
@@ -1598,26 +1648,22 @@ jobs:
       - name: Affected-only fast unit check
         run: |
           set -euo pipefail
-          pkgs="$(python3 scripts/affected_crates.py origin/develop)"
-          [ -n "$pkgs" ] || { echo 'No crate source changed — skipping.'; exit 0; }
-          # Bare positionals to cargo/nextest are TEST-NAME FILTERS, not package
-          # selectors — turn the space-separated list into -p args. Skip the root
-          # crate (proximadb): a src/** edit maps to it, but compiling its lib is
-          # redundant with rust-test and OOM-prone here (see job header).
-          root_seen=no
-          pkg_args=""
-          for p in $pkgs; do
-            if [ "$p" = "proximadb" ]; then
-              root_seen=yes
-            else
-              pkg_args="$pkg_args -p $p"
-            fi
-          done
-          [ "$root_seen" = "yes" ] && echo "Root crate 'proximadb' changed — covered by the required rust-test job; not re-run in this fast lane."
-          if [ -z "$pkg_args" ]; then
-            echo 'Only the root crate (or nothing leaf) changed — nothing fast to check here.'
+          # --exclude-dependents-of proximadb drops the root monolith AND every
+          # workspace member that transitively depends on it (see job header):
+          # `-p X` compiles X's whole dependency graph, so those crates are never
+          # cheap here. They stay covered by the required rust-test job. The
+          # script names the dropped crates on stderr, so the log still says why.
+          pkgs="$(python3 scripts/affected_crates.py --exclude-dependents-of proximadb origin/develop)"
+          if [ -z "$pkgs" ]; then
+            echo 'No eligible leaf crate changed — nothing fast to check here.'
             exit 0
           fi
+          # Bare positionals to cargo/nextest are TEST-NAME FILTERS, not package
+          # selectors — turn the space-separated list into -p args.
+          pkg_args=""
+          for p in $pkgs; do
+            pkg_args="$pkg_args -p $p"
+          done
           echo "Affected leaf crates:$pkg_args"
           cargo nextest run --lib --profile unit $pkg_args
 
@@ -1639,7 +1685,7 @@ jobs:
       needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.object_store_cloud_changes == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -1710,7 +1756,7 @@ jobs:
           sudo mkswap /mnt/swapfile-ci
           sudo swapon /mnt/swapfile-ci
           free -h
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -1730,8 +1776,8 @@ jobs:
           # set inside run_cloud_emulator_tests.sh for the memory cliff; this is
           # the other half.)
           cache-on-failure: true
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-restart-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -1754,7 +1800,7 @@ jobs:
       (needs.changes.outputs.storage_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1775,6 +1821,59 @@ jobs:
             fi
           done
 
+  rust-integration-test-authz:
+    name: Rust Integration Tests (authz e2e)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # `needs: [changes]` ONLY — deliberately not `rust-build`. `rust-build` is
+    # itself gated on the `rust` filter (src/**, crates/**, apps/**, Cargo*),
+    # so depending on it makes this lane inherit that gate transitively and skip
+    # on any PR that changes only tests/** or .github/** — which is precisely
+    # what happened on the first two pushes of #1544. This lane compiles what it
+    # needs via its own `cargo test`, so the dependency bought nothing.
+    # `rust-integration-test-pgwire-accuracy` gets this right and is the model.
+    needs: [changes]
+    # The `rust` filter is deliberately NOT ANDed in here: it covers src/**,
+    # crates/**, apps/** and the Cargo files, but NOT tests/** or .github/**, so
+    # requiring it would skip this lane on exactly the PRs that change the authz
+    # tests or this wiring — which is what happened on the first push of #1544.
+    # `authz_changes` already scopes the lane correctly on its own.
+    # NOTE: this suite is `#![cfg(feature = "abac-policy")]`, which is NOT a
+    # default feature — WITHOUT `--features abac-policy` the file compiles to
+    # ZERO tests and the job passes while verifying nothing. That is exactly how
+    # the suite sat dormant: no lane ran it, and a run without the feature would
+    # have looked green anyway.
+    if: |
+      !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
+      needs.changes.outputs.authz_changes == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-nightly-dev"
+          shared-key: "build"
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - name: Run Authorization E2E (live transports)
+        run: |
+          set -uo pipefail
+          # NOTE: deliberately NOT `set -e` around the capture. With `-e`, a
+          # failing cargo aborts the step BEFORE the echo, so the failure reason
+          # is swallowed and the job reports red with no diagnostic — which is
+          # exactly what happened on the first run of this lane.
+          status=0
+          output=$(cargo test --features abac-policy --test abac_relational_transport_e2e -- --test-threads=1 --nocapture 2>&1) || status=$?
+          echo "$output"
+          if echo "$output" | grep -qE "running 0 tests"; then
+            echo "::error::the authz e2e suite compiled to ZERO tests - the abac-policy feature is not enabled, so this job verified nothing."
+            exit 1
+          fi
+          exit "$status"
+
   rust-integration-test-query:
     name: Rust Integration Tests (query)
     runs-on: ubuntu-latest
@@ -1787,7 +1886,7 @@ jobs:
       (needs.changes.outputs.query_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1823,7 +1922,7 @@ jobs:
       # integration-test jobs previously lacked this.
       RUST_MIN_STACK: "8388608"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1886,7 +1985,7 @@ jobs:
       (needs.changes.outputs.graph_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1918,7 +2017,7 @@ jobs:
       (needs.changes.outputs.network_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1961,7 +2060,7 @@ jobs:
       (needs.changes.outputs.network_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1995,15 +2094,15 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: /home/runner/.cache/sccache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-nightly-coverage"
       # sccache complements rust-cache: caches individual rustc invocations
       # (content-addressed), so it hits even when the target/ artifact cache misses.
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: actions/cache@v4
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: actions/cache@v6
         with:
           path: /home/runner/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -2031,12 +2130,12 @@ jobs:
             --fail-under 60 || echo "Coverage generation failed (may be OOM), continuing"
       - name: Upload Coverage Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage/
           retention-days: 30
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v7
         if: always()
         with:
           files: coverage/cobertura.xml
@@ -2059,10 +2158,13 @@ jobs:
       matrix:
         # 3.9 dropped: the package declares requires-python ">=3.10".
         python-version: ["3.10", "3.11", "3.12"]
-    if: ${{ !inputs.skip_tests && needs.changes.outputs.extensive == 'true' }}
+    # medium_tier (base qa OR main), not extensive (base main only): the ~5min
+    # Python SDK suite runs at develop->qa too, so SDK regressions block one
+    # stage earlier instead of only surfacing at the qa->main boundary.
+    if: ${{ !inputs.skip_tests && needs.changes.outputs.medium_tier == 'true' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -2079,7 +2181,7 @@ jobs:
       # falls back to deterministic vectors if the model is still unavailable, so
       # neither the cache miss nor the prefetch failure can break the suite.
       - name: Cache HuggingFace model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface
           key: hf-all-MiniLM-L6-v2-${{ runner.os }}
@@ -2141,8 +2243,8 @@ jobs:
     needs: changes
     if: ${{ !inputs.skip_tests && needs.changes.outputs.python == 'true' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -2184,16 +2286,16 @@ jobs:
     needs: [changes, rust-build, python-test]
     if: ${{ !inputs.skip_tests && needs.changes.outputs.extensive == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: clients/python/pyproject.toml
 
       - name: Download Server Binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: proximadb-server-linux-x64
 
@@ -2306,15 +2408,15 @@ jobs:
     needs: changes
     if: (needs.changes.outputs.docker == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.extensive == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build Docker Image
         # Build the image we actually publish (deploy/docker/Dockerfile,
         # target `runtime`) so CI exercises the shipped OSS server, not the
         # demo image. The published artifact comes from publish-image.yml.
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/docker/Dockerfile
@@ -2357,7 +2459,7 @@ jobs:
       inputs.run_benchmarks ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.95.0
 
@@ -2375,7 +2477,7 @@ jobs:
           cargo bench --bench bench_21_query_cache -- --noplot 2>&1 | tee bench-results.txt
 
       - name: Upload Benchmark Results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: bench-results.txt
@@ -2398,7 +2500,7 @@ jobs:
       inputs.run_benchmarks ||
       (github.event_name == 'push' && github.ref == 'refs/heads/develop')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.95.0
 
@@ -2422,7 +2524,7 @@ jobs:
           cargo test --test tpc_perf_ledger_e2e -- --ignored --nocapture 2>&1 | tail -40
 
       - name: Upload ledger artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tpc-perf-ledger
           path: target/tpc-perf-ledger/ledger.json
@@ -2445,7 +2547,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && contains(fromJson('["qa", "main"]'), github.base_ref)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: merge-base --is-ancestor must walk back to the source
           # branch's merge point, which a shallow clone cannot prove.
@@ -2480,13 +2582,18 @@ jobs:
     name: SIFT PAX recall ratchet (N=10k)
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Release-mode compile of the recall test binary (pulls the full root crate) +
+    # 10k-vector ingest measured 30m17s on 2026-08-09 (#1552) — right at the prior
+    # 30m cap, so it tipped to CANCELLED under normal runner variance and blocked
+    # every storage/query-touching PR via the `ci-success` aggregator. 45m gives
+    # comfortable headroom without masking a genuine hang.
+    timeout-minutes: 45
     # only run when search/flush/WAL/PAX/cascade code changes
     if: >
       github.event_name == 'workflow_dispatch' ||
       (needs.changes.outputs.storage_changes == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install system deps
         run: |
@@ -2496,7 +2603,7 @@ jobs:
         with:
           prefix-key: "v1-sift-ratchet"
       - name: Cache SIFT corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/sift1m
           key: sift1m-texmem-fvecs-v1
@@ -2547,6 +2654,7 @@ jobs:
       - rust-build
       - rust-test
       - rust-integration-test-storage
+      - rust-integration-test-authz
       - rust-integration-test-query
       - rust-integration-test-pgwire-accuracy
       - rust-integration-test-graph

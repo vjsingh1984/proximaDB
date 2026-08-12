@@ -12,7 +12,7 @@
 //! - Integration with UnifiedCachingFilesystem
 
 pub mod field_encryption;
-pub mod key_store;
+pub use proximadb_security::key_store;
 
 pub use field_encryption::{
     EncryptedField, EncryptionConfig, EncryptionType, FieldEncryption, FieldEncryptionError,

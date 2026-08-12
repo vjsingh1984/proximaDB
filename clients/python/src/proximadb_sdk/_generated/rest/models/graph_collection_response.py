@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -21,28 +23,28 @@ class GraphCollectionResponse:
     SDKs rely on; extra server-side fields are passed through.
 
         Attributes:
-            description (Union[None, Unset, str]):
-            edge_count (Union[None, Unset, int]):
-            graph_id (Union[Unset, str]):
-            name (Union[None, Unset, str]):
-            node_count (Union[None, Unset, int]):
+            description (None | str | Unset):
+            edge_count (int | None | Unset):
+            graph_id (str | Unset):
+            name (None | str | Unset):
+            node_count (int | None | Unset):
     """
 
-    description: Union[None, Unset, str] = UNSET
-    edge_count: Union[None, Unset, int] = UNSET
-    graph_id: Union[Unset, str] = UNSET
-    name: Union[None, Unset, str] = UNSET
-    node_count: Union[None, Unset, int] = UNSET
+    description: None | str | Unset = UNSET
+    edge_count: int | None | Unset = UNSET
+    graph_id: str | Unset = UNSET
+    name: None | str | Unset = UNSET
+    node_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        description: Union[None, Unset, str]
+        description: None | str | Unset
         if isinstance(self.description, Unset):
             description = UNSET
         else:
             description = self.description
 
-        edge_count: Union[None, Unset, int]
+        edge_count: int | None | Unset
         if isinstance(self.edge_count, Unset):
             edge_count = UNSET
         else:
@@ -50,13 +52,13 @@ class GraphCollectionResponse:
 
         graph_id = self.graph_id
 
-        name: Union[None, Unset, str]
+        name: None | str | Unset
         if isinstance(self.name, Unset):
             name = UNSET
         else:
             name = self.name
 
-        node_count: Union[None, Unset, int]
+        node_count: int | None | Unset
         if isinstance(self.node_count, Unset):
             node_count = UNSET
         else:
@@ -82,41 +84,41 @@ class GraphCollectionResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
 
-        def _parse_description(data: object) -> Union[None, Unset, str]:
+        def _parse_description(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         description = _parse_description(d.pop("description", UNSET))
 
-        def _parse_edge_count(data: object) -> Union[None, Unset, int]:
+        def _parse_edge_count(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         edge_count = _parse_edge_count(d.pop("edge_count", UNSET))
 
         graph_id = d.pop("graph_id", UNSET)
 
-        def _parse_name(data: object) -> Union[None, Unset, str]:
+        def _parse_name(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         name = _parse_name(d.pop("name", UNSET))
 
-        def _parse_node_count(data: object) -> Union[None, Unset, int]:
+        def _parse_node_count(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         node_count = _parse_node_count(d.pop("node_count", UNSET))
 

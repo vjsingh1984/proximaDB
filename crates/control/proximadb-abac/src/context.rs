@@ -49,6 +49,10 @@ pub enum DenyReason {
     /// A binding at some scope explicitly denied (deny wins over any permit).
     #[error("an applicable policy binding denies this read")]
     ExplicitDeny,
+    /// ADR-090 L1.2: grant enforcement is armed and no applicable grant admits
+    /// the subject to the target. Fail-closed: absence of entitlement is deny.
+    #[error("no applicable grant admits this subject to the target")]
+    NoApplicableGrant,
 }
 
 /// The outcome of resolving a read: an admitted context, or a reason and nothing

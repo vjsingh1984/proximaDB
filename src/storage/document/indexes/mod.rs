@@ -8,7 +8,7 @@
 
 pub mod array_index;
 pub mod fulltext;
-pub mod geo_index;
+pub use proximadb_geo_index::geo_index;
 pub mod path_index;
 
 use std::collections::HashMap;

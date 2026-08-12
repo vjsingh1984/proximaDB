@@ -80,7 +80,12 @@ class TestImports:
         assert issubclass(CollectionNotFoundError, ProximaDBError)
 
     def test_chunking_imports(self):
-        """Test text chunking imports"""
+        """Test text chunking imports (opt-in `[chunking]` extra)."""
+        # Chunking public names are exported only when the `[chunking]` extra
+        # (tree-sitter) is installed; skip when it isn't, matching the SDK's
+        # opt-in design (see proximadb_sdk.__init__._chunking_concern_available).
+        pytest.importorskip("tree_sitter")
+
         from proximadb_sdk import (
             ChunkingStrategy,
             chunk_by_sentences,

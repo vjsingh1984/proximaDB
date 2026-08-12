@@ -74,6 +74,13 @@ pub struct AuditResource {
     pub resource_id: String,
     /// Optional parent resource for hierarchical resource trees (e.g., tenant -> collection -> vector)
     pub parent_resource: Option<Box<AuditResource>>,
+    /// Tenant that OWNS this resource, when known. Distinct from
+    /// `AuditEvent.tenant_id` (the tenant the *actor* was acting as) — the
+    /// cross-tenant-access detector compares the two, so without this field it
+    /// has nothing to compare against. `#[serde(default)]` keeps audit records
+    /// written before this field readable (mixed-read-safe).
+    #[serde(default)]
+    pub resource_tenant_id: Option<String>,
 }
 
 /// Result of the audited operation
@@ -219,12 +226,20 @@ impl AuditResource {
             resource_type,
             resource_id,
             parent_resource: None,
+            resource_tenant_id: None,
         }
     }
 
     /// Set parent resource
     pub fn with_parent(mut self, parent: AuditResource) -> Self {
         self.parent_resource = Some(Box::new(parent));
+        self
+    }
+
+    /// Attach the tenant that OWNS this resource (enables the cross-tenant
+    /// access detector, which compares it against the acting tenant).
+    pub fn with_resource_tenant(mut self, tenant_id: impl Into<String>) -> Self {
+        self.resource_tenant_id = Some(tenant_id.into());
         self
     }
 }

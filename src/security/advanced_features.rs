@@ -350,6 +350,10 @@ pub struct RateLimitingService {
 
     /// User rate limit counters
     user_counters: Arc<DashMap<String, RateLimitCounter>>,
+    /// Failed-authentication counters, keyed by ATTEMPTED principal. Separate
+    /// from `user_counters` so a brute-force burst cannot be masked by (or
+    /// mask) ordinary request-rate accounting.
+    failed_auth_counters: Arc<DashMap<String, RateLimitCounter>>,
 
     /// Tenant rate limit counters
     tenant_counters: Arc<DashMap<String, RateLimitCounter>>,
@@ -367,6 +371,20 @@ pub struct RateLimitConfig {
     pub requests_per_minute_per_ip: u32,
     pub burst_allowance: u32,
     pub cleanup_interval_minutes: u64,
+    /// Failed AUTHENTICATIONS per minute per attempted principal (TD-SEC-2).
+    /// Deliberately its own knob rather than reusing
+    /// `requests_per_minute_per_user`: a request budget and a failed-credential
+    /// budget are different semantics, and conflating them would silently make
+    /// one of them wrong.
+    #[serde(default = "default_failed_auth_per_minute")]
+    pub failed_auth_per_minute_per_principal: u32,
+}
+
+/// Ten failed attempts per principal per minute: high enough that a fumbled
+/// key or a retrying client is unaffected, low enough that online guessing is
+/// pointless.
+fn default_failed_auth_per_minute() -> u32 {
+    10
 }
 
 /// Rate limit counter
@@ -384,6 +402,7 @@ impl RateLimitingService {
         Self {
             config,
             user_counters: Arc::new(DashMap::new()),
+            failed_auth_counters: Arc::new(DashMap::new()),
             tenant_counters: Arc::new(DashMap::new()),
             ip_counters: Arc::new(DashMap::new()),
         }
@@ -422,6 +441,38 @@ impl RateLimitingService {
     }
 
     /// Check user-specific rate limit
+    /// Record a FAILED authentication for `principal` and report whether that
+    /// principal has exceeded its failure budget for the current minute.
+    ///
+    /// `principal` is the non-secret attribution produced by
+    /// `auth_service::attempted_principal` — never raw credential material.
+    /// Only the principal dimension is counted here: the client IP is not
+    /// available at this seam, and feeding a placeholder into the shared IP
+    /// counter would collapse every caller into one bucket (the same defect
+    /// that made the previous `anonymous()` attribution useless). Threading the
+    /// real client IP from middleware is the follow-on.
+    pub async fn record_failed_auth(&self, principal: &str) -> RateLimitResult {
+        if !self.config.enabled {
+            return RateLimitResult::allowed();
+        }
+        let now = Utc::now();
+        let mut counter = self
+            .failed_auth_counters
+            .entry(principal.to_string())
+            .or_insert_with(|| RateLimitCounter::new(now));
+        if now >= counter.window_start + Duration::minutes(1) {
+            counter.reset(now);
+        }
+        counter.requests += 1;
+        if counter.requests > self.config.failed_auth_per_minute_per_principal {
+            return RateLimitResult::denied(
+                "failed_auth",
+                "too many failed authentication attempts".to_string(),
+            );
+        }
+        RateLimitResult::allowed()
+    }
+
     async fn check_user_rate_limit(&self, user_id: &str, now: DateTime<Utc>) -> Result<()> {
         let mut counter = self
             .user_counters
@@ -692,6 +743,7 @@ fn create_mfa_audit_event(
             resource_type: "mfa".to_string(),
             resource_id: session_id.unwrap_or("unknown").to_string(),
             parent_resource: None,
+            resource_tenant_id: None,
         },
         action: action.to_string(),
         result: if success {
@@ -786,6 +838,7 @@ mod tests {
             requests_per_minute_per_ip: 200,
             burst_allowance: 10,
             cleanup_interval_minutes: 60,
+            failed_auth_per_minute_per_principal: 10,
         };
 
         let rate_service = RateLimitingService::new(config);

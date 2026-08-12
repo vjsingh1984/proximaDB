@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -28,16 +30,16 @@ class EdgeInput:
             from_node_id (str):
             id (str):
             to_node_id (str):
-            properties (Union[Unset, EdgeInputProperties]):
-            weight (Union[None, Unset, float]):
+            properties (EdgeInputProperties | Unset):
+            weight (float | None | Unset):
     """
 
     edge_type: str
     from_node_id: str
     id: str
     to_node_id: str
-    properties: Union[Unset, "EdgeInputProperties"] = UNSET
-    weight: Union[None, Unset, float] = UNSET
+    properties: EdgeInputProperties | Unset = UNSET
+    weight: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,11 +53,11 @@ class EdgeInput:
 
         to_node_id = self.to_node_id
 
-        properties: Union[Unset, dict[str, Any]] = UNSET
+        properties: dict[str, Any] | Unset = UNSET
         if not isinstance(self.properties, Unset):
             properties = self.properties.to_dict()
 
-        weight: Union[None, Unset, float]
+        weight: float | None | Unset
         if isinstance(self.weight, Unset):
             weight = UNSET
         else:
@@ -92,18 +94,18 @@ class EdgeInput:
         to_node_id = d.pop("to_node_id")
 
         _properties = d.pop("properties", UNSET)
-        properties: Union[Unset, EdgeInputProperties]
+        properties: EdgeInputProperties | Unset
         if isinstance(_properties, Unset):
             properties = UNSET
         else:
             properties = EdgeInputProperties.from_dict(_properties)
 
-        def _parse_weight(data: object) -> Union[None, Unset, float]:
+        def _parse_weight(data: object) -> float | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, float], data)
+            return cast(float | None | Unset, data)
 
         weight = _parse_weight(d.pop("weight", UNSET))
 

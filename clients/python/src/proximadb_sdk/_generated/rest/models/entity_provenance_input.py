@@ -3,8 +3,10 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TextIO, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -22,18 +24,18 @@ T = TypeVar("T", bound="EntityProvenanceInput")
 class EntityProvenanceInput:
     """
     Attributes:
-        chunk_id (Union[Unset, str]):
-        chunk_position (Union[Unset, int]):
-        extraction_method (Union[Unset, str]):
-        metadata (Union[Unset, EntityProvenanceInputMetadata]):
-        source_id (Union[Unset, str]):
+        chunk_id (str | Unset):
+        chunk_position (int | Unset):
+        extraction_method (str | Unset):
+        metadata (EntityProvenanceInputMetadata | Unset):
+        source_id (str | Unset):
     """
 
-    chunk_id: Union[Unset, str] = UNSET
-    chunk_position: Union[Unset, int] = UNSET
-    extraction_method: Union[Unset, str] = UNSET
-    metadata: Union[Unset, "EntityProvenanceInputMetadata"] = UNSET
-    source_id: Union[Unset, str] = UNSET
+    chunk_id: str | Unset = UNSET
+    chunk_position: int | Unset = UNSET
+    extraction_method: str | Unset = UNSET
+    metadata: EntityProvenanceInputMetadata | Unset = UNSET
+    source_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,7 +49,7 @@ class EntityProvenanceInput:
 
         extraction_method = self.extraction_method
 
-        metadata: Union[Unset, dict[str, Any]] = UNSET
+        metadata: dict[str, Any] | Unset = UNSET
         if not isinstance(self.metadata, Unset):
             metadata = self.metadata.to_dict()
 
@@ -83,7 +85,7 @@ class EntityProvenanceInput:
         extraction_method = d.pop("extraction_method", UNSET)
 
         _metadata = d.pop("metadata", UNSET)
-        metadata: Union[Unset, EntityProvenanceInputMetadata]
+        metadata: EntityProvenanceInputMetadata | Unset
         if isinstance(_metadata, Unset):
             metadata = UNSET
         else:
