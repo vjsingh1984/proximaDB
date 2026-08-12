@@ -3,6 +3,105 @@
 :dim: D5
 :pillar: SEC
 
+== CURRENT STATE (2026-08-12) — read this before the dated sections below
+
+The dated sections that follow are a CHRONOLOGICAL INVESTIGATION LOG. Several of them were
+overturned by later work, and a reader going top-down would absorb superseded claims as
+current. This section is the state of truth; the log is kept for its reasoning trail, not as
+a status report.
+
+=== Shipped
+
+[cols="1,3,1"]
+|===
+| Layer | What is on develop | Ref
+
+| L0.1 | Catalog-resident identity: principal + API-key registry, `pxk_` registry-authoritative, fail-closed boot at `<data_dir>/identity` | #1514
+| L0.3 | One gRPC port-identity construction, composed from the extraction primitives | #1516
+| L1.1 | `Grant` object — cross-tenant sharing expressible; multi-modal via the shared `Scope` lattice | #1517
+| L1.2 | Grant enforcement at the ABAC read-admission seam, per-tenant posture `{Off\|Audit\|Enforce}` | #1529, #1537
+| — | Grants admin REST (provision/list/revoke) | #1534
+| — | Live provision→permit→deny→revoke ratchet **and the CI lane that runs it** | #1544
+| — | Escalation-safe `cross_tenant_open_decision` (a Read grant can never admit a Write open) | #1562
+| — | Owner-keyed grant lookup; non-truncating `Target`; dead fail-open surface deleted | #1575
+| — | Resolver failures DENY instead of degrading to an unfiltered read | #1582
+|===
+
+=== Open, in dependency order
+
+. **Cross-tenant sharing is authorized but NOT observable.** The catalog seam must resolve
+  grant-admitted foreign collections before the per-row predicate change (TD-TENANT-2 step 2)
+  has any visible effect. Blocked on nothing but the work itself.
+. **TD-AUTHZ-2** — `xcatalog.tables` renders an empty `object_id` for SQL-created relational
+  tables. `NativeCatalog` is EXONERATED (round-trip test, #1559); the defect is in the wiring
+  between it and the introspection projection. Three tests remain `#[ignore]`d on it.
+. **L2** — `$subject.attr` substitution, the remaining `System` bypasses, predicate-store
+  tenant partitioning.
+. **L3** — BYOB storage bindings.
+
+=== Closed by deletion rather than by fixing
+
+L2.2 item 1 ("the graph/RAG surface has no identity") turned out to be an **unmounted
+duplicate** left by the decomposition; deleting it removed the gap and corrected three
+documents that called graph-RAG shipped. Ref the 2026-08-12 sections and the deletion PR.
+
+== 🔍 Rationalization audit — claims made, and how they held up
+
+Recorded because five of my own load-bearing claims in this program were **wrong**, each
+caught by verification rather than review. The pattern is more useful than any single entry:
+**every wrong claim came from inferring behavior from a signature, a call chain, or a search
+result, instead of checking what actually runs.**
+
+[cols="3,1,3"]
+|===
+| Claim | Verdict | What was actually true / where corrected
+
+| The per-row tenant predicate is load-bearing until the WAL read is tenant-keyed
+| ✘ WRONG
+| `validate_tenant_collection_access` does a tenant-scoped catalog lookup BEFORE the WAL read, so the catalog seam is the boundary and the predicate is defense-in-depth. Corrected #1547. *Drawn from a function signature; the caller chain overturned it.*
+
+| `validate_search_results_tenant_isolation` is fail-open isolation on a production path, outranking the sharing capability
+| ✘ WRONG
+| Absent metadata was already fail-CLOSED, and the whole function is unreachable (all 6 callers pass `None`). The real hazard was the inverse: wiring it would EMPTY ordinary reads. Corrected in the 2026-08-12 sections.
+
+| Wiring the audit logger arms the brute-force detector
+| ✘ WRONG
+| Two further defects would have left it broken: failures attributed to `anonymous()` (one global bucket) and limit-before-sort sampling arbitrary events. Corrected in #1536 before merge.
+
+| `unified_search_with_tenant_context` is production-reachable via RAG
+| ✘ WRONG
+| The router containing `rag_query` is referenced nowhere; the mounted router returns not-implemented. *Drawn from a call chain without checking whether its entry point is ROUTED.*
+
+| graph-RAG is SHIPPED (TD-ORION-1, TD-DBX-1)
+| ✘ WRONG
+| Pipeline ships; the REST route was never mounted. Both TDs corrected in the deletion PR.
+
+| Grants are correctly evaluated for same-tenant reads
+| ✔ HELD
+| But `grant_admits_read` loaded the ACTING tenant's slice, not the OWNER's — invisible same-tenant, fatal cross-tenant. Fixed #1575 with a teeth-proven test.
+
+| The abac live-transport e2e suite protects the authz surface
+| ✘ WRONG
+| It had NEVER run in CI (wrong glob + `#![cfg(feature)]` ⇒ zero tests, exit 0). Wiring the lane exposed 3 broken tests. Fixed #1544.
+|===
+
+=== The recurring defect class (six instances)
+
+A mechanism whose FAILURE mode is indistinguishable from a benign one reports success anyway:
+
+. `set_audit_logger` — zero callers; no auth event ever persisted (#1536)
+. brute-force counter — keyed on `anonymous()`, one global bucket (#1536)
+. cross-tenant alert — compared `event.tenant_id` to ITSELF (#1536)
+. authz e2e suite — feature-gated to zero tests, `cargo test` exits 0 (#1544)
+. `resolve_vector_read_context` — `None` meant "skip authorization" ⇒ unfiltered (#1582)
+. `get_audit_logger` — hardcoded `None`, so "Security incident logged" branches never ran
+
+Two of these were in the TOOLING rather than the product: the CI watcher counted
+`FAILURE|TIMED_OUT` but not `CANCELLED` (a cancelled job skips the aggregator, leaving a PR
+BLOCKED while the predicate reported healthy), and a `grep | head -6` made a guarded read path
+look unguarded. **A search returning zero is evidence about the SEARCH** until it is shown to
+return non-zero on a known-positive control.
+
 == Problem
 
 link:../../12-design/adr/ADR-090-identity-grants-and-byob-storage.adoc[ADR-090] (Proposed)
@@ -119,6 +218,9 @@ the cloud-emulator suite (Azurite/MinIO); recall unaffected (the standing
 
 == Sequencing update (2026-08-07) — verified blocker on the cross-tenant ratchet
 
+NOTE: SUPERSEDED — the blocker named here (WAL tenant-keying) was wrong; the gate is the
+catalog seam. See the 2026-08-08 correction below and the CURRENT STATE section at the top.
+
 Tracing the cross-tenant read path for the L1.2 e2e ratchet found that
 `src/services/operations/vectors/legacy.rs:1123/:1175/:1346` retain rows by
 `record.tenant_id == tenant_context.tenant_id`, so a foreign grantee is admitted by the
@@ -228,6 +330,9 @@ asserting an absence.
 
 
 == Item 3 wiring — the identity constraint at the seam (2026-08-10)
+
+NOTE: PARTLY SUPERSEDED — the interim proposed here (tenant-wide grants only) was made moot
+by the 2026-08-11 gate finding; the seam work is scoped differently now. See CURRENT STATE.
 
 The decision core (`cross_tenant_open_decision`) is merged and escalation-safe. Wiring it into
 `validate_tenant_collection_access` runs into a constraint that determines the shape of the
@@ -389,6 +494,9 @@ System".
 
 == L2.2 item 1 RE-SCOPED (2026-08-11): the graph/RAG REST surface extracts no identity
 
+NOTE: SUPERSEDED — the surface is an UNMOUNTED duplicate, since deleted. The identity gap
+was real but the code was never served. See the 2026-08-12 correction and CURRENT STATE.
+
 The tracker framed this as "`unified_search_with_tenant_context` has no ABAC". Tracing its
 production caller shows the fix is not where that framing points.
 
@@ -428,6 +536,9 @@ blocks while an assertion caught it.
 
 
 == L2.2 item 1 — VERIFIED ordering constraint: do NOT thread identity first (2026-08-12)
+
+NOTE: SUPERSEDED — the ordering was correct for a surface that is served; this one is not.
+The validator-model fix landed on its own merits. See CURRENT STATE.
 
 The obvious next slice is "extract identity in `rag_query` and pass `Some(tenant_context)`
 instead of the hardcoded `None`". **That would break RAG reads**, and the reason is verified:
