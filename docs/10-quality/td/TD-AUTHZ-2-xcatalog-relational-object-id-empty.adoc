@@ -171,3 +171,62 @@ This is the second time in this program that a verified-true finding was scoped 
 component: `NativeCatalog` was exonerated correctly and irrelevantly, exactly as the graph/RAG
 surface was analysed correctly and irrelevantly before discovering its router was never
 mounted. **Establish which implementation actually serves the path before testing one.**
+
+
+== 2026-08-12 (later) — ROOT CAUSE: `SystemCatalog::create_table` never mints `object_id`
+
+Located. `src/services/system_catalog.rs:819` (`impl Catalog for SystemCatalog`) validates the
+schema, boxes it, and returns it **verbatim**:
+
+[source,rust]
+----
+validate_schema(&schema)?;
+... schema: Box::new(schema.clone()) ...
+Ok(schema)
+----
+
+There is no `mint_object_id` and no allocator call. Compare `NativeCatalog::create_table`
+(`native.rs:~1507`), which mints for the table, every column, and every index. Since
+`SystemCatalog` is the catalog the server actually registers, tables created through SQL DDL
+get no object id at all.
+
+This also explains why VECTOR collections are unaffected: their `object_id` is pre-set from
+`collection.id` by the collection manager (`manager.rs:2313`) *before* `create_table` is
+called, so nothing needs minting. Only the SQL-DDL path depends on the catalog to mint — and
+the live catalog does not.
+
+=== The consequence is larger than three ignored tests
+
+The relational ABAC path denies when the ids are absent — `src/services/dml/mod.rs:1466-1472`:
+
+[source,rust]
+----
+let (Some(namespace), Some(table)) = (table_schema.stable_namespace_id, table_schema.object_id)
+else { return Some(AbacScanResult::Denied(DenyReason::NoApplicablePolicy)); };
+----
+
+So on the live catalog, **relational ABAC enforcement is structurally inert**: it can never
+admit, because the identity it scopes on is never minted. That is fail-closed (the safe
+direction) but it means relational policy bindings and grants cannot take effect at all today
+— not "are unconfigured", *cannot*. Any claim that ABAC covers relational tables should be
+read against this.
+
+=== Fix shape (not implemented here — durable identity deserves its own slice)
+
+`SystemCatalog` already carries the right pattern for a durable monotonic counter:
+`account_floor: AtomicU64`, "recovered from the WAL/snapshot". An object-id allocator should
+mirror it exactly:
+
+. Allocate table/column/index object ids in `SystemCatalog::create_table`, matching
+  `NativeCatalog::mint_object_id`'s adopt-or-allocate semantics (a caller-supplied id raises
+  the floor rather than being overwritten — that is what keeps vector collections' pre-set ids
+  intact).
+. Recover the floor from WAL replay and snapshot load, the way `account_floor` is, so a
+  restart never re-issues an id. Re-issuing an object id is an AUTHORIZATION defect, not just a
+  bookkeeping one: policy bindings and grants are keyed on it.
+. Give #1559's `object_id_survives_the_get_table_round_trip` a `SystemCatalog` sibling, so the
+  invariant is pinned for the implementation that actually serves.
+. Only then remove the three `#[ignore = "TD-AUTHZ-2: ..."]` attributes.
+
+Deliberately not attempted in the same pass as the diagnosis: a half-built durable id allocator
+is worse than none, and the monotonicity/recovery properties need their own tests.
