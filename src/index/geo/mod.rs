@@ -13,7 +13,7 @@ pub mod index;
 /// Geo-spatial query types and builders.
 pub mod queries;
 /// Core geo-spatial types (points, bounding boxes, polygons).
-pub mod types;
+pub use proximadb_geo_types::types;
 
 pub use geohash::{GeoHash, decode_geohash, encode_geohash, geohash_neighbors};
 pub use index::{GeoIndex, GeoIndexConfig, GeoIndexEntry};

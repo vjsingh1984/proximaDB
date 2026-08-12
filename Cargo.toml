@@ -78,6 +78,7 @@ members = [
     "crates/horizontal/proximadb-scan-cursor",
     "crates/horizontal/proximadb-llm-config",
     "crates/horizontal/proximadb-subscription",
+    "crates/horizontal/proximadb-geo-types",
     "crates/horizontal/proximadb-implicit-id-generator",
     "crates/horizontal/proximadb-document-compression",
     "crates/horizontal/proximadb-auth-sso",
@@ -316,6 +317,7 @@ proximadb-mvcc-resolution = { path = "crates/horizontal/proximadb-mvcc-resolutio
 proximadb-scan-cursor = { path = "crates/horizontal/proximadb-scan-cursor" }
 proximadb-llm-config = { path = "crates/horizontal/proximadb-llm-config" }
 proximadb-subscription = { path = "crates/horizontal/proximadb-subscription" }
+proximadb-geo-types = { path = "crates/horizontal/proximadb-geo-types" }
 proximadb-implicit-id-generator = { path = "crates/horizontal/proximadb-implicit-id-generator" }
 proximadb-document-compression = { path = "crates/horizontal/proximadb-document-compression" }
 proximadb-auth-sso = { path = "crates/horizontal/proximadb-auth-sso" }
@@ -458,6 +460,7 @@ proximadb-mvcc-resolution = { workspace = true }
 proximadb-scan-cursor = { workspace = true }
 proximadb-llm-config = { workspace = true }
 proximadb-subscription = { workspace = true }
+proximadb-geo-types = { workspace = true }
 proximadb-implicit-id-generator = { workspace = true }
 proximadb-document-compression = { workspace = true }
 proximadb-auth-sso = { workspace = true }
