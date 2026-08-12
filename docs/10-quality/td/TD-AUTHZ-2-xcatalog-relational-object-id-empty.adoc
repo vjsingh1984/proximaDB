@@ -1,5 +1,5 @@
 = TD-AUTHZ-2: xcatalog.tables returns an empty object_id for SQL-created relational tables
-:status: Open
+:status: Partial
 :dim: D4
 :pillar: SEC
 
@@ -230,3 +230,36 @@ mirror it exactly:
 
 Deliberately not attempted in the same pass as the diagnosis: a half-built durable id allocator
 is worse than none, and the monotonicity/recovery properties need their own tests.
+
+
+== 2026-08-12 — FIXED: SystemCatalog now mints object ids
+
+`SystemCatalog::create_table` mints table, column and index object ids, matching
+`NativeCatalog::mint_object_id`'s semantics so the two implementations cannot drift on
+identity rules.
+
+**The floor is DERIVED, not persisted.** `SystemCatalogState::max_object_id()` scans recovered
+state; both constructors set `object_id_floor = max_object_id().map_or(1, |id| id + 1)` — the
+same shape `account_floor` already used. Object ids ride inside the persisted schemas, so WAL
+replay and snapshot load reconstruct the floor for free: no extra fsync, no second recovery
+path, and no way for a floor record to disagree with the objects it governs.
+
+**Adopt, don't overwrite.** A caller-supplied id is kept and merely raises the floor via
+`fetch_max` (not `store`, which under concurrent creates could LOWER a floor another thread
+raised — that would re-issue an id). Adoption is what preserves the ADR-031 unification where a
+vector collection pre-sets `schema.object_id` from `collection.id` before `create_table` runs.
+
+Three tests, each teeth-proven (they fail when only the minting line is neutered):
+`object_ids_are_never_reissued_across_a_restart` (the invariant whose failure grants a NEW
+table a DEAD table's policy bindings and grants), `a_caller_supplied_object_id_is_adopted_and_
+raises_the_floor`, and `object_id_survives_the_get_table_round_trip_on_system_catalog` — the
+sibling to #1559, written because that test proved the invariant on an implementation the
+server does not register.
+
+=== Still open
+
+The three `#[ignore = "TD-AUTHZ-2: ..."]` tests in
+`tests/abac_relational_transport_e2e.rs` are NOT lifted here. Minting is now correct at the
+catalog, but whether `xcatalog.tables` renders the value end-to-end for a SQL-created table
+should be verified against a live server before removing the ignores — this TD's own history
+is a record of what assuming reachability costs. Status stays `Partial` until then.

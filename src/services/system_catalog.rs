@@ -105,6 +105,15 @@ pub struct SystemCatalog {
     /// Next durable account/tenant stable id. Recovered from the WAL/snapshot
     /// state at boot; u64 lets us detect u32 exhaustion instead of wrapping.
     account_floor: AtomicU64,
+    /// Next `object_id` for catalog objects (tables, columns, indexes — one
+    /// shared sequence, matching `NativeCatalog::mint_object_id`). Like
+    /// `account_floor`, the floor is DERIVED from recovered state rather than
+    /// persisted separately, so it cannot disagree with the objects it governs.
+    ///
+    /// Authorization-critical: policy bindings and grants are keyed on
+    /// `object_id`, so re-issuing one after a restart would grant a NEW table
+    /// the permissions of a DEAD one.
+    object_id_floor: AtomicU64,
     appender: Arc<dyn TableWalAppender>,
     /// Serializes the durable-append → in-RAM-apply pair so concurrent DDL can
     /// never interleave such that a lower-LSN mutation applies after a higher
@@ -150,11 +159,13 @@ impl SystemCatalog {
         appender: Arc<dyn TableWalAppender>,
     ) -> Self {
         let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
+        let object_id_floor = state.max_object_id().map_or(1, |id| id + 1);
         Self {
             name: name.into(),
             role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
             account_floor: AtomicU64::new(account_floor),
+            object_id_floor: AtomicU64::new(object_id_floor),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: None,
@@ -290,11 +301,13 @@ impl SystemCatalog {
             .unwrap_or(DEFAULT_SNAPSHOT_THRESHOLD);
 
         let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
+        let object_id_floor = state.max_object_id().map_or(1, |id| id + 1);
         Ok(Self {
             name: name.into(),
             role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
             account_floor: AtomicU64::new(account_floor),
+            object_id_floor: AtomicU64::new(object_id_floor),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: Some(SnapshotConfig {
@@ -647,6 +660,21 @@ impl SystemCatalog {
     }
 }
 
+impl SystemCatalog {
+    /// Adopt a caller-supplied `object_id` (raising the floor past it) or
+    /// allocate the next one. Mirrors `NativeCatalog::mint_object_id` so the two
+    /// implementations cannot drift on identity semantics.
+    fn mint_object_id(&self, existing: Option<u64>) -> u64 {
+        match existing {
+            Some(id) => {
+                self.object_id_floor.fetch_max(id + 1, Ordering::SeqCst);
+                id
+            }
+            None => self.object_id_floor.fetch_add(1, Ordering::SeqCst),
+        }
+    }
+}
+
 #[async_trait]
 impl Catalog for SystemCatalog {
     fn name(&self) -> &str {
@@ -822,6 +850,24 @@ impl Catalog for SystemCatalog {
         schema: CatalogTableSchema,
     ) -> Result<CatalogTableSchema> {
         validate_schema(&schema)?;
+        // TD-AUTHZ-2: mint object ids. ADOPT-or-allocate, matching
+        // `NativeCatalog::mint_object_id`: a caller-supplied id is KEPT and
+        // merely raises the floor, never overwritten — that is what preserves
+        // the ADR-031 unification where a vector collection pre-sets
+        // `schema.object_id` from `collection.id` before this call.
+        //
+        // Without this the live catalog left `object_id` None for every
+        // SQL-created table, and the relational ABAC path denies on absent ids
+        // (dml/mod.rs:1466) — so relational policy bindings and grants could
+        // never take effect at all.
+        let mut schema = schema;
+        schema.object_id = Some(self.mint_object_id(schema.object_id));
+        for column in &mut schema.columns {
+            column.object_id = Some(self.mint_object_id(column.object_id));
+        }
+        for index in &mut schema.indexes {
+            index.object_id = Some(self.mint_object_id(index.object_id));
+        }
         if !self.state.namespace_exists(&identifier.namespace) {
             return Err(anyhow!(
                 "Namespace '{}' does not exist",
@@ -1094,6 +1140,113 @@ mod tests {
             reopened.account_id_u32("acme").await?,
             Some(2),
             "a new tenant must mint above the replayed floor"
+        );
+        Ok(())
+    }
+
+    /// TD-AUTHZ-2 THE INVARIANT THAT MATTERS: an object_id is never re-issued
+    /// across a restart.
+    ///
+    /// Policy bindings and grants are keyed on object_id, so handing a NEW table
+    /// a DEAD table's id would hand it that table's permissions. The floor is
+    /// derived from recovered state (`max_object_id`), so WAL replay must lift
+    /// it above everything already minted.
+    #[tokio::test]
+    async fn object_ids_are_never_reissued_across_a_restart() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+        let ns = nslevels(&["t"]);
+
+        let first_id = {
+            let cat = SystemCatalog::open("default", &wal).await?;
+            cat.create_namespace(&ns, std::collections::HashMap::new())
+                .await?;
+            let a = cat
+                .create_table(&TableIdentifier::new(ns.clone(), "a"), vec_schema("a"))
+                .await?;
+            let b = cat
+                .create_table(&TableIdentifier::new(ns.clone(), "b"), vec_schema("b"))
+                .await?;
+            let (ida, idb) = (
+                a.object_id.expect("table a minted"),
+                b.object_id.expect("table b minted"),
+            );
+            assert!(idb > ida, "monotonic within a run: {idb} > {ida}");
+            idb
+        };
+
+        // Restart: rebuild from the same WAL.
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        let c = reopened
+            .create_table(&TableIdentifier::new(ns.clone(), "c"), vec_schema("c"))
+            .await?;
+        let idc = c.object_id.expect("table c minted after restart");
+        assert!(
+            idc > first_id,
+            "an object_id minted after restart ({idc}) must be above every id \
+             minted before it ({first_id}) — re-issuing one would grant a new \
+             table the policy bindings and grants of a dead one"
+        );
+        Ok(())
+    }
+
+    /// A caller-supplied object_id is ADOPTED, not overwritten — this is what
+    /// preserves the ADR-031 unification where a vector collection pre-sets
+    /// `schema.object_id` from `collection.id` before create_table runs.
+    /// Adoption must also raise the floor, so the next allocation cannot collide.
+    #[tokio::test]
+    async fn a_caller_supplied_object_id_is_adopted_and_raises_the_floor() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let ns = nslevels(&["t"]);
+        let cat = catalog(dir.path()).await;
+        cat.create_namespace(&ns, std::collections::HashMap::new())
+            .await?;
+
+        let mut preset = vec_schema("preset");
+        preset.object_id = Some(5_000);
+        let adopted = cat
+            .create_table(&TableIdentifier::new(ns.clone(), "preset"), preset)
+            .await?;
+        assert_eq!(
+            adopted.object_id,
+            Some(5_000),
+            "a pre-set id must be KEPT — overwriting it splits one collection \
+             into two identities and detaches any policy bound to the first"
+        );
+
+        let next = cat
+            .create_table(
+                &TableIdentifier::new(ns.clone(), "next"),
+                vec_schema("next"),
+            )
+            .await?;
+        assert!(
+            next.object_id.expect("minted") > 5_000,
+            "adoption must raise the floor so the next allocation cannot collide"
+        );
+        Ok(())
+    }
+
+    /// The read-back invariant, for the implementation that ACTUALLY SERVES.
+    /// #1559 proved this for NativeCatalog — which the server does not register,
+    /// so the invariant went unverified where it mattered.
+    #[tokio::test]
+    async fn object_id_survives_the_get_table_round_trip_on_system_catalog() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let ns = nslevels(&["t"]);
+        let cat = catalog(dir.path()).await;
+        cat.create_namespace(&ns, std::collections::HashMap::new())
+            .await?;
+        let ident = TableIdentifier::new(ns.clone(), "rt");
+        let created = cat.create_table(&ident, vec_schema("rt")).await?;
+        let minted = created.object_id.expect("create_table mints");
+
+        let fetched = cat.get_table(&ident).await?;
+        assert_eq!(
+            fetched.object_id,
+            Some(minted),
+            "xcatalog.tables projects this value; an empty one is what \
+             TD-AUTHZ-2 reports and what makes relational ABAC deny"
         );
         Ok(())
     }
