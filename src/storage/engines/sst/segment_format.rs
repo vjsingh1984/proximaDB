@@ -2814,9 +2814,10 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         0.0
     };
     let codes_base = header.sq8_off + coalesced_sq8::codes_offset(footer.row_count as usize) as u64;
-    // Coalesce policy IOP-aligned to the backend (ADR-065 cache-co-design): a
-    // coalesced range must not exceed one chunk (4 MiB Azure / 8 MiB S3), so it
-    // is exactly one billed GET on the target store (no SDK chunk-split inflation).
+    // Coalesce policy IOP-aligned to the backend (ADR-065 cache-co-design).
+    // The Azure 4 MiB value is a conservative planner default, not a billing
+    // quantum or proven SDK split boundary. TD-SEARCH-3 compares the issued
+    // range count with Azurite/Azure wire requests before changing it.
     let iop_target =
         proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
     let policy =

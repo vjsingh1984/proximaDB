@@ -791,6 +791,24 @@ version = "10M source/binary revision 955990254988bbf68acbfd616d8b1d7e12aa27c1; 
 notes = "The 10M result is deliberately partial and the five-point natural-knee fit is labeled provisional_partial_input (log R2 0.8828, LOOCV MAPE 47.6%). The complete four-scale quality fits are unchanged. Input checkpoint SHA-256 values and generated SVG hashes are recorded in the artifact. Azurite supports physical-operation and relative-latency conclusions, not Azure WAN latency."
 
 [[claims]]
+id = "bge768_k30_range_cap_4mib_baseline"
+claim = "On the immutable 491,655-row, 768-dimensional BGE PAX v3 bed with one k_c=30 segment and projection width 32, nprobe=12/top-10 measured recall 0.9836, 203,093.762 rows/query, 8,305,348.376 Region-A bytes/query, 150,304,273.920 Region-B bytes/query, 170,313,605.378 total bytes/query, 49.542 application physical GET/query, 0.999 invariants-cache hit ratio, and 0.0562387 survivor-cache hit ratio under the fixed 1 MiB-gap/4 MiB-range Azure planner. The result is conditional on that planner cap and does not prove smaller cells are Blob-GET optimal."
+metric = "recall@10 + application physical GET/query + bytes/query by IVF region + cache hit ratios"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc",
+  "docs/10-quality/td/TD-IVF-3-coarse-pca-projection-width-miscalibrated.adoc",
+  "docs/12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc",
+]
+bench_source = "scripts/bench/nprobe_sweep.py"
+bench_command = "Run the release/Azurite PAX v3 query-only matrix over the immutable BGE bed with --nprobes 2,3,4,5,6,8,10,12,16,20 --top-k-values 10,20 --queries 1000 --quality-policy report; select nprobe=12/top-10"
+artifact = "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc"
+hardware = "Local macOS arm64 Apple Silicon, serialized release-server run, Azurite localhost HTTP backend"
+date = "2026-08-12"
+version = "binary/source aed724fc533dac595e6ac31894ea3e505e1bcdfd; matrix git revision 4dac739827e184d635a0e97190960d4b424eeb7e"
+notes = "Raw matrix SHA-256 5536f57e2ae9a3c6d2b378e4659eac2349a33405f6da0f30693d167b37d03205; binary SHA-256 62677fb41686015569f7de408fbe8c9758dd7a469de582cb33c8c9d17d1efdae; bed-config SHA-256 1816b6e00cab6f69659f943ee93b2dbfafabb469f207cf8c0bd23feb30aad8dd. Azurite is operation-shape and relative-latency evidence, not Azure WAN latency. The application counter is above object_store.get_range; TD-SEARCH-3's range-cap sweep adds server-side wire counting."
+
+[[claims]]
 id = "compaction_memory_amplification_3m3"
 claim = "After canonical-record and in-place-MVCC copy removal, a release-profile 3.3M-vector PAX compaction over the production Azure backend/Azurite path still consumes 9.85x incremental RSS per input-segment byte; input bytes are therefore a usable conservative admission currency, with 12x initial headroom"
 metric = "incremental_peak_rss_bytes / input_segment_bytes + compaction wall time + settled segment count + recall@10"

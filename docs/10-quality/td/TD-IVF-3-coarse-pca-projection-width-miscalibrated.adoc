@@ -194,11 +194,16 @@ exists to absorb CI hardware/threading differences, not scatter.
 
 == Adjacent findings (measured, not proposed here)
 
-* **The 4MiB IOP target should stand.** Forcing `k_c=50` at 3.3M (≈8MiB cells)
-  costs **+7.2% GETs at iso-recall**, +21% bytes and +11% write. ADR-065's "one
-  cell ≈ one IOP-sized block" is already missed at 4MiB (2.19 GETs/cell) and worse
-  at 8MiB (3.54). The *other* direction — `k_c=200`, ≈2MiB — is untested and may
-  approach 1 GET/cell.
+* **The cell-size conclusion is conditional on the 4 MiB read cap.** Forcing
+  `k_c=50` at 3.3M (approximately 8 MiB cells) measured **+7.2% application
+  GETs at iso-recall**, +21% bytes and +11% write under the fixed 4 MiB planner.
+  But flat Azure Blob has no 4 MiB billing quantum, and the current application
+  counter sits above the SDK. On the 768-d `k_c=30`, width-32 bed, nprobe 12
+  measured 49.542 application GET/query while Region B alone read 150.30 MB;
+  the approximately 12.5 MiB average cell is mechanically split by the planner.
+  TD-SEARCH-3's fixed-bed 4/8/16/32 MiB wire sweep must complete before this TD
+  calls smaller cells GET-optimal. `k_c=200` remains useful afterward for the
+  independent byte/selectivity trade-off.
 * **Read metering, verified against vendor docs.** Azure **Blob** bills one
   transaction per request with **no 4 MiB increment** — that rule is ADLS Gen2
   (`dfs.`) only, and ADR-036 puts us on the flat Blob endpoint. S3 and GCS also
