@@ -8,7 +8,7 @@
 | Status | **Resolved 2026-07-15 — the fusion is ALREADY implemented and wired (TD-045 Modular Graph RAG).** The original filing (2026-07-15) claimed it was blocked on building an ORION `oid`→node index; a source review disproved that premise (see below). The one genuine residual is a **relevance eval** (mandate #13) for this ranked/generated surface, tracked in <<_residual_the_eval>>.
 | Priority | P3 (residual eval only; the capability itself ships today).
 | Severity | Low — no missing capability; a test-quality (eval vs deterministic test) gap.
-| Component | SHIPPED: `src/graph/rag/` (`RagPipeline`, `VectorNodeRetriever`, `KHopSubgraphBuilder`); `src/network/rest/canonical/graph.rs` (`POST /graphs/{id}/rag`, route `:852`, handler `:1319`). Residual: a graph-RAG eval harness under `tests/`.
+| Component | PARTIAL (corrected 2026-08-12): the pipeline `src/graph/rag/` (`RagPipeline`, `VectorNodeRetriever`, `KHopSubgraphBuilder`) is shipped, but the REST entry point was NOT mounted — `create_graph_router()` in that file was referenced nowhere, and the router actually nested at `handlers.rs:1694` is the `proximadb-api` one, which routes `/graphs/{id}/rag` to `not_implemented_handler`. The unmounted duplicate was removed 2026-08-12; the pipeline in `src/graph/rag/` remains. Graph-RAG is therefore NOT reachable over REST today. Residual: mount a RAG route with identity extraction built in, plus a graph-RAG eval harness under `tests/`.
 | Governs | link:../../12-design/adr/ADR-061-per-collection-workload-profiles.adoc[ADR-061] (D4)
 | Relates to | TD-045 (Modular Graph RAG — the implementation), ADR-044 (stable symbol `oid`), TD-WLP-5 (Churn read core), TD-WLP-8 (the amendment this split from)
 | Pillar | correctness/eval (ranked graph-RAG relevance)
@@ -32,7 +32,9 @@ halves are false:
   (`engine_impls.rs:63`, `.map(|r| r.oid)`); `KHopSubgraphBuilder::build` k-hop BFS-expands them via
   `get_outgoing_edges(oid, edge_type)`; `RagPipeline::run` composes retrieve → filter → prune → build.
   It is exposed as a REST endpoint **`POST /graphs/{graph_id}/rag`** (route
-  `network/rest/canonical/graph.rs:852`, handler `:1319`). This *is* ADR-061 D4's match-then-traverse.
+  the pipeline in `src/graph/rag/`). This *is* ADR-061 D4's match-then-traverse, but
+  see the Component row: its REST entry point was an unmounted duplicate and has been
+  removed, so the capability is not reachable over REST until a route is mounted.
 
 So the vector→graph fusion capability is **shipped**, not blocked. ADR-061 D4's fusion intent is
 satisfied by the `/rag` endpoint (a dedicated graph-RAG surface — cleaner than overloading the Churn
