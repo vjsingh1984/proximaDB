@@ -407,3 +407,61 @@ pub trait CanonicalWalReaderPort: Send + Sync {
         canonical_wal_path: &std::path::Path,
     ) -> Result<Vec<proximadb_storage_common::wal_entry::CanonicalWalEntry>>;
 }
+
+// ===========================================================================
+// TD-DECOMP-66: Port-traits to resolve grandfathered control-layer coupling
+// ===========================================================================
+
+/// Inverts the orion-engine → metrics (modality→control) edge.
+///
+/// The concrete impl (bumping Prometheus counters) is registered at bootstrap;
+/// `None` (pre-registration, tests) is a no-op — recovery behavior is unchanged.
+pub trait OrionMetricsPort: Send + Sync {
+    /// Record an ORION recovery checkpoint observation (TD-066 Part 2 Option E).
+    /// Best-effort, infallible — observability must never fail the caller.
+    fn record_recovery_checkpoint_observation(
+        &self,
+        graph_id: &str,
+        checkpoint_lsn: Option<u64>,
+        checkpoint_timestamp_ms: Option<u64>,
+    );
+}
+
+static GLOBAL_ORION_METRICS: std::sync::OnceLock<Arc<dyn OrionMetricsPort>> =
+    std::sync::OnceLock::new();
+
+/// Register the global ORION metrics port. Called once by the composition root.
+pub fn register_orion_metrics(m: Arc<dyn OrionMetricsPort>) {
+    let _ = GLOBAL_ORION_METRICS.set(m);
+}
+
+/// Access the registered ORION metrics port, if any. ORION engine calls this
+/// and treats `None` as a no-op (tests, pre-registration).
+pub fn orion_metrics() -> Option<&'static Arc<dyn OrionMetricsPort>> {
+    GLOBAL_ORION_METRICS.get()
+}
+
+/// Inverts the storage-operations → catalog (storage→control) edge.
+///
+/// The concrete impl delegates to `CorpusVersionRegistry::global()`;
+/// `None` (pre-registration, tests) is a no-op — compaction is unaffected.
+#[async_trait::async_trait]
+pub trait CorpusVersionPort: Send + Sync {
+    /// Bump the corpus version for every tenant that has cached plans against
+    /// this collection. Returns the number of entries bumped.
+    async fn bump_collection_all_tenants(&self, collection: &str) -> usize;
+}
+
+static GLOBAL_CORPUS_VERSION: std::sync::OnceLock<Arc<dyn CorpusVersionPort>> =
+    std::sync::OnceLock::new();
+
+/// Register the global corpus-version port. Called once by the composition root.
+pub fn register_corpus_version(p: Arc<dyn CorpusVersionPort>) {
+    let _ = GLOBAL_CORPUS_VERSION.set(p);
+}
+
+/// Access the registered corpus-version port, if any. The compaction manager
+/// calls this and treats `None` as a no-op (tests, pre-registration).
+pub fn corpus_version() -> Option<&'static Arc<dyn CorpusVersionPort>> {
+    GLOBAL_CORPUS_VERSION.get()
+}

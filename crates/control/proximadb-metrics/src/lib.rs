@@ -32,3 +32,22 @@ pub mod wal_scan_metrics;
 pub use exporters::SystemMetrics;
 pub use proximadb_config::MetricsConfig;
 pub use schema::Alert;
+
+/// Adapter implementing [`proximadb_storage_ports::OrionMetricsPort`] by delegating
+/// to the existing Prometheus-counter free functions. Registered at bootstrap.
+pub struct OrionMetricsAdapter;
+
+impl proximadb_storage_ports::OrionMetricsPort for OrionMetricsAdapter {
+    fn record_recovery_checkpoint_observation(
+        &self,
+        graph_id: &str,
+        checkpoint_lsn: Option<u64>,
+        checkpoint_timestamp_ms: Option<u64>,
+    ) {
+        td066_metrics::record_recovery_checkpoint_observation(
+            graph_id,
+            checkpoint_lsn,
+            checkpoint_timestamp_ms,
+        );
+    }
+}
