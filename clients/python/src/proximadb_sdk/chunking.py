@@ -24,6 +24,8 @@ Usage:
     records = chunk_and_embed_text(text, source_id, embedding_provider, config)
 """
 
+import hashlib
+import json
 import threading
 from collections import defaultdict
 from collections.abc import Callable
@@ -103,7 +105,32 @@ class ChunkerPool:
 
     def _get_pool_key(self, config: ChunkingConfig) -> str:
         """Generate pool key for chunker configuration"""
-        return f"{config.strategy.value}_{config.chunk_size}_{config.chunk_overlap}_{config.min_chunk_size}"
+        token_budget = getattr(config, "token_budget", None)
+        input_contract = getattr(config, "input_contract", None)
+        if token_budget is None:
+            token_identity = None
+        else:
+            if input_contract is None:
+                raise ValueError(
+                    "input_contract is required when token_budget is configured"
+                )
+            role = getattr(config, "input_role", None) or "document"
+            role_value = getattr(role, "value", role)
+            token_identity = {
+                "budget": token_budget.to_manifest(),
+                "contract": input_contract.to_manifest(),
+                "role": str(role_value),
+            }
+        payload = {
+            "strategy": config.strategy.value,
+            "chunk_size": config.chunk_size,
+            "chunk_overlap": config.chunk_overlap,
+            "min_chunk_size": config.min_chunk_size,
+            "max_chunk_size": config.max_chunk_size,
+            "token_identity": token_identity,
+        }
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     def _get_or_create_pool(
         self, config: ChunkingConfig
@@ -225,6 +252,9 @@ class TextChunker:
             breakpoint_percentile_threshold=getattr(
                 self.config, "breakpoint_percentile_threshold", 95.0
             ),
+            token_budget=getattr(self.config, "token_budget", None),
+            input_contract=getattr(self.config, "input_contract", None),
+            input_role=getattr(self.config, "input_role", None),
         )
 
     def chunk_text(
@@ -343,8 +373,7 @@ def create_records(
     """
     if len(chunks) != len(embeddings):
         raise ValueError(
-            f"Chunks ({len(chunks)}) and embeddings ({len(embeddings)}) "
-            f"length mismatch"
+            f"Chunks ({len(chunks)}) and embeddings ({len(embeddings)}) length mismatch"
         )
 
     collection_metadata = collection_metadata or {}

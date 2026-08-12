@@ -7,6 +7,8 @@ Clean, extensible embedding provider system with:
 - Plugin-based provider registration
 """
 
+from dataclasses import replace
+
 # Core components (light — registry, config, base classes; no model deps)
 from .core import (
     BaseEmbeddingProvider,
@@ -33,6 +35,11 @@ _PROVIDER_EXPORTS = {
     "BGEProvider": (".providers.local.bge", "BGEProvider"),
     "E5Provider": (".providers.local.e5", "E5Provider"),
     "GTEQwenProvider": (".providers.local.gte_qwen", "GTEQwenProvider"),
+    "NomicProvider": (".providers.local.nomic", "NomicProvider"),
+    "OpenWeightsProvider": (
+        ".providers.local.open_weights",
+        "OpenWeightsProvider",
+    ),
     "SentenceTransformerProvider": (
         ".providers.local.sentence_transformer",
         "SentenceTransformerProvider",
@@ -112,22 +119,42 @@ def get_provider(name: str, **config_kwargs):
 
     # Handle dimension specially
     if "dimension" in config_kwargs:
-        new_model = ModelMetadata(
-            name=default_config.model.name,
-            dimension=config_kwargs.pop("dimension"),
-            max_length=default_config.model.max_length,
-            provider_type=default_config.model.provider_type,
-            requires_instruction=default_config.model.requires_instruction,
-            instruction_template=default_config.model.instruction_template,
-            mteb_score=default_config.model.mteb_score,
-            languages=default_config.model.languages,
-            description=default_config.model.description,
-            use_case=default_config.model.use_case,
+        dimension = config_kwargs.pop("dimension")
+        dimension_policy = bool(
+            default_config.model.supported_output_dimensions
+            or default_config.model.minimum_output_dimension is not None
         )
-        config_kwargs["model"] = new_model
+        if dimension == default_config.model.dimension:
+            pass
+        elif default_config.model.supports_dimension(dimension):
+            extra = dict(config_kwargs.pop("extra", {}))
+            extra["truncate_dim"] = dimension
+            config_kwargs["extra"] = extra
+        elif dimension_policy:
+            raise ValueError(
+                f"{default_config.model.name} does not support {dimension} dimensions"
+            )
+        else:
+            config_kwargs["model"] = replace(default_config.model, dimension=dimension)
 
     config = default_config.merge(**config_kwargs)
     return provider_class(config)
+
+
+def get_open_embedding_model(
+    model_id: str, *, dimension: int | None = None, **config_kwargs
+):
+    """Create any model in the curated open-weight catalog."""
+    from .providers.local.open_weights import create_open_model_provider
+
+    return create_open_model_provider(model_id, dimension=dimension, **config_kwargs)
+
+
+def list_open_embedding_models(**filters):
+    """List curated open-weight model specs by family/license filter."""
+    from .catalog import list_open_models
+
+    return list_open_models(**filters)
 
 
 def list_providers(include_aliases: bool = False) -> list[str]:
@@ -214,12 +241,16 @@ __all__ = [
     "get_provider",
     "list_providers",
     "get_provider_info",
+    "get_open_embedding_model",
+    "list_open_embedding_models",
     "recommend_free_providers",
     # Backward compatibility (deprecated)
     "get_embedding_provider",
     "get_default_embedding_provider",
     # Providers
     "GTEQwenProvider",
+    "NomicProvider",
+    "OpenWeightsProvider",
     "SimulatedEmbeddingProvider",
     "OpenAIProvider",
     "CohereProvider",

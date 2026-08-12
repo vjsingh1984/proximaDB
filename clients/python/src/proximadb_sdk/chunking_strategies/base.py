@@ -127,6 +127,14 @@ class ChunkingConfig:
     # breakpoint is placed (LlamaIndex default: 95th percentile).
     breakpoint_percentile_threshold: float = 95.0
 
+    # Optional model-input budget. When present, the selected strategy proposes
+    # preferred structural boundaries and TokenBudgetStrategy owns final token
+    # segmentation. These are typed as Any so importing the base module remains
+    # dependency-light and existing character-based configurations are unchanged.
+    token_budget: Any | None = None
+    input_contract: Any | None = None
+    input_role: Any | None = None
+
 
 class ChunkingStrategyInterface(ABC):
     """
@@ -161,6 +169,24 @@ class ChunkingStrategyInterface(ABC):
             List of TextChunk objects
         """
         pass
+
+    def preferred_boundaries(
+        self,
+        text: str,
+        source_id: str,
+        base_metadata: dict[str, Any] | None = None,
+    ) -> list[int]:
+        """Return preferred raw-text end offsets for an external size budget.
+
+        The compatibility default derives boundaries from this strategy's
+        ordinary chunks. Structural strategies override it to expose every
+        atomic boundary, independent of their legacy character-size grouping.
+        """
+        return [
+            chunk.end_pos
+            for chunk in self.chunk(text, source_id, base_metadata)
+            if 0 < chunk.end_pos <= len(text)
+        ]
 
     def chunk_stream(
         self,

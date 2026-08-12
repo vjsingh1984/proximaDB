@@ -1,0 +1,187 @@
+= xCatalog MLOps Model Registry Co-Design
+:toc: left
+:toclevels: 3
+:icons: font
+:revdate: 2026-08-12
+
+[.lead]
+This design makes embedding execution contracts first-class, typed xCatalog assets while keeping
+MLflow, SDK discovery and serving runtimes as adapters. It is the native control-plane half of
+token-budgeted chunking: the tokenizer, renderer, context and output geometry used to chunk must be
+the same immutable contract pinned by collections and deployments.
+
+Status: *core contract and NativeCatalog persistence implemented; public lifecycle API and MLflow
+REST compatibility are rollout slices*. The shape is additive and legacy-read-safe.
+
+== First principles
+
+An embedding is not identified by a model name. Its executable meaning is the artifact digest,
+model and tokenizer revisions, tokenizer fingerprint, query/document rendering, effective context,
+pooling, normalization and output dimension policy. Therefore:
+
+. registered versions are immutable;
+. a URI locates bytes while a digest identifies them;
+. aliases select versions, but collections and deployments pin the resolved version and digest;
+. evidence does not grant approval; approval is an audited decision;
+. producer executions and input datasets are typed lineage, not tags;
+. request-hot embedding consumes a cached immutable snapshot, not a live catalog lookup;
+. weights, tokenizer files and row-level eval results remain outside catalog metadata.
+
+== One authority, several adapters
+
+[source,text]
+----
+SDK seed catalog         MLflow API          OpenLineage/MLMD events
+       \                    |                       /
+        +---------------- xCatalog mlops.* ----------------+
+                          durable authority
+                                  |
+              +-------------------+------------------+
+              |                                      |
+ collection binding                         deployment binding
+ asset id + version +                       version + artifact digest
+ contract hash + dimension                  runtime + endpoint
+              |                                      |
+          data/index plane                    serving runtime
+          cached snapshot                     cached snapshot
+----
+
+The curated SDK catalog proposes defaults but cannot approve them and is never a second durable
+registry. MLflow compatibility must lower to the same xCatalog commands; it must not own another
+metadata database.
+
+== Standards pressure test
+
+[cols="1,2,3", options="header"]
+|===
+| External concept | Native mapping | Consequence
+
+| MLflow registered model/version
+| `CatalogEmbeddingModelRegistry` and immutable version
+| Duplicate versions fail; source run identity is retained.
+
+| MLflow aliases/tags
+| Mutable aliases and annotations outside versions
+| No data-plane record stores an unresolved alias.
+
+| MLflow signature
+| Typed input/output contracts
+| Embeddings add tokenizer/rendering/context semantics beyond tensor schemas.
+
+| MLflow deprecated stages
+| No built-in staging/production state machine
+| Decisions express policy; deployments express actual serving state.
+
+| MLflow datasets
+| Name plus content digest in lineage/evidence
+| Reproducibility never depends on a mutable path.
+
+| MLMD artifact/execution/event/context
+| Content-addressed artifact, producer execution, typed inputs and namespace
+| Lineage is structural and queryable.
+
+| OpenLineage job/run/dataset facets
+| Producer execution and typed dataset/artifact inputs
+| Its facade imports/exports records without changing authority.
+
+| OCI descriptor
+| URI, SHA-256 digest, media type and byte size
+| Artifact relocation does not change executable contract identity.
+
+| KServe model/storage contract
+| Deployment runtime, endpoint, immutable version and digest
+| Runtime must be explicitly approved for that version.
+
+| Unity Catalog model/version hierarchy
+| Unified tenant catalog object under `mlops.*`
+| Models inherit stable identity, namespace, policy and audit boundaries.
+|===
+
+Authoritative references:
+
+* https://www.mlflow.org/docs/latest/ml/model-registry/workflow/[MLflow Model Registry workflows]
+* https://mlflow.org/docs/latest/dataset/[MLflow dataset tracking]
+* https://www.tensorflow.org/tfx/guide/mlmd[TensorFlow ML Metadata]
+* https://github.com/OpenLineage/OpenLineage[OpenLineage core model]
+* https://specs.opencontainers.org/image-spec/descriptor/[OCI content descriptor]
+* https://docs.unitycatalog.io/usage/models/[Unity Catalog registered models]
+* https://kserve.github.io/website/docs/model-serving/storage/multiple-storage-uris[KServe storage]
+
+== Native model and seams
+
+[source,text]
+----
+CatalogMlopsAsset::EmbeddingModel
+  CatalogEmbeddingModelRegistry
+    schema_version + optimistic revision
+    versions[version]                 immutable
+      artifact descriptor             digest identity
+      input contract                  tokenizer/rendering/context
+      output contract                 dimension/pooling/normalization
+      governance                      license/access/remote-code/runtime allow-list
+      lineage                         producer execution + digest-pinned inputs
+    aliases[name -> version]          mutable catalog transaction
+    evidence[]                        append-only
+    decisions[]                       append-only audit
+    deployments[name]                 mutable, version/digest pinned
+----
+
+Mutations are commands (`RegisterVersion`, `SetAlias`, `AppendEvidence`, `RecordDecision`,
+`UpsertDeployment`) with an expected revision. Stale whole-document writes cannot erase concurrent
+evidence or alias changes.
+
+`CatalogEmbeddingConfig` remains the collection projection. Legacy rows may carry only `model`.
+A native binding sets `model_asset_id`, `model_version` and `contract_sha256` together; partial
+bindings fail. Output dimension stays on the collection because one Matryoshka model can back
+several vector geometries.
+
+== Control plane versus data plane
+
+. Resolve aliases and validate policy on the control plane.
+. Commit a concrete version, artifact digest and contract hash to collection/deployment state.
+. Load and cache the immutable snapshot by contract hash in the embedding service.
+. Record that hash in corpus and index manifests.
+. Alias changes affect future resolution only; existing collections do not drift.
+
+Catalog unavailability blocks lifecycle mutation but not a serving process holding a valid pinned
+snapshot. Revocation requires an explicit audited invalidation event.
+
+== Co-design economics and security
+
+[cols="1,2,2", options="header"]
+|===
+| Dimension | Dominant term | Response
+| Object storage | artifact bytes and requests | Catalog stores descriptors, not weights/results.
+| Network | downloads and catalog latency | Digest caches; no request-hot catalog lookup.
+| Local cache | duplicate weights and drift | Verify/cache by content and contract digest.
+| Compute | tokens, context and dimension | Persist exact contract so quality/cost is comparable.
+| Governance | code/license/tenant risk | Fail-closed unreviewed defaults and runtime allow-list.
+|===
+
+Credentials never live in the contract. Registering a remote-code model does not execute it;
+execution requires a separately approved sandbox/runtime and existing tenant secret policy.
+
+== TDD acceptance matrix
+
+Tests require digest identity, valid templates/budgets/dimensions, immutable versions, append-only
+evidence/decisions, optimistic conflict rejection, alias history preservation, digest-pinned and
+runtime-approved deployments, relocation-stable hashes, legacy JSON compatibility, NativeCatalog
+reload persistence, all-or-none collection bindings, and Python conversion from a real
+`ResolvedInputContract` to native JSON.
+
+== Rollout
+
+. *Implemented*: typed contracts, validation, collection pins, stable hash, command mutations,
+  optimistic concurrency, NativeCatalog persistence and SDK payload adapter.
+. Add generated REST/gRPC lifecycle handlers; regenerate SDKs from OpenAPI/proto. No handwritten
+  Python transport.
+. Add MLflow model/version/alias/tag compatibility with conformance tests.
+. Add OpenLineage import/export over producer/input lineage.
+. Add transactional OLTP-catalog overrides and cross-backend conformance tests before advertising
+  that backend's MLOps lifecycle surface.
+. Bind embedding workers and collection creation to resolved snapshots default-OFF, dual-reading
+  the legacy route until baked.
+. Ratchet retrieval and economic evals per contract hash before making native binding the default.
+
+The public API is a distinct slice because it requires generated API changes plus authorization and
+audit review. The core catalog seam is usable now and keeps those adapters thin.

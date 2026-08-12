@@ -541,6 +541,21 @@ class ChunkingPipeline:
                         if self.config.chunking_config
                         else 50
                     ),
+                    token_budget=(
+                        self.config.chunking_config.token_budget
+                        if self.config.chunking_config
+                        else None
+                    ),
+                    input_contract=(
+                        self.config.chunking_config.input_contract
+                        if self.config.chunking_config
+                        else None
+                    ),
+                    input_role=(
+                        self.config.chunking_config.input_role
+                        if self.config.chunking_config
+                        else None
+                    ),
                 )
             self.chunker = ChunkingStrategyFactory.create_strategy(
                 self.config.chunking_strategy, config

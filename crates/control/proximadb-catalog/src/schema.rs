@@ -23,8 +23,17 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
         return Err(anyhow!("Schema name cannot be empty"));
     }
 
-    if schema.columns.is_empty() {
+    if schema.columns.is_empty() && schema.mlops_asset.is_none() {
         return Err(anyhow!("Schema must have at least one column"));
+    }
+
+    if let Some(asset) = &schema.mlops_asset {
+        asset
+            .validate()
+            .map_err(|error| anyhow!("Invalid MLOps asset: {error}"))?;
+    }
+    if let Some(binding) = &schema.embedding_config {
+        binding.validate_model_binding()?;
     }
 
     let mut seen = HashSet::new();
