@@ -43,12 +43,33 @@ filter as the correctness backstop. This TD tracks the phases.
   TD-FLUSH-8** (auto-flush cannot resolve REST-created collections in the
   catalog — segments are never produced from the public API, so all corridor
   measurements to date were memtable-scan measurements).
-* **P2 — footer-resident block stats (zero-GET pruning).** Populate the
-  reserved `StatsKind::MinMax`/`BloomOid` slots in the segment footer block
+* **P2 — footer-resident block stats (zero-GET pruning). IN PROGRESS.**
+  Populate the reserved `StatsKind::MinMax` slot in the segment footer block
   table (`segment_layout.rs:222-262`; today always `StatsKind::None`,
   `pax_block.rs:2104` — the ADR-062 D5 deferral, now lifted) for filterable
   columns. Pruning then costs nothing beyond the footer the cascade already
-  reads. Mixed-read-safe by the stats_kind marker.
+  reads. Mixed-read-safe by the stats_kind marker AND the footer's existing
+  per-entry `stats_len` framing (readers already skip an unknown-length stats
+  payload — `segment_layout.rs:595-603`).
+  ** **Keystone DONE (this slice):** `proximadb-block-format::FooterBlockStats`
+     — the filterable columns' `ColumnMeta` (min/max hash bounds, the SAME
+     bounds P1 prunes on in-body) lifted into a compact `[n u16][ColumnMeta×n]`
+     payload, implementing the existing `BlockZoneSource` so `evaluate_block`
+     runs unchanged against a footer-backed source. Round-trip + empty-payload
+     (all-"may-match", mixed-read-safe) + **footer-prune == body-prune parity**
+     are TDD-proven (5 tests). No new pruning logic; reuses the P1 kernel.
+  ** **Remaining wiring:** (a) storage-common footer ser/de — write the payload
+     in `write_block_entry` (currently hardcodes `stats_len=0`,
+     `segment_layout.rs:582`) + parse it in `read_blocks` + carry it on
+     `FooterBlockEntry` (drops `Copy`; only ~4 call sites, all in
+     `pax_block.rs`); (b) writer — populate per-block from filterable-column
+     `ColumnMeta` at footer build (`pax_block.rs:1664/2100`), `stats_kind =
+     MinMax`, behind a default-OFF gate until baked; (c) Stage F
+     (`pax_filtered_row_allow`) — `evaluate_block` over `FooterBlockStats`
+     FIRST, fetch+decode only the survivors (pruned blocks cost zero body GET).
+  ** **Evidence gate:** filtered search `io_trace` `object_gets`/`bytes_read`
+     drop with selectivity (pruned blocks unfetched), recall unchanged, on both
+     the synthetic partition and Wikipedia `lang` corpora.
 * **P3 — per-cell stats (prune before any Region-A byte).** Optional
   footer/A0 section with per-cell dictionary/zone summaries for filterable
   columns; intersect with the geometric nprobe cut
