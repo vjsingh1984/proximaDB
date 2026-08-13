@@ -137,7 +137,7 @@ impl CatalogMlopsAssetExt for CatalogTableSchema {
     fn mlops_asset_as_typed(&self) -> anyhow::Result<Option<mlops::CatalogMlopsAsset>> {
         self.mlops_asset
             .as_ref()
-            .map(|v| serde_json::from_value(v.clone()).map_err(anyhow::Error::new))
+            .map(|value| serde_json::from_value(value.clone()).map_err(anyhow::Error::new))
             .transpose()
     }
 
@@ -2385,7 +2385,7 @@ pub trait Catalog: Send + Sync {
             .await?
             .ok_or_else(|| anyhow::anyhow!("embedding model asset {asset_id} was not found"))?;
         let schema = self.get_table(&identifier).await?;
-        let asset = schema.mlops_asset.ok_or_else(|| {
+        let asset = schema.mlops_asset_as_typed()?.ok_or_else(|| {
             anyhow::anyhow!("catalog object {asset_id} is not an embedding model asset")
         })?;
         let mlops::CatalogMlopsAsset::EmbeddingModel(registry) = asset;

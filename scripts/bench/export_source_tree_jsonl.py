@@ -66,8 +66,7 @@ def iter_source_files(
             directories[:] = sorted(
                 name
                 for name in directories
-                if name not in skip_dirs
-                and not (Path(current) / name).is_symlink()
+                if name not in skip_dirs and not (Path(current) / name).is_symlink()
             )
             for name in sorted(files):
                 path = Path(current) / name
@@ -166,7 +165,9 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--code-root", type=Path, required=True)
-    parser.add_argument("--repository", dest="repositories", action="append", required=True)
+    parser.add_argument(
+        "--repository", dest="repositories", action="append", required=True
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--extension", dest="extensions", action="append")

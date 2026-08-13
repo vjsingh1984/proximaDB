@@ -75,9 +75,7 @@ def _load_contracts(path: Path) -> CompositeInputContract:
         document_parameters = tuple(
             sorted(
                 (str(key), str(value))
-                for key, value in model.get(
-                    "document_encode_parameters", {}
-                ).items()
+                for key, value in model.get("document_encode_parameters", {}).items()
             )
         )
         query_parameters = tuple(

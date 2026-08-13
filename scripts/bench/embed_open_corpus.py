@@ -47,11 +47,15 @@ def _atomic_json(value: Any, path: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _contract_for_model(corpus_manifest: dict[str, Any], model_id: str) -> dict[str, Any]:
+def _contract_for_model(
+    corpus_manifest: dict[str, Any], model_id: str
+) -> dict[str, Any]:
     contracts = corpus_manifest.get("input_contract", {}).get("contracts", [])
     matches = [item for item in contracts if item.get("model_id") == model_id]
     if len(matches) != 1:
-        raise ValueError(f"corpus manifest must contain exactly one contract for {model_id}")
+        raise ValueError(
+            f"corpus manifest must contain exactly one contract for {model_id}"
+        )
     return matches[0]
 
 
@@ -90,9 +94,7 @@ def prepare_shards(
             raise RuntimeError(f"embedding shard identity mismatch in {shard_dir}")
     else:
         _atomic_json(identity, identity_path)
-    return [
-        shard_dir / f"{start:08d}.npy" for start in range(0, rows, shard_size)
-    ]
+    return [shard_dir / f"{start:08d}.npy" for start in range(0, rows, shard_size)]
 
 
 def pending_shards(
@@ -233,7 +235,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if resolved_contract.fingerprint != declared_contract.get("contract_fingerprint"):
         raise ValueError("loaded runtime contract does not match the corpus contract")
     if provider.get_dimension() != args.dimension:
-        raise ValueError("loaded runtime dimension does not match the requested dimension")
+        raise ValueError(
+            "loaded runtime dimension does not match the requested dimension"
+        )
 
     shard_paths = prepare_shards(
         output_dir=args.output_dir,

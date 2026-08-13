@@ -464,6 +464,56 @@ pub struct CatalogEmbeddingModelVersion {
     pub source_run_id: Option<String>,
 }
 
+/// JSON object keys are strings, while the in-memory registry indexes versions
+/// numerically. An explicit adapter is required because the registry may be
+/// buffered inside an adjacently tagged enum (for example via
+/// `serde_json::Value`), where serde_json's streaming map-key coercion is not
+/// available and object-field order must not affect deserialization.
+mod version_map_wire {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _, ser::SerializeMap as _};
+
+    use super::CatalogEmbeddingModelVersion;
+
+    pub fn serialize<S>(
+        versions: &BTreeMap<u64, CatalogEmbeddingModelVersion>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(versions.len()))?;
+        for (version, contract) in versions {
+            map.serialize_entry(&version.to_string(), contract)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<BTreeMap<u64, CatalogEmbeddingModelVersion>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = BTreeMap::<String, CatalogEmbeddingModelVersion>::deserialize(deserializer)?;
+        let mut versions = BTreeMap::new();
+        for (key, contract) in wire {
+            let version = key.parse::<u64>().map_err(|_| {
+                D::Error::custom(format!(
+                    "model version key '{key}' is not an unsigned integer"
+                ))
+            })?;
+            if versions.insert(version, contract).is_some() {
+                return Err(D::Error::custom(format!(
+                    "model version key '{key}' duplicates numeric version {version}"
+                )));
+            }
+        }
+        Ok(versions)
+    }
+}
+
 impl CatalogEmbeddingModelVersion {
     pub fn new(
         version: u64,
@@ -733,7 +783,7 @@ pub struct CatalogEmbeddingModelRegistry {
     #[serde(default)]
     pub revision: u64,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, with = "version_map_wire")]
     pub versions: BTreeMap<u64, CatalogEmbeddingModelVersion>,
     #[serde(default)]
     pub aliases: BTreeMap<String, u64>,

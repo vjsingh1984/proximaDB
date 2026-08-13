@@ -351,6 +351,19 @@ fn legacy_catalog_rows_default_to_no_mlops_facet() {
 }
 
 #[test]
+fn opaque_schema_value_round_trips_numeric_model_version_keys() {
+    let mut registry = CatalogEmbeddingModelRegistry::new("search-embedding").unwrap();
+    registry.register_version(version(1)).unwrap();
+    let schema = CatalogTableSchema::new("search-embedding")
+        .with_mlops_asset(CatalogMlopsAsset::EmbeddingModel(registry))
+        .unwrap();
+
+    let CatalogMlopsAsset::EmbeddingModel(round_tripped) =
+        schema.mlops_asset_as_typed().unwrap().unwrap();
+    assert_eq!(round_tripped.version(1).unwrap().version, 1);
+}
+
+#[test]
 fn python_sdk_golden_asset_is_native_serde_compatible() {
     let json = include_str!(
         "../../../../clients/python/tests/fixtures/embedding_model_xcatalog_asset.json"
