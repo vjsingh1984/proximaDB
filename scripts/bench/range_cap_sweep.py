@@ -35,7 +35,9 @@ def load_module(name: str, path: Path):
     return module
 
 
-ACCEPTANCE = load_module("range_cap_acceptance", SCRIPT_ROOT / "sift1m_get_reduction.py")
+ACCEPTANCE = load_module(
+    "range_cap_acceptance", SCRIPT_ROOT / "sift1m_get_reduction.py"
+)
 NPROBE = load_module("range_cap_nprobe", SCRIPT_ROOT / "nprobe_sweep.py")
 MIB = 1024 * 1024
 REQUEST_LINE = re.compile(
@@ -86,14 +88,15 @@ class AzuriteWireLog:
             # Emulator URLs include /devstoreaccount1 before container. A
             # suffix/subpath match also accepts product-style host URLs.
             if not (
-                request_path.endswith(self.scope)
-                or f"{self.scope}/" in request_path
+                request_path.endswith(self.scope) or f"{self.scope}/" in request_path
             ):
                 continue
             try:
                 headers = json.loads(match.group("headers"))
             except json.JSONDecodeError as error:
-                raise RuntimeError(f"invalid Azurite request headers: {line}") from error
+                raise RuntimeError(
+                    f"invalid Azurite request headers: {line}"
+                ) from error
             method = match.group("method")
             raw_range = headers.get("range") or headers.get("Range")
             range_bytes = None
@@ -192,10 +195,10 @@ class RssSampler:
 def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> dict:
     wire = candidate["wire_http"]["get_requests"]
     base_wire = baseline["wire_http"]["get_requests"]
+    wire_ranges = candidate["wire_http"]["range_get_requests"]
     app = candidate["physical_gets"]
     recall_identical = (
-        abs(candidate["recall_at_k"] - baseline["recall_at_k"])
-        <= args.recall_tolerance
+        abs(candidate["recall_at_k"] - baseline["recall_at_k"]) <= args.recall_tolerance
     )
     wire_reduction = 1.0 - (wire / base_wire) if base_wire else 0.0
     bytes_ratio = candidate["bytes_read"] / baseline["bytes_read"]
@@ -208,7 +211,12 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
         if candidate_peak is not None and baseline_peak
         else None
     )
-    one_wire_per_application_get = abs(wire - app) < 0.5
+    # The server issues application-counted byte-range reads. One additional
+    # full-object GET may be control-plane/catalog work and is still billed,
+    # but it is not evidence that the SDK split one ranged read. Compare the
+    # range requests for the SDK-splitting gate while retaining total GETs for
+    # the economic reduction calculation.
+    one_wire_range_per_application_get = abs(wire_ranges - app) < 0.5
     checks = {
         "recall_identical": recall_identical,
         "target_recall_maintained": candidate["recall_at_k"] >= args.target_recall,
@@ -219,7 +227,7 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
         "rss_not_materially_regressed": (
             rss_ratio is not None and rss_ratio <= args.max_rss_ratio
         ),
-        "one_wire_get_per_application_get": one_wire_per_application_get,
+        "one_wire_range_get_per_application_get": one_wire_range_per_application_get,
     }
     return {
         "baseline_cap_mib": baseline["range_cap_mib"],
@@ -229,9 +237,21 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
         "p95_ratio": p95_ratio,
         "rss_ratio": rss_ratio,
         "wire_to_application_get_ratio": wire / app if app else None,
+        "wire_range_to_application_get_ratio": wire_ranges / app if app else None,
         "checks": checks,
         "promotion_eligible": all(checks.values()),
     }
+
+
+def validate_wire_observation(label: str, point: dict) -> None:
+    """Fail closed when application reads occurred but the wire observer was dead."""
+    app_gets = point["physical_gets"]
+    wire_gets = point["wire_http"]["get_requests"]
+    if app_gets > 0 and wire_gets == 0:
+        raise RuntimeError(
+            f"{label}: application counted {app_gets:.0f} GETs but Azurite "
+            "observed zero HTTP GETs; debug log is stale or disconnected"
+        )
 
 
 def checkpoint_identity(result: dict) -> dict:
@@ -399,7 +419,9 @@ def main() -> int:
     )
     max_cells = max(segment["coarse_cells"] for segment in geometry["segments"])
     if args.nprobe > max_cells:
-        raise RuntimeError(f"nprobe={args.nprobe} exceeds persisted max k_c={max_cells}")
+        raise RuntimeError(
+            f"nprobe={args.nprobe} exceeds persisted max k_c={max_cells}"
+        )
 
     result = {
         "protocol": "pax_azure_range_cap_sweep",
@@ -513,6 +535,7 @@ def main() -> int:
                 point["process_rss"] = sampler.stop()
                 sampler = None
                 point["wire_http"] = wire_log.sample(offset)
+                validate_wire_observation(label, point)
             except (Exception, KeyboardInterrupt) as error:
                 write_checkpoint(
                     output,
@@ -536,7 +559,14 @@ def main() -> int:
                 if point["physical_gets"]
                 else None
             )
-            if attribution_failure := ACCEPTANCE.ivf_byte_attribution_failure(label, point):
+            point["wire_range_to_application_get_ratio"] = (
+                point["wire_http"]["range_get_requests"] / point["physical_gets"]
+                if point["physical_gets"]
+                else None
+            )
+            if attribution_failure := ACCEPTANCE.ivf_byte_attribution_failure(
+                label, point
+            ):
                 result["measurement_failures"].append(attribution_failure)
             result["experiment"]["points"].append(point)
             completed.add((cap_mib, top_k))
