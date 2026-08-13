@@ -10,8 +10,9 @@ MLflow, SDK discovery and serving runtimes as adapters. It is the native control
 token-budgeted chunking: the tokenizer, renderer, context and output geometry used to chunk must be
 the same immutable contract pinned by collections and deployments.
 
-Status: *core contract and NativeCatalog persistence implemented; public lifecycle API and MLflow
-REST compatibility are rollout slices*. The shape is additive and legacy-read-safe.
+Status: *core contract, NativeCatalog persistence, and fail-closed collection-binding resolution
+implemented; public lifecycle API and MLflow REST compatibility are rollout slices*. The shape is
+additive and legacy-read-safe.
 
 == First principles
 
@@ -146,6 +147,18 @@ several vector geometries.
 Catalog unavailability blocks lifecycle mutation but not a serving process holding a valid pinned
 snapshot. Revocation requires an explicit audited invalidation event.
 
+`Catalog::resolve_embedding_model_binding` is the one resolution query for collection creation,
+embedding workers, lifecycle APIs and compatibility adapters. It resolves the durable asset by
+stable ID and verifies the concrete version, executable contract digest, output dimension, latest
+approval/deprecation decision, approved runtime and the legacy route name. The route-name check is
+required for mixed-version safety: an old reader following `model` and a new reader following the
+typed binding must not execute different models.
+
+The durable typed `Catalog` / `CatalogTableSchema` model is the authority under ADR-048. The
+separate in-memory `internal::CatalogObject` model is not a second MLOps registry; its broader
+parallel-model collapse is already tracked by the TF-1 catalog roadmap. Lifecycle adapters must
+call the durable `Catalog` seam rather than adding MLOps state to that ephemeral registry.
+
 == Co-design economics and security
 
 [cols="1,2,2", options="header"]
@@ -172,16 +185,20 @@ reload persistence, all-or-none collection bindings, and Python conversion from 
 == Rollout
 
 . *Implemented*: typed contracts, validation, collection pins, stable hash, command mutations,
-  optimistic concurrency, NativeCatalog persistence and SDK payload adapter.
-. Add generated REST/gRPC lifecycle handlers; regenerate SDKs from OpenAPI/proto. No handwritten
-  Python transport.
-. Add MLflow model/version/alias/tag compatibility with conformance tests.
-. Add OpenLineage import/export over producer/input lineage.
+  optimistic concurrency, NativeCatalog persistence, SDK payload adapter, and one fail-closed
+  binding-resolution query over digest/dimension/decision/runtime/name.
+. Add generated REST/gRPC lifecycle handlers and regenerate SDKs from OpenAPI/proto. Handlers lower
+  to catalog commands and the shared resolution query; no handwritten Python transport.
+. Add the typed collection binding to generated APIs, then bind collection creation and embedding
+  workers to approved resolved snapshots default-OFF, dual-reading the legacy route until baked.
+. Add MLflow model/version/alias/tag compatibility with conformance tests; then add OpenLineage
+  import/export over the same producer/input lineage. Neither adapter owns persistence.
 . Add transactional OLTP-catalog overrides and cross-backend conformance tests before advertising
   that backend's MLOps lifecycle surface.
-. Bind embedding workers and collection creation to resolved snapshots default-OFF, dual-reading
-  the legacy route until baked.
-. Ratchet retrieval and economic evals per contract hash before making native binding the default.
+. Ratchet retrieval quality and lifecycle economics per contract hash before making native binding
+  the default. The economic rubric includes context, dimension, GETs, bytes, cache hit ratio and
+  object access tier; TD-COST-1 shows request-priced Hot and retrieval-byte-priced Cool/Cold can
+  prefer different index geometry.
 
 The public API is a distinct slice because it requires generated API changes plus authorization and
 audit review. The core catalog seam is usable now and keeps those adapters thin.

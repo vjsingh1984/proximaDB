@@ -54,6 +54,16 @@ pub enum CatalogModelContractError {
     DeploymentDigestMismatch { deployment: String, version: u64 },
     #[error("runtime '{runtime}' is not approved for model version {version}")]
     RuntimeNotApproved { runtime: String, version: u64 },
+    #[error("model version {version} contract digest does not match the pinned binding")]
+    ContractDigestMismatch { version: u64 },
+    #[error("model version {version} does not support output dimension {dimension}")]
+    UnsupportedOutputDimension { version: u64, dimension: u32 },
+    #[error("model version {version} is not approved for use")]
+    ModelNotApproved { version: u64 },
+    #[error("model version {version} is rejected and cannot be used")]
+    ModelRejected { version: u64 },
+    #[error("model version {version} is deprecated and cannot be used")]
+    ModelDeprecated { version: u64 },
     #[error("model registry revision conflict: expected {expected}, current {current}")]
     RevisionConflict { expected: u64, current: u64 },
     #[error("contract serialization failed: {message}")]
@@ -454,6 +464,56 @@ pub struct CatalogEmbeddingModelVersion {
     pub source_run_id: Option<String>,
 }
 
+/// JSON object keys are strings, while the in-memory registry indexes versions
+/// numerically. An explicit adapter is required because the registry may be
+/// buffered inside an adjacently tagged enum (for example via
+/// `serde_json::Value`), where serde_json's streaming map-key coercion is not
+/// available and object-field order must not affect deserialization.
+mod version_map_wire {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _, ser::SerializeMap as _};
+
+    use super::CatalogEmbeddingModelVersion;
+
+    pub fn serialize<S>(
+        versions: &BTreeMap<u64, CatalogEmbeddingModelVersion>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(versions.len()))?;
+        for (version, contract) in versions {
+            map.serialize_entry(&version.to_string(), contract)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<BTreeMap<u64, CatalogEmbeddingModelVersion>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = BTreeMap::<String, CatalogEmbeddingModelVersion>::deserialize(deserializer)?;
+        let mut versions = BTreeMap::new();
+        for (key, contract) in wire {
+            let version = key.parse::<u64>().map_err(|_| {
+                D::Error::custom(format!(
+                    "model version key '{key}' is not an unsigned integer"
+                ))
+            })?;
+            if versions.insert(version, contract).is_some() {
+                return Err(D::Error::custom(format!(
+                    "model version key '{key}' duplicates numeric version {version}"
+                )));
+            }
+        }
+        Ok(versions)
+    }
+}
+
 impl CatalogEmbeddingModelVersion {
     pub fn new(
         version: u64,
@@ -586,6 +646,43 @@ pub enum CatalogModelDecisionKind {
     Deprecated,
 }
 
+/// Fail-closed policy applied when resolving an immutable model snapshot for
+/// a collection, embedding worker, or serving deployment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogModelUsePolicy {
+    /// Runtime implementation that will execute the contract. `None` is valid
+    /// for registration-time referential validation before a worker is chosen.
+    pub runtime: Option<String>,
+    /// Require the latest append-only decision for the version to be Approved.
+    pub require_approved: bool,
+}
+
+impl CatalogModelUsePolicy {
+    pub fn registration_only() -> Self {
+        Self {
+            runtime: None,
+            require_approved: false,
+        }
+    }
+
+    pub fn approved_for_runtime(runtime: impl Into<String>) -> Self {
+        Self {
+            runtime: Some(runtime.into()),
+            require_approved: true,
+        }
+    }
+}
+
+/// Immutable snapshot returned by the durable catalog resolution seam.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogResolvedEmbeddingModel {
+    pub asset_id: u64,
+    pub registry_name: String,
+    pub registry_revision: u64,
+    pub contract_sha256: String,
+    pub model: CatalogEmbeddingModelVersion,
+}
+
 /// Append-only policy/audit decision, intentionally separate from evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogModelDecision {
@@ -686,7 +783,7 @@ pub struct CatalogEmbeddingModelRegistry {
     #[serde(default)]
     pub revision: u64,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, with = "version_map_wire")]
     pub versions: BTreeMap<u64, CatalogEmbeddingModelVersion>,
     #[serde(default)]
     pub aliases: BTreeMap<String, u64>,
@@ -791,6 +888,55 @@ impl CatalogEmbeddingModelRegistry {
                     alias: alias.to_string(),
                 })?;
         self.version(*version)
+    }
+
+    /// Resolve and verify every executable field persisted by a collection.
+    /// Alias lookup is intentionally absent: callers must persist a concrete
+    /// version before entering the data plane.
+    pub fn resolve_use(
+        &self,
+        version: u64,
+        contract_sha256: &str,
+        dimension: u32,
+        policy: &CatalogModelUsePolicy,
+    ) -> Result<&CatalogEmbeddingModelVersion, CatalogModelContractError> {
+        let model = self.version(version)?;
+        if model.contract_sha256()? != contract_sha256 {
+            return Err(CatalogModelContractError::ContractDigestMismatch { version });
+        }
+        if !model.output.supports(dimension) {
+            return Err(CatalogModelContractError::UnsupportedOutputDimension {
+                version,
+                dimension,
+            });
+        }
+        if policy.require_approved {
+            match self
+                .decisions
+                .iter()
+                .rev()
+                .find(|decision| decision.version == version)
+                .map(|decision| decision.decision)
+            {
+                Some(CatalogModelDecisionKind::Approved) => {}
+                Some(CatalogModelDecisionKind::Rejected) => {
+                    return Err(CatalogModelContractError::ModelRejected { version });
+                }
+                Some(CatalogModelDecisionKind::Deprecated) => {
+                    return Err(CatalogModelContractError::ModelDeprecated { version });
+                }
+                None => return Err(CatalogModelContractError::ModelNotApproved { version }),
+            }
+        }
+        if let Some(runtime) = &policy.runtime
+            && !model.governance.approved_runtimes.contains(runtime)
+        {
+            return Err(CatalogModelContractError::RuntimeNotApproved {
+                runtime: runtime.clone(),
+                version,
+            });
+        }
+        Ok(model)
     }
 
     pub fn append_evidence(

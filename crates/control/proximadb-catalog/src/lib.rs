@@ -137,7 +137,7 @@ impl CatalogMlopsAssetExt for CatalogTableSchema {
     fn mlops_asset_as_typed(&self) -> anyhow::Result<Option<mlops::CatalogMlopsAsset>> {
         self.mlops_asset
             .as_ref()
-            .map(|v| serde_json::from_value(v.clone()).map_err(anyhow::Error::new))
+            .map(|value| serde_json::from_value(value.clone()).map_err(anyhow::Error::new))
             .transpose()
     }
 
@@ -2356,6 +2356,58 @@ pub trait Catalog: Send + Sync {
     ) -> anyhow::Result<Option<Vec<String>>> {
         let _ = object_id;
         Ok(None)
+    }
+
+    /// Resolve a collection's pinned embedding binding to one immutable,
+    /// policy-checked xCatalog snapshot.
+    ///
+    /// Collection creation, embedding workers, lifecycle APIs, and external
+    /// compatibility adapters share this query seam. It rejects aliases and
+    /// verifies the legacy route name too, so mixed-version readers cannot
+    /// execute a different model.
+    async fn resolve_embedding_model_binding(
+        &self,
+        binding: &CatalogEmbeddingConfig,
+        policy: &mlops::CatalogModelUsePolicy,
+    ) -> anyhow::Result<mlops::CatalogResolvedEmbeddingModel> {
+        binding.validate_model_binding()?;
+        let asset_id = binding
+            .model_asset_id
+            .ok_or_else(|| anyhow::anyhow!("embedding model binding is not pinned to an asset"))?;
+        let version = binding
+            .model_version
+            .ok_or_else(|| anyhow::anyhow!("embedding model binding is not pinned to a version"))?;
+        let contract_sha256 = binding.contract_sha256.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("embedding model binding is not pinned to a contract digest")
+        })?;
+        let identifier = self
+            .get_table_by_object_id(asset_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("embedding model asset {asset_id} was not found"))?;
+        let schema = self.get_table(&identifier).await?;
+        let asset = schema.mlops_asset_as_typed()?.ok_or_else(|| {
+            anyhow::anyhow!("catalog object {asset_id} is not an embedding model asset")
+        })?;
+        let mlops::CatalogMlopsAsset::EmbeddingModel(registry) = asset;
+        if registry.name != binding.model {
+            return Err(anyhow::anyhow!(
+                "embedding route '{}' does not match registered model '{}' for asset {}",
+                binding.model,
+                registry.name,
+                asset_id
+            ));
+        }
+        let model = registry
+            .resolve_use(version, contract_sha256, binding.dimension, policy)
+            .map_err(anyhow::Error::new)?
+            .clone();
+        Ok(mlops::CatalogResolvedEmbeddingModel {
+            asset_id,
+            registry_name: registry.name,
+            registry_revision: registry.revision,
+            contract_sha256: contract_sha256.to_string(),
+            model,
+        })
     }
 
     async fn rename_table(

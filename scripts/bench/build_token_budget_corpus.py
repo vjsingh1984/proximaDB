@@ -75,9 +75,7 @@ def _load_contracts(path: Path) -> CompositeInputContract:
         document_parameters = tuple(
             sorted(
                 (str(key), str(value))
-                for key, value in model.get(
-                    "document_encode_parameters", {}
-                ).items()
+                for key, value in model.get("document_encode_parameters", {}).items()
             )
         )
         query_parameters = tuple(
@@ -153,6 +151,8 @@ def _atomic_paths(output_dir: Path) -> tuple[Path, Path, Path, Path]:
 
 
 def build(args: argparse.Namespace) -> dict[str, Any]:
+    if args.max_chunks is not None and args.max_chunks <= 0:
+        raise ValueError("max_chunks must be positive when set")
     input_sha256 = _sha256(args.input)
     contracts = _load_contracts(args.contracts)
     budget = TokenBudget(
@@ -183,6 +183,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     chunk_count = 0
     split_sources = 0
     dropped_spans: list[dict[str, Any]] = []
+    stopped_at_max_chunks = False
+    seen_chunk_digests: set[bytes] = set()
+    duplicate_chunk_count = 0
     try:
         with (
             args.input.open("r", encoding="utf-8") as source,
@@ -192,6 +195,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             texts.write("[")
             first_text = True
             for line_number, line in enumerate(source, 1):
+                if args.max_chunks is not None and chunk_count >= args.max_chunks:
+                    stopped_at_max_chunks = True
+                    break
                 if not line.strip():
                     continue
                 record = json.loads(line)
@@ -231,6 +237,15 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                         )
 
                 for chunk in emitted:
+                    if args.max_chunks is not None and chunk_count >= args.max_chunks:
+                        stopped_at_max_chunks = True
+                        break
+                    if args.deduplicate == "exact":
+                        digest = hashlib.sha256(chunk.text.encode("utf-8")).digest()
+                        if digest in seen_chunk_digests:
+                            duplicate_chunk_count += 1
+                            continue
+                        seen_chunk_digests.add(digest)
                     if not first_text:
                         texts.write(",")
                     json.dump(chunk.text, texts, ensure_ascii=False)
@@ -259,6 +274,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     chunk_count += 1
             texts.write("]\n")
+        if chunk_count == 0:
+            raise ValueError("corpus builder emitted no chunks")
         if _sha256(args.input) != input_sha256:
             raise RuntimeError("input JSONL changed while the corpus was being built")
         os.replace(texts_tmp, texts_path)
@@ -291,6 +308,10 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "chunks_sha256": _sha256(chunks_path),
         "source_count": source_count,
         "chunk_count": chunk_count,
+        "max_chunks": args.max_chunks,
+        "stopped_at_max_chunks": stopped_at_max_chunks,
+        "deduplication_policy": args.deduplicate,
+        "duplicate_chunk_count": duplicate_chunk_count,
         "split_oversized_source_count": split_sources,
         "dropped_spans": dropped_spans,
         "boundary_strategy": args.strategy,
@@ -337,6 +358,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-tokens", type=int, default=480)
     parser.add_argument("--overlap-tokens", type=int, default=72)
     parser.add_argument("--min-content-tokens", type=int, default=32)
+    parser.add_argument(
+        "--max-chunks",
+        type=int,
+        help="stop after this many chunks, preserving deterministic input order",
+    )
+    parser.add_argument(
+        "--deduplicate",
+        choices=("none", "exact"),
+        default="none",
+        help="exact removes byte-identical emitted texts and records the count",
+    )
     parser.add_argument("--boundary-char-size", type=int, default=4096)
     parser.add_argument(
         "--overflow-policy",
