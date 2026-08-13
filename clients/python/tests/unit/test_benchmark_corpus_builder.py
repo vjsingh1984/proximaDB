@@ -64,7 +64,9 @@ class WordCounter:
 def _args(tmp_path: Path, *, max_chunks: int | None) -> Namespace:
     source = tmp_path / "documents.jsonl"
     source.write_text(
-        json.dumps({"id": "doc-1", "text": "one two three four five six seven eight nine"})
+        json.dumps(
+            {"id": "doc-1", "text": "one two three four five six seven eight nine"}
+        )
         + "\n"
         + json.dumps({"id": "doc-2", "text": "ten eleven twelve"})
         + "\n",
@@ -213,7 +215,11 @@ def test_embedding_shards_are_content_and_contract_addressed(tmp_path: Path):
         shard_size=2,
         rows=5,
     )
-    assert [path.name for path in paths] == ["00000000.npy", "00000002.npy", "00000004.npy"]
+    assert [path.name for path in paths] == [
+        "00000000.npy",
+        "00000002.npy",
+        "00000004.npy",
+    ]
     assert "bge-base-en-v1.5" in str(paths[0].parent)
 
     import numpy as np
