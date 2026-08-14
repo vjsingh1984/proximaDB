@@ -59,6 +59,7 @@ pub mod storage_path;
 pub mod storage_profile;
 pub mod swift_id_index;
 pub mod tenant_performance;
+pub mod text_search;
 pub mod tiering_policy;
 pub mod tiering_retention;
 pub mod transaction_isolation;

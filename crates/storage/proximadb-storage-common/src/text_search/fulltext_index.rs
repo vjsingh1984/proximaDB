@@ -1387,7 +1387,7 @@ pub trait ChunkIndexing {
     fn index_chunks(
         &mut self,
         parent_doc_id: &str,
-        chunks: &[super::text_storage::TextChunk],
+        chunks: &[crate::text_search::text_storage::TextChunk],
     ) -> Result<(), FullTextIndexError>;
 
     /// Search across chunks
@@ -1413,7 +1413,7 @@ impl ChunkIndexing for FullTextIndex {
     fn index_chunks(
         &mut self,
         parent_doc_id: &str,
-        chunks: &[super::text_storage::TextChunk],
+        chunks: &[crate::text_search::text_storage::TextChunk],
     ) -> Result<(), FullTextIndexError> {
         for chunk in chunks {
             let mut metadata = HashMap::new();
