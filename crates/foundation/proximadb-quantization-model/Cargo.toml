@@ -17,6 +17,8 @@ experimental-turboquant = []
 
 [dependencies]
 proximadb-quantization-types = { workspace = true }
+# StorageQuantizationConfig field type (foundation-pure; TD-DECOMP-72)
+proximadb-distance-kernel = { workspace = true }
 serde = { workspace = true }
 
 [lints]

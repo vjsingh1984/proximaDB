@@ -7483,6 +7483,7 @@ dependencies = [
  "proximadb-compression",
  "proximadb-data-model",
  "proximadb-distance-kernel",
+ "proximadb-hardware-caps",
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-quantization-model",
@@ -8107,6 +8108,7 @@ dependencies = [
 name = "proximadb-quantization-model"
 version = "0.2.0"
 dependencies = [
+ "proximadb-distance-kernel",
  "proximadb-quantization-types",
  "serde",
 ]

@@ -26,6 +26,7 @@ proximadb-clustering-kernel.workspace = true
 # smart_rowgroup_sizing (raptor rowgroup sizing heuristics, TD-DECOMP-69)
 # block_structures + index_structures (TD-DECOMP-71/72)
 proximadb-bloom.workspace = true
+proximadb-hardware-caps.workspace = true
 proximadb-codec.workspace = true
 proximadb-search-types.workspace = true
 proximadb-data-model.workspace = true

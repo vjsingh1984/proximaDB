@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use crate::proto::proximadb_v1::CompressionConfig as ProtoCompressionConfig;
 use proximadb_compression::{CompressionAlgorithm, CompressionContext};
 use proximadb_hardware_caps::HardwareCapabilities;
+use proximadb_proto::proximadb_v1::CompressionConfig as ProtoCompressionConfig;
 
 /// Row-based compression configuration
 #[derive(Debug, Clone)]
@@ -264,7 +264,7 @@ pub struct BlockCompressionStats {
 impl RowBasedCompressionConfig {
     /// Create compression config from proto config
     pub fn from_proto_config(proto_config: &ProtoCompressionConfig) -> Self {
-        use crate::proto::proximadb_v1::CompressionAlgorithm as ProtoAlgorithm;
+        use proximadb_proto::proximadb_v1::CompressionAlgorithm as ProtoAlgorithm;
         let algorithm = match ProtoAlgorithm::try_from(proto_config.algorithm) {
             Ok(ProtoAlgorithm::CompressionZstd) => CompressionAlgorithm::Zstd,
             Ok(ProtoAlgorithm::CompressionLz4) => CompressionAlgorithm::Lz4,
@@ -395,8 +395,10 @@ impl RowBasedCompressionConfig {
 
     /// Centralized conversion from proto config to BlockCompressionConfig
     /// Used by all engines (SST, SWIFT, HELIX) to avoid duplication
-    pub fn to_block_compression_config(&self) -> crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig{
-        use crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig;
+    pub fn to_block_compression_config(
+        &self,
+    ) -> crate::proximablocks::block_structures::BlockCompressionConfig {
+        use crate::proximablocks::block_structures::BlockCompressionConfig;
 
         BlockCompressionConfig {
             algorithm: self.algorithm,
@@ -405,15 +407,16 @@ impl RowBasedCompressionConfig {
             enable_metadata_compression: self.metadata_compression.enabled,
             compression_threshold_bytes: self.compression_thresholds.min_compression_size,
             dictionary_compression: self.adaptive_compression.enabled,
-            vector_layout:
-                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            vector_layout: crate::proximablocks::block_structures::VectorEncodingLayout::Auto,
             metadata_algorithm: None, // Use main algorithm for metadata
         }
     }
 
     /// Create BlockCompressionConfig from proto config directly
     /// Convenience method that combines from_proto_config() and to_block_compression_config()
-    pub fn create_block_config_from_proto(proto_config: Option<&ProtoCompressionConfig>) -> crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig{
+    pub fn create_block_config_from_proto(
+        proto_config: Option<&ProtoCompressionConfig>,
+    ) -> crate::proximablocks::block_structures::BlockCompressionConfig {
         match proto_config {
             Some(config) => {
                 let unified_config = Self::from_proto_config(config);
