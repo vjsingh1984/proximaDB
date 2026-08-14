@@ -625,3 +625,63 @@ The original claim came from tracing a CALL CHAIN (`engine_impls.rs` → `unifie
 checking whether the chain's entry point is ROUTED. A caller existing is not the same as a
 caller being reachable. Verify mounting, not just call sites, before assigning production
 severity.
+
+
+== ADR-0083 vs the u64 ABAC key — RECONCILED (2026-08-13)
+
+The catalog-consolidation gate asked whether ADR-0083 (Accepted: *"the composite is the sole
+canonical identity; the global `object_id` u64 is RETIRED as an identity ... never a key"*)
+conflicts with the ABAC path keying on `object_id` (`dml/mod.rs:1467`, hardened by `c6bdf066b`).
+
+**They do not conflict. ABAC already keys on the composite.** ADR-0083's own ABAC addendum
+states it: `tenant_stable_id: u64` is *"the ADR-0083 account u32 widened — the composite's
+tenant component"*, and the catalog mints no separate tenant u64.
+
+So the enforcement key today is:
+
+----
+tenant_stable_id (= account u32, widened)   <- composite component 1
+Target.namespace : NamespaceId  (u16)       <- composite component 2
+Target.table     : CollectionId (u32)       <- composite component 3
+----
+
+That is `{account, namespace, collection}` — the composite — merely split across two structures
+(`GrantSubject` carries the account component; `Target` carries the other two). **No re-keying is
+required, and ADR-0083 needs no amendment.**
+
+=== The one real discrepancy: sourcing, not keying
+
+`Target.table` is *derived from* `schema.object_id` — the retired u64, truncated to u32
+(`legacy.rs:685`, `dml/mod.rs:1478`) — instead of from the composite's `collection_id`
+(`StorageAssignment.typed_collection_id`). Today the two are numerically identical only because
+ADR-031 unified them (`create_table` adopts `collection.id` as `object_id`). **It works by
+coincidence of that unification, not by design**, and ADR-0083 explicitly permits `object_id`
+only as an ordering sequence — never a key.
+
+=== The fix, and what it dissolves
+
+Source `Target`'s components from the typed triple
+(`typed_account_id` / `typed_namespace_id` / `typed_collection_id` on `StorageAssignment`) rather
+than from `schema.object_id`. That is ADR-0083-conformant by construction, and it dissolves
+several problems currently being fought separately:
+
+* **The u64→u32 truncation hazard disappears.** `collection_id` is natively `u32`; there is
+  nothing to truncate. The `Target::try_from_object_ids` guard added in #1575 becomes a
+  belt-and-braces check rather than the load-bearing defense.
+* **`SystemCatalog`'s object_id minting stops being load-bearing for ABAC.** `c6bdf066b` remains
+  correct and useful (ordering sequence, `xcatalog` projection) but it is **not** the fix for
+  relational ABAC — which is why the e2e stayed red after it. Verified: `c6bdf066b` IS an
+  ancestor of the tree the e2e ran on (`91eb1e632`), so that observation was sound.
+* **The two-field gate becomes one composite check.** `dml/mod.rs:1466` currently requires
+  `stable_namespace_id` AND `object_id` from two different mint paths; sourcing from the triple
+  makes it one lookup with one failure mode.
+* **`SystemCatalog` never setting `stable_namespace_id`** stops being a separate bug to fix and
+  becomes part of one requirement: the catalog must stamp the typed triple.
+
+=== Consequence for the consolidation design
+
+The gate is cleared, and the answer narrows the consolidation rather than widening it: the
+invariant every internal catalog must be unable to omit is **"stamp the typed triple"**, not
+"mint a u64". That is a better invariant to enforce — it is the identity ADR-0083 already
+declares canonical, it is what the object-store path is built from (structural isolation by
+construction, D3), and it removes the u64 from the authorization surface entirely.
