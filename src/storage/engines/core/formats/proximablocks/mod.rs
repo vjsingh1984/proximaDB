@@ -230,12 +230,12 @@
 
 pub mod arrow_reader; // Arrow reader for .sst files - enables external tool access
 pub mod block_reader; // ✅ NEW: Unified Proxima block reader with strategies
-pub mod block_structures;
+pub use proximadb_engine_core::proximablocks::block_structures; // extracted TD-DECOMP-71
 pub mod bloom_filter; // Row-based bloom filter for SST and Swift
 // Block-level compression now integrated into main block_structures.rs
 pub mod compression_config;
 pub mod engine_profile; // Engine-specific optimization profiles
-pub mod index_structures;
+pub use proximadb_engine_core::proximablocks::index_structures; // extracted TD-DECOMP-71
 // Quantization now handled by unified compute module
 pub mod batch_operations;
 pub mod constants;

@@ -1,11 +1,13 @@
-//! `proximablocks` hermetic sub-leaves hoisted from the root crate
-//! (root-crate decomposition, engines extraction). These have no root `crate::`
-//! deps (only foundation/horizontal crates), so they move verbatim — except
-//! `spatial_traits`, whose single `crate::...helix::hilbert_curve` ref swaps to
-//! `proximadb_storage_common::hilbert_curve` (the helix file is a re-export shim).
+//! `proximablocks` sub-leaves hoisted from the root crate (root-crate
+//! decomposition, engines extraction). The hermetic leaves moved verbatim;
+//! `block_structures` (the crown jewel, 5.7K LOC / 29 tests) landed in
+//! TD-DECOMP-71 once all its root paths resolved to extracted crates
+//! (bloom, compression, codec, search-types, proto, storage-common).
 //! Root keeps per-file re-export shims.
 
+pub mod block_structures;
 pub mod header_metadata;
+pub mod index_structures;
 pub mod per_column_alignment;
 pub mod spatial_clustering;
 pub mod spatial_encoding;

@@ -4,8 +4,8 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, HashMap};
 
-use super::block_structures::BlockLocation;
-use crate::core::bloom::{
+use crate::proximablocks::block_structures::BlockLocation;
+use proximadb_bloom::{
     BloomFilterBuilder, BloomFilterConfig as SstBloomConfig, SstableBloomFilter,
 };
 
@@ -308,8 +308,8 @@ impl RowBasedIdIndex {
                 bits_per_key: 10,
                 false_positive_rate: Some(config.bloom_config.false_positive_rate),
                 expected_items: config.bloom_config.max_items_per_filter as usize,
-                strategy: crate::core::bloom::BloomStrategy::ByteAligned,
-                hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+                strategy: proximadb_bloom::BloomStrategy::ByteAligned,
+                hash_algorithm: proximadb_bloom::HashAlgorithm::Murmur3,
             };
             bloom_filter_builders.push(BloomFilterBuilder::new(bloom_config));
         }
@@ -357,7 +357,7 @@ impl RowBasedIdIndex {
             // Create SstableBloomFilter with the serialized data
             // Using default config and empty metadata filter for now
             let bloom_config = SstBloomConfig::default();
-            let stats = crate::core::bloom::BloomFilterStats::default();
+            let stats = proximadb_bloom::BloomFilterStats::default();
             let sstable_bloom = SstableBloomFilter::new(
                 bloom_config,
                 serialized,
@@ -483,10 +483,10 @@ impl RowBasedIdIndex {
 
             let bloom_filter = if config.bloom_per_level {
                 Some(SstableBloomFilter::new(
-                    crate::core::config::BloomFilterConfig::default(),
+                    proximadb_bloom::BloomFilterConfig::default(),
                     vec![],
                     vec![],
-                    crate::core::bloom::BloomFilterStats::default(),
+                    proximadb_bloom::BloomFilterStats::default(),
                 ))
             } else {
                 None

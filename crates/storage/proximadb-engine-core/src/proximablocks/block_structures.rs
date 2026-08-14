@@ -109,16 +109,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info, trace, warn};
 
-use crate::core::bloom::SstableBloomFilter;
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_bloom::SstableBloomFilter;
+use proximadb_compression::CompressionAlgorithm;
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 // ProximaCodec system for encoding/decoding
-use super::engine_profile::EngineProfile;
-use crate::storage::engines::core::ops::proximacodec::{
-    ProximaCodec, analysis, types::ProximaScheme,
-};
+use proximadb_codec::{ProximaCodec, analysis, types::ProximaScheme};
+use proximadb_storage_common::engine_profile::EngineProfile;
 // Quantization now handled by unified compute module
 
 /// Pattern detected in vector data for optimal encoding selection
@@ -376,11 +374,11 @@ impl ProximaBlockMetadata {
             buffer.write_all(&[if stat.bloom_filter_enabled { 1u8 } else { 0u8 }])?;
 
             // JSON values using safe serializer
-            crate::core::search::json_value_serde::serialize_json_value(
+            proximadb_search_types::json_value_serde::serialize_json_value(
                 &stat.min_value.clone().unwrap_or(serde_json::Value::Null),
                 &mut buffer,
             )?;
-            crate::core::search::json_value_serde::serialize_json_value(
+            proximadb_search_types::json_value_serde::serialize_json_value(
                 &stat.max_value.clone().unwrap_or(serde_json::Value::Null),
                 &mut buffer,
             )?;
@@ -474,9 +472,9 @@ impl ProximaBlockMetadata {
             let bloom_filter_enabled = u8_buf[0] != 0;
 
             let min_value =
-                crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
+                proximadb_search_types::json_value_serde::deserialize_json_value(&mut cursor).ok();
             let max_value =
-                crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
+                proximadb_search_types::json_value_serde::deserialize_json_value(&mut cursor).ok();
 
             // Convert Null to None
             let min_value = if let Some(serde_json::Value::Null) = min_value {
@@ -1282,10 +1280,10 @@ impl ProximaDataBlock {
             return None;
         }
 
-        use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+        use proximadb_bloom::{BloomFilterConfig, factory::BloomFilterFactory};
 
         // Use adaptive bloom filter sizing for optimal memory usage
-        let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::for_block_level();
+        let adaptive_config = proximadb_bloom::adaptive::AdaptiveBloomConfig::for_block_level();
         let num_keys = records.len();
         let optimal_size = adaptive_config.optimal_size(num_keys);
         let bits_per_key = optimal_size
@@ -1296,11 +1294,11 @@ impl ProximaDataBlock {
         // Create config with adaptive sizing
         let bloom_config = BloomFilterConfig {
             enabled: true,
-            strategy: crate::core::bloom::BloomStrategy::BitPacked,
+            strategy: proximadb_bloom::BloomStrategy::BitPacked,
             bits_per_key,
             expected_items: num_keys,
             false_positive_rate: Some(adaptive_config.target_fp_rate),
-            hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
+            hash_algorithm: proximadb_bloom::HashAlgorithm::XXHash,
         };
 
         let mut bloom = BloomFilterFactory::create(&bloom_config);
@@ -1312,7 +1310,7 @@ impl ProximaDataBlock {
         // Serialize the bloom filter and create SstableBloomFilter
         match bloom.serialize() {
             Ok(data) => {
-                use crate::core::bloom::BloomFilterStats;
+                use proximadb_bloom::BloomFilterStats;
 
                 let stats = BloomFilterStats {
                     key_count: num_keys as u64,
@@ -1830,7 +1828,7 @@ impl ProximaDataBlock {
             return Ok(None);
         }
 
-        use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+        use proximadb_bloom::{BloomFilterConfig, factory::BloomFilterFactory};
 
         let bloom_config = BloomFilterConfig::for_sstable(self.records.len());
         let mut bloom = BloomFilterFactory::create(&bloom_config);
@@ -2525,9 +2523,9 @@ impl ProximaDataBlock {
     fn deserialize_metadata_value(
         key_name: &str,
         val_bytes: &[u8],
-        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+        collection_config: Option<&proximadb_proto::proximadb_v1::Collection>,
     ) -> ProximaValue {
-        use crate::proto::proximadb_v1::FilterableDataType;
+        use proximadb_proto::proximadb_v1::FilterableDataType;
 
         // Metadata values are stored with type tags: [type_tag:1][value_bytes:N]
         // Skip the type tag byte (index 0) to get the actual payload
@@ -2676,7 +2674,7 @@ impl ProximaDataBlock {
     /// Backward compatible: Pass None to use heuristic for all metadata
     pub fn deserialize(
         data: &[u8],
-        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+        collection_config: Option<&proximadb_proto::proximadb_v1::Collection>,
     ) -> anyhow::Result<Self> {
         use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::Read;
@@ -3724,20 +3722,20 @@ impl ProximaDataBlock {
             sample_values
         );
 
-        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
+        use proximadb_codec::{ProximaCodec, analysis};
 
         let detected_scheme = analysis::analyze_and_choose_scheme_f32(&all_floats);
         let pattern_info = format!("{:?}", detected_scheme); // Use scheme name as pattern description
 
         // Override lossy schemes with lossless alternatives
         let scheme = match &detected_scheme {
-            crate::storage::engines::core::ops::proximacodec::ProximaScheme::Simple8b
-            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::RunLength
-            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::VByte
-            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::Zigzag { .. }
-            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::PForDelta {
-                ..
-            } => crate::storage::engines::core::ops::proximacodec::ProximaScheme::Delta { base: 0 },
+            proximadb_codec::ProximaScheme::Simple8b
+            | proximadb_codec::ProximaScheme::RunLength
+            | proximadb_codec::ProximaScheme::VByte
+            | proximadb_codec::ProximaScheme::Zigzag { .. }
+            | proximadb_codec::ProximaScheme::PForDelta { .. } => {
+                proximadb_codec::ProximaScheme::Delta { base: 0 }
+            }
             _ => detected_scheme.clone(),
         };
 
@@ -3924,9 +3922,7 @@ impl ProximaDataBlock {
         //
         // ============================================================================
 
-        use crate::storage::engines::core::ops::proximacodec::{
-            ProximaScheme as CodecScheme, analysis,
-        };
+        use proximadb_codec::{ProximaScheme as CodecScheme, analysis};
         use std::collections::HashMap;
 
         // Track pattern distribution for debugging
@@ -3961,7 +3957,7 @@ impl ProximaDataBlock {
 
             // Use is_lossy() method to automatically filter lossy schemes
             // This ensures future lossless schemes are automatically allowed
-            use crate::storage::engines::core::ops::proximacodec::TypeId;
+            use proximadb_codec::TypeId;
 
             let scheme = if detected_scheme.is_lossy(TypeId::F32) {
                 // Scheme is lossy for f32 - override with safe alternative
@@ -4120,16 +4116,14 @@ impl ProximaDataBlock {
             }
 
             // Analyze this group's pattern and choose scheme
-            use crate::storage::engines::core::ops::proximacodec::{
-                ProximaScheme as CodecScheme, analysis,
-            };
+            use proximadb_codec::{ProximaScheme as CodecScheme, analysis};
 
             let detected_scheme = analysis::analyze_and_choose_scheme_f32(&group_floats);
             let pattern = format!("{:?}", detected_scheme); // Use scheme name as pattern description
 
             // Use is_lossy() method to automatically filter lossy schemes
             // This ensures future lossless schemes are automatically allowed
-            use crate::storage::engines::core::ops::proximacodec::TypeId;
+            use proximadb_codec::TypeId;
 
             let scheme = if detected_scheme.is_lossy(TypeId::F32) {
                 // Scheme is lossy for f32 - override with safe alternative
@@ -4292,10 +4286,8 @@ impl ProximaDataBlock {
             std::collections::HashMap::new();
 
         // Use ProximaCodec for hardware-optimized encoding
-        use crate::storage::engines::core::ops::proximacodec::TypeId;
-        use crate::storage::engines::core::ops::proximacodec::{
-            ProximaCodec, ProximaScheme as CodecScheme, analysis,
-        };
+        use proximadb_codec::TypeId;
+        use proximadb_codec::{ProximaCodec, ProximaScheme as CodecScheme, analysis};
 
         // ===== PHASE 1: PARALLEL ANALYSIS =====
         // Analyze all dimensions in parallel using Rayon (5-10x speedup expected)
@@ -4427,10 +4419,8 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
 
-        use crate::storage::engines::core::ops::proximacodec::TypeId;
-        use crate::storage::engines::core::ops::proximacodec::{
-            ProximaCodec, ProximaScheme as CodecScheme, analysis,
-        };
+        use proximadb_codec::TypeId;
+        use proximadb_codec::{ProximaCodec, ProximaScheme as CodecScheme, analysis};
         use proximadb_compression::{CompressionContext, compress};
         use rayon::prelude::*;
 
