@@ -46,6 +46,8 @@ pub mod manager;
 pub use manager::{CatalogFilesystemResolver, CatalogManager, TableOpLockRegistry};
 /// Typed MLOps/model-registry facet for the unified xCatalog object model.
 pub mod mlops;
+/// Tenant-scoped model-registry lifecycle application service shared by API adapters.
+pub mod model_registry_service;
 // Catalog federation (Slice 3) — unified view across internal + external
 // catalogs, moved from root src/catalog/federation (now that CatalogManager is
 // in this crate).

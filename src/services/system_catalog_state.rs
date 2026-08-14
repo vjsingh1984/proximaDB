@@ -130,6 +130,10 @@ struct CatalogInner {
     /// Per-table statistics (stored separately, like NativeCatalog's
     /// `TableMetadata.statistics`, not on the schema).
     statistics: HashMap<TableIdentifier, CatalogTableStatistics>,
+    /// Derived inverse index for stable table/model asset identity. It is not
+    /// persisted separately: WAL replay and snapshot load rebuild it from the
+    /// authoritative schemas, so it cannot drift from `tables`.
+    object_ids: HashMap<u64, TableIdentifier>,
     /// Highest WAL sequence number folded in (the replay watermark).
     applied_seq: u64,
 }
@@ -150,12 +154,24 @@ impl CatalogInner {
                 if let Some(children) = self.ns_children.remove(&levels) {
                     for name in children {
                         let id = TableIdentifier::new(levels.clone(), name);
-                        self.tables.remove(&id);
+                        if let Some(schema) = self.tables.remove(&id)
+                            && let Some(object_id) = schema.object_id
+                        {
+                            self.object_ids.remove(&object_id);
+                        }
                         self.statistics.remove(&id);
                     }
                 }
             }
             CatalogDelta::UpsertTable { identifier, schema } => {
+                if let Some(previous) = self.tables.get(&identifier)
+                    && let Some(object_id) = previous.object_id
+                {
+                    self.object_ids.remove(&object_id);
+                }
+                if let Some(object_id) = schema.object_id {
+                    self.object_ids.insert(object_id, identifier.clone());
+                }
                 self.ns_children
                     .entry(identifier.namespace.clone())
                     .or_default()
@@ -163,7 +179,11 @@ impl CatalogInner {
                 self.tables.insert(identifier, Arc::new(*schema));
             }
             CatalogDelta::DropTable { identifier } => {
-                self.tables.remove(&identifier);
+                if let Some(schema) = self.tables.remove(&identifier)
+                    && let Some(object_id) = schema.object_id
+                {
+                    self.object_ids.remove(&object_id);
+                }
                 self.statistics.remove(&identifier);
                 if let Some(children) = self.ns_children.get_mut(&identifier.namespace) {
                     children.remove(&identifier.name);
@@ -250,6 +270,12 @@ impl SystemCatalogState {
     /// Get a table schema by identifier (clones an `Arc`, not the schema).
     pub fn get_table(&self, identifier: &TableIdentifier) -> Option<Arc<CatalogTableSchema>> {
         self.inner.read().tables.get(identifier).cloned()
+    }
+
+    /// Resolve the rename-stable table/model asset identifier without scanning
+    /// the catalog. The index is rebuilt from schemas on every recovery path.
+    pub fn get_table_by_object_id(&self, object_id: u64) -> Option<TableIdentifier> {
+        self.inner.read().object_ids.get(&object_id).cloned()
     }
 
     /// List the tables in a namespace. Replaces `NativeCatalog`'s per-call
@@ -377,8 +403,8 @@ impl SystemCatalogState {
     }
 
     /// Decode a snapshot blob into a fully-indexed [`CatalogInner`], rebuilding
-    /// the `ns_children` secondary index (which the snapshot omits as a pure
-    /// derivation of `tables`).
+    /// the `ns_children` and `object_ids` secondary indexes (which the snapshot
+    /// omits as pure derivations of `tables`).
     fn inner_from_snapshot_bytes(bytes: &[u8]) -> Result<CatalogInner> {
         let snapshot: CatalogSnapshot =
             rmp_serde::from_slice(bytes).context("decoding catalog snapshot")?;
@@ -389,11 +415,15 @@ impl SystemCatalogState {
             ns_children.entry(levels.clone()).or_default();
         }
         let mut tables = HashMap::with_capacity(snapshot.tables.len());
+        let mut object_ids = HashMap::with_capacity(snapshot.tables.len());
         for (id, schema) in snapshot.tables {
             ns_children
                 .entry(id.namespace.clone())
                 .or_default()
                 .insert(id.name.clone());
+            if let Some(object_id) = schema.object_id {
+                object_ids.insert(object_id, id.clone());
+            }
             tables.insert(id, Arc::new(schema));
         }
         Ok(CatalogInner {
@@ -402,6 +432,7 @@ impl SystemCatalogState {
             tables,
             ns_children,
             statistics: snapshot.statistics,
+            object_ids,
             applied_seq: snapshot.applied_seq,
         })
     }
