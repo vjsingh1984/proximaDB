@@ -432,6 +432,7 @@ pub mod utils {
 mod tests {
     use super::utils::*;
     use super::*;
+    use proximadb_compression::CompressionAlgorithm;
 
     #[test]
     fn test_optimal_block_size_calculation() {
