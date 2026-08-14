@@ -56,6 +56,7 @@ members = [
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
     "crates/foundation/proximadb-catalog-schema",
+    "crates/horizontal/proximadb-multimodel-codec",
     "crates/control/proximadb-abac",
     "crates/control/proximadb-catalog",
     "crates/control/proximadb-metrics",
@@ -262,6 +263,7 @@ proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine
 proximadb-abac = { path = "crates/control/proximadb-abac" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-catalog-schema = { path = "crates/foundation/proximadb-catalog-schema" }
+proximadb-multimodel-codec = { path = "crates/horizontal/proximadb-multimodel-codec" }
 proximadb-cdc = { path = "crates/integrations/proximadb-cdc" }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 arc-swap = "1.7"
@@ -443,6 +445,7 @@ proximadb-quantization-types = { path = "crates/foundation/proximadb-quantizatio
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog", features = ["fc-metamodel"] }
 proximadb-catalog-schema = { workspace = true }
+proximadb-multimodel-codec = { workspace = true }
 proximadb-cdc = { workspace = true }
 proximadb-abac = { path = "crates/control/proximadb-abac", optional = true }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
