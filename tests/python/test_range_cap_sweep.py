@@ -1,10 +1,13 @@
 import copy
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "bench" / "range_cap_sweep.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[2] / "scripts" / "bench" / "range_cap_sweep.py"
+)
 SPEC = importlib.util.spec_from_file_location("range_cap_sweep", SCRIPT)
 assert SPEC is not None
 assert SPEC.loader is not None
@@ -140,3 +143,58 @@ def test_checkpoint_write_is_atomic_and_records_progress(tmp_path: Path):
         "incomplete_reason": None,
     }
     assert not (tmp_path / ".range-cap.json.tmp").exists()
+
+
+def test_wire_validation_rejects_dead_observer_when_application_read_storage():
+    point = {
+        "physical_gets": 12.0,
+        "wire_http": {"get_requests": 0, "range_get_requests": 0},
+    }
+
+    with pytest.raises(RuntimeError, match="observed zero HTTP GETs"):
+        SWEEP.validate_wire_observation("range-16mib-top-10", point)
+
+
+def test_decision_matches_application_reads_to_ranged_gets_not_control_gets():
+    args = SimpleNamespace(
+        recall_tolerance=1e-12,
+        target_recall=0.98,
+        min_wire_get_reduction=0.2,
+        max_byte_amplification=1.5,
+        max_latency_ratio=1.1,
+        max_rss_ratio=1.1,
+    )
+    baseline = {
+        "range_cap_mib": 4,
+        "recall_at_k": 0.99,
+        "physical_gets": 439.0,
+        "bytes_read": 100.0,
+        "latency_ms": {"p50": 10.0, "p95": 20.0},
+        "process_rss": {"peak_bytes": 1_000},
+        "wire_http": {
+            "get_requests": 440,
+            "range_get_requests": 439,
+            "full_get_requests": 1,
+        },
+    }
+    candidate = copy.deepcopy(baseline)
+    candidate.update(
+        {
+            "range_cap_mib": 16,
+            "physical_gets": 158.0,
+            "bytes_read": 102.0,
+            "latency_ms": {"p50": 8.0, "p95": 16.0},
+            "process_rss": {"peak_bytes": 1_050},
+            "wire_http": {
+                "get_requests": 159,
+                "range_get_requests": 158,
+                "full_get_requests": 1,
+            },
+        }
+    )
+
+    decision = SWEEP.decision_for(candidate, baseline, args)
+
+    assert decision["checks"]["one_wire_range_get_per_application_get"] is True
+    assert decision["wire_range_to_application_get_ratio"] == 1.0
+    assert decision["promotion_eligible"] is True
