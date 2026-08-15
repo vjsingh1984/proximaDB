@@ -17,7 +17,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 — tomllib is stdlib only in 3.11+
+    import tomli as tomllib
 from proximadb_sdk.chunking_strategies import (
     ChunkingConfig,
     ChunkingStrategy,
