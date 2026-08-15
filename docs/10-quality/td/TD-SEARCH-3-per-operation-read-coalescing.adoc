@@ -165,6 +165,61 @@ Regions B/D: `max_gap = max(target/4, 64 KiB)` and
 mirrors can override either value, including `0` for exact-adjacency/unbounded
 diagnostics.
 
+The 4 MiB Azure value is a **conservative read-planner policy**, not a flat
+Blob billing quantum and not a proven SDK split boundary. The previous source
+comment that described a hard 4 MiB SDK boundary was unsupported and is
+removed. `AzureBlobFileSystem::read_range()` invokes
+`object_store.get_range()` once, but the application counter above that call
+cannot observe an HTTP-client retry or internal split. A wire-boundary
+measurement is therefore required before interpreting application GETs as
+Azure transactions for ranges larger than 4 MiB.
+
+=== S3a: isolate range-cap effects before choosing cell count
+
+The completed 4 MiB factorial remains the controlled baseline. One exact
+768-dimensional BGE point on its immutable one-segment `k_c=30`, projection
+width 32 bed, at `nprobe=12`, top-10, and 1,000 diverse queries measured:
+
+[cols="2,1", options="header"]
+|===
+| Metric | Value
+
+| Cells probed | 12 / 30
+| Recall@10 | 0.9836
+| Rows probed/query | 203,093.762
+| Region-A bytes/query | 8,305,348.376
+| Region-B bytes/query | 150,304,273.920
+| Total bytes/query | 170,313,605.378
+| Application physical GET/query | 49.542
+| Invariants hit ratio | 0.999
+| Survivor hit ratio | 0.0562387
+|===
+
+At this geometry, average Region-B bytes per cell are about 12.5 MiB. The
+current 4 MiB maximum can therefore turn one selected cell extent into roughly
+3–4 application ranges. That makes every cell-size/GET conclusion conditional
+on the planner cap: it does **not** prove that smaller cells are inherently
+required to reduce Blob operations.
+
+`scripts/bench/range_cap_sweep.py` now defines the query-only falsification
+experiment. It reuses the exact bed and fixed query slice, holds `nprobe=12`
+and `max_gap=1 MiB` constant, varies only `max_range={4,8,16,32} MiB`, and runs
+top-10 and top-20 in a fresh process per point. It records:
+
+* application GETs and bytes from ProximaDB;
+* actual GET requests received at the Azurite HTTP boundary, including range
+  lengths, so SDK splitting/retries are visible;
+* recall, p50/p95, Region-A/B attribution, cache hit and resident bytes; and
+* sampled server peak RSS.
+
+Azurite proves request shape/count through the production Azure backend; its
+localhost latency is not Azure service latency evidence. Promote a larger Hot
+Blob default only when recall is identical, wire GETs fall materially, bytes
+are bounded, p50/p95/RSS do not materially regress, and the wire/application
+ratio proves one HTTP request per issued large range. Repeat only eligible caps
+on the natural `k_c=90` bed; use `k_c=200` afterward to measure the independent
+byte/selectivity trade-off.
+
 === S4: remove the redundant PAX-as-SST1 magic probe
 
 The first passing release run after the persistent-tier implementation reported
@@ -380,6 +435,11 @@ materialized segment geometry:
 . segment count and level distribution;
 . recall@10 (must not regress below the ratchet);
 . prefix disabled (`0`) versus 1 MiB versus a justified alternative.
+
+Before interpreting finer `k_c` as GET-optimal, additionally complete the S3a
+4/8/16/32 MiB sweep with Azurite wire counts. Keep any resulting policy
+tier-aware: Hot flat Blob in the same region may prefer fewer, larger requests;
+Cool/Cold/remote placement must jointly price bytes and requests.
 
 The benchmark must wait for flush/compaction quiescence and prove that all
 1M vectors are searchable from materialized segments before restarting.

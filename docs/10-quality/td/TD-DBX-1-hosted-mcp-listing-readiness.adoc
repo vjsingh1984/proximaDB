@@ -22,7 +22,7 @@
 | Medium — S1 is the load-bearing item; S2 is a correctness/credibility defect if the catalog is published as-is.
 
 | Component
-| `crates/platform/proximadb-mcp/src/tools.rs` (tool catalog + dispatch), `src/network/mcp/backend.rs` (`EngineBackend`), `src/graph/rag/` (shipped fusion), `src/network/rest/canonical/graph.rs` (`POST /graphs/{id}/rag`).
+| `crates/platform/proximadb-mcp/src/tools.rs` (tool catalog + dispatch), `src/network/mcp/backend.rs` (`EngineBackend`), `src/graph/rag/` (shipped fusion pipeline). NOTE 2026-08-12: the REST route for `POST /graphs/{id}/rag` is NOT served — the handler lived in an unmounted duplicate that has been removed, and the mounted router returns not-implemented. Listing readiness must not assume a reachable RAG endpoint.
 |===
 
 toc::[]
@@ -37,7 +37,7 @@ competing Postgres-native engines).
 The fusion capability **ships today**: `src/graph/rag/` implements
 retrieve → filter → prune → k-hop-expand (`RagPipeline`, `VectorNodeRetriever`,
 `KHopSubgraphBuilder`), exposed at `POST /graphs/{graph_id}/rag`
-(`network/rest/canonical/graph.rs`, route `:852`, handler `:1319`). TD-ORION-1
+(pipeline only; the REST route is not mounted — see the 2026-08-12 note above). TD-ORION-1
 verified this and closed as Resolved.
 
 **But the MCP tool catalog exposes no graph surface at all.** `reference_tools()`

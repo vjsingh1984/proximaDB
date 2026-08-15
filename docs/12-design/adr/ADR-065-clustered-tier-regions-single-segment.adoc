@@ -113,6 +113,18 @@ and arbitrary top-k rows need not be adjacent. The implementation must report
 per-tier GETs, bytes, fetch rounds, and cache outcomes; the collection-level
 budget is the sum over live segments.
 
+**Azure range-policy clarification (2026-08-12).** The current 4 MiB Azure
+maximum is an implementation policy, not a flat-Blob billing quantum. A
+768-dimensional one-segment `k_c=30` bed at nprobe 12 measured 150.30 MB/query
+from Region B and 49.542 application GET/query; its average approximately
+12.5 MiB cell is split into several planner ranges. Therefore the observed
+relationship between cell size and GET count is conditional on that cap.
+TD-SEARCH-3 must first sweep 4/8/16/32 MiB on the same immutable bed, reconcile
+application counters with Azurite/Azure wire requests, and gate bytes, latency,
+RSS, and recall. No layout or production-default change is authorized by this
+clarification. Eligible Hot/same-region policy may minimize requests; cold or
+remote policy must jointly minimize bytes and requests.
+
 === Explicitly rejected / deferred
 
 * **Separate files per family** — needs a multi-object commit protocol

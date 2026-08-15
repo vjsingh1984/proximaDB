@@ -773,3 +773,28 @@ def test_server_records_explicit_sub_floor_training_override(tmp_path: Path) -> 
 
     environment = popen.call_args.kwargs["env"]
     assert environment["PROXIMADB_TRAINING_COMPACTION_MIN_MB"] == "1"
+
+
+def test_server_records_explicit_query_range_policy(tmp_path: Path) -> None:
+    process = SimpleNamespace(poll=lambda: None)
+    server = HARNESS.OwnedServer(
+        tmp_path / "proximadb-server",
+        tmp_path / "benchmark.toml",
+        "http://127.0.0.1:5790",
+        tmp_path / "server.log",
+        None,
+        coalesce_gap_bytes=1024 * 1024,
+        coalesce_range_bytes=16 * 1024 * 1024,
+    )
+
+    with (
+        patch.object(HARNESS.subprocess, "Popen", return_value=process) as popen,
+        patch.object(HARNESS, "request_json", return_value={}),
+    ):
+        server.start()
+
+    environment = popen.call_args.kwargs["env"]
+    assert environment["PROXIMADB_PAX_VECTOR_COALESCE_GAP"] == "1048576"
+    assert environment["PROXIMADB_PAX_COALESCE_GAP"] == "1048576"
+    assert environment["PROXIMADB_PAX_VECTOR_COALESCE_RANGE"] == "16777216"
+    assert environment["PROXIMADB_PAX_COALESCE_RANGE"] == "16777216"

@@ -93,6 +93,7 @@ def require_release_provenance(
             "tests/python/test_bigann_prefix_groundtruth.py",
             "tests/python/test_nprobe_geometry_analysis.py",
             "tests/python/test_nprobe_sweep.py",
+            "tests/python/test_range_cap_sweep.py",
         }
     ]
     if unsafe:

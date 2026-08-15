@@ -1712,6 +1712,14 @@ async fn update_graph_schema(
 const DEFAULT_GRAPH_ID: &str = "default";
 const LEGACY_GRAPH_SUNSET_DATE: &str = "2026-06-30";
 
+/// Legacy compatibility routes (`/api/v1/graph/nodes`, `/api/v1/graph/edges`, etc.)
+/// return `308 Permanent Redirect` to their canonical multi-graph equivalents,
+/// carrying `Deprecation` and `Sunset` metadata. Sunset date: `2026-06-30`.
+///
+/// This contract is drift-guarded by `scripts/validate_capability_matrix.py`
+/// (capability `graph_legacy_route_deprecation`). The guard previously watched an
+/// unmounted duplicate of this module under `src/`; it now watches the
+/// implementation that is actually served.
 fn legacy_redirect(canonical_path: impl Into<String>) -> Response {
     let canonical_path = canonical_path.into();
     warn!(

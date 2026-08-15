@@ -4,8 +4,6 @@ E5 (Text Embeddings by Weakly-Supervised Contrastive Pre-training) Provider
 Microsoft's excellent general-purpose embeddings with query/passage prefix support.
 """
 
-import numpy as np
-
 from ...core.base import BaseEmbeddingProvider
 from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
@@ -20,6 +18,8 @@ E5_MODELS = {
         provider_type="sentence-transformer",
         requires_instruction=True,
         instruction_template="query: {query}",
+        document_template="passage: {text}",
+        query_template="query: {text}",
         mteb_score=65.0,
         languages="en",
         description="Best quality, top MTEB performer",
@@ -32,6 +32,8 @@ E5_MODELS = {
         provider_type="sentence-transformer",
         requires_instruction=True,
         instruction_template="query: {query}",
+        document_template="passage: {text}",
+        query_template="query: {text}",
         mteb_score=64.5,
         languages="en",
         description="Balanced quality and speed",
@@ -44,6 +46,8 @@ E5_MODELS = {
         provider_type="sentence-transformer",
         requires_instruction=True,
         instruction_template="query: {query}",
+        document_template="passage: {text}",
+        query_template="query: {text}",
         mteb_score=62.8,
         languages="en",
         description="Fast and efficient",
@@ -56,6 +60,8 @@ E5_MODELS = {
         provider_type="sentence-transformer",
         requires_instruction=True,
         instruction_template="query: {query}",
+        document_template="passage: {text}",
+        query_template="query: {text}",
         mteb_score=64.0,
         languages="100+",
         description="Multilingual support for 100+ languages",
@@ -99,9 +105,6 @@ class E5Provider(InstructionMixin, SentenceTransformerMixin, BaseEmbeddingProvid
     - Passages: "passage: {text}" (handled automatically)
     """
 
-    #: E5 models require this prefix on documents/passages (not just queries).
-    PASSAGE_PREFIX = "passage: "
-
     def default_config(self) -> ProviderConfig:
         """Default to large model"""
         return ProviderConfig(
@@ -110,14 +113,3 @@ class E5Provider(InstructionMixin, SentenceTransformerMixin, BaseEmbeddingProvid
             normalize=True,
             extra={"use_query_instruction": True},
         )
-
-    def embed_passages(self, passages: list[str]) -> np.ndarray:
-        """Embed passages with the mandatory E5 ``"passage: "`` prefix.
-
-        Unlike the generic :class:`InstructionMixin` (which leaves passages
-        unprefixed), E5 was trained with an asymmetric ``query:``/``passage:``
-        scheme. Omitting the passage prefix silently degrades retrieval recall,
-        so we prepend it here.
-        """
-        prefixed = [f"{self.PASSAGE_PREFIX}{p}" for p in passages]
-        return self.embed(prefixed)

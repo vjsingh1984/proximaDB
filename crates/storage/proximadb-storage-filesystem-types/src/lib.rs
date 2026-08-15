@@ -1018,3 +1018,5 @@ mod read_ranges_buffered_tests {
         assert!(res.is_err(), "expected short-circuit error, got {res:?}");
     }
 }
+pub mod range_coalescer;
+pub mod smart_io_traits;

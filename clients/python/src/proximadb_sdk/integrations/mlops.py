@@ -9,8 +9,210 @@ detected lazily so the base SDK remains dependency-light.
 from __future__ import annotations
 
 import importlib.util
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from ..chunking_strategies.contracts import ResolvedInputContract
+
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class ArtifactDescriptor:
+    """Content-addressed bytes referenced by an xCatalog asset.
+
+    A URI locates bytes; the digest establishes their immutable identity.
+    Model repositories should use a deterministic package/manifest digest when
+    they contain more than one file.
+    """
+
+    uri: str
+    digest: str
+    size_bytes: int
+    media_type: str
+
+    def __post_init__(self) -> None:
+        if not self.uri.strip():
+            raise ValueError("artifact uri must not be empty")
+        if not _SHA256.fullmatch(self.digest):
+            raise ValueError("artifact digest must be sha256:<64 lowercase hex chars>")
+        if self.size_bytes < 0:
+            raise ValueError("artifact size_bytes cannot be negative")
+        if not self.media_type.strip():
+            raise ValueError("artifact media_type must not be empty")
+
+    def to_manifest(self) -> dict[str, Any]:
+        return {
+            "uri": self.uri,
+            "digest": self.digest,
+            "size_bytes": self.size_bytes,
+            "media_type": self.media_type,
+        }
+
+
+@dataclass(frozen=True)
+class EmbeddingModelRegistration:
+    """SDK adapter from a runtime-resolved contract to native xCatalog JSON.
+
+    This object only builds the generated-API payload. It deliberately performs
+    no hand-written HTTP so the eventual REST surface remains OpenAPI-generated.
+    """
+
+    registered_name: str
+    version: int
+    contract: ResolvedInputContract
+    artifact: ArtifactDescriptor
+    created_at_ms: int
+    declared_context_limit: int
+    normalized: bool = True
+    pooling: str = "model-defined"
+    license_id: str = "unknown"
+    access: str = "unreviewed"
+    requires_remote_code: bool = False
+    approved_runtimes: tuple[str, ...] = ()
+    source_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.registered_name.strip():
+            raise ValueError("registered_name must not be empty")
+        if self.version <= 0:
+            raise ValueError("version must be positive")
+        if self.declared_context_limit < self.contract.effective_context_limit:
+            raise ValueError(
+                "declared_context_limit cannot be below the runtime effective limit"
+            )
+        if self.access not in {"open", "gated", "unreviewed"}:
+            raise ValueError("access must be open, gated, or unreviewed")
+        if not self.license_id.strip():
+            raise ValueError("license_id must not be empty")
+        if not self.pooling.strip():
+            raise ValueError("pooling must not be empty")
+        if any(not runtime.strip() for runtime in self.approved_runtimes):
+            raise ValueError("approved runtime names must not be empty")
+
+    @classmethod
+    def from_resolved_contract(
+        cls,
+        registered_name: str,
+        version: int,
+        contract: ResolvedInputContract,
+        artifact: ArtifactDescriptor,
+        created_at_ms: int,
+        *,
+        declared_context_limit: int | None = None,
+        normalized: bool = True,
+        pooling: str = "model-defined",
+        license_id: str = "unknown",
+        access: str = "unreviewed",
+        requires_remote_code: bool = False,
+        approved_runtimes: tuple[str, ...] = (),
+        source_run_id: str | None = None,
+    ) -> EmbeddingModelRegistration:
+        return cls(
+            registered_name=registered_name,
+            version=version,
+            contract=contract,
+            artifact=artifact,
+            created_at_ms=created_at_ms,
+            declared_context_limit=(
+                declared_context_limit or contract.effective_context_limit
+            ),
+            normalized=normalized,
+            pooling=pooling,
+            license_id=license_id,
+            access=access,
+            requires_remote_code=requires_remote_code,
+            approved_runtimes=approved_runtimes,
+            source_run_id=source_run_id,
+        )
+
+    @staticmethod
+    def _digest(value: str) -> str:
+        return value if value.startswith("sha256:") else f"sha256:{value}"
+
+    def _dimension_contract(self) -> dict[str, Any]:
+        native = self.contract.native_dimension
+        if native is None:
+            raise ValueError("native_dimension is required for model registration")
+        if self.contract.supported_output_dimensions:
+            dimensions = sorted(set(self.contract.supported_output_dimensions))
+            if native not in dimensions:
+                dimensions.append(native)
+                dimensions.sort()
+            policy: str | dict[str, dict[str, int]] = "discrete"
+        elif self.contract.minimum_output_dimension is not None:
+            dimensions = []
+            policy = {"range": {"minimum": self.contract.minimum_output_dimension}}
+        else:
+            dimensions = [native]
+            policy = "fixed"
+        return {
+            "native_dimension": native,
+            "dimension_policy": policy,
+            "supported_dimensions": dimensions,
+            "normalized": self.normalized,
+            "pooling": self.pooling,
+        }
+
+    def model_version(self) -> dict[str, Any]:
+        tokenizer_revision = (
+            getattr(self.contract.counter, "resolved_revision", None)
+            or self.contract.model_revision
+        )
+        payload: dict[str, Any] = {
+            "version": self.version,
+            "provider_model_id": self.contract.model_id,
+            "artifact": self.artifact.to_manifest(),
+            "input": {
+                "model_revision": self.contract.model_revision,
+                "tokenizer_id": self.contract.counter.name,
+                "tokenizer_revision": str(tokenizer_revision),
+                "tokenizer_fingerprint": self._digest(
+                    self.contract.counter.fingerprint
+                ),
+                "declared_context_limit": self.declared_context_limit,
+                "effective_context_limit": self.contract.effective_context_limit,
+                "special_token_count": self.contract.counter.count(""),
+                "document_template": self.contract.renderer.document_template,
+                "query_template": self.contract.renderer.query_template,
+                "document_parameters": dict(self.contract.document_encode_parameters),
+                "query_parameters": dict(self.contract.query_encode_parameters),
+            },
+            "output": self._dimension_contract(),
+            "governance": {
+                "license_id": self.license_id,
+                "access": self.access,
+                "requires_remote_code": self.requires_remote_code,
+                "approved_runtimes": sorted(set(self.approved_runtimes)),
+            },
+            "lineage": {
+                "producer_execution_id": self.source_run_id,
+                "code_revision": self.contract.model_revision,
+                "inputs": [],
+            },
+            "created_at_ms": self.created_at_ms,
+        }
+        if self.source_run_id is not None:
+            payload["source_run_id"] = self.source_run_id
+        return payload
+
+    def xcatalog_asset(self) -> dict[str, Any]:
+        """Return the typed facet stored on a unified xCatalog object."""
+        return {
+            "kind": "embedding_model",
+            "contract": {
+                "schema_version": 1,
+                "revision": 0,
+                "name": self.registered_name,
+                "versions": {str(self.version): self.model_version()},
+                "aliases": {},
+                "evidence": [],
+                "decisions": [],
+                "deployments": {},
+                "tags": {},
+            },
+        }
 
 
 @dataclass(frozen=True)

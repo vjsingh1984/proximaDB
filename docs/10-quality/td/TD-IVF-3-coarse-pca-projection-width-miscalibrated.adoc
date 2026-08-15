@@ -77,26 +77,106 @@ not a portable constant. The two-constraint clamp rule this TD previously propos
 (a variance target AND an independent estimation floor) is therefore **wrong in
 structure**, not merely mis-parameterised: the two terms trade off continuously.
 
-We are left with two solid measurements and a two-point interpolation:
+The interpolation this TD previously offered — `n_comp ~= 4.9 * dim^0.387`,
+predicting ~49 at 384-d — has since been **measured and refuted**. See the
+factorial below.
 
-....
-  measured:   128-d -> 32 comps (25.0% of dims)
-              768-d -> 64 comps ( 8.3% of dims)
+== The factorial this TD asked for (completed 2026-08-12)
 
-  interpolation:  n_comp ~= 4.9 * dim^0.387
-      dim= 128 ->  32   (matches)          dim= 768 ->  64   (matches)
-      dim= 384 ->  49   UNTESTED           dim=1024 ->  72   UNTESTED
-      dim=1536 ->  84   UNTESTED
+384-d BGE, same 491,655 chunks as the 768-d bed, `k_c` FORCED to 90 so embedding
+dimension is the only variable:
 
-  today's formula, for contrast:
-      dim= 128 ->  10   dim= 384 ->  12   dim= 768 ->  14   dim=1536 ->  15
-....
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| n_comp | % of dim | s/p | floor@10 | GET/q | floor@20 | GET/q
+| 12 (default) | 3.1% | 45.5 | 30 | 34.6 | 30 | 34.4
+| **24** | 6.2% | 22.8 | **25** | **29.6** | 30 | 32.0
+| 32 | 8.3% | 17.1 | 25 | 29.4 | 30 | 32.5
+| 48 | 12.5% | 11.4 | 25 | 29.4 | 30 | 33.0
+| **64** | 16.7% | 8.5 | 25 | 29.4 | **25** | **28.6**
+|===
 
-A two-point fit reproduces two points by construction. It is an **interpolation
-between measurements, explicitly not a law**. It cannot establish that dimension
-is the correct policy key, especially when the fixed-dimension experiment above
-identifies `k_c` as the larger effect. The 384-d prediction of ~49 is one
-falsifiable test, not a default candidate.
+Sub-0.98 mean deltas: `24 vs 12 = +0.0198`, `32 vs 24 = +0.0019`,
+`48 vs 32 = +0.0023`, `64 vs 48 = +0.0219`.
+
+**The curve is two-stepped, not smooth.** A large gain 12→24, a **plateau across
+24/32/48**, then a second gain at 64. So the interpolation's prediction of 49 lands
+squarely inside the dead zone — 48 is measurably no better than 24, at twice the
+width. Dimension is not the policy key.
+
+NOTE: quote the **sub-0.98** statistic, not the full-grid mean. Above the floor
+every width converges to 0.994–0.998 (the TD-WLP-4b saturation), and averaging
+those ties in dilutes real effects by 30–40%.
+
+=== `k_c` does not move the optimum
+
+768-d, the same corpus, `k_c` forced apart from N:
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| k_c | MiB/cell | width | floor@10 | GET/q | 64-vs-32 (sub-0.98)
+| 30 | 12.0 | 32 | 12 | 49.5 | —
+| 30 | 12.0 | 64 | 10 | 39.7 | **+0.0221**
+| 90 | 4.0 | 32 | 25 | 41.0 | —
+| 90 | 4.0 | 64 | 25 | 38.7 | **+0.0151**
+|===
+
+64 wins at both cell counts, so **the width policy needs no `k_c` term**. A second
+effect appears though: a wider projection largely *cancels* the penalty for coarse
+cells. At `n_comp=32`, moving 90→30 costs +21% GET/query; at `n_comp=64` it costs
+**+2.6%**. Width buys robustness to `k_c` misconfiguration, not just probes.
+
+=== The best invariant found: between-centroid variance
+
+Coarse ranking needs the ability to separate *centroids*, which is not what PCA
+maximises. Measuring `eta^2 = between-centroid variance / total variance` per
+component (60k sample, k-means in the full PCA space):
+
+[cols="1,1,1,1", options="header"]
+|===
+| corpus | measured optimum | % BETWEEN-centroid | % total variance
+| 128-d BIGANN | 32 | 96.8% | 79.1%
+| 384-d BGE | 64 | 92.4% | 59.5%
+| 768-d BGE | 64 | 93.1% | 56.9%
+| *spread* | | *4.4 pp* | *22.2 pp*
+|===
+
+**5× tighter than total variance**, and within one model family essentially exact
+(92.4 vs 93.1 — 0.7 pp, at different ambient dims). It is still **not** a single
+threshold: `T_b=92%` predicts BIGANN at 24 (measured 32); `T_b=96%` predicts both
+BGE at 128 (measured 64). BIGANN sits ~4 pp higher — a corpus-family effect.
+
+Consequence for any future rule: **target between-centroid variance, not total
+variance.** `T=0.79` of total variance demands ~147 components at 384-d, while 64
+already captures 92.4% of what ranking actually needs. Targeting the wrong
+quantity is why earlier drafts of this TD over-demanded width and wrongly
+concluded that neural embeddings were infeasible under the training cap. The
+quantity is computable at compaction time from the centroids and projection the
+engine already holds.
+
+REFUTED, recorded so it is not retried: the 48→64 step is *not* explained by
+discriminative directions arriving late in the PCA ordering. Between-variance
+added by components 49–64 versus 33–48 is a ratio of 0.55, against a
+total-variance ratio of 0.77 — i.e. those components contribute *less* separation
+per unit variance, the opposite of what that hypothesis requires. The step remains
+unexplained; the spectrum, the eta^2 profile and cell balance are all smooth, and
+beds are deterministic.
+
+=== The sqrt-based nprobe policy is BIGANN-specific
+
+`ceil(1.7*sqrt(k_c))` = 17 at `k_c`≈90–100:
+
+[cols="2,1,1,1,1", options="header"]
+|===
+| bed | k_c | policy | measured floor | verdict
+| 128-d BIGANN | 100 | 17 | 12 | MEETS (over-provisions)
+| 384-d BGE | 90 | 17 | 25 | **MISSES** (0.9672 @ np20)
+| 768-d BGE | 90 | 17 | 25 | **MISSES** (0.9758 @ np20)
+|===
+
+Probe requirement is not a function of cell count alone — embedding geometry
+matters. A policy fitted on BIGANN under-provisions neural corpora at identical
+`k_c`, landing below the 0.98 SLA.
 
 == Proposed resolution
 
@@ -194,11 +274,33 @@ exists to absorb CI hardware/threading differences, not scatter.
 
 == Adjacent findings (measured, not proposed here)
 
-* **The 4MiB IOP target should stand.** Forcing `k_c=50` at 3.3M (≈8MiB cells)
-  costs **+7.2% GETs at iso-recall**, +21% bytes and +11% write. ADR-065's "one
-  cell ≈ one IOP-sized block" is already missed at 4MiB (2.19 GETs/cell) and worse
-  at 8MiB (3.54). The *other* direction — `k_c=200`, ≈2MiB — is untested and may
-  approach 1 GET/cell.
+* **The 4MiB IOP target is vindicated, and now bracketed on both sides.** GET/query
+  is U-shaped in `k_c` with its minimum at the natural value, while bytes/query
+  fall monotonically as cells get finer:
++
+....
+   k_c  MiB/cell  floor@10   GET/q   MB/q   %corpus touched
+    30      12.0        12    49.5    170        40.0%
+    90       4.0        25    41.0    116        27.8%   <- GET minimum
+   300       1.2        60    57.4     93        20.0%
+....
++
+Coarser was already known to lose (a `k_c=50`/8MiB test at 128-d cost +7.2% GETs
+at iso-recall). Finer loses too: more probes cost more round-trips than the byte
+saving is worth. Because Hot bills requests and Cool bills bytes, the two tiers
+want different geometries — see link:TD-COST-1-cold-tier-posture-unsafe-for-query-serving-collections.adoc[TD-COST-1].
+
+
+* **The cell-size conclusion is conditional on the 4 MiB read cap.** Forcing
+  `k_c=50` at 3.3M (approximately 8 MiB cells) measured **+7.2% application
+  GETs at iso-recall**, +21% bytes and +11% write under the fixed 4 MiB planner.
+  But flat Azure Blob has no 4 MiB billing quantum, and the current application
+  counter sits above the SDK. On the 768-d `k_c=30`, width-32 bed, nprobe 12
+  measured 49.542 application GET/query while Region B alone read 150.30 MB;
+  the approximately 12.5 MiB average cell is mechanically split by the planner.
+  TD-SEARCH-3's fixed-bed 4/8/16/32 MiB wire sweep must complete before this TD
+  calls smaller cells GET-optimal. `k_c=200` remains useful afterward for the
+  independent byte/selectivity trade-off.
 * **Read metering, verified against vendor docs.** Azure **Blob** bills one
   transaction per request with **no 4 MiB increment** — that rule is ADLS Gen2
   (`dfs.`) only, and ADR-036 puts us on the flat Blob endpoint. S3 and GCS also

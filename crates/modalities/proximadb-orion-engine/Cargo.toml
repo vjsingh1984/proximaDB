@@ -43,7 +43,6 @@ proximadb-storage-common.workspace = true
 proximadb-storage-ports.workspace = true
 proximadb-storage-tenant.workspace = true
 # Control-tier (modality -> control is allowed by the workspace boundaries)
-proximadb-metrics.workspace = true
 # Modality-tier: graph algorithms/compaction (re-exported by the engine's shim modules)
 proximadb-graph = { path = "../proximadb-graph" }
 

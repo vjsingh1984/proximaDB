@@ -1,0 +1,107 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-COST-1: the Cool/Cold default posture is unsafe for query-serving vector collections — read amplification moves the break-even by orders of magnitude
+:status: Open
+:dim: D1
+:pillar: COST
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open — measured on one bed. Proposes a guidance change, not a code change.**
+| Priority | **P2 — cost correctness.** No incorrect behaviour ships today (tiering is an unset per-PUT knob), but the documented posture would be expensive if followed for query-serving collections.
+| Component | `docs/12-design/adr/ADR-036-azure-objectstore-orientation.adoc` :56 ("default cold posture is flat Blob + Cool/Cold access tier"). Knob is `ObjectAccessTier` / `FileOptions.storage_class`; no automatic or lifecycle tiering exists.
+| Evidence | 768-d BGE bed, 491,655 rows, k_c=90, n_comp=32, at the recall-0.98 floor: **41.0 GET/query, 116 MB/query** on the cold object path. Binary `62677fb4…` @ `aed724fc5`.
+|===
+
+== The finding
+
+ADR-036 is right that the access tier is the dominant *at-rest* cost lever, and
+right that it is the thing to reach for. What the posture does not account for is
+that **vector search reads ~116 MB per query at the SLA** — four to five orders of
+magnitude more than the few-KB reads that generic blob-tiering guidance assumes.
+Cool and Cold bill **per GB retrieved**, in-region, on every read. Hot does not.
+
+Measured read cost per query on this bed (Azure Blob LRS list prices):
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| cache hit | Hot | Cool | Cold | Cool/Hot
+| 0% | $1.80e-05 | $1.17e-03 | $3.81e-03 | **65×**
+| 50% | $9.02e-06 | $5.87e-04 | $1.90e-03 | 65×
+| 90% | $1.80e-06 | $1.17e-04 | $3.81e-04 | 65×
+| 99% | $1.80e-07 | $1.17e-05 | $3.81e-05 | 65×
+|===
+
+The ratio is cache-invariant: caching scales both tiers equally, so it changes the
+absolute bill but never which tier wins.
+
+== Where the break-even actually sits
+
+Cool saves **$0.0093/GB-month** at rest and costs more on every read. Equating the
+two gives the query rate above which Hot is cheaper overall:
+
+[cols="1,1,1", options="header"]
+|===
+| cache hit ratio | queries/month per GB | for a 0.485 GB collection
+| 0% | 8.0 | 3.9 /month
+| 50% | 16.1 | 7.8 /month
+| 90% | 80.5 | 39 /month
+| 99% | 804.7 | 390 /month
+|===
+
+So a half-gigabyte collection served from a warm (90%) cache needs only **~39
+queries a month** before Hot is the cheaper posture. Generic tiering guidance —
+written for workloads that read kilobytes — puts this threshold orders of
+magnitude higher, which is why the posture reads as safe and is not.
+
+== Proposed resolution
+
+. **Amend ADR-036's posture.** "Default cold posture = Cool/Cold" should become:
+  Hot is the default for **query-serving** collections; Cool/Cold is for
+  collections that are archival *by access rate*, not by age.
+. **Require an access-rate justification**, not an age heuristic, before tiering a
+  collection down. The break-even is computable from quantities already metered:
+  bytes/query, queries/month, stored GB, cache hit ratio.
+. Do **not** add automatic/lifecycle tiering by object age. On this workload an
+  age-based demotion would move actively-queried collections onto a tier that is
+  65× more expensive per read, and nothing in the current design would surface it.
+. If tiering is applied, revisit cell geometry with it — see the related finding
+  below; the two interact.
+
+NOTE: this is a guidance change. `ObjectAccessTier` defaults to unset (account
+default) and no lifecycle policy ships, so **no incorrect behaviour is live** —
+the risk is that someone follows the documented posture.
+
+== Related: the optimal cell size is also tier-dependent
+
+The same measurement sweep shows GET/query is U-shaped in `k_c` with its minimum
+at the natural `k_c` (≈4 MiB cells, vindicating ADR-065's IOP target), while
+**bytes/query fall monotonically** as cells get finer:
+
+....
+   k_c  MiB/cell  floor@10   GET/q   MB/q   %corpus touched
+    30      12.0        12    49.5    170        40.0%
+    90       4.0        25    41.0    116        27.8%   <- GET minimum
+   300       1.2        60    57.4     93        20.0%
+....
+
+Because Hot bills requests and Cool bills bytes, the two tiers want different
+geometries: **Hot → k_c=90 (cheaper by 29%); Cool → k_c=300 (cheaper by 18%)**.
+`iop_target` is currently a single constant. If tiering is ever applied to a
+query-serving collection, its cell geometry is then optimised for a cost model it
+no longer pays. Filed here as an observation; a geometry change needs its own
+measurement.
+
+== What is NOT established
+
+* **One bed, one dimensionality.** 768-d/491k rows/k_c=90. Read amplification
+  scales with corpus and `k_c`, so the break-even moves; the *method* transfers,
+  the constants do not.
+* Azure Blob LRS **list prices** as of 2026-08. Reserved capacity, other clouds,
+  and negotiated rates shift the arithmetic — S3 IA and GCS Nearline have the same
+  shape (per-GB retrieval on cold classes) but different constants.
+* Cool/Cold also carry **minimum retention** (early-deletion penalties) which this
+  analysis ignores; they make tiering-down worse, not better.
+* The cache-hit ratios above are illustrative. Production hit ratio is the single
+  largest term in the absolute bill and is not measured here.

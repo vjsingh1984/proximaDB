@@ -224,9 +224,11 @@ impl CompactionManager {
         // choice may shift because the storage layout changed. The
         // compaction manager only knows the collection_id, not the
         // tenant, so we use the registry's all-tenants variant.
-        let bumped = proximadb_catalog::CorpusVersionRegistry::global()
-            .bump_collection_all_tenants(collection_id)
-            .await;
+        let bumped = if let Some(p) = proximadb_storage_ports::corpus_version() {
+            p.bump_collection_all_tenants(collection_id).await
+        } else {
+            0
+        };
         if bumped > 0 {
             tracing::debug!(
                 collection = %collection_id,
@@ -310,9 +312,11 @@ impl CompactionManager {
         // Bump corpus_version across all tenants — major compaction
         // rewrites the storage layout more invasively than minor;
         // any cached plan should be reconsidered against the new state.
-        let bumped = proximadb_catalog::CorpusVersionRegistry::global()
-            .bump_collection_all_tenants(collection_id)
-            .await;
+        let bumped = if let Some(p) = proximadb_storage_ports::corpus_version() {
+            p.bump_collection_all_tenants(collection_id).await
+        } else {
+            0
+        };
         if bumped > 0 {
             tracing::debug!(
                 collection = %collection_id,

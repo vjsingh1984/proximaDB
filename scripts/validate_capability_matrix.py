@@ -65,7 +65,7 @@ DRIFT_RULES = {
             # multi-graph canonical-route requirement is covered by the graph.adoc rule
             # above and the source-comment rule below.
             {
-                "path": "src/network/rest/canonical/graph.rs",
+                "path": "crates/platform/proximadb-api/src/rest/canonical/graph.rs",
                 "required_substrings": [
                     "Legacy compatibility routes (`/api/v1/graph/nodes`, `/api/v1/graph/edges`, etc.)",
                     "return `308 Permanent Redirect`",

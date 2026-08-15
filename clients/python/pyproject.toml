@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # the import package stays `proximadb_sdk`). The native in-process engine ships
 # separately as `proximadb_embedded` — install via the `embedded` extra below.
 name = "proximadb"
-version = "0.2.2"
+version = "0.3.0"
 description = "Python client SDK for ProximaDB - Cloud-native vector database engineered for AI-first applications"
 authors = [
     {name = "Vijaykumar Singh", email = "vijay@anvaiops.com"}
@@ -166,6 +166,7 @@ dev = [
     "mypy>=1.0.0",
     "pre-commit>=2.20.0",
     "ruff>=0.0.280",
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 
 test = [
@@ -189,6 +190,9 @@ test = [
     "pyyaml>=6.0",
     "jsonschema>=4.0.0",
     "httpx>=0.24.0",
+    # scripts/bench/build_token_budget_corpus.py reads TOML; tomllib is stdlib
+    # only on 3.11+, so the bench corpus test needs the tomli backport on 3.10.
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 
 docs = [

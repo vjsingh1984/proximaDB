@@ -46,6 +46,9 @@ proximadb-data-model = { workspace = true }
 proximadb-distance-types = { workspace = true }
 proximadb-quantization-types = { workspace = true }
 proximadb-records = { workspace = true }
+# Foundation schema contract types (extracted from this crate — TD-DECOMP ratchet).
+# Re-exported so historical `proximadb_catalog::*` paths keep working.
+proximadb-catalog-schema = { workspace = true }
 # The canonical `ObjectStoreBridge` contract module (moved down from
 # `proximadb-storage-common`, which re-exports it): object_store/arrow-array/
 # futures for the trait surface, kernel for `StorageError`.

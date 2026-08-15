@@ -15,7 +15,7 @@ SENTENCE_TRANSFORMER_MODELS = {
     "all-mpnet-base-v2": ModelMetadata(
         name="all-mpnet-base-v2",
         dimension=768,
-        max_length=512,
+        max_length=384,
         provider_type="sentence-transformer",
         mteb_score=63.3,
         languages="en",
@@ -25,7 +25,7 @@ SENTENCE_TRANSFORMER_MODELS = {
     "all-MiniLM-L6-v2": ModelMetadata(
         name="all-MiniLM-L6-v2",
         dimension=384,
-        max_length=512,
+        max_length=256,
         provider_type="sentence-transformer",
         mteb_score=58.8,
         languages="en",
@@ -35,7 +35,7 @@ SENTENCE_TRANSFORMER_MODELS = {
     "all-MiniLM-L12-v2": ModelMetadata(
         name="all-MiniLM-L12-v2",
         dimension=384,
-        max_length=512,
+        max_length=256,
         provider_type="sentence-transformer",
         mteb_score=59.8,
         languages="en",
@@ -45,7 +45,7 @@ SENTENCE_TRANSFORMER_MODELS = {
     "paraphrase-MiniLM-L6-v2": ModelMetadata(
         name="paraphrase-MiniLM-L6-v2",
         dimension=384,
-        max_length=512,
+        max_length=256,
         provider_type="sentence-transformer",
         languages="en",
         description="Optimized for paraphrase detection",

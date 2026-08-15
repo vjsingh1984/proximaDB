@@ -200,61 +200,11 @@ pub enum RerankPrecision {
     Fp32Promoted,
 }
 
-/// Where a collection is in its precision-migration lifecycle. A migration
-/// from fp32 → fp16 typically goes `Stable → ShadowingTarget →
-/// CutoverPending → Stable` over multiple compactions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrecisionMigrationState {
-    Stable,
-    ShadowingTarget,
-    CutoverPending,
-    RollingBack,
-}
-
-/// Per-metric recall@K target.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RecallTargets {
-    pub at_10: f32,
-    pub at_100: f32,
-}
-
-/// Per-distance-metric recall SLO. LLD §Q13 locks the defaults that ship
-/// with the global default policy — operators can override per policy.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RecallSlo {
-    pub cosine: RecallTargets,
-    pub l2: RecallTargets,
-    pub dot: RecallTargets,
-}
-
-impl Default for RecallSlo {
-    fn default() -> Self {
-        Self::lld_defaults()
-    }
-}
-
-impl RecallSlo {
-    /// LLD §Q13 per-metric recall defaults. Cosine + L2 share fp16-noise
-    /// tolerance (normalized magnitudes); dot product needs tighter recall
-    /// because raw magnitude affects ranking.
-    pub const fn lld_defaults() -> Self {
-        Self {
-            cosine: RecallTargets {
-                at_10: 0.99,
-                at_100: 0.995,
-            },
-            l2: RecallTargets {
-                at_10: 0.99,
-                at_100: 0.995,
-            },
-            dot: RecallTargets {
-                at_10: 0.995,
-                at_100: 0.998,
-            },
-        }
-    }
-}
+// `PrecisionMigrationState`, `RecallTargets`, and `RecallSlo` were extracted
+// into the foundation `proximadb-catalog-schema` crate (they are pure data
+// types referenced by `CatalogTableSchema`). Re-exported here so historical
+// `embedding_precision_policy::RecallSlo` paths keep working.
+pub use proximadb_catalog_schema::{PrecisionMigrationState, RecallSlo, RecallTargets};
 
 /// Full precision policy row as it lives in the catalog.
 ///

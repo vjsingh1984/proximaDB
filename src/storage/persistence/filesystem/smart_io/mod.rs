@@ -83,8 +83,8 @@
 
 pub mod metrics;
 pub mod parallel_reader;
-pub mod range_coalescer;
-pub mod traits;
+pub use proximadb_storage_filesystem_types::range_coalescer;
+pub use proximadb_storage_filesystem_types::smart_io_traits as traits;
 
 use std::sync::Arc;
 use tracing::{debug, trace};

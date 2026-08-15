@@ -15,8 +15,6 @@ pub mod catalog;
 pub mod document;
 /// REST handlers for SKS entity operations
 pub mod entities;
-/// REST handlers for graph database operations
-pub mod graph;
 /// Core REST handlers for collections, vectors, search, and health
 pub mod handlers;
 /// REST handlers for hybrid (vector + BM25) search

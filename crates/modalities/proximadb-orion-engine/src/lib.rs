@@ -553,11 +553,13 @@ impl OrionGraphEngine {
             // detect "is canonical emission + production wiring healthy?"
             // without depending on log scraping. See
             // `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc`.
-            proximadb_metrics::td066_metrics::record_recovery_checkpoint_observation(
-                persistence.graph_id(),
-                canonical_checkpoint_lsn,
-                checkpoint_ts_ms,
-            );
+            if let Some(m) = proximadb_storage_ports::orion_metrics() {
+                m.record_recovery_checkpoint_observation(
+                    persistence.graph_id(),
+                    canonical_checkpoint_lsn,
+                    checkpoint_ts_ms,
+                );
+            }
 
             // Step 1: Load latest snapshot (if available). TD-066 (c) Part 2:
             // when the feature is enabled, discover + load the newest engine
