@@ -14,10 +14,10 @@ name = "proximadb_storage_operations"
 path = "src/lib.rs"
 
 [dependencies]
+proximadb-storage-ports.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
-proximadb-catalog.workspace = true
 proximadb-proto.workspace = true
 proximadb-records.workspace = true
 proximadb-storage-common.workspace = true

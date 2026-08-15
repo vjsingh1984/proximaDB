@@ -22,7 +22,7 @@
 
 use tracing::{debug, trace};
 
-use super::traits::{ByteRange, RangeMapping, RangeOptimizer, RangeOptimizerWithMapping};
+use crate::smart_io_traits::{ByteRange, RangeMapping, RangeOptimizer, RangeOptimizerWithMapping};
 
 /// Default coalescing strategy that merges adjacent ranges
 #[derive(Debug, Clone)]

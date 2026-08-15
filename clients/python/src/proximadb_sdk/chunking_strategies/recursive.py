@@ -81,6 +81,21 @@ class RecursiveStrategy(ChunkingStrategyInterface):
 
         return final_chunks
 
+    def preferred_boundaries(
+        self,
+        text: str,
+        source_id: str,
+        base_metadata: dict[str, Any] | None = None,
+    ) -> list[int]:
+        """Prefer paragraphs, then sentences, independent of char budgets."""
+        paragraph_ends = self.paragraph_strategy.preferred_boundaries(
+            text, source_id, base_metadata
+        )
+        sentence_ends = self.sentence_strategy.preferred_boundaries(
+            text, source_id, base_metadata
+        )
+        return sorted(set(paragraph_ends + sentence_ends))
+
     def _recursive_split(
         self,
         text: str,

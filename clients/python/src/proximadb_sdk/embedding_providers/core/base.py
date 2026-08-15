@@ -150,7 +150,26 @@ class BaseEmbeddingProvider(ABC):
         Returns:
             Dimension of embedding vectors
         """
-        return self.config.model.dimension
+        truncate_dim = self.config.extra.get("truncate_dim")
+        if truncate_dim is None:
+            return self.config.model.dimension
+        if not isinstance(truncate_dim, int) or truncate_dim <= 0:
+            raise ValueError("extra['truncate_dim'] must be a positive integer")
+        model = self.config.model
+        if not model.supports_dimension(truncate_dim):
+            supported = model.supported_output_dimensions
+            guidance = (
+                str(supported)
+                if supported
+                else f"{model.minimum_output_dimension}..{model.dimension}"
+            )
+            raise ValueError(
+                f"dimension {truncate_dim} is not supported by "
+                f"{model.name}; choose {guidance}"
+            )
+        if truncate_dim > self.config.model.dimension:
+            raise ValueError("truncate_dim cannot exceed the native dimension")
+        return truncate_dim
 
     def embed_text(self, text: str) -> np.ndarray:
         """
@@ -211,8 +230,17 @@ class BaseEmbeddingProvider(ABC):
         """
         return {
             "name": self.config.model.name,
-            "dimension": self.config.model.dimension,
+            "dimension": self.get_dimension(),
+            "native_dimension": self.config.model.dimension,
             "max_length": self.config.model.max_length,
+            "revision": self.config.model.revision,
+            "supported_output_dimensions": list(
+                self.config.model.supported_output_dimensions
+            ),
+            "minimum_output_dimension": self.config.model.minimum_output_dimension,
+            "license_id": self.config.model.license_id,
+            "access": self.config.model.access,
+            "source_url": self.config.model.source_url,
             "mteb_score": self.config.model.mteb_score,
             "languages": self.config.model.languages,
             "description": self.config.model.description,

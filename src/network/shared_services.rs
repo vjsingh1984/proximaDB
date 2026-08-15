@@ -13,6 +13,21 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Bridge implementing [`proximadb_storage_ports::CorpusVersionPort`] by delegating
+/// to the catalog's `CorpusVersionRegistry`. Registered at bootstrap so the
+/// compaction manager can bump corpus versions without depending on catalog.
+/// (TD-DECOMP-66 edge 2: resolves storage-operations → catalog upward coupling.)
+struct CorpusVersionBridge {
+    registry: proximadb_catalog::CorpusVersionRegistry,
+}
+
+#[async_trait::async_trait]
+impl proximadb_storage_ports::CorpusVersionPort for CorpusVersionBridge {
+    async fn bump_collection_all_tenants(&self, collection: &str) -> usize {
+        self.registry.bump_collection_all_tenants(collection).await
+    }
+}
 use tracing::{debug, info, warn};
 
 use crate::metrics::MetricsConfig;
@@ -1565,6 +1580,17 @@ impl SharedServices {
         // the cache through the leaf port without naming the concrete orchestrator.
         proximadb_storage_ports::register_graph_cache_hint(std::sync::Arc::new(
             crate::storage::cache::orchestrator::GraphCacheHintBridge,
+        ));
+        // TD-DECOMP-66: Register port-traits to resolve control-layer coupling edges.
+        // orion-engine uses OrionMetricsPort instead of depending on metrics (control);
+        // storage-operations uses CorpusVersionPort instead of depending on catalog (control).
+        proximadb_storage_ports::register_orion_metrics(std::sync::Arc::new(
+            proximadb_metrics::OrionMetricsAdapter,
+        ));
+        proximadb_storage_ports::register_corpus_version(std::sync::Arc::new(
+            CorpusVersionBridge {
+                registry: proximadb_catalog::CorpusVersionRegistry::global().clone(),
+            },
         ));
 
         // =========================================================================

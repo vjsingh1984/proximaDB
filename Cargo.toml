@@ -55,6 +55,7 @@ members = [
     "crates/foundation/proximadb-tenant",
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
+    "crates/foundation/proximadb-catalog-schema",
     "crates/control/proximadb-abac",
     "crates/control/proximadb-catalog",
     "crates/control/proximadb-metrics",
@@ -69,7 +70,7 @@ members = [
     "crates/horizontal/proximadb-audit",
     "crates/horizontal/proximadb-cross-modal-fusion",
     "crates/horizontal/proximadb-utility-scorer",
-    "crates/horizontal/proximadb-geo-index",
+    "crates/horizontal/proximadb-document-geo-index",
     "crates/horizontal/proximadb-geo-spatial-index",
     "crates/horizontal/proximadb-connectors-types",
     "crates/horizontal/proximadb-type-validators",
@@ -260,6 +261,7 @@ proximadb-relational-frontend = { path = "crates/query/proximadb-relational-fron
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
 proximadb-abac = { path = "crates/control/proximadb-abac" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-catalog-schema = { path = "crates/foundation/proximadb-catalog-schema" }
 proximadb-cdc = { path = "crates/integrations/proximadb-cdc" }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 arc-swap = "1.7"
@@ -312,7 +314,7 @@ proximadb-automl = { path = "crates/horizontal/proximadb-automl" }
 proximadb-audit = { path = "crates/horizontal/proximadb-audit" }
 proximadb-cross-modal-fusion = { path = "crates/horizontal/proximadb-cross-modal-fusion" }
 proximadb-utility-scorer = { path = "crates/horizontal/proximadb-utility-scorer" }
-proximadb-geo-index = { path = "crates/horizontal/proximadb-geo-index" }
+proximadb-document-geo-index = { path = "crates/horizontal/proximadb-document-geo-index" }
 proximadb-connectors-types = { path = "crates/horizontal/proximadb-connectors-types" }
 proximadb-type-validators = { path = "crates/horizontal/proximadb-type-validators" }
 proximadb-tcp-multiplexer = { path = "crates/horizontal/proximadb-tcp-multiplexer" }
@@ -440,6 +442,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog", features = ["fc-metamodel"] }
+proximadb-catalog-schema = { workspace = true }
 proximadb-cdc = { workspace = true }
 proximadb-abac = { path = "crates/control/proximadb-abac", optional = true }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
@@ -459,7 +462,7 @@ proximadb-automl = { workspace = true }
 proximadb-audit = { workspace = true }
 proximadb-cross-modal-fusion = { workspace = true }
 proximadb-utility-scorer = { workspace = true }
-proximadb-geo-index = { workspace = true }
+proximadb-document-geo-index = { workspace = true }
 proximadb-connectors-types = { workspace = true }
 proximadb-type-validators = { workspace = true }
 proximadb-tcp-multiplexer = { workspace = true }

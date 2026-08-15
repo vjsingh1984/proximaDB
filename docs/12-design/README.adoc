@@ -125,6 +125,12 @@ Read these in order for future-shaping architecture work:
    hand-written ergonomic facade, and split the kitchen-sink per-language packages (e.g. Python's
    ~86k `proximadb_sdk`, of which the wire client is only ~19k) into focused, opt-in packages
    (core client / chunking / embeddings / integrations). Tracked as TD-126.
+   Companion model-input blueprint:
+   link:MODEL_INPUT_CONTRACT_AND_TOKEN_BUDGETED_CHUNKING_2026_08_11.adoc[model-agnostic token-budgeted
+   chunking, open-weight model seed catalog, and native xCatalog model-contract binding].
+   Companion native catalog blueprint:
+   link:XCATALOG_MLOPS_MODEL_REGISTRY_2026_08_12.adoc[xCatalog MLOps model registry co-design,
+   MLflow/MLMD/OpenLineage pressure test, and TDD rollout seams].
 21. `CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc` +
    Co-design spec for hosting an external coding agent's Code Property Graph as a correlated
    OLTP + graph + vector substrate: one `ProximaRecord`/`oid` per code symbol simultaneously a

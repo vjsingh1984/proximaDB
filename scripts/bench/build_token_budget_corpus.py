@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""Build an auditable token-budgeted embedding corpus from JSONL documents.
+
+This is the benchmark transport around the authoritative SDK chunking contracts.
+It deliberately contains no splitting algorithm of its own.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 — tomllib is stdlib only in 3.11+
+    import tomli as tomllib
+from proximadb_sdk.chunking_strategies import (
+    ChunkingConfig,
+    ChunkingStrategy,
+    CompositeInputContract,
+    HuggingFaceTokenCounter,
+    InputRenderer,
+    InputRole,
+    OverflowPolicy,
+    ResolvedInputContract,
+    ShortChunkPolicy,
+    TokenBudget,
+    get_chunking_strategy,
+)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _load_contracts(path: Path) -> CompositeInputContract:
+    with path.open("rb") as handle:
+        config = tomllib.load(handle)
+    models = config.get("models")
+    if not isinstance(models, list) or not models:
+        raise ValueError("contract TOML must contain at least one [[models]] table")
+
+    contracts = []
+    for index, model in enumerate(models):
+        for required in ("model_id", "revision", "effective_context_limit"):
+            if required not in model:
+                raise ValueError(f"models[{index}] is missing {required!r}")
+        tokenizer_id = model.get("tokenizer_id", model["model_id"])
+        tokenizer_revision = model.get("tokenizer_revision", model["revision"])
+        if re.fullmatch(r"[0-9a-f]{40}", str(model["revision"])) is None:
+            raise ValueError(
+                f"models[{index}].revision must be an immutable 40-character "
+                "Hugging Face commit SHA"
+            )
+        if re.fullmatch(r"[0-9a-f]{40}", str(tokenizer_revision)) is None:
+            raise ValueError(
+                f"models[{index}].tokenizer_revision must be an immutable "
+                "40-character Hugging Face commit SHA"
+            )
+        counter = HuggingFaceTokenCounter.from_pretrained(
+            tokenizer_id,
+            revision=tokenizer_revision,
+            trust_remote_code=bool(model.get("trust_remote_code", False)),
+            local_files_only=bool(model.get("local_files_only", False)),
+        )
+        dimensions = tuple(int(value) for value in model.get("output_dimensions", ()))
+        document_parameters = tuple(
+            sorted(
+                (str(key), str(value))
+                for key, value in model.get("document_encode_parameters", {}).items()
+            )
+        )
+        query_parameters = tuple(
+            sorted(
+                (str(key), str(value))
+                for key, value in model.get("query_encode_parameters", {}).items()
+            )
+        )
+        contracts.append(
+            ResolvedInputContract(
+                model_id=str(model["model_id"]),
+                model_revision=str(model["revision"]),
+                counter=counter,
+                effective_context_limit=int(model["effective_context_limit"]),
+                renderer=InputRenderer(
+                    document_template=str(model.get("document_template", "{text}")),
+                    query_template=str(model.get("query_template", "{text}")),
+                ),
+                native_dimension=(
+                    int(model["native_dimension"])
+                    if "native_dimension" in model
+                    else None
+                ),
+                output_dimension=(
+                    int(model["output_dimension"])
+                    if "output_dimension" in model
+                    else None
+                ),
+                supported_output_dimensions=dimensions,
+                minimum_output_dimension=(
+                    int(model["minimum_output_dimension"])
+                    if "minimum_output_dimension" in model
+                    else None
+                ),
+                document_encode_parameters=document_parameters,
+                query_encode_parameters=query_parameters,
+            )
+        )
+    return CompositeInputContract(tuple(contracts))
+
+
+def _percentile(sorted_values: list[int], fraction: float) -> int | None:
+    if not sorted_values:
+        return None
+    index = round((len(sorted_values) - 1) * fraction)
+    return sorted_values[index]
+
+
+def _histogram(values: list[int]) -> dict[str, int | None]:
+    ordered = sorted(values)
+    return {
+        "min": ordered[0] if ordered else None,
+        "p50": _percentile(ordered, 0.50),
+        "p90": _percentile(ordered, 0.90),
+        "p99": _percentile(ordered, 0.99),
+        "max": ordered[-1] if ordered else None,
+    }
+
+
+def _atomic_paths(output_dir: Path) -> tuple[Path, Path, Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    texts_fd, texts_name = tempfile.mkstemp(
+        prefix="texts.", suffix=".tmp", dir=output_dir
+    )
+    chunks_fd, chunks_name = tempfile.mkstemp(
+        prefix="chunks.", suffix=".tmp", dir=output_dir
+    )
+    os.close(texts_fd)
+    os.close(chunks_fd)
+    texts_tmp = Path(texts_name)
+    chunks_tmp = Path(chunks_name)
+    return texts_tmp, chunks_tmp, output_dir / "texts.json", output_dir / "chunks.jsonl"
+
+
+def build(args: argparse.Namespace) -> dict[str, Any]:
+    if args.max_chunks is not None and args.max_chunks <= 0:
+        raise ValueError("max_chunks must be positive when set")
+    input_sha256 = _sha256(args.input)
+    contracts = _load_contracts(args.contracts)
+    budget = TokenBudget(
+        target_tokens=args.target_tokens,
+        overlap_tokens=args.overlap_tokens,
+        min_content_tokens=args.min_content_tokens,
+        overflow_policy=OverflowPolicy(args.overflow_policy),
+        short_chunk_policy=ShortChunkPolicy(args.short_chunk_policy),
+    )
+    config = ChunkingConfig(
+        strategy=ChunkingStrategy(args.strategy),
+        chunk_size=args.boundary_char_size,
+        chunk_overlap=0,
+        min_chunk_size=1,
+        max_chunk_size=args.boundary_char_size,
+        token_budget=budget,
+        input_contract=contracts,
+        input_role=InputRole.DOCUMENT,
+    )
+    strategy = get_chunking_strategy(
+        config.strategy,
+        **{key: value for key, value in vars(config).items() if key != "strategy"},
+    )
+
+    texts_tmp, chunks_tmp, texts_path, chunks_path = _atomic_paths(args.output_dir)
+    token_lengths: dict[str, list[int]] = defaultdict(list)
+    source_count = 0
+    chunk_count = 0
+    split_sources = 0
+    dropped_spans: list[dict[str, Any]] = []
+    stopped_at_max_chunks = False
+    seen_chunk_digests: set[bytes] = set()
+    duplicate_chunk_count = 0
+    try:
+        with (
+            args.input.open("r", encoding="utf-8") as source,
+            texts_tmp.open("w", encoding="utf-8") as texts,
+            chunks_tmp.open("w", encoding="utf-8") as chunks_out,
+        ):
+            texts.write("[")
+            first_text = True
+            for line_number, line in enumerate(source, 1):
+                if args.max_chunks is not None and chunk_count >= args.max_chunks:
+                    stopped_at_max_chunks = True
+                    break
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                text = record.get(args.text_field)
+                if not isinstance(text, str):
+                    raise ValueError(
+                        f"line {line_number}: {args.text_field!r} must be a string"
+                    )
+                source_id = str(record.get(args.id_field, line_number))
+                source_count += 1
+                was_oversized = not contracts.fits(
+                    text, InputRole.DOCUMENT, budget.target_tokens
+                )
+                emitted = strategy.chunk(text, source_id, {"source_line": line_number})
+                if was_oversized and emitted:
+                    split_sources += 1
+                if not emitted and text.strip():
+                    dropped_spans.append(
+                        {
+                            "source_id": source_id,
+                            "start_pos": 0,
+                            "end_pos": len(text),
+                            "reason": "oversized_source_or_short_chunk_policy",
+                        }
+                    )
+                elif emitted:
+                    offsets = contracts.primary.counter.content_offsets(text) or ()
+                    content_end = offsets[-1][1] if offsets else 0
+                    if emitted[-1].end_pos < content_end:
+                        dropped_spans.append(
+                            {
+                                "source_id": source_id,
+                                "start_pos": emitted[-1].end_pos,
+                                "end_pos": content_end,
+                                "reason": "short_chunk_policy",
+                            }
+                        )
+
+                for chunk in emitted:
+                    if args.max_chunks is not None and chunk_count >= args.max_chunks:
+                        stopped_at_max_chunks = True
+                        break
+                    if args.deduplicate == "exact":
+                        digest = hashlib.sha256(chunk.text.encode("utf-8")).digest()
+                        if digest in seen_chunk_digests:
+                            duplicate_chunk_count += 1
+                            continue
+                        seen_chunk_digests.add(digest)
+                    if not first_text:
+                        texts.write(",")
+                    json.dump(chunk.text, texts, ensure_ascii=False)
+                    first_text = False
+                    counts = contracts.validate(chunk.text, InputRole.DOCUMENT)
+                    for model_id, count in counts.items():
+                        if count > budget.target_tokens:
+                            raise AssertionError(
+                                f"chunk {chunk_count} exceeds target for {model_id}"
+                            )
+                        token_lengths[model_id].append(count)
+                    chunks_out.write(
+                        json.dumps(
+                            {
+                                "chunk_index": chunk_count,
+                                "chunk_id": chunk.chunk_id,
+                                "source_id": source_id,
+                                "start_pos": chunk.start_pos,
+                                "end_pos": chunk.end_pos,
+                                "token_counts": counts,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                    chunk_count += 1
+            texts.write("]\n")
+        if chunk_count == 0:
+            raise ValueError("corpus builder emitted no chunks")
+        if _sha256(args.input) != input_sha256:
+            raise RuntimeError("input JSONL changed while the corpus was being built")
+        os.replace(texts_tmp, texts_path)
+        os.replace(chunks_tmp, chunks_path)
+    finally:
+        texts_tmp.unlink(missing_ok=True)
+        chunks_tmp.unlink(missing_ok=True)
+
+    histogram = {
+        model_id: {
+            **_histogram(values),
+            "over_effective_context": sum(
+                value
+                > next(
+                    contract.effective_context_limit
+                    for contract in contracts.contracts
+                    if contract.model_id == model_id
+                )
+                for value in values
+            ),
+            "over_target": sum(value > budget.target_tokens for value in values),
+        }
+        for model_id, values in token_lengths.items()
+    }
+    manifest = {
+        "schema_version": 1,
+        "input": str(args.input.resolve()),
+        "input_sha256": input_sha256,
+        "texts_sha256": _sha256(texts_path),
+        "chunks_sha256": _sha256(chunks_path),
+        "source_count": source_count,
+        "chunk_count": chunk_count,
+        "max_chunks": args.max_chunks,
+        "stopped_at_max_chunks": stopped_at_max_chunks,
+        "deduplication_policy": args.deduplicate,
+        "duplicate_chunk_count": duplicate_chunk_count,
+        "split_oversized_source_count": split_sources,
+        "dropped_spans": dropped_spans,
+        "boundary_strategy": args.strategy,
+        "token_budget": budget.to_manifest(),
+        "input_contract": contracts.to_manifest(),
+        "token_histogram": histogram,
+        "zero_truncation_asserted": all(
+            values["over_effective_context"] == 0 and values["over_target"] == 0
+            for values in histogram.values()
+        ),
+    }
+    manifest_path = args.output_dir / "corpus.manifest.json"
+    manifest_fd, manifest_name = tempfile.mkstemp(
+        prefix="corpus.manifest.", suffix=".tmp", dir=args.output_dir
+    )
+    os.close(manifest_fd)
+    manifest_tmp = Path(manifest_name)
+    try:
+        with manifest_tmp.open("w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(manifest_tmp, manifest_path)
+    finally:
+        manifest_tmp.unlink(missing_ok=True)
+    if not manifest["zero_truncation_asserted"]:
+        raise AssertionError("emitted corpus contains inputs that would truncate")
+    return manifest
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", type=Path, required=True, help="JSONL source")
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--contracts", type=Path, required=True, help="TOML model contracts"
+    )
+    parser.add_argument("--text-field", default="text")
+    parser.add_argument("--id-field", default="id")
+    parser.add_argument(
+        "--strategy",
+        choices=[value.value for value in ChunkingStrategy],
+        default="recursive",
+    )
+    parser.add_argument("--target-tokens", type=int, default=480)
+    parser.add_argument("--overlap-tokens", type=int, default=72)
+    parser.add_argument("--min-content-tokens", type=int, default=32)
+    parser.add_argument(
+        "--max-chunks",
+        type=int,
+        help="stop after this many chunks, preserving deterministic input order",
+    )
+    parser.add_argument(
+        "--deduplicate",
+        choices=("none", "exact"),
+        default="none",
+        help="exact removes byte-identical emitted texts and records the count",
+    )
+    parser.add_argument("--boundary-char-size", type=int, default=4096)
+    parser.add_argument(
+        "--overflow-policy",
+        choices=[value.value for value in OverflowPolicy],
+        default="split",
+    )
+    parser.add_argument(
+        "--short-chunk-policy",
+        choices=[value.value for value in ShortChunkPolicy],
+        default="keep",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    manifest = build(parse_args())
+    print(
+        json.dumps(
+            {
+                "chunk_count": manifest["chunk_count"],
+                "texts_sha256": manifest["texts_sha256"],
+                "token_histogram": manifest["token_histogram"],
+                "zero_truncation_asserted": manifest["zero_truncation_asserted"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

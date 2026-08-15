@@ -406,6 +406,45 @@ fn v1_search_result_to_rich(
     }
 }
 
+/// How a search result's `tenant_id` metadata corroborates (or contradicts) the
+/// tenant that is already permitted to read the collection.
+///
+/// This is NOT the isolation boundary — `validate_tenant_collection_access` is,
+/// and it runs before any search. This only reports whether the optional label
+/// on a result agrees with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TenantLabelVerdict {
+    /// Labelled and matching, or unlabelled (the common case — no ordinary write
+    /// path stamps `tenant_id` into record metadata). Structural scoping governs.
+    Keep,
+    /// Present but not a string: cannot corroborate. Keep, but say so — this arm
+    /// previously matched nothing and the record vanished with no log at all.
+    KeepUncorroborated,
+    /// Labelled with a DIFFERENT tenant inside a collection this tenant may open.
+    /// A genuine contradiction ⇒ drop and alert; something upstream is wrong.
+    DropContradiction { found: String },
+}
+
+/// Decide a single result's verdict. Pure so the rule is testable without a
+/// service, and so the rule is stated in one place rather than spread across
+/// nested `if let`s.
+pub(crate) fn corroborate_tenant_label(
+    label: Option<&crate::proto::proximadb_v1::sql_value::Value>,
+    expected_tenant_id: &str,
+) -> TenantLabelVerdict {
+    use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+    match label {
+        Some(SqlVal::StringValue(found)) if found != expected_tenant_id => {
+            TenantLabelVerdict::DropContradiction {
+                found: found.clone(),
+            }
+        }
+        Some(SqlVal::StringValue(_)) => TenantLabelVerdict::Keep,
+        Some(_) => TenantLabelVerdict::KeepUncorroborated,
+        None => TenantLabelVerdict::Keep,
+    }
+}
+
 fn vector_record_to_rich_result(record: ProximaRecord) -> RichSearchResult {
     // INT-2.5b: RichSearchResult holds Vec<f32>; promote non-Fp32 variants.
     let vector: Vec<f32> = record
@@ -2800,58 +2839,57 @@ impl VectorOperationsService {
             let mut validated_search_result = search_result.clone();
             validated_search_result.results.clear();
 
-            // Check each vector result for tenant isolation
+            // Corroborate tenant labelling on each result.
+            //
+            // THIS IS NOT THE ISOLATION BOUNDARY. The caller resolves the
+            // collection through `validate_tenant_collection_access` before any
+            // search runs, so a result can only come from a collection the
+            // acting tenant is permitted to open. This loop is defense in depth
+            // over that guarantee.
+            //
+            // Which is why absent metadata must NOT be a verdict: record
+            // metadata is copied verbatim from what the user wrote, and no
+            // ordinary write path stamps `tenant_id` into it (the only writers
+            // are bulk-load and distributed-insert enrichment). Treating absence
+            // as a breach — the previous behavior — would drop essentially every
+            // ordinary record the moment a real tenant context reached this
+            // function, turning a hardening change into an outage.
+            //
+            // A check that cannot distinguish "unlabelled" from "foreign" cannot
+            // be an authorization decision. It can only report a genuine
+            // contradiction: a record that IS labelled, with a DIFFERENT tenant,
+            // inside a collection this tenant legitimately opened. That means
+            // something upstream is wrong, so it is dropped and alerted.
             for vector_result in &search_result.results {
-                // Check if result has tenant_id metadata
-                if let Some(result_tenant_id) = vector_result.metadata.get("tenant_id") {
-                    if let Some(value) = &result_tenant_id.value {
-                        if let crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                            tenant_value,
-                        ) = value
-                        {
-                            if tenant_value == expected_tenant_id {
-                                validated_search_result.results.push(vector_result.clone());
-                            } else {
-                                // CRITICAL SECURITY ALERT: Cross-tenant data leakage detected!
-                                error!(
-                                    "🚨 CRITICAL SECURITY ALERT: Cross-tenant data leakage prevented! Expected tenant: {}, Found: {} for vector: {}",
-                                    expected_tenant_id, tenant_value, vector_result.id
-                                );
-
-                                // Log security incident for audit trail
-                                if let Some(_audit_logger) = self.get_audit_logger() {
-                                    // Security incident logged via tracing (observability layer)
-                                    warn!(
-                                        "Security incident logged: cross_tenant_data_leakage_prevented for vector {}",
-                                        vector_result.id
-                                    );
-                                }
-
-                                // Do not include this result - potential data breach prevented
-                            }
-                        }
-                    } else {
-                        // No tenant metadata - allow by default for now but log warning
+                match corroborate_tenant_label(
+                    vector_result
+                        .metadata
+                        .get("tenant_id")
+                        .and_then(|v| v.value.as_ref()),
+                    expected_tenant_id,
+                ) {
+                    TenantLabelVerdict::Keep => {
+                        validated_search_result.results.push(vector_result.clone());
+                    }
+                    TenantLabelVerdict::KeepUncorroborated => {
                         warn!(
-                            "Vector result without tenant_id metadata found - allowing by default"
+                            target: "proximadb.security.audit",
+                            vector = %vector_result.id,
+                            "tenant_id metadata is not a string; cannot corroborate — \
+                             relying on structural collection scoping"
                         );
                         validated_search_result.results.push(vector_result.clone());
                     }
-                } else {
-                    // CRITICAL: Result without tenant_id is a security issue
-                    error!(
-                        "🚨 CRITICAL SECURITY ALERT: Vector result without tenant_id found! Vector: {}",
-                        vector_result.id
-                    );
-
-                    if let Some(_audit_logger) = self.get_audit_logger() {
-                        // Security incident logged via tracing (observability layer)
-                        warn!(
-                            "Security incident logged: missing_tenant_metadata for vector {}",
-                            vector_result.id
+                    TenantLabelVerdict::DropContradiction { found } => {
+                        error!(
+                            target: "proximadb.security.audit",
+                            expected_tenant = %expected_tenant_id,
+                            found_tenant = %found,
+                            vector = %vector_result.id,
+                            "cross-tenant labelled record found in a tenant-scoped collection — \
+                             dropped; indicates an upstream stamping or routing defect"
                         );
                     }
-                    // Don't include this result - it's a security risk
                 }
             }
 
@@ -2869,12 +2907,6 @@ impl VectorOperationsService {
         }
 
         Ok(validated_results)
-    }
-
-    /// Get audit logger for security incident reporting
-    fn get_audit_logger(&self) -> Option<&crate::audit::AuditLogger> {
-        // Placeholder - would be injected via dependency injection
-        None
     }
 
     /// Unified search that returns v1 proto results at the source.
@@ -6866,6 +6898,68 @@ mod recompute_merged_shortfall_tests {
 
 #[cfg(test)]
 mod axis_insert_gate_tests {
+    // --- TD-AUTHZ-1 L2.2 step 1: the tenant-label corroboration rule ---------
+    //
+    // The rule is NOT the isolation boundary — `validate_tenant_collection_access`
+    // is, and it runs before any search. These pin what the optional metadata
+    // label may and may not conclude on top of that.
+
+    #[test]
+    fn unlabelled_results_are_kept_because_absence_is_not_evidence() {
+        // THE INVERSION. Previously absent metadata was treated as a breach and
+        // the record was dropped. But record metadata is copied verbatim from
+        // what the user wrote and NO ordinary write path stamps `tenant_id`, so
+        // "absent" is the common case: dropping on it would empty ordinary
+        // reads the moment a real tenant context reached this code — an outage
+        // dressed as a hardening fix.
+        assert_eq!(
+            super::corroborate_tenant_label(None, "tenant-a"),
+            super::TenantLabelVerdict::Keep
+        );
+    }
+
+    #[test]
+    fn a_matching_label_is_kept() {
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+        assert_eq!(
+            super::corroborate_tenant_label(
+                Some(&SqlVal::StringValue("tenant-a".to_string())),
+                "tenant-a"
+            ),
+            super::TenantLabelVerdict::Keep
+        );
+    }
+
+    #[test]
+    fn a_foreign_label_is_a_contradiction_and_is_dropped() {
+        // The one genuinely diagnostic case: a record labelled for ANOTHER
+        // tenant inside a collection this tenant legitimately opened. That
+        // cannot happen if upstream stamping and routing are correct, so it is
+        // dropped and alerted rather than quietly returned.
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+        assert_eq!(
+            super::corroborate_tenant_label(
+                Some(&SqlVal::StringValue("tenant-b".to_string())),
+                "tenant-a"
+            ),
+            super::TenantLabelVerdict::DropContradiction {
+                found: "tenant-b".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_non_string_label_is_kept_but_reported() {
+        // REGRESSION: this shape previously matched no arm at all, so the record
+        // was dropped with NO log — invisible data loss. It cannot corroborate,
+        // but it is not evidence of a breach either.
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+        assert_eq!(
+            super::corroborate_tenant_label(Some(&SqlVal::Int64Value(7)), "tenant-a"),
+            super::TenantLabelVerdict::KeepUncorroborated
+        );
+    }
+
     use super::collection_uses_axis_indexes;
     use crate::proto::proximadb_v1::{Collection, CollectionConfig, IndexConfig};
 

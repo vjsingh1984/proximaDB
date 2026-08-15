@@ -54,30 +54,20 @@ class InstructionMixin:
             >>> result = mixin.apply_instruction("machine learning", is_query=True)
             >>> # Returns: "Instruct: Given a query, retrieve relevant passages\nQuery: machine learning"
         """
-        # Only apply to queries, not passages
-        if not is_query:
-            return text
-
-        # Check if model requires instruction
-        if not self.config.model.requires_instruction:
-            return text
-
-        # Get instruction template
-        template = self.config.model.instruction_template
+        if is_query:
+            template = self.config.model.query_template
+            if template is None and self.config.model.requires_instruction:
+                template = self.config.model.instruction_template
+        else:
+            template = self.config.model.document_template
         if not template:
-            logger.warning(
-                f"Model {self.config.model.name} requires_instruction=True "
-                f"but has no instruction_template. Using plain text."
-            )
             return text
 
-        # Apply template
         try:
-            return template.format(query=text)
+            return template.format(query=text, text=text)
         except KeyError as e:
             logger.error(
-                f"Invalid instruction template: {template}. "
-                f"Missing placeholder: {e}"
+                f"Invalid instruction template: {template}. Missing placeholder: {e}"
             )
             return text
 
@@ -97,9 +87,11 @@ class InstructionMixin:
             >>> print(query_emb.shape)
             (1536,)
         """
+        role_encoder = getattr(self, "_encode_with_prompt", None)
+        if callable(role_encoder):
+            return role_encoder([query], "query")[0]
         instructed_query = self.apply_instruction(query, is_query=True)
-        embeddings = self.embed([instructed_query])
-        return embeddings[0]
+        return self.embed([instructed_query])[0]
 
     def embed_queries(self, queries: list[str]) -> np.ndarray:
         """
@@ -118,6 +110,9 @@ class InstructionMixin:
             >>> print(query_embs.shape)
             (2, 1536)
         """
+        role_encoder = getattr(self, "_encode_with_prompt", None)
+        if callable(role_encoder):
+            return role_encoder(queries, "query")
         instructed_queries = [self.apply_instruction(q, is_query=True) for q in queries]
         return self.embed(instructed_queries)
 
@@ -138,8 +133,11 @@ class InstructionMixin:
             >>> print(passage_embs.shape)
             (2, 1536)
         """
-        # Passages don't get instructions
-        return self.embed(passages)
+        role_encoder = getattr(self, "_encode_with_prompt", None)
+        if callable(role_encoder):
+            return role_encoder(passages, "document")
+        rendered = [self.apply_instruction(text, is_query=False) for text in passages]
+        return self.embed(rendered)
 
     def embed_documents(self, documents: list[dict]) -> np.ndarray:
         """

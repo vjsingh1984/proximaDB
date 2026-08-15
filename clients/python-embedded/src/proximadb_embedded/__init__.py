@@ -80,7 +80,7 @@ from .notebook import (
 )
 import time
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 __all__ = [
     "ProximaDB",
     "DiskConfig",

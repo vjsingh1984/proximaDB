@@ -32,6 +32,7 @@ proximadb-hardware.workspace = true
 proximadb-kernel.workspace = true
 proximadb-proto.workspace = true
 proximadb-config.workspace = true
+proximadb-storage-ports.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -58,6 +58,16 @@ from .code import (  # Parser classes - Primary languages; Parser classes - Addi
     register_file_extension,
     register_language_parser,
 )
+from .contracts import (
+    CompositeInputContract,
+    InputRenderer,
+    InputRole,
+    OverflowPolicy,
+    ResolvedInputContract,
+    ShortChunkPolicy,
+    TokenBudget,
+    TokenCounter,
+)
 
 # Document and binary parsers (OCR, reverse engineering)
 from .document_parsers import (  # Enums; Data structures; Tool detection; Parsers; Factory functions
@@ -116,6 +126,8 @@ from .semantic import SemanticStrategy
 from .semantic_embedding import SemanticEmbeddingStrategy
 from .sentence import SentenceStrategy
 from .sliding_window import SlidingWindowStrategy
+from .token_budget import TokenBudgetStrategy
+from .tokenizers import HuggingFaceTokenCounter
 
 __all__ = [
     # Base classes
@@ -123,6 +135,16 @@ __all__ = [
     "ChunkingStrategyInterface",
     "TextChunk",
     "ChunkingConfig",
+    "TokenBudget",
+    "TokenCounter",
+    "InputRole",
+    "InputRenderer",
+    "OverflowPolicy",
+    "ShortChunkPolicy",
+    "ResolvedInputContract",
+    "CompositeInputContract",
+    "TokenBudgetStrategy",
+    "HuggingFaceTokenCounter",
     # Text chunking strategies
     "SlidingWindowStrategy",
     "SentenceStrategy",

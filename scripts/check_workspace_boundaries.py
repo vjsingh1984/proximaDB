@@ -129,7 +129,6 @@ class StorageUpEdge:
 
 STORAGE_UP_EDGE_TARGETS = ("compute", "index", "query", "services")
 
-
 LAYER_RULES = (
     LayerRule(
         frozenset({"foundation"}),
@@ -152,6 +151,12 @@ LAYER_RULES = (
         "storage-common crates must not depend upward into modality, query, platform, integration, or app layers",
     ),
     LayerRule(
+        frozenset({"storage"}),
+        frozenset({"control"}),
+        "error",
+        "storage crates must not depend upward into the control plane (catalog/metrics) — invert via port-traits or type extraction (TD-DECOMP ratchet)",
+    ),
+    LayerRule(
         frozenset({"horizontal"}),
         frozenset(
             {
@@ -165,6 +170,12 @@ LAYER_RULES = (
         ),
         "error",
         "horizontal infrastructure crates must stay reusable and not depend on domain, platform, integration, or app layers",
+    ),
+    LayerRule(
+        frozenset({"horizontal"}),
+        frozenset({"control"}),
+        "error",
+        "horizontal crates must not depend upward into the control plane — reclassify the crate or invert the dep (TD-DECOMP-66: resolved via port-traits + dev-dep exclusion)",
     ),
     LayerRule(
         frozenset({"control"}),
@@ -187,6 +198,12 @@ LAYER_RULES = (
         frozenset({"platform", "integration", *APPLICATION_LAYERS}),
         "error",
         "modality crates must not depend on platform/integration/root/application/binding crates",
+    ),
+    LayerRule(
+        frozenset({"modality"}),
+        frozenset({"control"}),
+        "error",
+        "modality crates must not depend upward into the control plane — invert via port-traits (TD-DECOMP-66: resolved)",
     ),
     LayerRule(
         frozenset({"query-contract"}),
@@ -503,15 +520,18 @@ def load_toml(path: Path) -> dict:
 
 
 def dependency_names(manifest: dict) -> tuple[str, ...]:
+    """Return RUNTIME dependency names (excludes dev-deps + build-deps).
+
+    Dev-deps are test-only and don't form runtime coupling edges — they're
+    architecturally distinct from production dependencies (TD-DECOMP-66 edge 4).
+    """
     names: set[str] = set()
-    for section in ("dependencies", "dev-dependencies", "build-dependencies"):
-        for name in manifest.get(section, {}):
-            names.add(name)
+    for name in manifest.get("dependencies", {}):
+        names.add(name)
 
     for target in manifest.get("target", {}).values():
-        for section in ("dependencies", "dev-dependencies", "build-dependencies"):
-            for name in target.get(section, {}):
-                names.add(name)
+        for name in target.get("dependencies", {}):
+            names.add(name)
 
     return tuple(sorted(names))
 

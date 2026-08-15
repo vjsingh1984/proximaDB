@@ -137,7 +137,7 @@ id = "graph_legacy_route_deprecation"
 status = "complete"
 notes = "Legacy graph compatibility routes issue 308 redirects with deprecation/sunset metadata; docs include explicit migration mappings to canonical multi-graph paths."
 evidence = [
-  "src/network/rest/canonical/graph.rs:1610",
+  "crates/platform/proximadb-api/src/rest/canonical/graph.rs:1723",
   "src/network/rest/canonical/handlers.rs:1958",
   "docs/03-api-reference/graph.adoc:32",
 ]

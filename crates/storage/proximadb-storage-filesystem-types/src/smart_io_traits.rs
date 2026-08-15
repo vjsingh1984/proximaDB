@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use std::fmt::Debug;
 use std::ops::Range;
 
-use crate::storage::persistence::filesystem::FsResult;
+use crate::FsResult;
 
 /// Represents a byte range within a file
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

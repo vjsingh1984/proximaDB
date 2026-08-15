@@ -54,8 +54,10 @@ METRICS = (
     "proximadb_object_store_bytes_read_total",
     "proximadb_survivor_cache_hits",
     "proximadb_survivor_cache_misses",
+    "proximadb_survivor_cache_bytes",
     "proximadb_segment_invariants_cache_hits_total",
     "proximadb_segment_invariants_cache_misses_total",
+    "proximadb_segment_invariants_cache_bytes",
     "proximadb_cache_local_disk_hits_total",
     "proximadb_cache_local_disk_misses_total",
     "proximadb_cache_local_disk_bytes",
@@ -1238,6 +1240,7 @@ def run_query_sweep(
             "hits": survivor_hits,
             "misses": survivor_misses,
             "hit_ratio": (survivor_hits / survivor_total if survivor_total else None),
+            "resident_bytes": after["proximadb_survivor_cache_bytes"],
         },
         "invariants": {
             "hits": invariant_hits,
@@ -1245,6 +1248,7 @@ def run_query_sweep(
             "hit_ratio": (
                 invariant_hits / invariant_total if invariant_total else None
             ),
+            "resident_bytes": after["proximadb_segment_invariants_cache_bytes"],
         },
         "local_disk": {
             "hits": local_hits,
@@ -1413,6 +1417,8 @@ class OwnedServer:
         nprobe: int | None = None,
         training_compaction_min_mb: int | None = None,
         azure_emulator: bool = False,
+        coalesce_gap_bytes: int = AZURE_COALESCE_GAP_BYTES,
+        coalesce_range_bytes: int = AZURE_COALESCE_RANGE_BYTES,
     ):
         self.binary = binary
         self.config = config
@@ -1423,6 +1429,10 @@ class OwnedServer:
         self.nprobe = nprobe
         self.training_compaction_min_mb = training_compaction_min_mb
         self.azure_emulator = azure_emulator
+        if coalesce_gap_bytes < 0 or coalesce_range_bytes <= 0:
+            raise RuntimeError("coalescing gap must be non-negative and range positive")
+        self.coalesce_gap_bytes = coalesce_gap_bytes
+        self.coalesce_range_bytes = coalesce_range_bytes
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -1436,10 +1446,10 @@ class OwnedServer:
                 "PROXIMADB_L0_COMPACTION_ENABLED": "1",
                 # Keep the planner fixed across local and Azure profiles so
                 # backend choice does not silently change the read geometry.
-                "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(AZURE_COALESCE_GAP_BYTES),
-                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(AZURE_COALESCE_RANGE_BYTES),
-                "PROXIMADB_PAX_COALESCE_GAP": str(AZURE_COALESCE_GAP_BYTES),
-                "PROXIMADB_PAX_COALESCE_RANGE": str(AZURE_COALESCE_RANGE_BYTES),
+                "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(self.coalesce_gap_bytes),
+                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(self.coalesce_range_bytes),
+                "PROXIMADB_PAX_COALESCE_GAP": str(self.coalesce_gap_bytes),
+                "PROXIMADB_PAX_COALESCE_RANGE": str(self.coalesce_range_bytes),
             }
         )
         # The diagnostic object-cold phase must remain cold even when the
@@ -2256,6 +2266,7 @@ def main() -> int:
                 "tests/python/test_bigann_prefix_groundtruth.py",
                 "tests/python/test_nprobe_geometry_analysis.py",
                 "tests/python/test_nprobe_sweep.py",
+                "tests/python/test_range_cap_sweep.py",
             }
         ]
         if unsafe_changes:

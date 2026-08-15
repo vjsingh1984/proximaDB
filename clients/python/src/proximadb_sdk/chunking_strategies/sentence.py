@@ -210,6 +210,28 @@ class SentenceStrategy(ChunkingStrategyInterface):
 
         return chunks
 
+    def preferred_boundaries(
+        self,
+        text: str,
+        source_id: str,
+        base_metadata: dict[str, Any] | None = None,
+    ) -> list[int]:
+        """Expose every real sentence boundary without character grouping."""
+        boundaries: list[int] = []
+        current = ""
+        previous = 0
+        for match in self.sentence_pattern.finditer(text):
+            part = text[previous : match.start()].strip()
+            previous = match.end()
+            if not part:
+                continue
+            current += (" " if current else "") + part
+            if self._is_sentence_end(current):
+                boundaries.append(match.start())
+                current = ""
+        boundaries.append(len(text))
+        return boundaries
+
     def chunk_stream(
         self,
         text_source: "str | Iterable[str]",

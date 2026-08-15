@@ -13,6 +13,7 @@ from .semantic import SemanticStrategy
 from .semantic_embedding import SemanticEmbeddingStrategy
 from .sentence import SentenceStrategy
 from .sliding_window import SlidingWindowStrategy
+from .token_budget import TokenBudgetStrategy
 
 
 class ChunkingStrategyFactory:
@@ -74,11 +75,32 @@ class ChunkingStrategyFactory:
                     chunk_overlap=config.chunk_overlap,
                     min_chunk_size=config.min_chunk_size,
                     max_chunk_size=config.max_chunk_size,
+                    token_budget=config.token_budget,
+                    input_contract=config.input_contract,
+                    input_role=config.input_role,
                 )
 
-        # Create and return strategy instance
+        # Create the boundary strategy, then optionally decorate it with the
+        # exact model-input budget. No token budget means legacy character
+        # semantics remain byte-for-byte compatible.
         strategy_class = cls._strategies[strategy]
-        return strategy_class(config)
+        boundary_strategy = strategy_class(config)
+        if config.token_budget is None:
+            return boundary_strategy
+        if config.input_contract is None:
+            raise ValueError("input_contract is required when token_budget is set")
+
+        from .contracts import InputRole
+
+        role = config.input_role or InputRole.DOCUMENT
+        if isinstance(role, str):
+            role = InputRole(role)
+        return TokenBudgetStrategy(
+            boundary_strategy,
+            config.token_budget,
+            config.input_contract,
+            role=role,
+        )
 
     @classmethod
     def register_strategy(
