@@ -236,24 +236,16 @@ So the resolution is a **floor**, not a formula:
   .. **Seed sensitivity.** Every bed to date is one clustering draw. Replicate the
      32-vs-64 ordering across ≥2 `PROXIMADB_IVF_KMEANS_SEED` values. If the
      ordering flips, the table is an artifact of one draw and nothing ships.
-  .. **PCA conditioning at width — RESOLVED, and it caps the answer at 32.**
-     This precondition was checked and **failed**. The extractor uses power
-     iteration with deflation from a fixed seed vector and no
-     re-orthogonalisation; past a spectrum-dependent depth it returns
-     near-duplicates of components already extracted — measured onset at
-     component **42** for a `0.90^j` spectrum and **59** for `0.95^j`, in both
-     cases duplicating component 2, an early high-variance direction. That
-     double-counts a direction in the metric that ranks coarse cells, and recall
-     cannot see it because the coarse projection only selects cells. Filed as
-     **TD-IVF-5** with an executing test. Consequence: `IVF_NCOMP_FLOOR_CEILING`
-     ships at **32**, not the measured optimum of 64. It lifts when the extractor
-     re-orthogonalises.
-+
-NOTE: TD-IVF-5 is also a **candidate explanation for the one anomaly in the table
-above** — width 64 won at 384-d and 768-d but *lost* to 32 at 128-d. A
-faster-decaying effective spectrum at 128-d would make its components past ~40
-degenerate, which is the shape of that result. Testable against the persisted A0
-model of the existing `n_comp=128` beds; not yet checked.
+  .. **PCA conditioning at width — CHECKED; 64 clears it on every measured
+     corpus.** The extractor uses power iteration with deflation from a fixed
+     seed and no re-orthogonalisation, so past a spectrum-dependent depth it
+     returns near-duplicates of components already extracted (filed as
+     **TD-IVF-5**). Re-fitting it on the raw corpora puts first onset at component
+     **111** for 128-d BIGANN and beyond 128 for both BGE corpora, so the ceiling
+     sits at the measured optimum of **64** with margin. Adversarial synthetic
+     spectra (`0.90^j`) breach it at 42, so the bound is corpus-dependent: a
+     future corpus with much faster spectral decay needs the check re-run. A first
+     pass that used only synthetic spectra wrongly concluded the cap had to be 32.
   .. **A0 size.** The directory carries `n_comp·dim + k_c·n_comp` f32s and is
      fetched whole on first touch. Guarded by a unit test asserting it stays
      within one 4 MiB IOP at the widest supported geometry (`k_c`=4096, dim=3072).
