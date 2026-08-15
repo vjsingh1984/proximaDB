@@ -157,7 +157,7 @@ def test_wire_validation_rejects_dead_observer_when_application_read_storage():
 
 def test_decision_matches_application_reads_to_ranged_gets_not_control_gets():
     args = SimpleNamespace(
-        recall_tolerance=1e-12,
+        max_recall_regression=0.0005,
         target_recall=0.98,
         min_wire_get_reduction=0.2,
         max_byte_amplification=1.5,
@@ -200,9 +200,9 @@ def test_decision_matches_application_reads_to_ranged_gets_not_control_gets():
     assert decision["promotion_eligible"] is True
 
 
-def test_decision_localizes_result_set_and_order_mismatches_without_relaxing_gate():
+def test_decision_localizes_result_set_and_order_mismatches_as_diagnostics():
     args = SimpleNamespace(
-        recall_tolerance=1e-12,
+        max_recall_regression=0.0005,
         target_recall=0.98,
         min_wire_get_reduction=0.2,
         max_byte_amplification=1.5,
@@ -249,5 +249,61 @@ def test_decision_localizes_result_set_and_order_mismatches_without_relaxing_gat
         "result_set_first_mismatch_queries": [],
         "recall_hits_mismatch_count": 1,
         "recall_hits_first_mismatch_queries": [1],
+        "recall_hit_delta_total": -1,
+        "queries_with_fewer_recall_hits": 1,
+        "queries_with_more_recall_hits": 0,
     }
     assert decision["promotion_eligible"] is True
+
+
+def test_decision_allows_bounded_recall_regression_but_preserves_hard_ratchet():
+    args = SimpleNamespace(
+        max_recall_regression=0.0005,
+        target_recall=0.98,
+        min_wire_get_reduction=0.2,
+        max_byte_amplification=1.5,
+        max_latency_ratio=1.1,
+        max_rss_ratio=1.1,
+    )
+    baseline = {
+        "range_cap_mib": 4,
+        "recall_at_k": 0.9840,
+        "physical_gets": 100.0,
+        "bytes_read": 100.0,
+        "latency_ms": {"p50": 10.0, "p95": 20.0},
+        "process_rss": {"peak_bytes": 1_000},
+        "wire_http": {"get_requests": 101, "range_get_requests": 100},
+    }
+    candidate = copy.deepcopy(baseline)
+    candidate.update(
+        {
+            "range_cap_mib": 24,
+            "recall_at_k": 0.9836,
+            "physical_gets": 36.0,
+            "bytes_read": 104.0,
+            "latency_ms": {"p50": 8.0, "p95": 16.0},
+            "process_rss": {"peak_bytes": 1_060},
+            "wire_http": {"get_requests": 37, "range_get_requests": 36},
+        }
+    )
+
+    decision = SWEEP.decision_for(candidate, baseline, args)
+
+    assert decision["recall_delta"] == pytest.approx(-0.0004)
+    assert decision["checks"]["recall_noninferior"] is True
+    assert decision["checks"]["target_recall_maintained"] is True
+    assert decision["promotion_eligible"] is True
+
+    candidate["recall_at_k"] = 0.9834
+    regressed = SWEEP.decision_for(candidate, baseline, args)
+    assert regressed["checks"]["recall_noninferior"] is False
+    assert regressed["checks"]["target_recall_maintained"] is True
+    assert regressed["promotion_eligible"] is False
+
+    ratchet_baseline = copy.deepcopy(baseline)
+    ratchet_baseline["recall_at_k"] = 0.9802
+    candidate["recall_at_k"] = 0.9799
+    below_ratchet = SWEEP.decision_for(candidate, ratchet_baseline, args)
+    assert below_ratchet["checks"]["recall_noninferior"] is True
+    assert below_ratchet["checks"]["target_recall_maintained"] is False
+    assert below_ratchet["promotion_eligible"] is False

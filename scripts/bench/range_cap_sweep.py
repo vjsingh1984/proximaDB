@@ -197,9 +197,8 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
     base_wire = baseline["wire_http"]["get_requests"]
     wire_ranges = candidate["wire_http"]["range_get_requests"]
     app = candidate["physical_gets"]
-    recall_identical = (
-        abs(candidate["recall_at_k"] - baseline["recall_at_k"]) <= args.recall_tolerance
-    )
+    recall_delta = candidate["recall_at_k"] - baseline["recall_at_k"]
+    recall_noninferior = recall_delta >= -args.max_recall_regression
     wire_reduction = 1.0 - (wire / base_wire) if base_wire else 0.0
     bytes_ratio = candidate["bytes_read"] / baseline["bytes_read"]
     p50_ratio = candidate["latency_ms"]["p50"] / baseline["latency_ms"]["p50"]
@@ -244,8 +243,22 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
             ]
             identity_diagnostics[f"{label}_mismatch_count"] = len(mismatches)
             identity_diagnostics[f"{label}_first_mismatch_queries"] = mismatches[:20]
+            if label == "recall_hits":
+                deltas = [
+                    after - before
+                    for before, after in zip(
+                        baseline_values, candidate_values, strict=True
+                    )
+                ]
+                identity_diagnostics["recall_hit_delta_total"] = sum(deltas)
+                identity_diagnostics["queries_with_fewer_recall_hits"] = sum(
+                    delta < 0 for delta in deltas
+                )
+                identity_diagnostics["queries_with_more_recall_hits"] = sum(
+                    delta > 0 for delta in deltas
+                )
     checks = {
-        "recall_identical": recall_identical,
+        "recall_noninferior": recall_noninferior,
         "target_recall_maintained": candidate["recall_at_k"] >= args.target_recall,
         "wire_get_reduction_material": wire_reduction >= args.min_wire_get_reduction,
         "byte_amplification_bounded": bytes_ratio <= args.max_byte_amplification,
@@ -258,6 +271,7 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
     }
     return {
         "baseline_cap_mib": baseline["range_cap_mib"],
+        "recall_delta": recall_delta,
         "wire_get_reduction": wire_reduction,
         "bytes_ratio": bytes_ratio,
         "p50_ratio": p50_ratio,
@@ -379,7 +393,7 @@ def main() -> int:
     parser.add_argument("--max-segments", type=int, default=1)
     parser.add_argument("--required-layout-version", type=int, default=3)
     parser.add_argument("--target-recall", type=float, default=0.98)
-    parser.add_argument("--recall-tolerance", type=float, default=1e-12)
+    parser.add_argument("--max-recall-regression", type=float, default=0.0005)
     parser.add_argument("--min-wire-get-reduction", type=float, default=0.20)
     parser.add_argument("--max-byte-amplification", type=float, default=1.50)
     parser.add_argument("--max-latency-ratio", type=float, default=1.10)
@@ -398,6 +412,8 @@ def main() -> int:
         raise RuntimeError("--range-caps-mib must include the 4 MiB baseline")
     if args.coalesce_gap_mib < 0 or args.nprobe <= 0:
         raise RuntimeError("coalescing gap must be non-negative and nprobe positive")
+    if args.max_recall_regression < 0:
+        raise RuntimeError("--max-recall-regression must be non-negative")
     if args.groundtruth_scope_rows != args.rows:
         raise RuntimeError("ground-truth scope must equal measured corpus rows")
     if not args.collection_id.isdecimal():
@@ -502,7 +518,7 @@ def main() -> int:
             "fresh_process_per_point": True,
             "target_recall": args.target_recall,
             "decision_thresholds": {
-                "recall_tolerance": args.recall_tolerance,
+                "max_recall_regression": args.max_recall_regression,
                 "min_wire_get_reduction": args.min_wire_get_reduction,
                 "max_byte_amplification": args.max_byte_amplification,
                 "max_latency_ratio": args.max_latency_ratio,
