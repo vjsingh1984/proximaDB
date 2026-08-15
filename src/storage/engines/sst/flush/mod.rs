@@ -1455,13 +1455,17 @@ fn resolve_flush_shred_spec(
     if config.enable_proxima_record != Some(true) {
         return Vec::new();
     }
-    config
+    let spec: Vec<(String, i32)> = config
         .filterable_columns
         .iter()
         .enumerate()
         .filter(|(_, col)| !col.name.is_empty())
         .map(|(idx, col)| (col.name.clone(), 100 + idx as i32))
-        .collect()
+        .collect();
+    if !spec.is_empty() {
+        tracing::debug!("TD-FPRUNE-1 M1: flush shred spec = {:?}", spec);
+    }
+    spec
 }
 
 /// Tag prefix encoding the per-collection tier-2 rerank quant strategy.

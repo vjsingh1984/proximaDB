@@ -69,6 +69,16 @@ pub struct CollectionFlushPlan {
     pub dimension: u32,
     /// Owning tenant, when known — the A6 fence input. `None` ⇒ fence fails open.
     pub tenant_id: Option<String>,
+    /// TD-FPRUNE-1 M1: the collection's declared filterable columns, carried from
+    /// the catalog `meta` so the flush can shred them into typed user-columns
+    /// (footer min/max + bloom + self-describing field-map). The transitional
+    /// `collection_config` DTO the materializer rebuilds is otherwise minimal
+    /// (name/engine/dimension only) and drops these — so footer filter-pruning
+    /// stayed dark end-to-end. Empty ⇒ no shredding (byte-identical).
+    pub filterable_columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>,
+    /// TD-FPRUNE-1 M1: whether this is a ProximaRecord (document) collection —
+    /// the gate for shredding (mirrors `collection_mapping`'s precondition).
+    pub enable_proxima_record: Option<bool>,
 }
 
 /// Build a [`CollectionFlushPlan`] from a collection's catalog metadata. The single
@@ -126,6 +136,13 @@ pub fn flush_plan_from_collection_meta(
         engine_type,
         dimension,
         tenant_id,
+        // TD-FPRUNE-1 M1: carry the declared filterable columns from the full
+        // catalog meta so the flush can shred them (the reconstructed DTO below
+        // would otherwise drop them).
+        filterable_columns: config
+            .map(|c| c.filterable_columns.clone())
+            .unwrap_or_default(),
+        enable_proxima_record: config.and_then(|c| c.enable_proxima_record),
     })
 }
 
@@ -572,6 +589,12 @@ async fn materialize_collection_with_coordinator_mode(
             name: plan.collection_name.clone(),
             storage_engine: Some(plan.engine_type),
             dimension: plan.dimension,
+            // TD-FPRUNE-1 M1: propagate the filterable columns + proxima-record
+            // flag so `resolve_flush_shred_spec` can shred declared tags into
+            // typed user-columns (footer filter-pruning). These were dropped by
+            // this transitional DTO, keeping footer-pruning dark end-to-end.
+            filterable_columns: plan.filterable_columns.clone(),
+            enable_proxima_record: plan.enable_proxima_record,
             ..Default::default()
         }),
         ..Default::default()
@@ -898,6 +921,8 @@ mod tests {
             engine_type: ProtoStorageEngine::Sst as i32,
             dimension: 2,
             tenant_id: Some("test-tenant".to_string()),
+            filterable_columns: Vec::new(),
+            enable_proxima_record: None,
         }
     }
 
