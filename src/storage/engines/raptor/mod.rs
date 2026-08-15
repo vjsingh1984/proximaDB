@@ -132,7 +132,7 @@ pub mod writer;
 pub mod artus_bloom;
 pub mod progressive_stages;
 pub mod rowgroup_manager;
-pub mod smart_rowgroup_sizing; // ISP-compliant progressive search stages
+pub use proximadb_engine_core::smart_rowgroup_sizing; // extracted to engine-core (TD-DECOMP-69)
 
 // Re-export commonly used types from common module
 pub use common::{

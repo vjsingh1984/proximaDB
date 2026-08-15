@@ -7479,6 +7479,7 @@ dependencies = [
  "proximadb-compression",
  "proximadb-distance-kernel",
  "proximadb-kernel",
+ "proximadb-quantization-model",
  "proximadb-records",
  "proximadb-storage-common",
  "serde",
