@@ -232,10 +232,20 @@ So the resolution is a **floor**, not a formula:
   against a measured 64. No single threshold fits all three; it would be model #5.
   It is emitted as a diagnostic under `PROXIMADB_TRACE_IVF_FLUSH` so evidence keeps
   accruing without the policy depending on it.
-. **Flip preconditions** — all three must pass before the compiled default moves:
+. **Flip preconditions** — all four must pass before the compiled default moves:
   .. **Seed sensitivity.** Every bed to date is one clustering draw. Replicate the
      32-vs-64 ordering across ≥2 `PROXIMADB_IVF_KMEANS_SEED` values. If the
      ordering flips, the table is an artifact of one draw and nothing ships.
+  .. **Re-check the width optimum at the eligible read cap.** *Every width
+     measurement in this TD was taken under the fixed 4 MiB planner* — the same
+     conditioning the cell-size caveat below records for `k_c`. That is not a
+     safe thing to assume away: TD-SEARCH-3 measured `k_c=30` at a 24 MiB cap
+     near **17.9** wire GET/query against **49.5** at 4 MiB for ~4% more bytes.
+     A swing of that size can move which projection width is optimal, because
+     width and cap both act on how many cells must be probed to clear the recall
+     floor. **The width optimum is therefore not established independently of the
+     cap**, and if the 24 MiB default lands first, the 32-vs-64 comparison must be
+     re-run under it before the floor is set from these numbers.
   .. **PCA conditioning at width — CHECKED; 64 clears it on every measured
      corpus.** The extractor uses power iteration with deflation from a fixed
      seed and no re-orthogonalisation, so past a spectrum-dependent depth it
