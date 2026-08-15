@@ -322,3 +322,73 @@ typed paths.
 . relational ABAC becomes satisfiable; the three `#[ignore]`d e2e tests become meaningful
 . only then is the catalog-consolidation invariant ("every internal catalog must stamp the typed
   triple") enforceable, because there is a working reference implementation to enforce against
+
+
+== 2026-08-14 (2) — 🔴 the next link is a RE-LAND of reverted code, not a fresh implementation
+
+The review of "how would `SystemCatalog` mint the typed triple" surfaced a hazard that changes
+the risk class of this work entirely, and it was found only by chasing the symbol names.
+
+=== What the survey found
+
+`NativeCatalog::mint_stable_identity` is a thin wrapper; the machinery is `resolve_typed_triple`
++ `account_u32` + the stable-id floors. Counting those symbols in the live catalog:
+
+[cols="3,1,1"]
+|===
+| symbol | `system_catalog.rs` | `native.rs`
+
+| `resolve_typed_triple`    | **0** | 7
+| `account_u32`             | **0** | 17
+| `identity_allocator_seed` | **0** | 0
+| `mint_object_id`          | 7 (re-landed, #1607) | 7
+|===
+
+Those zeros are not an omission. **They are a deliberate revert.** `249d45fd7` (#1425) deleted
+268 lines of exactly this machinery from `system_catalog.rs` + `system_catalog_state.rs` because
+#1406 added it and collapsed cross-tier ANN recall:
+
+____
+This regressed `vector_ann_recall_under_deletes_and_compaction`: Phase C (cross-tier,
+delete-after-flush + reflush) recall collapses to **mean=0.000** while pre/post-flush stay 1.000.
+... Likely path: changed OID/identity minting leaves the **OID resolver cache stale after the 2nd
+flush's compaction** -> cross-segment search misses the live set.
+____
+
+=== Why this matters to ADR-090
+
+The identity chain's next link is therefore **not** new code to design — it is TD-RECALL-2's
+explicit charter: *"the ADR-0083 typed-identity minting can be re-landed fixed."* This work has
+already caused one production-severity regression, and the failure mode is **silent**: recall
+degrades: nothing panics, no test outside the recall e2e notices.
+
+Re-landing it as an incidental step of an authorization change — which is exactly what "just add
+`mint_stable_identity` to `SystemCatalog`" would have been — is how it went wrong the first time.
+**#1406 was itself an ABAC PR** (`feat(abac): ratchet live relational policy enforcement`).
+
+=== Evidence that the u64 half (#1607) is safe
+
+`mint_object_id` is the one reverted symbol already re-landed, by #1607. It is NOT implicated:
+
+* `Rust Integration Tests (query)` — the lane that runs `tests/vector_ann_recall_e2e.rs`
+  (`ci.yml:1901`) — **ran and passed** on #1607.
+* It ran because #1430 added `src/services/**` to `query_changes` after that filter gap let
+  #1406's collapse escape its own PR. The guard worked on the first PR that exercised it.
+
+Note the `SIFT PAX recall ratchet` shows `skipping` on #1607 — a *different* gate. Reading that
+as "recall was not tested" would be wrong; reading it as "recall was tested" would also be wrong.
+The query lane is the one that matters here.
+
+=== Binding conditions on the re-land (TD-RECALL-2 owns this, not TD-AUTHZ-2)
+
+. Re-land the typed-identity minting **as its own PR** with the recall fix, never bundled into an
+  authorization or catalog-consolidation change.
+. `vector_ann_recall_e2e` Phase C cross-tier must hold **mean=1.000** — asserted, and confirmed
+  to have RUN (`running N tests`), not merely "green".
+. Address the named mechanism: the OID resolver cache must be invalidated/rebuilt after
+  compaction, per the revert's diagnosis (TD-DELVEC-1 C2/C3 territory).
+. Only after that does the ADR-090 chain resume: `Target` from the typed triple → relational ABAC
+  live → the three `#[ignore]`d e2e tests.
+
+**Status change:** the previous entry's "coherent slice (both, or neither)" is superseded. Step 2
+of that slice is not a small addition — it is a gated re-land owned by TD-RECALL-2.
