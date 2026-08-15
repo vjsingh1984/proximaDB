@@ -7,9 +7,14 @@
 
 pub mod block_structures;
 pub mod bloom_filter;
+pub mod columnar_config_types;
+pub mod columnar_footer_cache;
+pub mod columnar_utilities;
 pub mod compression_config;
 pub mod header_metadata;
 pub mod index_structures;
+pub mod nova_metadata;
+pub mod parquet_metadata;
 pub mod per_column_alignment;
 pub mod row_config;
 pub mod spatial_clustering;
