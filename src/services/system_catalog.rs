@@ -826,6 +826,23 @@ impl Catalog for SystemCatalog {
         self.state.account_id_u32(account)
     }
 
+    async fn max_object_id(&self) -> Result<Option<u64>> {
+        Ok(self.state.max_object_id())
+    }
+
+    async fn allocate_object_id(&self) -> Result<Option<u64>> {
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' is read-only; object ids must be allocated on the owning pod",
+                self.name
+            ));
+        }
+        // Reserve from the exact sequence create_table uses. The later create
+        // adopts this caller-supplied id, so collection lifecycle cannot race a
+        // relational DDL path through an independent process-global allocator.
+        Ok(Some(self.mint_object_id(None)))
+    }
+
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
