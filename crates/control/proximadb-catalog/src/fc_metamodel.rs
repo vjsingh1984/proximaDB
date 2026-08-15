@@ -917,6 +917,29 @@ impl Target {
     /// cannot parse. Until then this constructor makes the unrepresentable case
     /// **fail closed** — callers map `None` onto their existing deny path, so an
     /// id that cannot be represented can never be authorized.
+    /// Build a `Target` from the ADR-0083 typed triple — the CANONICAL source.
+    ///
+    /// ADR-0083 makes `{account, namespace, collection}` the sole identity and
+    /// retires the global `object_id` u64 ("never a key"). ABAC already keys on
+    /// that composite: the account component travels as `tenant_stable_id` on
+    /// the subject, and these two components travel here. Sourcing them from the
+    /// typed triple rather than from `object_id` is what makes that conformance
+    /// structural instead of coincidental — today the two agree only because
+    /// ADR-031 unified `collection.id` with `schema.object_id`.
+    ///
+    /// Both conversions FAIL CLOSED rather than truncate. `typed_namespace_id`
+    /// is a `u32` on the wire while `NamespaceId` is `u16`, so this carries the
+    /// same aliasing hazard the `object_id` path did: a wrapped value can
+    /// collide with a legitimately-bound namespace, and `scope_covers` matches
+    /// with `==`. An identity that cannot be represented must not be authorized.
+    pub fn try_from_typed_triple(namespace_id: u32, collection_id: u32) -> Option<Self> {
+        Some(Self {
+            namespace: NamespaceId::try_from(namespace_id).ok()?,
+            table: CollectionId::from(collection_id),
+            column: None,
+        })
+    }
+
     pub fn try_from_object_ids(namespace: NamespaceId, object_id: u64) -> Option<Self> {
         let table = CollectionId::try_from(object_id).ok()?;
         Some(Self {
@@ -1139,6 +1162,30 @@ impl SubjectAttributes {
 
 #[cfg(test)]
 mod tests {
+    /// ADR-0083 conformance: the typed triple is the canonical source, and its
+    /// own narrowing (`typed_namespace_id` is u32 on the wire, `NamespaceId` is
+    /// u16) must fail closed exactly as the object_id path does.
+    #[test]
+    fn target_from_typed_triple_refuses_an_unrepresentable_namespace() {
+        let ok = Target::try_from_typed_triple(2, 42).expect("representable triple");
+        assert_eq!(ok.namespace, 2);
+        assert_eq!(ok.table, 42);
+
+        let max = Target::try_from_typed_triple(u16::MAX as u32, 7).expect("u16::MAX fits");
+        assert_eq!(max.namespace, u16::MAX);
+
+        assert_eq!(
+            Target::try_from_typed_triple(u16::MAX as u32 + 1, 7),
+            None,
+            "a namespace id one past u16::MAX must fail closed, not wrap to 0"
+        );
+        assert_eq!(
+            Target::try_from_typed_triple(2 + (1 << 16), 7),
+            None,
+            "the 2^16 alias must be refused outright — scope_covers matches with =="
+        );
+    }
+
     /// B3: a `Target` must never be built by truncation. `scope_covers` matches
     /// with `==`, so a wrapped object id could collide with a legitimately-bound
     /// table and be authorized by someone else's binding.
