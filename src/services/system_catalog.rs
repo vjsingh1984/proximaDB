@@ -1032,7 +1032,6 @@ impl Catalog for SystemCatalog {
         // SQL-created table, and the relational ABAC path denies on absent ids
         // (dml/mod.rs:1466) — so relational policy bindings and grants could
         // never take effect at all.
-        let mut schema = schema;
         schema.object_id = Some(self.mint_object_id(schema.object_id)?);
         for column in &mut schema.columns {
             column.object_id = Some(self.mint_object_id(column.object_id)?);
