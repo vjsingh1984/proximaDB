@@ -6777,6 +6777,7 @@ dependencies = [
  "proximadb-metrics",
  "proximadb-mongodb-parser",
  "proximadb-montecarlo",
+ "proximadb-multimodel-codec",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
  "proximadb-mvcc-resolution",
@@ -7841,6 +7842,15 @@ version = "0.2.0"
 dependencies = [
  "rand 0.8.6",
  "rayon",
+]
+
+[[package]]
+name = "proximadb-multimodel-codec"
+version = "0.2.0"
+dependencies = [
+ "arrow-schema",
+ "proximadb-catalog-schema",
+ "proximadb-data-model",
 ]
 
 [[package]]

@@ -17,7 +17,7 @@
 //! complementing the vector-only codec in `codec.rs`.
 
 use arrow_schema::{DataType, Field, Schema};
-use proximadb_catalog::CatalogTableSchema;
+use proximadb_catalog_schema::CatalogTableSchema;
 use std::sync::Arc;
 
 // --- Document ---
@@ -180,7 +180,7 @@ pub fn relational_schema_from_catalog(table_schema: &CatalogTableSchema) -> Arc<
         .map(|column| {
             Field::new(
                 column.name.clone(),
-                proximadb_catalog::catalog_arrow_type(&column.data_type),
+                proximadb_catalog_schema::catalog_arrow_type(&column.data_type),
                 column.nullable,
             )
         })
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_relational_schema_from_catalog_uses_catalog_types_and_nullability() {
-        use proximadb_catalog::{CatalogColumn, CatalogTableSchema};
+        use proximadb_catalog_schema::{CatalogColumn, CatalogTableSchema};
         use proximadb_data_model::ProximaType;
 
         let table = CatalogTableSchema::new("events")
