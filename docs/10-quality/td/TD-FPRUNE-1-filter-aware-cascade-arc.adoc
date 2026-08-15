@@ -122,8 +122,30 @@ filter as the correctness backstop. This TD tracks the phases.
          `footer_index_round_trips` (map round-trip),
          `stage_f_user_tag_footer_prune_via_self_describing_segment` (partition
          filter prunes ≥1 block AND allow-set stays exact). `write_pax_segment_ordered`
-         gained a `shred_spec` param so the write path can shred (production flush
-         already shreds via `record_store`).
+         gained a `shred_spec` param so the write path can shred.
+     *** ⚠️ **BENCHMARK FINDING (2026-08-14, measure-don't-assert): the SST
+         vector-flush path does NOT shred, so user-tag footer-pruning is still
+         DARK end-to-end for vector collections.** Verified on a release server
+         (both gates on) with correlated data (partition ⟂ vector cluster,
+         blocks partition-homogeneous → SHOULD prune 3/4 blocks): stage-F engages
+         (rows_matched correct) but `blocks_pruned_footer = 0` on every segment,
+         because `partition` never became a shredded column at flush →
+         `shred_field_map` empty → the field doesn't resolve. Root cause: the
+         `with_shred_spec` path is `ObjectStoreVectorRecordStore::write_mutations`
+         (`record_store.rs:4712`, the document/table store), NOT the SST
+         memtable-flush materializer (`storage/trait_components/writer.rs` →
+         `write_pax_segment` with an EMPTY shred spec). So for `engine=sst`
+         vector collections nothing shreds at flush.
+     *** ❌ **FINAL WIRING (next slice, the true end-to-end unlock):** thread the
+         collection's `promoted_keys`→`shred_spec` into the SST flush materializer
+         and pass it to `write_pax_segment` (the `_ordered` param already exists;
+         the public `write_pax_segment` helper + the SST flush caller must forward
+         it). Needs the collection schema at the flush site. Then re-run this
+         benchmark: `blocks_pruned_footer > 0` on a correlated user-tag filter,
+         and io_trace `object_gets`/`bytes_read` drop. NOTE the data-dependence:
+         footer-pruning only helps when the filtered tag CORRELATES with vector
+         clustering (like a parquet zone-map on a sorted column) — a random tag
+         (the corridor bench's `p{i%8}`) is a correct no-op, never a regression.
   ** **Evidence gate (NEXT):** filtered search `io_trace`
      `object_gets`/`bytes_read` drop with selectivity (pruned blocks
      unfetched), recall unchanged, on the synthetic partition + Wikipedia
