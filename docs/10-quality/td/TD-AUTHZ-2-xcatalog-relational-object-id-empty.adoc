@@ -263,3 +263,62 @@ The three `#[ignore = "TD-AUTHZ-2: ..."]` tests in
 catalog, but whether `xcatalog.tables` renders the value end-to-end for a SQL-created table
 should be verified against a live server before removing the ignores — this TD's own history
 is a record of what assuming reachability costs. Status stays `Partial` until then.
+
+
+== 2026-08-14 — the converging chain, and why the next slice must be TWO changes
+
+Trajectory review before wiring `Target` to the typed triple caught that the wiring would have
+been premature, and traced the dependency to its root.
+
+=== What is actually missing on the live catalog
+
+`dml/mod.rs:1467` gates on BOTH `stable_namespace_id` and `object_id`. On the live
+`SystemCatalog`:
+
+* `object_id` — now minted (#1607).
+* `stable_namespace_id` — **never set. Zero occurrences in `src/services/system_catalog.rs`.**
+  It is stamped only by `NativeCatalog`, via `mint_stable_identity` (`native.rs:312/345/363`).
+
+So relational tables created on the live catalog carry no typed identity, and **sourcing
+`Target` from the typed triple would have swapped one unsatisfiable gate for another** — while
+looking like ADR-0083 conformance. `Target::try_from_typed_triple` (#1630) is a correct and
+necessary prerequisite, but it is NOT the unblocking step.
+
+=== The root link, and why one line is not enough
+
+`NativeCatalog` mints typed ids only because it mirrors the tenant onto the namespace
+(`native.rs:1286`), and its own comment is explicit:
+
+____
+ADR-031 Phase 5 (tenant→account collapse): `account_id` mirrors `tenant_id` ... Setting it here
+ACTIVATES the typed-id minting: `mint_stable_identity` (create_table) reads `account_id` → mints
+`stable_namespace_id`/`stable_collection_id` + the `account_u32` registry entry.
+____
+
+`SystemCatalog::create_namespace_inner` sets `ns.tenant_id` and leaves `account_id` `None`.
+
+**But mirroring `account_id` alone would change nothing observable**, because "activates" refers
+to `NativeCatalog::create_table` calling `mint_stable_identity` — and `SystemCatalog::create_table`
+has no such call. Shipping only the mirror would repeat exactly the `c6bdf066b` shape: a correct
+change, one layer off the observable.
+
+=== The coherent slice (both, or neither)
+
+. `SystemCatalog::create_namespace_inner` mirrors `account_id` from `tenant_id`.
+. `SystemCatalog::create_table` gains a `mint_stable_identity` equivalent that reads
+  `ns.account_id` and stamps `stable_namespace_id` / `stable_collection_id`, reusing
+  SystemCatalog's existing durable `account_floor` allocator rather than NativeCatalog's sidecar
+  registry.
+
+Note for the implementer: `NativeCatalog`'s typed ids are "persisted but inert" when
+`PROXIMADB_TYPED_PATHS` is off (the default) — that gate governs the typed DATA path, not ABAC.
+ABAC reads `stable_namespace_id` regardless, so minting satisfies the gate without enabling
+typed paths.
+
+=== Converging order (each link a prerequisite of the next)
+
+. namespace carries `account_id` **and** the catalog stamps typed identity ← the unblocking slice
+. `Target` sourced from that identity (#1630 provides the fail-closed constructor)
+. relational ABAC becomes satisfiable; the three `#[ignore]`d e2e tests become meaningful
+. only then is the catalog-consolidation invariant ("every internal catalog must stamp the typed
+  triple") enforceable, because there is a working reference implementation to enforce against
