@@ -7114,6 +7114,7 @@ dependencies = [
  "proximadb-quantization-types",
  "proximadb-records",
  "proximadb-storage-filesystem-types",
+ "proximadb-tenant",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "serde",

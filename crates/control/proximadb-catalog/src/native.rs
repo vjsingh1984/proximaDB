@@ -1442,6 +1442,12 @@ impl Catalog for NativeCatalog {
         Ok(self.object_name_index.read().await.values().copied().max())
     }
 
+    async fn allocate_object_id(&self) -> Result<Option<u64>> {
+        // Collection lifecycle and ordinary catalog DDL must draw from one
+        // authority. The later create_table adopts this id via mint_object_id.
+        Ok(Some(self.mint_object_id(None)))
+    }
+
     async fn mint_collection_typed_identity(
         &self,
         account: &str,

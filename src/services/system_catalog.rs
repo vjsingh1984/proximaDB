@@ -28,8 +28,9 @@ use crate::services::catalog_snapshot_store::{
 };
 use proximadb_catalog::schema::{apply_evolution, validate_schema};
 use proximadb_catalog::{
-    Catalog, CatalogIndex, CatalogNamespace, CatalogPrimaryPod, CatalogSchemaEvolution,
-    CatalogStorageLayout, CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
+    Catalog, CatalogIndex, CatalogMlopsAssetExt, CatalogNamespace, CatalogPrimaryPod,
+    CatalogSchemaEvolution, CatalogStorageLayout, CatalogTableSchema, CatalogTableStatistics,
+    TableIdentifier,
 };
 
 use crate::services::record_store::TableWalAppender;
@@ -540,6 +541,12 @@ impl SystemCatalog {
             self.account_floor
                 .fetch_max(u64::from(max) + 1, Ordering::SeqCst);
         }
+        if let Some(max) = self.state.max_object_id() {
+            let next = max
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("catalog object-id space exhausted at {max}"))?;
+            self.object_id_floor.fetch_max(next, Ordering::SeqCst);
+        }
         self.loaded_version.store(read.version, Ordering::SeqCst);
         self.loaded_generation
             .store(read.generation, Ordering::SeqCst);
@@ -819,6 +826,23 @@ impl Catalog for SystemCatalog {
         self.state.account_id_u32(account)
     }
 
+    async fn max_object_id(&self) -> Result<Option<u64>> {
+        Ok(self.state.max_object_id())
+    }
+
+    async fn allocate_object_id(&self) -> Result<Option<u64>> {
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' is read-only; object ids must be allocated on the owning pod",
+                self.name
+            ));
+        }
+        // Reserve from the exact sequence create_table uses. The later create
+        // adopts this caller-supplied id, so collection lifecycle cannot race a
+        // relational DDL path through an independent process-global allocator.
+        Ok(Some(self.mint_object_id(None)))
+    }
+
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
@@ -868,6 +892,16 @@ impl Catalog for SystemCatalog {
         for index in &mut schema.indexes {
             index.object_id = Some(self.mint_object_id(index.object_id));
         }
+        let table_object_id = schema
+            .object_id
+            .ok_or_else(|| anyhow!("system catalog failed to mint a table object id"))?;
+        if let Some(existing) = self.state.get_table_by_object_id(table_object_id)
+            && existing != *identifier
+        {
+            return Err(anyhow!(
+                "object id {table_object_id} is already assigned to table '{existing}'"
+            ));
+        }
         if !self.state.namespace_exists(&identifier.namespace) {
             return Err(anyhow!(
                 "Namespace '{}' does not exist",
@@ -909,6 +943,10 @@ impl Catalog for SystemCatalog {
 
     async fn get_table(&self, identifier: &TableIdentifier) -> Result<CatalogTableSchema> {
         self.require_table(identifier)
+    }
+
+    async fn get_table_by_object_id(&self, object_id: u64) -> Result<Option<TableIdentifier>> {
+        Ok(self.state.get_table_by_object_id(object_id))
     }
 
     async fn rename_table(&self, from: &TableIdentifier, to: &TableIdentifier) -> Result<()> {
@@ -1083,6 +1121,50 @@ impl Catalog for SystemCatalog {
         Ok(schema)
     }
 
+    async fn apply_model_registry_mutation(
+        &self,
+        identifier: &TableIdentifier,
+        expected_revision: u64,
+        mutation: proximadb_catalog::mlops::CatalogModelRegistryMutation,
+    ) -> Result<CatalogTableSchema> {
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' is read-only (a follower replica or superseded by a newer \
+                 pod); route model registry mutation to the owning pod",
+                self.name
+            ));
+        }
+
+        // The read, revision check, mutation, durable append, and in-RAM apply
+        // form one compare-and-swap critical section. Taking the lock only for
+        // the final write would allow two callers with the same expected
+        // revision to both pass validation and overwrite one another.
+        let _guard = self.write_lock.lock().await;
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' became read-only; route model registry mutation to the \
+                 owning pod",
+                self.name
+            ));
+        }
+        let mut schema = self.require_table(identifier)?;
+        let mut asset = schema
+            .mlops_asset_as_typed()?
+            .ok_or_else(|| anyhow!("Catalog object '{}' is not an MLOps asset", identifier))?;
+        asset
+            .apply_model_mutation(expected_revision, mutation)
+            .map_err(anyhow::Error::new)?;
+        asset.validate().map_err(anyhow::Error::new)?;
+        schema.set_mlops_asset_typed(asset);
+        schema.updated_at_ms = now_millis();
+        self.commit_batch_locked(vec![CatalogDelta::UpsertTable {
+            identifier: identifier.clone(),
+            schema: Box::new(schema.clone()),
+        }])
+        .await?;
+        Ok(schema)
+    }
+
     /// Take a final snapshot on graceful shutdown so the next restart replays an
     /// empty WAL tail. Best-effort: a failed checkpoint is not fatal to close
     /// (the durable WAL alone still recovers correctly).
@@ -1097,7 +1179,12 @@ impl Catalog for SystemCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_catalog::{CatalogColumn, CatalogIndexType};
+    use proximadb_catalog::mlops::{
+        CatalogMlopsAsset, CatalogModelRegistryMutation, CatalogModelUsePolicy,
+    };
+    use proximadb_catalog::{
+        CatalogColumn, CatalogEmbeddingConfig, CatalogIndexType, CatalogMlopsAssetExt,
+    };
     use proximadb_data_model::ProximaType;
 
     async fn catalog(dir: &std::path::Path) -> SystemCatalog {
@@ -1115,6 +1202,13 @@ mod tests {
             .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
             .with_column(CatalogColumn::new(2, "body", ProximaType::String))
             .with_primary_key(vec!["id".to_string()])
+    }
+
+    fn model_schema() -> Result<CatalogTableSchema> {
+        let asset: CatalogMlopsAsset = serde_json::from_str(include_str!(
+            "../../clients/python/tests/fixtures/embedding_model_xcatalog_asset.json"
+        ))?;
+        CatalogTableSchema::new("search-embedding").with_mlops_asset(asset)
     }
 
     #[tokio::test]
@@ -1248,6 +1342,106 @@ mod tests {
             "xcatalog.tables projects this value; an empty one is what \
              TD-AUTHZ-2 reports and what makes relational ABAC deny"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn model_asset_id_resolution_and_mutation_survive_system_catalog_restart() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+        let namespace = nslevels(&["tenant-a", "mlops"]);
+        let identifier = TableIdentifier::new(namespace.clone(), "search-embedding");
+
+        let asset_id = {
+            let cat = SystemCatalog::open("default", &wal).await?;
+            cat.create_namespace(&namespace, HashMap::new()).await?;
+            let created = cat.create_table(&identifier, model_schema()?).await?;
+            let asset_id = created.object_id.context("model asset id")?;
+            assert_eq!(
+                cat.get_table_by_object_id(asset_id).await?,
+                Some(identifier.clone())
+            );
+
+            cat.apply_model_registry_mutation(
+                &identifier,
+                0,
+                CatalogModelRegistryMutation::SetAlias {
+                    alias: "champion".to_string(),
+                    version: 1,
+                },
+            )
+            .await?;
+            asset_id
+        };
+
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        assert_eq!(
+            reopened.get_table_by_object_id(asset_id).await?,
+            Some(identifier.clone()),
+            "stable asset lookup must be rebuilt from the WAL"
+        );
+        let schema = reopened.get_table(&identifier).await?;
+        let CatalogMlopsAsset::EmbeddingModel(registry) = schema
+            .mlops_asset_as_typed()?
+            .context("typed MLOps asset")?;
+        assert_eq!(registry.revision, 1);
+        assert_eq!(registry.resolve_alias("champion")?.version, 1);
+
+        let model = registry.version(1)?;
+        let binding = CatalogEmbeddingConfig::pinned(
+            "search-embedding",
+            768,
+            asset_id,
+            1,
+            model.contract_sha256()?,
+        )?;
+        let resolved = reopened
+            .resolve_embedding_model_binding(&binding, &CatalogModelUsePolicy::registration_only())
+            .await?;
+        assert_eq!(resolved.asset_id, asset_id);
+        assert_eq!(resolved.model.version, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn model_registry_revision_is_an_atomic_compare_and_swap_on_system_catalog() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let namespace = nslevels(&["tenant-a", "mlops"]);
+        let identifier = TableIdentifier::new(namespace.clone(), "search-embedding");
+        let cat = Arc::new(catalog(dir.path()).await);
+        cat.create_namespace(&namespace, HashMap::new()).await?;
+        cat.create_table(&identifier, model_schema()?).await?;
+
+        let left = cat.apply_model_registry_mutation(
+            &identifier,
+            0,
+            CatalogModelRegistryMutation::SetAlias {
+                alias: "left".to_string(),
+                version: 1,
+            },
+        );
+        let right = cat.apply_model_registry_mutation(
+            &identifier,
+            0,
+            CatalogModelRegistryMutation::SetAlias {
+                alias: "right".to_string(),
+                version: 1,
+            },
+        );
+        let (left, right) = tokio::join!(left, right);
+        assert_ne!(
+            left.is_ok(),
+            right.is_ok(),
+            "exactly one stale writer must win"
+        );
+
+        let schema = cat.get_table(&identifier).await?;
+        let CatalogMlopsAsset::EmbeddingModel(registry) = schema
+            .mlops_asset_as_typed()?
+            .context("typed MLOps asset")?;
+        assert_eq!(registry.revision, 1);
+        assert_eq!(registry.aliases.len(), 1);
         Ok(())
     }
 

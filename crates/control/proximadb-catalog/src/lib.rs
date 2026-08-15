@@ -46,6 +46,8 @@ pub mod manager;
 pub use manager::{CatalogFilesystemResolver, CatalogManager, TableOpLockRegistry};
 /// Typed MLOps/model-registry facet for the unified xCatalog object model.
 pub mod mlops;
+/// Tenant-scoped model-registry lifecycle application service shared by API adapters.
+pub mod model_registry_service;
 // Catalog federation (Slice 3) — unified view across internal + external
 // catalogs, moved from root src/catalog/federation (now that CatalogManager is
 // in this crate).
@@ -2263,6 +2265,16 @@ pub trait Catalog: Send + Sync {
     /// legacy (pre-unification) `schema.object_id` → no oid-index corruption.
     /// Default `None` (federated catalogs have no native object_ids).
     async fn max_object_id(&self) -> anyhow::Result<Option<u64>> {
+        Ok(None)
+    }
+    /// Reserve the next `object_id` from this catalog's authoritative sequence.
+    ///
+    /// Lifecycle services that must expose an id before creating the catalog
+    /// object use this instead of maintaining a second allocator. The later
+    /// `create_table` call adopts the reserved id and raises (but does not
+    /// advance past) the same sequence. `None` means this catalog has no native
+    /// object-id authority; callers may use a compatibility allocator.
+    async fn allocate_object_id(&self) -> anyhow::Result<Option<u64>> {
         Ok(None)
     }
     /// ADR-031 Phase 4c: pre-mint the typed identity triple
