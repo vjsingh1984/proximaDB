@@ -46,10 +46,14 @@ proximadb-cache = { workspace = true }
 proximadb-catalog-schema = { workspace = true }
 # text_search/text_filter n-gram bloom (TD-DECOMP-73)
 proximadb-bloom = { workspace = true }
+proximadb-hardware.workspace = true
+proximadb-hardware-caps.workspace = true
 regex.workspace = true
 arrow-select = { version = "58", default-features = false }
 crc32fast.workspace = true
 proximadb-runtime-common.workspace = true
+# columnar footer_cache + utilities (TD-DECOMP-76)
+moka.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

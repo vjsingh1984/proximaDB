@@ -275,8 +275,12 @@ impl ZeroCopyIOSystem {
             Box::new(SwiftMetadataSerializer::new(
                 filesystem.clone() as Arc<dyn proximadb_storage_ports::FilesystemPort>
             )),
-            Box::new(ParquetMetadataSerializer::new(Arc::clone(&filesystem))),
-            Box::new(NovaMetadataSerializer::new(Arc::clone(&filesystem))),
+            Box::new(ParquetMetadataSerializer::new(
+                filesystem.clone() as Arc<dyn proximadb_storage_ports::FilesystemPort>
+            )),
+            Box::new(NovaMetadataSerializer::new(
+                filesystem.clone() as Arc<dyn proximadb_storage_ports::FilesystemPort>
+            )),
         ];
 
         info!(

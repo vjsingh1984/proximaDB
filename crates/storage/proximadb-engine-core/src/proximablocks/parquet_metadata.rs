@@ -5,11 +5,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::storage::engines::core::io::zero_copy::{
+use proximadb_storage_common::zero_copy_traits::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext,
 };
-use crate::storage::persistence::filesystem::FilesystemFactory;
+// FilesystemPort seam (TD-DECOMP-75 pattern): root FilesystemFactory implements it.
 use proximadb_kernel::error::ProximaDBError;
+use proximadb_storage_ports::FilesystemPort;
 
 /// Parquet Footer metadata (fixed size, bytemuck-compatible)
 #[repr(C)]
@@ -157,11 +158,11 @@ pub struct ParquetMetadata {
 /// Parquet metadata serializer implementation
 pub struct ParquetMetadataSerializer {
     /// Filesystem for reading files
-    filesystem: Arc<FilesystemFactory>,
+    filesystem: Arc<dyn FilesystemPort>,
 }
 
 impl ParquetMetadataSerializer {
-    pub fn new(filesystem: Arc<FilesystemFactory>) -> Self {
+    pub fn new(filesystem: Arc<dyn FilesystemPort>) -> Self {
         Self { filesystem }
     }
 
