@@ -473,3 +473,62 @@ Re-apply the reverted 268 lines onto today's `develop` (resolving the one expect
   unblocked** — which would unblock the whole ADR-090 identity chain.
 
 The second outcome is plausible and cheap to test, so it should be tested before any redesign.
+
+
+== 2026-08-14 (4) — ⭐ THE COLLAPSE DOES NOT REPRODUCE ON TODAY'S `develop`
+
+The decisive experiment from the previous entry was run. **Result: the second predicted outcome.**
+
+=== Method
+
+The reverted diff (`249d45fd7`) was re-applied to a worktree on current `develop`
+(`git apply -R --3way`), producing four conflicts, all resolved as a **union** so the experiment
+adds only the *unproven* machinery on top of the already-proven `mint_object_id` (#1607):
+
+* three field-block conflicts → kept ours (`object_id_floor`) **and** theirs
+  (`object_floor`, `namespace_floor`, `collection_floor`, `namespace_ids`);
+* the state conflict → kept theirs' `table_entries` (needed by `identity_allocator_seed`) and
+  ours' `max_object_id`;
+* theirs' duplicate `mint_object_id` (`-> u64`) deleted in favour of ours (`-> Result<u64>`), and
+  the three re-applied call sites in `create_table` patched with `?`.
+
+Armed and verified present before running: `resolve_typed_triple` (3), `identity_allocator_seed`
+(4), `mint_collection_typed_identity` (1), the `async fn max_object_id` trait override (1),
+`namespace_ids` (13), `collection_floor` (13). `cargo check --lib` clean.
+
+=== Result
+
+....
+running 2 tests
+test vector_ann_recall_at_k ... ok
+test vector_ann_recall_under_deletes_and_compaction ... ok
+test result: ok. 2 passed; 0 failed
+....
+
+**#1406's identity machinery no longer collapses cross-tier ANN recall.** The defect was
+incidentally fixed in the window since 2026-08-05 — the DV-aware SST compaction and
+async-compaction work are the candidates, consistent with the revert's own hedge pointing at
+TD-DELVEC-1 C2/C3 territory.
+
+=== What this changes
+
+**TD-RECALL-2's re-land is unblocked**, and with it the whole ADR-090 identity chain:
+typed identity on the live catalog → `Target` from the typed triple (#1630) → relational ABAC
+satisfiable → the three `#[ignore]`d e2e tests become meaningful.
+
+The 397-line re-land patch (258 additions) is saved and reproducible from this entry's method.
+
+=== Honest limits on this result — read before landing
+
+. **Not byte-identical to #1406.** Ours keeps the `Result`-returning `mint_object_id`. The claim
+  is "#1406's machinery *modulo the proven-safe object-id minting* does not collapse recall",
+  which is the configuration we would actually ship — but it is not a literal replay.
+. **One local run, default features.** The binding conditions from entry (2) still stand: the
+  re-land is its own PR, and Phase C must be confirmed to have RUN in CI (`running N tests`), not
+  merely green. Local green is a go-ahead to attempt the re-land, not a substitute for the gate.
+. **The root cause is still unknown.** We know the symptom is gone, not why. A latent
+  interaction could return. The re-land PR should therefore ratchet the recall e2e as its
+  explicit gate rather than treat the risk as retired.
+. The `#[ignore]`d e2e tests fail with `ParseIntError { kind: Empty }` — **empty**, matching a
+  never-populated field, which is what the re-land is expected to fix. That is the end-to-end
+  check that the chain actually closed.
