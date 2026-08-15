@@ -363,6 +363,29 @@ fn hilbert_cell_order(centroids: &[Vec<f32>]) -> (Vec<usize>, Vec<usize>) {
 /// the same.
 const PAX_IVF_KMEANS_SEED: u64 = 0x5041_585F_4956_4631;
 
+/// Eval-only override for the k-means seed (`PROXIMADB_IVF_KMEANS_SEED`).
+///
+/// The pipeline is deterministic end to end, which makes results perfectly
+/// reproducible and — by construction — blind to how much a conclusion depends on
+/// one clustering draw. Every coarse-PCA width measurement to date (TD-IVF-3) was
+/// taken at the single compiled-in seed, so the sensitivity of those optima to
+/// initialisation is unmeasured. This gate exists to measure it.
+///
+/// Unset in production: the default keeps the compiled-in constant, so behaviour
+/// and reproducibility are unchanged. The chosen seed is persisted per segment
+/// (see `seed:` below), so a bed always records which draw produced it.
+fn pax_ivf_kmeans_seed() -> u64 {
+    resolve_kmeans_seed(std::env::var("PROXIMADB_IVF_KMEANS_SEED").ok())
+}
+
+/// Pure resolution of the seed override, split out so it is testable without
+/// mutating process environment (`set_var`/`remove_var` are unsafe in edition
+/// 2024 precisely because they race across threads).
+fn resolve_kmeans_seed(raw: Option<String>) -> u64 {
+    raw.and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(PAX_IVF_KMEANS_SEED)
+}
+
 /// Bounded, deterministic training geometry shared by the in-memory and local
 /// spill compaction paths. The spill path uses `sample_step` to revisit its
 /// checksummed winner run without retaining the raw corpus in RAM.
@@ -485,7 +508,7 @@ impl IvfProbeClassifier {
             centroids,
             radii,
             cell_rows,
-            seed: PAX_IVF_KMEANS_SEED,
+            seed: pax_ivf_kmeans_seed(),
             trained_on: self.trained_on as u64,
         })
     }
@@ -549,7 +572,7 @@ pub(crate) fn finish_ivf_probe_classifier(
         k,
         15,
         1e-3,
-        PAX_IVF_KMEANS_SEED,
+        pax_ivf_kmeans_seed(),
     ) else {
         return None;
     };
@@ -634,7 +657,7 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
         k,
         15,
         1e-3,
-        PAX_IVF_KMEANS_SEED,
+        pax_ivf_kmeans_seed(),
     ) else {
         return cluster_plan(records, idx);
     };
@@ -1266,5 +1289,40 @@ mod tests {
         unsafe {
             std::env::remove_var("PROXIMADB_IVF_K");
         }
+    }
+}
+
+#[cfg(test)]
+mod kmeans_seed_gate_tests {
+    use super::{PAX_IVF_KMEANS_SEED, resolve_kmeans_seed};
+
+    /// Unset must be bit-identical to the compiled-in constant: this gate exists
+    /// to measure initialisation sensitivity in evaluation, never to change
+    /// production behaviour or the determinism the harness relies on.
+    #[test]
+    fn unset_falls_back_to_the_compiled_in_seed() {
+        assert_eq!(resolve_kmeans_seed(None), PAX_IVF_KMEANS_SEED);
+    }
+
+    /// A malformed value must NOT silently become 0. A seed of 0 is a perfectly
+    /// legitimate draw, so a typo would quietly produce a different clustering
+    /// than intended and invalidate the comparison with no error anywhere.
+    #[test]
+    fn unparseable_value_falls_back_rather_than_defaulting_to_zero() {
+        for bad in ["not-a-number", "", "-1", "1.5", "0x10"] {
+            assert_eq!(
+                resolve_kmeans_seed(Some(bad.to_string())),
+                PAX_IVF_KMEANS_SEED,
+                "malformed seed {bad:?} must fall back, not parse to something else"
+            );
+        }
+    }
+
+    /// A valid override is honoured exactly — including 0, which must be usable
+    /// as a deliberate draw even though it is also the "empty" u64.
+    #[test]
+    fn valid_override_is_honoured_including_zero() {
+        assert_eq!(resolve_kmeans_seed(Some("0".into())), 0);
+        assert_eq!(resolve_kmeans_seed(Some("12345".into())), 12345);
     }
 }
