@@ -11,12 +11,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
-use super::QuantizationConfig;
-use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
-use crate::storage::engines::core::formats::columnar::constants::{
-    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
-};
+use crate::columnar_constants::{DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE};
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_proto::proximadb_v1::QuantizationConfig;
+use proximadb_proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
 
 /// Convert proto FilterableColumnSpec to internal ColumnarFilterableSpec
 pub fn convert_filterable_spec(spec: &FilterableColumnSpec) -> ColumnarFilterableSpec {
@@ -823,21 +821,29 @@ impl CachedSchema {
 
 impl ColumnarFilterableSpec {
     /// Convert from proto FilterableColumnSpec to our internal type
-    pub fn from_proto(proto: &crate::proto::proximadb_v1::FilterableColumnSpec) -> Self {
+    pub fn from_proto(proto: &proximadb_proto::proximadb_v1::FilterableColumnSpec) -> Self {
         let data_type = match proto.data_type {
-            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32 => {
+            x if x
+                == proximadb_proto::proximadb_v1::FilterableDataType::FilterableString as i32 =>
+            {
                 FilterableData::String
             }
-            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableInteger as i32 => {
+            x if x
+                == proximadb_proto::proximadb_v1::FilterableDataType::FilterableInteger as i32 =>
+            {
                 FilterableData::Integer
             }
-            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32 => {
+            x if x == proximadb_proto::proximadb_v1::FilterableDataType::FilterableFloat as i32 => {
                 FilterableData::Float
             }
-            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean as i32 => {
+            x if x
+                == proximadb_proto::proximadb_v1::FilterableDataType::FilterableBoolean as i32 =>
+            {
                 FilterableData::Boolean
             }
-            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableDatetime as i32 => {
+            x if x
+                == proximadb_proto::proximadb_v1::FilterableDataType::FilterableDatetime as i32 =>
+            {
                 FilterableData::Datetime
             }
             _ => FilterableData::String, // Default to string
@@ -854,7 +860,7 @@ impl ColumnarFilterableSpec {
 
     /// Convert a list of proto specs to internal specs
     pub fn from_proto_vec(
-        protos: &[crate::proto::proximadb_v1::FilterableColumnSpec],
+        protos: &[proximadb_proto::proximadb_v1::FilterableColumnSpec],
     ) -> Vec<Self> {
         protos.iter().map(Self::from_proto).collect()
     }

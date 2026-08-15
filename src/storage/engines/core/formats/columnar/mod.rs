@@ -94,7 +94,7 @@ pub mod columnar_query_engine;
 pub mod parquet_write_engine; // Columnar write operations and Parquet file generation // Columnar read operations and query execution
 // Quantization now handled by unified compute module
 pub mod batch_operations;
-pub mod columnar_schema;
+pub use proximadb_storage_common::columnar_schema_full as schema; // extracted TD-DECOMP-74
 pub mod config_builder;
 pub mod footer_cache;
 pub mod hybrid_writer;
@@ -110,7 +110,6 @@ pub mod columnar_compaction; // Unified Parquet compaction using StreamingParque
 
 // New unified columnar infrastructure
 pub mod common;
-pub mod schema;
 pub mod serialization;
 // NOTE: Distance computation has been moved to proximadb_distance_kernel::quantized
 
@@ -192,6 +191,7 @@ pub use self::metadata_filter_strategy::{
     FilterPerformanceMetrics, MetadataFilterAnalyzer, MetadataFilterStrategy,
 };
 pub use batch_operations::ColumnarBatchOperations;
+pub mod columnar_schema;
 pub use columnar_schema::ColumnarSchema;
 pub use footer_cache::{FooterCacheConfig, FooterCacheStats, ParquetFooterCache, WarmingStrategy};
 pub use utilities::ColumnarUtilities;

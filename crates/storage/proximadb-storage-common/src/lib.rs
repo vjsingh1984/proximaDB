@@ -10,6 +10,7 @@ pub mod coarse_directory;
 pub mod collection_path;
 pub mod column_projector;
 pub mod columnar_constants;
+pub mod columnar_schema_full;
 pub mod compaction_override;
 pub mod deletion_vector;
 pub mod delta_simd;
