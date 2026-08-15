@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Landing (revert in this PR)
+| Status | Re-landing (typed-identity minting restored; revert superseded)
 | Severity | High — blocks 3 PRs (#1418, #1419, feat/mvp-rest-sql-v2); ratchet regression
 | Component | `src/services/system_catalog.rs`; `src/services/system_catalog_state.rs`
 | Root cause commit | `7e000ddad` (#1406 feat(abac): ratchet live relational policy enforcement)
@@ -71,3 +71,59 @@ interaction is fixed.
   regression directly (today it only runs on query/storage-touching PRs).
 * NOTE process: `cargo nextest run -E 'test(...)'` hung on test-discovery at some commits (enumerates
   all ~195 binaries); use `cargo test --test <file> <name> -- --exact` for single-test bisect steps.
+
+
+== 2026-08-15 — the re-land
+
+=== Why now
+
+The revert (#1425) removed 268 lines rather than diagnosing them, and named its cause only as a
+hedge: *"**Likely** path: changed OID/identity minting leaves the OID resolver cache stale after
+the 2nd flush's compaction."* That hypothesis was never confirmed, so "re-land it fixed" had no
+defined fix to apply. The blocker was therefore attacked empirically instead.
+
+Two candidate mechanisms were tested and **falsified** (detail in `TD-AUTHZ-2`):
+
+. **The collection-id floor raise.** `shared_services.rs:1049` raises the floor from
+  `cat.max_object_id()`, which `SystemCatalog` did not override ⇒ no-op; #1406 *did* override it.
+  Arming only that 3-line override left recall passing.
+. **Minting moves the on-disk path.** `manager.rs:2053` switches data/wal/index dirs to the typed
+  account-rooted layout when the identity is `Some`, and minting is documented "always mint" —
+  which would have explained the signature exactly. It does not happen: the sole call site passes
+  the **gated** `typed_path_identity(...)` (`manager.rs:1114`), and `typed_paths_enabled()`
+  (`proximadb-storage-ports/src/path_resolver.rs:189`) is false unless `PROXIMADB_TYPED_PATHS=1`.
+
+=== The decisive result
+
+Re-applying the full reverted diff onto current `develop` and running the failing test:
+**`vector_ann_recall_under_deletes_and_compaction` passes.** The collapse does not reproduce. The
+defect was incidentally fixed in the window since 2026-08-05 — the DV-aware SST compaction and
+async-compaction work are the candidates, consistent with the revert's own pointer at
+[[TD-DELVEC-1]] C2/C3 territory.
+
+=== What this PR restores
+
+`identity_allocator_seed`, `resolve_typed_triple`, `mint_collection_typed_identity`, the
+`max_object_id` trait override, the `object_floor`/`namespace_floor`/`collection_floor` allocators
+and the `namespace_ids` registry, plus `system_catalog_state::table_entries`. Conflicts with code
+that landed since were resolved as a **union**, keeping the already-proven `mint_object_id`
+(#1607, `-> Result<u64>`) and adapting the newer `allocate_object_id` call site with `?`.
+
+`create_table` again stamps `stable_namespace_id`/`stable_collection_id`
+(`system_catalog.rs:1083-1089`), and #1406's own assertion test returns with it.
+
+=== Why this matters beyond recall
+
+`dml/mod.rs:1466` gates relational ABAC on BOTH `stable_namespace_id` AND `object_id`. Only the
+latter was minted on the live catalog (#1607), so **relational ABAC was structurally inert** — the
+three `#[ignore]`d transport e2e tests fail with `ParseIntError { kind: Empty }`, the signature of
+a never-populated field. This re-land closes the other half, which is the last link in the ADR-090
+chain: typed identity → `Target::try_from_typed_triple` (#1630) → enforceable relational policy.
+
+=== 🔴 Residual risk — read before approving
+
+**The root cause remains unknown.** We know the symptom is gone, not why it went. A latent
+interaction could return through a different path. Accordingly this PR treats the recall e2e as
+its **explicit gate**, not as a risk that has been retired, and the re-land is deliberately kept
+in its own PR — bundling identity minting into an authorization change is precisely the shape
+that produced the original regression (#1406 was itself an ABAC PR).
