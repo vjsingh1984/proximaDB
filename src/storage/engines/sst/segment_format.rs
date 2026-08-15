@@ -2132,6 +2132,9 @@ pub struct CoarseProbeSettings {
     pub nprobe_multiplier: f32,
     pub nprobe_min: usize,
     pub nprobe_max: usize,
+    /// TD-IVF-3 write-side floor on the coarse-PCA projection width; 0 = legacy
+    /// formula. Read by `block_cluster::ivf_ncomp_floor()`.
+    pub ncomp_floor: usize,
 }
 
 // TD-COMPACT-9: overwritable, NOT first-wins. Every production `SstEngine::new()`
@@ -2173,6 +2176,7 @@ impl From<crate::core::config::CoarseProbeConfig> for CoarseProbeSettings {
             nprobe_multiplier: c.nprobe_multiplier,
             nprobe_min: c.nprobe_min,
             nprobe_max: c.nprobe_max,
+            ncomp_floor: c.ncomp_floor,
         }
     }
 }
@@ -3058,6 +3062,7 @@ mod tests {
             nprobe_multiplier: mult,
             nprobe_min: 3,
             nprobe_max: 0,
+            ncomp_floor: 0,
         }
     }
 

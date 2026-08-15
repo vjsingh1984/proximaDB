@@ -1022,6 +1022,103 @@ where
     (blocks, index_entries)
 }
 
+/// TD-IVF-3: conditioning of the *deep* PCA components.
+///
+/// Components are extracted by power iteration with deflation, so numerical
+/// error accumulates down the spectrum and near-degenerate eigenvalues converge
+/// slowly. That matters now because the coarse-PCA projection width is moving
+/// from ~14 components to 32–64: components in that range have never been used
+/// for anything, so they have never been checked.
+///
+/// End-to-end recall cannot detect this — a handful of poorly-conditioned
+/// directions is absorbed by the rerank tier — which is exactly why it needs a
+/// direct assertion rather than a bed. A failure here is a **blocker** on
+/// widening the default, and the answer would be a narrower floor (or more power
+/// iterations), not a louder recall gate.
+#[cfg(test)]
+mod deep_component_conditioning_tests {
+    use super::IncrementalPCA;
+
+    /// Deterministic pseudo-random corpus with a decaying spectrum: component
+    /// `j` gets variance `~1/(j+1)`, so the tail is genuinely close-spaced and
+    /// deflation error has somewhere to show up.
+    fn decaying_spectrum_corpus(rows: usize, dim: usize) -> Vec<Vec<f32>> {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = || {
+            // xorshift64* — deterministic, no external RNG, no thread state.
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            let value = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+            ((value >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        };
+        (0..rows)
+            .map(|_| {
+                (0..dim)
+                    .map(|j| (next() / ((j + 1) as f64).sqrt()) as f32)
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn components_stay_orthonormal_out_to_the_widened_projection_width() {
+        const DIM: usize = 96;
+        const WIDTH: usize = 64;
+        let corpus = decaying_spectrum_corpus(4_000, DIM);
+
+        let mut pca = IncrementalPCA::new(DIM, WIDTH);
+        for sample in &corpus {
+            pca.add_sample(sample);
+        }
+        pca.finalize();
+        let components = pca
+            .components()
+            .expect("finalized PCA must expose components");
+        assert_eq!(components.len(), WIDTH, "expected the full requested width");
+
+        // Unit norm. A component that has collapsed toward zero contributes no
+        // separation while still consuming a coordinate in every centroid
+        // comparison and every A0 byte.
+        for (j, component) in components.iter().enumerate() {
+            let norm = component.iter().map(|v| v * v).sum::<f64>().sqrt();
+            assert!(
+                (norm - 1.0).abs() < 1e-3,
+                "component {j} has norm {norm:.6}, expected unit norm — deflation \
+                 has degraded the deep components"
+            );
+        }
+
+        // Mutual orthogonality. Deflation error shows up here first: a pair that
+        // has drifted into alignment is double-counting one direction and
+        // silently narrowing the effective projection.
+        let mut worst = 0f64;
+        let mut worst_pair = (0usize, 0usize);
+        for a in 0..components.len() {
+            for b in (a + 1)..components.len() {
+                let dot = components[a]
+                    .iter()
+                    .zip(&components[b])
+                    .map(|(x, y)| x * y)
+                    .sum::<f64>()
+                    .abs();
+                if dot > worst {
+                    worst = dot;
+                    worst_pair = (a, b);
+                }
+            }
+        }
+        assert!(
+            worst < 1e-2,
+            "components {} and {} have |dot| = {worst:.6}; the deep components are \
+             not mutually orthogonal, so the effective projection is narrower than \
+             the nominal width",
+            worst_pair.0,
+            worst_pair.1
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

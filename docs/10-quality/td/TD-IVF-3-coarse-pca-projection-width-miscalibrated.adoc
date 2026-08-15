@@ -8,10 +8,10 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open — measured at two dimensionalities. No production-default change is justified yet.**
+| Status | **In Progress — measured at three dimensionalities; the width floor is plumbed and ships DISABLED (`ncomp_floor = 0`). The default flip is gated on the bake below.**
 | Priority | **P1 — read-side cost.** Object-store round-trips are the dominant cost term under the co-design mandate. Measured 20–21% GET/query reduction at the 0.98 recall SLA, for a one-time write cost of +9…15%.
 | Component | `src/storage/engines/sst/block_cluster.rs` — `ivf_projection_dims()` :294, call sites :390 and :598. Env gates `PROXIMADB_IVF_NCOMP`, `_A`, `_B` (ENV_GATE_REGISTRY :131–133, TD-WLP-4b).
-| Evidence | 16 beds on one binary (`62677fb41686…` @ `aed724fc5`), exact top-100 ground truth, 1000-query slices. **128-d**: BIGANN prefixes, 12 beds, 100K→10M. **768-d**: BGE-base over 491,655 code/doc chunks from 17 distinct repos, 4 widths + an independent replicate + clean serial write costs.
+| Evidence | 26 beds on one binary (`62677fb41686…` @ `aed724fc5`), exact top-100 ground truth, 1000-query slices. **128-d**: BIGANN prefixes, 12 beds, 100K→10M. **384-d** and **768-d**: BGE over 491,655 code/doc chunks from 17 distinct repos — multiple widths per corpus, an independent determinism replicate (sd 0.00013), two independently forced `k_c` values at 768-d, and clean serial write costs. Each bed is **one clustering draw**; seed sensitivity is measurable via `PROXIMADB_IVF_KMEANS_SEED` but not yet measured.
 |===
 
 == The defect
@@ -34,6 +34,28 @@ Measured cost of that under-projection, at the recall-0.98 SLA:
 Both optima beat *every* other width measured at their scale, on every shared
 point. The 768-d saving applies at top-10 and top-20 alike; the 128-d saving is
 −21%/−23%.
+
+[IMPORTANT]
+====
+**Widening the projection does not, on its own, bank those GET savings.** Every
+figure above is measured **at the recall-0.98 floor**, i.e. with `nprobe` re-tuned
+per width. Production does not re-tune: `coarse_probe_nprobe` uses
+`geometric_nprobe = ceil(sqrt(k_c) × multiplier)`, which has **no `n_comp` term**
+— it is width-blind.
+
+So at the shipped `nprobe`, a wider projection buys **recall per probe**, not fewer
+requests. That is still the right first move, for two reasons:
+
+* It is a **recall fix today.** The sqrt policy is BIGANN-fitted and
+  under-provisions neural corpora at identical `k_c` — both BGE beds sit **below
+  the 0.98 SLA** (0.967 and 0.976), as the nprobe-policy section below records.
+* It is the **prerequisite** for converting the frontier gain into COGS: a wider
+  projection is what makes a *lower* `nprobe` viable at the same recall.
+
+The `nprobe` retune is therefore a deliberate follow-up, kept separate so this
+change stays one-variable against the probe-economy ratchet. Quoting the −20%
+without the retune would overstate what shipping the floor alone delivers.
+====
 
 === Two structural faults, separable from the calibration
 
@@ -178,23 +200,55 @@ Probe requirement is not a function of cell count alone — embedding geometry
 matters. A policy fitted on BIGANN under-provisions neural corpora at identical
 `k_c`, landing below the 0.98 SLA.
 
-== Proposed resolution
+== Resolution
 
-. **Keep the production default unchanged.** The existing `PROXIMADB_IVF_NCOMP`
-  is a process-global evaluation override, not a per-collection policy surface;
-  it remains suitable for controlled beds only.
-. **Measure a minimal factorial before proposing a rule.** At 384-d, sweep the
-  predicted width neighbourhood at at least two independently forced `k_c`
-  values. Repeat one 128-d or 768-d point at those same `k_c` values. Record the
-  recall-per-probe frontier, GET/query, bytes/query, cache state, and write cost.
-  This distinguishes width, cell-count, and corpus-content effects.
-. **Then choose the policy key from evidence.** If a later policy needs a
-  per-collection choice, add a versioned collection configuration rather than
-  overload a process environment variable. Only then calibrate whether a
-  `k_c`-aware rule, a content-class table, or neither beats the existing formula.
-. **Do not alter `max()` yet.** Its masking is a real observation, but deleting
-  or inverting it before the factorial data merely replaces one uncalibrated
-  formula with another.
+The factorial called for below has now been run: 26 beds across **three**
+dimensionalities, with two independently forced `k_c` values at 768-d. Two results
+from it shape the policy.
+
+**The optimum does not move with `k_c`.** Width 64 beat width 32 at both `k_c`=30
+and `k_c`=90, so the policy needs **no `k_c` term** — which also means the `max()`
+masking noted above is not the thing to fix first.
+
+**Width buys robustness, and that is the decisive property.** Degrading `k_c`
+90→30 costs **+21% GET/query at width 32 but only +2.6% at width 64**. Production
+`k_c` is derived from corpus size (`(n_usable·dim)/4 MiB`, clamped 2..4096) and
+therefore varies over orders of magnitude across collections and LSM levels, while
+the width policy is a single constant serving all of them. A constant chosen at the
+narrow end is fragile exactly where the geometry is least controlled.
+
+So the resolution is a **floor**, not a formula:
+
+. **`ncomp_floor` is plumbed and ships at 0** (legacy formula, bit-identical).
+  Precedence: env `PROXIMADB_IVF_NCOMP_FLOOR` → TOML
+  `[storage.sst_config.coarse_probe] ncomp_floor` → compiled-in default.
+  `PROXIMADB_IVF_NCOMP` remains an absolute eval override so bench sweeps can still
+  measure widths outside the policy band.
+. **Do not fit another dimension-keyed model.** Four were fitted and refuted in
+  turn (samples-per-parameter, fraction-of-dims, total-variance target, and a
+  `4.9·dim^0.387` power law). The between-centroid-variance invariant is tight in
+  *variance-share* space (93–97%) but **loose in width space** — T_b=92% predicts
+  BIGANN at 24 against a measured 32, and T_b=96% predicts both BGE corpora at 128
+  against a measured 64. No single threshold fits all three; it would be model #5.
+  It is emitted as a diagnostic under `PROXIMADB_TRACE_IVF_FLUSH` so evidence keeps
+  accruing without the policy depending on it.
+. **Flip preconditions** — all three must pass before the compiled default moves:
+  .. **Seed sensitivity.** Every bed to date is one clustering draw. Replicate the
+     32-vs-64 ordering across ≥2 `PROXIMADB_IVF_KMEANS_SEED` values. If the
+     ordering flips, the table is an artifact of one draw and nothing ships.
+  .. **PCA conditioning at width.** Components are extracted by 20-iteration power
+     iteration with deflation, so components 32–64 may be materially worse
+     conditioned than 1–14. End-to-end recall can absorb a few bad directions,
+     which is precisely why the measurement study cannot see this. Assert
+     unit-norm, mutual orthogonality, and non-increasing Rayleigh quotients. **A
+     failure here means the answer is 32, not 64.**
+  .. **A0 size.** The directory carries `n_comp·dim + k_c·n_comp` f32s and is
+     fetched whole on first touch. Guarded by a unit test asserting it stays
+     within one 4 MiB IOP at the widest supported geometry (`k_c`=4096, dim=3072).
+. **Per-collection surface stays deferred.** The optimum is `k_c`-independent and
+  moves only between 32 and 64 across three very different corpora, so the knob
+  would be exercised almost never; the TOML mirror covers the operator escape
+  without a catalog-schema change.
 
 **Mixed-read safety is already satisfied.** `n_comp` is persisted per segment in
 the A0 coarse directory and read back from the file, so existing segments retain
@@ -208,12 +262,46 @@ flag-day, per the storage-format migration mandate.
   768-d, 491k rows:  write_ms = 274,711 + 502.1 * n_comp   R^2=0.9997
 ....
 
-The **slopes match (521 vs 502 ms/dim) despite 6.7× fewer rows**. If the per-dim
-term were projecting and assigning all rows, the 768-d slope would be ~78 ms/dim.
-It is not — so the per-dimension cost is **k-means over the training sample**
-(50k rows, k_c≈90–100 in both cases), and is therefore **independent of collection
-size**. It amortises away entirely as collections grow: a 10M-row collection pays
-the same absolute k-means cost as a 500k one.
+The **slopes match (521 vs 502 ms/dim) despite 6.7× fewer rows**.
+
+[WARNING]
+====
+**CORRECTED (2026-08-14). The inference below this line was wrong, and it was
+load-bearing — it is the reason this TD treated a widened default as
+cost-free at scale.**
+
+The original argument ran: "if the per-dim term were projecting and assigning all
+rows, the 768-d slope would be ~78 ms/dim; it is not, so the per-dimension cost is
+k-means over the training sample, and is therefore independent of collection size
+— it amortises away entirely as collections grow."
+
+That drops a factor. The row-linear work is `N·dim` per component, not `N`. The two
+beds are **8.45e8 (3.3M × 128) vs 7.55e8 (491k × 768)** — **12% apart, not 6.7×**.
+Fewer rows and more dimensions very nearly cancel, so matching slopes is exactly
+what a row-linear term predicts. The measurement does not discriminate between the
+two hypotheses at all; the beds are confounded.
+
+Decomposing the actual algorithm, at `n_train`≈50k and `k_c`≈90–100, the
+**N-scaling terms (project-all-rows + assign-all-rows) are ~75–78% of the
+per-component slope**, and the sample-scaling k-means terms are the remainder. If
+that holds, write cost scales with `N` and **does not amortise**: +14% at 3.3M is
+still +14% at 100M.
+
+**Status: not yet settled by measurement.** Two cheap ways to settle it, both
+using gates that already exist:
+
+. Fix `PROXIMADB_IVF_K` and vary `N` by 4× at fixed `dim`. A slope that scales with
+  `N` is the projection term.
+. Read it straight off the flush trace. `PROXIMADB_TRACE_IVF_FLUSH` now reports
+  `project(sample)` and `project+assign` as separate phases precisely so the
+  sample-scaling and N-scaling halves are directly comparable.
+
+Mitigation already landed: the in-memory path used to project every row **twice**
+(once to build a full coordinate buffer, once inside `classify`), while holding an
+`O(N·n_comp)` buffer whose only surviving use was PC1. Both are removed, so the
+N-scaling half of the slope is now roughly half what it was measured at — which
+lowers the real cost of widening regardless of how the attribution resolves.
+====
 
 CAUTION: timings require a quiet machine. A first attempt at the 768-d costs
 produced 334k/468k/307k ms — non-monotonic, despite identical compaction paths —

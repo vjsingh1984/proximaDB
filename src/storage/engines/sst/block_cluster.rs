@@ -287,11 +287,37 @@ fn default_train_sample(k: usize) -> usize {
         .min(IVF_TRAIN_SAMPLE_CAP)
 }
 
+/// Compiled-in default for the coarse-PCA projection-width floor. **`0` =
+/// disabled**, i.e. the legacy formula below is used unchanged.
+///
+/// TD-IVF-3 measured the GET/query optimum at 32 (128-d) and 64 (384-d, 768-d)
+/// against a formula that yields 10–14, so this constant is the seam that will
+/// carry the widened default once the bake completes. It ships at `0` so the
+/// plumbing lands bit-identical and the flip is a one-line, revertible change.
+const IVF_NCOMP_FLOOR_DEFAULT: usize = 0;
+
+/// Ceiling applied to the *floor* (never to the legacy value, and never to the
+/// explicit `PROXIMADB_IVF_NCOMP` eval override). Bounds A0 growth: the coarse
+/// directory carries `n_comp·dim + k_c·n_comp` f32s, so width is linear in the
+/// cold-prefix bytes a first query fetches (`coarse_directory.rs` `serialized_len`).
+const IVF_NCOMP_FLOOR_CEILING: usize = 64;
+
 /// TD-WLP-4b: PCA projection dimensionality = max of two logarithmic terms
 /// (`a·log2 dim` intrinsic-dim, `b·log2 k` partition-granularity insurance),
-/// env-tunable (`PROXIMADB_IVF_NCOMP[_A|_B]`). See the sweep notes at the
-/// call sites.
+/// env-tunable (`PROXIMADB_IVF_NCOMP[_A|_B]`), then raised to the configured
+/// floor (TD-IVF-3). See the sweep notes at the call sites.
+///
+/// `PROXIMADB_IVF_NCOMP` remains an **absolute** override, clamped only to `dim`:
+/// the bench harness sweeps widths (e.g. 128) deliberately outside the shipped
+/// policy band, and capping it would silently truncate those measurements.
 fn ivf_projection_dims(dim: usize, k: usize) -> usize {
+    if let Some(explicit) = std::env::var("PROXIMADB_IVF_NCOMP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+    {
+        return explicit.clamp(1, dim);
+    }
     let ivf_a = std::env::var("PROXIMADB_IVF_NCOMP_A")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
@@ -302,16 +328,43 @@ fn ivf_projection_dims(dim: usize, k: usize) -> usize {
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|x| *x > 0.0)
         .unwrap_or(1.5);
-    std::env::var("PROXIMADB_IVF_NCOMP")
+    projection_dims_with_floor(dim, k, ivf_a, ivf_b, ivf_ncomp_floor())
+}
+
+/// Pure width policy, split out so the floor can be tested across dimensions
+/// without mutating process environment (`set_var`/`remove_var` are unsafe in
+/// edition 2024 precisely because they race across threads).
+///
+/// The ceiling binds only `floor`, never the legacy term — so `floor == 0`
+/// reproduces the pre-TD-IVF-3 value exactly and this function is bit-identical
+/// until the default is flipped.
+fn projection_dims_with_floor(dim: usize, k: usize, a: f64, b: f64, floor: usize) -> usize {
+    let dim_term = a * (dim as f64).log2();
+    let k_term = b * (k.max(2) as f64).log2();
+    let legacy = dim_term.max(k_term).floor() as usize;
+    legacy.max(floor.min(IVF_NCOMP_FLOOR_CEILING)).clamp(1, dim)
+}
+
+/// Resolved projection-width floor. Precedence: env `PROXIMADB_IVF_NCOMP_FLOOR`
+/// → TOML `[storage.sst_config.coarse_probe] ncomp_floor` → compiled-in
+/// [`IVF_NCOMP_FLOOR_DEFAULT`], mirroring [`ivf_probe_enabled`]. A malformed env
+/// value falls through to config rather than being read as `0`, so a typo cannot
+/// silently disable the widened default once it ships.
+fn ivf_ncomp_floor() -> usize {
+    std::env::var("PROXIMADB_IVF_NCOMP_FLOOR")
         .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|n| *n > 0)
+        .and_then(|raw| parse_ncomp_floor(&raw))
         .unwrap_or_else(|| {
-            let dim_term = ivf_a * (dim as f64).log2();
-            let k_term = ivf_b * (k.max(2) as f64).log2();
-            dim_term.max(k_term).floor() as usize
+            crate::storage::engines::sst::segment_format::coarse_probe_settings().ncomp_floor
         })
-        .clamp(1, dim)
+}
+
+/// Pure parse of the floor override, split out so it is testable without
+/// mutating process environment (`set_var`/`remove_var` are unsafe in edition
+/// 2024 precisely because they race across threads). `None` = "not specified
+/// here", so the caller falls through to config.
+fn parse_ncomp_floor(raw: &str) -> Option<usize> {
+    raw.trim().parse::<usize>().ok()
 }
 
 /// Order cells by the Hilbert code of their centroid so same-region cells are
@@ -444,10 +497,24 @@ impl IvfProbeClassifier {
     pub(crate) fn classify(&self, vector: &[f32]) -> Option<IvfAssignment> {
         use proximadb_storage_common::coarse_directory::project_with_model;
 
-        if vector.len() != self.dim || self.centroids.is_empty() {
+        if vector.len() != self.dim {
             return None;
         }
         let coords = project_with_model(&self.pca_mean, &self.pca_components, self.n_comp, vector);
+        self.classify_coords(&coords)
+    }
+
+    /// Nearest-centroid assignment for an **already-projected** row.
+    ///
+    /// Split out of [`Self::classify`] so callers that have projected the row
+    /// already do not pay for a second projection. `cluster_plan_ivf_probe` used
+    /// to project every usable row, then call `classify`, which projected it
+    /// again — the projection term is `N·dim·n_comp`, so that duplicate was a
+    /// large share of the width-linear write cost this crate is about to raise.
+    pub(crate) fn classify_coords(&self, coords: &[f32]) -> Option<IvfAssignment> {
+        if self.centroids.is_empty() {
+            return None;
+        }
         let mut source_cell = 0usize;
         let mut distance_sq = f32::INFINITY;
         for (cell, centroid) in self.centroids.iter().enumerate() {
@@ -669,14 +736,15 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
     let (_cell_order, cell_rank) = hilbert_cell_order(&centroids);
 
     // Records: usable ordered by (cell rank, PC1, index); unusable last, stably.
+    // This path keeps the full `coords` (kmeans_assign needs every row), so PC1
+    // is projected out of it rather than carried on an assignment.
     let usable_orig: Vec<usize> = usable.iter().map(|(i, _)| *i).collect();
-    let (order, runs) = order_rows_by_cell(
-        records.len(),
-        &usable_orig,
-        &coords,
-        &assignments,
-        &cell_rank,
-    );
+    let pc1: Vec<f32> = coords
+        .iter()
+        .map(|c| c.first().copied().unwrap_or(0.0))
+        .collect();
+    let (order, runs) =
+        order_rows_by_cell(records.len(), &usable_orig, &pc1, &assignments, &cell_rank);
     let t_end = std::time::Instant::now();
     if trace_ivf {
         eprintln!(
@@ -793,17 +861,20 @@ pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<I
     let t_pca = std::time::Instant::now();
 
     let projection = IvfPcaProjection::from_finalized(&pca)?;
-    let coords: Vec<Vec<f32>> = usable
-        .iter()
-        .map(|(_, vector)| projection.project(vector))
-        .collect();
-    let t_proj = std::time::Instant::now();
-
-    let sample_coords = coords
+    // Project ONLY the training sample. k-means needs exactly these rows, and
+    // every usable row is projected once below in the assignment pass. The
+    // previous shape projected all N rows here and then called `classify`, which
+    // projected each row a SECOND time — while also holding an O(N·n_comp)
+    // buffer (at 3.3M rows and width 64 that is ~845 MB of coordinates whose
+    // only surviving use was PC1, which `IvfAssignment` already carries).
+    // Sampling stride matches the PCA fit above, so this is bit-identical.
+    let sample_coords = usable
         .iter()
         .step_by(shape.sample_step)
-        .cloned()
+        .map(|(_, vector)| projection.project(vector))
         .collect::<Vec<_>>();
+    let t_proj = std::time::Instant::now();
+
     let classifier = finish_ivf_probe_classifier(projection, shape, &sample_coords)?;
     let cell_count = classifier.cell_count();
     let n_comp = classifier.n_comp;
@@ -812,6 +883,8 @@ pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<I
         .iter()
         .map(|(_, vector)| classifier.classify(vector))
         .collect::<Option<Vec<_>>>()?;
+    // PC1 per usable row — the sole reason the full coords buffer existed.
+    let pc1: Vec<f32> = classified.iter().map(|a| a.pc1).collect();
     let assignments = classified
         .iter()
         .map(|assignment| assignment.source_cell)
@@ -826,21 +899,30 @@ pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<I
     }
     let t_assign = std::time::Instant::now();
 
+    if trace_ivf {
+        trace_between_centroid_variance(&sample_coords, &classifier.centroids, &counts);
+    }
+
     // Rows: usable ordered by (cell rank, PC1, index); unusable last, stably (the
     // no-embedding tail — outside every cell, unreachable by ANN anyway).
     let usable_orig: Vec<usize> = usable.iter().map(|(i, _)| *i).collect();
     let (order, runs) = order_rows_by_cell(
         records.len(),
         &usable_orig,
-        &coords,
+        &pc1,
         &assignments,
         &classifier.cell_rank,
     );
     let model = classifier.finish_model(&counts, &radii_sq)?;
     let t_end = std::time::Instant::now();
     if trace_ivf {
+        // Phase labels are load-bearing: TD-IVF-3 attributed the width-linear
+        // write cost to k-means over the training sample, which would make it
+        // independent of collection size. `project(sample)` scales with the
+        // sample; `project+assign` scales with N. Comparing the two across
+        // corpus sizes settles that directly.
         eprintln!(
-            "[IVF probe compaction] N={n} dim={dim} k={k} n_comp={n_comp} | pca_fit {pca:.0} ms  project {proj:.0} ms  kmeans {km:.0} ms  assign+radii {asg:.0} ms  order {ord:.0} ms  | total {tot:.0} ms",
+            "[IVF probe compaction] N={n} dim={dim} k={k} n_comp={n_comp} | pca_fit {pca:.0} ms  project(sample) {proj:.0} ms  kmeans {km:.0} ms  project+assign {asg:.0} ms  order {ord:.0} ms  | total {tot:.0} ms",
             n = usable.len(),
             k = cell_count,
             pca = (t_pca - t_start).as_secs_f64() * 1e3,
@@ -886,10 +968,112 @@ fn contiguous_runs<T: PartialEq>(ordered_labels: &[T]) -> Vec<OrderedClusterRun>
 /// run keyed `usize::MAX`). Projection-agnostic — the caller decides whether
 /// `coords` came from `pca.transform` (f64 model) or `project_with_model` (f32),
 /// so extracting this keeps both plans byte-identical to their inline form.
+/// Diagnostic (trace-gated): the share of **between-centroid** variance carried
+/// by each PCA component, and its cumulative profile.
+///
+/// Coarse ranking succeeds or fails on whether the projection preserves the
+/// separation *between cells*, which is not the same as preserving total
+/// variance — TD-IVF-3 measured a 4.4-point spread across corpora in
+/// between-centroid share at the optimum versus 22.2 points in total-variance
+/// share. That invariant is nonetheless **not** used to choose the width: it is
+/// tight in variance-share space but loose in width space (no single threshold
+/// reproduces all three measured optima), so it would be the fifth refuted
+/// dimension-keyed model. Emitting it keeps the evidence accruing on every bed at
+/// zero production cost, without the policy depending on it.
+fn trace_between_centroid_variance(
+    sample_coords: &[Vec<f32>],
+    centroids: &[Vec<f32>],
+    counts: &[u64],
+) {
+    let Some(n_comp) = sample_coords.first().map(|c| c.len()) else {
+        return;
+    };
+    if n_comp == 0 || centroids.len() != counts.len() {
+        return;
+    }
+    let total_rows: f64 = counts.iter().map(|&c| c as f64).sum();
+    if total_rows <= 0.0 || sample_coords.is_empty() {
+        return;
+    }
+
+    // Between-centroid variance per component, weighted by realised cell
+    // occupancy (the grand mean is that same weighted mean, so the two are
+    // consistent even when cells are badly unbalanced).
+    let mut grand = vec![0f64; n_comp];
+    for (centroid, &count) in centroids.iter().zip(counts) {
+        for (j, value) in centroid.iter().take(n_comp).enumerate() {
+            grand[j] += *value as f64 * count as f64;
+        }
+    }
+    for value in &mut grand {
+        *value /= total_rows;
+    }
+    let mut between = vec![0f64; n_comp];
+    for (centroid, &count) in centroids.iter().zip(counts) {
+        for (j, value) in centroid.iter().take(n_comp).enumerate() {
+            let delta = *value as f64 - grand[j];
+            between[j] += count as f64 * delta * delta;
+        }
+    }
+    for value in &mut between {
+        *value /= total_rows;
+    }
+
+    // Total variance per component, over the training sample.
+    let n_sample = sample_coords.len() as f64;
+    let mut mean = vec![0f64; n_comp];
+    for coords in sample_coords {
+        for (j, value) in coords.iter().take(n_comp).enumerate() {
+            mean[j] += *value as f64;
+        }
+    }
+    for value in &mut mean {
+        *value /= n_sample;
+    }
+    let mut total = vec![0f64; n_comp];
+    for coords in sample_coords {
+        for (j, value) in coords.iter().take(n_comp).enumerate() {
+            let delta = *value as f64 - mean[j];
+            total[j] += delta * delta;
+        }
+    }
+    for value in &mut total {
+        *value /= n_sample;
+    }
+
+    let between_sum: f64 = between.iter().sum();
+    if between_sum <= 0.0 {
+        return;
+    }
+    // eta^2 of the leading component, plus the cumulative between-centroid share
+    // at the widths the study actually measured.
+    let eta2_first = if total[0] > 0.0 {
+        between[0] / total[0]
+    } else {
+        0.0
+    };
+    let mut cumulative = String::new();
+    let mut running = 0f64;
+    let mut next_marker = 0usize;
+    const MARKERS: [usize; 6] = [12, 16, 24, 32, 48, 64];
+    for (j, value) in between.iter().enumerate() {
+        running += value;
+        while next_marker < MARKERS.len() && MARKERS[next_marker] == j + 1 {
+            cumulative.push_str(&format!(
+                " w{}={:.1}%",
+                MARKERS[next_marker],
+                100.0 * running / between_sum
+            ));
+            next_marker += 1;
+        }
+    }
+    eprintln!("[IVF eta2] n_comp={n_comp} eta2(pc1)={eta2_first:.3} between_share:{cumulative}");
+}
+
 fn order_rows_by_cell(
     records_len: usize,
     usable_orig: &[usize],
-    coords: &[Vec<f32>],
+    pc1: &[f32],
     assignments: &[usize],
     cell_rank: &[usize],
 ) -> (Vec<usize>, Vec<OrderedClusterRun>) {
@@ -898,8 +1082,8 @@ fn order_rows_by_cell(
         cell_rank[assignments[a]]
             .cmp(&cell_rank[assignments[b]])
             .then_with(|| {
-                let pa = coords[a].first().copied().unwrap_or(0.0);
-                let pb = coords[b].first().copied().unwrap_or(0.0);
+                let pa = pc1.get(a).copied().unwrap_or(0.0);
+                let pb = pc1.get(b).copied().unwrap_or(0.0);
                 pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
             })
             .then_with(|| usable_orig[a].cmp(&usable_orig[b]))
@@ -1324,5 +1508,93 @@ mod kmeans_seed_gate_tests {
     fn valid_override_is_honoured_including_zero() {
         assert_eq!(resolve_kmeans_seed(Some("0".into())), 0);
         assert_eq!(resolve_kmeans_seed(Some("12345".into())), 12345);
+    }
+}
+
+/// TD-IVF-3: the coarse-PCA projection-width floor.
+#[cfg(test)]
+mod ncomp_floor_tests {
+    use super::{IVF_NCOMP_FLOOR_CEILING, parse_ncomp_floor, projection_dims_with_floor};
+
+    /// The three geometries the width study measured. With the floor disabled
+    /// the policy must reproduce the widths those beds actually ran at, or every
+    /// number in TD-IVF-3 is being compared against the wrong baseline.
+    const MEASURED: [(usize, usize, usize); 3] = [
+        (128, 100, 10), // 128-d BIGANN
+        (384, 90, 12),  // 384-d BGE
+        (768, 90, 14),  // 768-d BGE
+    ];
+
+    #[test]
+    fn floor_disabled_reproduces_the_legacy_widths_exactly() {
+        for (dim, k, expected) in MEASURED {
+            assert_eq!(
+                projection_dims_with_floor(dim, k, 1.5, 1.5, 0),
+                expected,
+                "dim={dim} k={k}: a 0 floor must be bit-identical to the legacy formula"
+            );
+        }
+    }
+
+    /// The floor raises, never lowers — the legacy term is not capped by it.
+    #[test]
+    fn floor_raises_narrow_widths_and_never_lowers() {
+        for (dim, k, legacy) in MEASURED {
+            for floor in [32usize, 64] {
+                let got = projection_dims_with_floor(dim, k, 1.5, 1.5, floor);
+                assert_eq!(got, floor, "dim={dim} k={k} floor={floor}");
+                assert!(got >= legacy, "the floor must never narrow the projection");
+            }
+        }
+    }
+
+    /// A0 carries `n_comp·dim + k_c·n_comp` f32s, so width is linear in the cold
+    /// prefix a first query fetches. The ceiling bounds that growth even if an
+    /// operator sets something extreme.
+    #[test]
+    fn floor_is_capped_by_the_ceiling() {
+        assert_eq!(
+            projection_dims_with_floor(768, 90, 1.5, 1.5, 4096),
+            IVF_NCOMP_FLOOR_CEILING
+        );
+    }
+
+    /// `n_comp <= dim` is a hard invariant of the persisted coarse directory —
+    /// `CoarseModel::validate` rejects a model that violates it, which would fail
+    /// the write rather than degrade it.
+    #[test]
+    fn width_never_exceeds_the_ambient_dimension() {
+        for dim in [2usize, 8, 16, 48] {
+            let got = projection_dims_with_floor(dim, 90, 1.5, 1.5, 64);
+            assert!(
+                got <= dim,
+                "dim={dim}: width {got} exceeds ambient dimension"
+            );
+            assert!(got >= 1, "dim={dim}: width must stay positive");
+        }
+    }
+
+    /// A malformed value must fall through to config, NOT read as 0. Once the
+    /// default ships widened, parsing a typo as 0 would silently restore the
+    /// under-projecting formula on every segment written — the exact regression
+    /// this floor exists to remove, with no error anywhere.
+    #[test]
+    fn malformed_floor_falls_through_rather_than_disabling() {
+        for bad in ["not-a-number", "", "-1", "1.5", "0x40", "64x"] {
+            assert_eq!(
+                parse_ncomp_floor(bad),
+                None,
+                "malformed floor {bad:?} must fall through to config"
+            );
+        }
+    }
+
+    /// An explicit 0 is a real setting — "use the legacy formula" — and must be
+    /// distinguishable from "unset".
+    #[test]
+    fn explicit_values_parse_including_zero() {
+        assert_eq!(parse_ncomp_floor("0"), Some(0));
+        assert_eq!(parse_ncomp_floor("64"), Some(64));
+        assert_eq!(parse_ncomp_floor("  32  "), Some(32));
     }
 }

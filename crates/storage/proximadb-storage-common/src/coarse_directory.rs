@@ -399,6 +399,175 @@ fn read_f32s(input: &[u8], p: &mut usize, count: usize) -> Result<Vec<f32>> {
 }
 
 #[cfg(test)]
+mod a0_size_budget_tests {
+    use super::CoarseDirectory;
+
+    /// A0 is fetched **whole** on the first touch of a segment, before any cell
+    /// is probed, so its size is cold-start latency paid on the critical path.
+    /// The co-design invariant (ADR-065) is that one fetch ≈ one IOP-sized
+    /// block, so the directory must fit inside a single 4 MiB IOP even at the
+    /// worst supported geometry.
+    const IOP_TARGET_BYTES: usize = 4 * 1024 * 1024;
+
+    /// Widest supported corner: `k_c` is clamped to 4096 by `ivf_fine_cell_count`
+    /// and 3072 is the largest embedding dimension we ship against (OpenAI
+    /// text-embedding-3-large).
+    const WIDEST_K_C: usize = 4096;
+    const WIDEST_DIM: usize = 3072;
+
+    /// A0 grows linearly in `n_comp` on *two* terms — `n_comp·dim` components
+    /// and `k_c·n_comp` centroids — so raising the projection-width floor
+    /// (TD-IVF-3) inflates the cold prefix everywhere, not just on wide corpora.
+    /// This is the guard that keeps a future floor increase from silently
+    /// turning the first query of every segment into a multi-IOP fetch.
+    #[test]
+    fn a0_fits_one_iop_at_the_widest_supported_geometry() {
+        for n_comp in [14usize, 32, 64] {
+            let len = CoarseDirectory::serialized_len(WIDEST_K_C, WIDEST_DIM, n_comp);
+            assert!(
+                len <= IOP_TARGET_BYTES,
+                "A0 at k_c={WIDEST_K_C} dim={WIDEST_DIM} n_comp={n_comp} is {len} bytes, \
+                 over the {IOP_TARGET_BYTES}-byte IOP target: the cold prefix would cost \
+                 more than one round-trip before any cell is read"
+            );
+        }
+    }
+
+    /// Pins the shape of the growth so a regression in `serialized_len` (an
+    /// added per-cell or per-component field, say) shows up here rather than as
+    /// a quietly larger cold read.
+    #[test]
+    fn a0_growth_is_affine_in_projection_width() {
+        let at = |n| CoarseDirectory::serialized_len(WIDEST_K_C, WIDEST_DIM, n);
+        // Equal steps in width must produce equal increments — the two
+        // width-linear terms are `n_comp·dim` and `k_c·n_comp`, with no
+        // higher-order term in `n_comp`.
+        let step_a = at(32) - at(16);
+        let step_b = at(48) - at(32);
+        let step_c = at(64) - at(48);
+        assert_eq!(
+            step_a, step_b,
+            "width growth must be affine, not accelerating"
+        );
+        assert_eq!(
+            step_b, step_c,
+            "width growth must be affine, not accelerating"
+        );
+        // And the width-independent terms (mean, radii, cell entries) must be a
+        // real intercept, so doubling the width less than doubles the directory.
+        assert!(
+            at(64) < 2 * at(32),
+            "expected a non-zero width-independent term"
+        );
+    }
+}
+
+/// TD-IVF-3 mixed-read safety: raising the projection-width default changes the
+/// *value* of `n_comp`, never the byte layout. Old and new segments must coexist
+/// in one collection, each probed at its own persisted width, with no version
+/// bump and no reader branch.
+#[cfg(test)]
+mod mixed_width_read_tests {
+    use super::*;
+
+    fn directory_at_width(n_comp: u16) -> CoarseDirectory {
+        let dim = 64u32;
+        let k_c = 4usize;
+        let model = CoarseModel {
+            dim,
+            n_comp,
+            pca_mean: (0..dim).map(|i| i as f32 * 0.5).collect(),
+            pca_components: (0..n_comp as usize * dim as usize)
+                .map(|i| (i as f32).sin())
+                .collect(),
+            centroids: (0..k_c * n_comp as usize)
+                .map(|i| i as f32 * 0.25)
+                .collect(),
+            radii: vec![1.0, 2.0, 0.0, 3.5],
+            cell_rows: vec![100, 50, 0, 25],
+            seed: 0xABCD_1234_5678_9ABC,
+            trained_on: 175,
+        };
+        let mut row = 0u64;
+        let mut cells = Vec::new();
+        for (i, &rows) in model.cell_rows.iter().enumerate() {
+            cells.push(CoarseCellEntry {
+                row_begin: row,
+                row_end: row + rows,
+                a_off: 1000 + row * 24,
+                a_len: rows * 24,
+                b_off: 9000 + row * 8,
+                b_len: rows * 8,
+                c_off: 0,
+                c_len: 0,
+                d_block_begin: i as u32,
+                d_block_end: i as u32 + u32::from(rows > 0),
+            });
+            row += rows;
+        }
+        CoarseDirectory { model, cells }
+    }
+
+    /// The load-bearing property: a directory written at the legacy width and one
+    /// written at the widened floor both parse, independently, each reporting its
+    /// own `n_comp`. Nothing recomputes the width from `dim`/`k_c` at read time,
+    /// so there is no flag-day and no mis-probe path.
+    #[test]
+    fn legacy_and_widened_directories_parse_independently() {
+        // 14 = the legacy formula at 768-d; 64 = the measured optimum.
+        let legacy = directory_at_width(14);
+        let widened = directory_at_width(64);
+
+        let legacy_bytes = legacy.to_bytes().expect("legacy directory must serialize");
+        let widened_bytes = widened
+            .to_bytes()
+            .expect("widened directory must serialize");
+
+        // Different widths ⇒ different lengths, but the SAME layout: each length
+        // is exactly what `serialized_len` predicts for its own width.
+        assert_ne!(legacy_bytes.len(), widened_bytes.len());
+        assert_eq!(
+            legacy_bytes.len(),
+            CoarseDirectory::serialized_len(4, 64, 14)
+        );
+        assert_eq!(
+            widened_bytes.len(),
+            CoarseDirectory::serialized_len(4, 64, 64)
+        );
+
+        let parsed_legacy =
+            CoarseDirectory::parse(&legacy_bytes).expect("legacy segment must still parse");
+        let parsed_widened =
+            CoarseDirectory::parse(&widened_bytes).expect("widened segment must parse");
+
+        assert_eq!(parsed_legacy.model.n_comp, 14);
+        assert_eq!(parsed_widened.model.n_comp, 64);
+        assert_eq!(parsed_legacy, legacy);
+        assert_eq!(parsed_widened, widened);
+        // Same magic and version: the widened directory is not a new format.
+        assert_eq!(&legacy_bytes[..4], A0_MAGIC);
+        assert_eq!(&widened_bytes[..4], A0_MAGIC);
+        assert_eq!(legacy_bytes[4], widened_bytes[4], "version must not change");
+    }
+
+    /// Parsing must be driven by the persisted `n_comp`, not by anything the
+    /// caller assumes. Truncating a widened directory to the length a *legacy*
+    /// one would occupy must fail closed rather than silently decode a prefix as
+    /// a valid narrower model — that would be the silent mis-probe path.
+    #[test]
+    fn a_widened_directory_truncated_to_legacy_length_fails_closed() {
+        let widened = directory_at_width(64);
+        let bytes = widened.to_bytes().expect("must serialize");
+        let legacy_len = CoarseDirectory::serialized_len(4, 64, 14);
+        assert!(legacy_len < bytes.len());
+        assert!(
+            CoarseDirectory::parse(&bytes[..legacy_len]).is_err(),
+            "a truncated directory must fail closed, never decode as a narrower model"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
