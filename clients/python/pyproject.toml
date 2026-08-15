@@ -166,6 +166,7 @@ dev = [
     "mypy>=1.0.0",
     "pre-commit>=2.20.0",
     "ruff>=0.0.280",
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 
 test = [
@@ -189,6 +190,9 @@ test = [
     "pyyaml>=6.0",
     "jsonschema>=4.0.0",
     "httpx>=0.24.0",
+    # scripts/bench/build_token_budget_corpus.py reads TOML; tomllib is stdlib
+    # only on 3.11+, so the bench corpus test needs the tomli backport on 3.10.
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 
 docs = [
