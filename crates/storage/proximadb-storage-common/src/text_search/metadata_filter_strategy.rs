@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
 
-use super::{FilterCondition, MetadataFilter};
+use crate::text_search::metadata_filter_types::{FilterCondition, MetadataFilter};
 
 /// Strategy for handling metadata filters based on column types
 #[derive(Debug, Clone)]
@@ -119,7 +119,8 @@ impl MetadataFilterAnalyzer {
                     // This requires full scan
                     non_filterable.push(condition.clone());
                     // For non-filterable, we need the extra_meta column
-                    required_columns.insert(super::FIELD_EXTRA_META.to_string());
+                    required_columns
+                        .insert(crate::columnar_constants::FIELD_EXTRA_META.to_string());
                 }
             }
         }
@@ -215,7 +216,7 @@ impl MetadataFilterAnalyzer {
         for filter in filters {
             // Get the extra_meta column (MapArray or Binary)
             let metadata_column = batch
-                .column_by_name(super::FIELD_EXTRA_META)
+                .column_by_name(crate::columnar_constants::FIELD_EXTRA_META)
                 .ok_or_else(|| anyhow!("Missing extra_meta column for filtering"))?;
 
             // Apply filter to each row
@@ -535,7 +536,7 @@ impl FilterPerformanceMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::core::formats::columnar::FilterLogic;
+    use crate::text_search::metadata_filter_types::FilterLogic;
 
     #[test]
     fn test_strategy_selection() {
