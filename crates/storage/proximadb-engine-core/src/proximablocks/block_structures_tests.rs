@@ -536,7 +536,7 @@ fn test_generate_bloom() {
     assert!(!bloom_bytes.is_empty());
 
     // Verify bloom filter can be deserialized
-    use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+    use proximadb_bloom::{BloomFilterConfig, factory::BloomFilterFactory};
     let config = BloomFilterConfig::for_sstable(records.len());
     let deserialized = BloomFilterFactory::deserialize(&config, &bloom_bytes);
     assert!(deserialized.is_ok());

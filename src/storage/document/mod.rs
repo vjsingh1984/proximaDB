@@ -17,7 +17,7 @@ pub mod aggregation_extensions;
 pub mod canonical_adapter;
 pub mod indexes;
 pub mod query;
-pub mod sdp;
+pub use proximadb_storage_common::text_search::sdp; // extracted TD-DECOMP-70
 pub mod service;
 pub mod storage;
 

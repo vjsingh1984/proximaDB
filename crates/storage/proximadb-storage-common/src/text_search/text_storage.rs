@@ -66,8 +66,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
-use crate::core::types::TextStorageStrategy;
-use crate::storage::document::sdp::{SdpChunker, SdpConfig};
+use crate::text_search::TextStorageStrategy;
+use crate::text_search::sdp::{SdpChunker, SdpConfig};
 
 // Import full-text search index types
 use super::fulltext_index::{

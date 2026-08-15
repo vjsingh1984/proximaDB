@@ -366,37 +366,10 @@ impl ColumnDataType {
     }
 }
 
-/// TEXT storage strategy for columnar storage
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum TextStorageStrategy {
-    /// Store inline in main Parquet column (<4KB)
-    Inline,
-    /// Split into chunks with embeddings (4KB-1MB)
-    Chunked,
-    /// Store in separate sidecar file (>1MB)
-    Sidecar,
-    /// Auto-select based on actual size (default)
-    #[default]
-    Adaptive,
-}
-
-impl TextStorageStrategy {
-    /// Maximum size in bytes for inline text storage (4KB)
-    pub const INLINE_MAX_SIZE: usize = 4 * 1024;
-    /// Maximum size in bytes for chunked text storage (1MB)
-    pub const CHUNKED_MAX_SIZE: usize = 1024 * 1024;
-
-    /// Determine strategy based on content size
-    pub fn for_size(size: usize) -> Self {
-        if size <= Self::INLINE_MAX_SIZE {
-            Self::Inline
-        } else if size <= Self::CHUNKED_MAX_SIZE {
-            Self::Chunked
-        } else {
-            Self::Sidecar
-        }
-    }
-}
+/// TEXT storage strategy for columnar storage — moved to
+/// `proximadb-storage-common`'s `text_search` module (TD-DECOMP-70); re-exported
+/// here so existing `crate::core::types` import paths keep working.
+pub use proximadb_storage_common::text_search::TextStorageStrategy;
 
 /// Typed column definition with validation constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]

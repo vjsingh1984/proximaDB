@@ -7473,17 +7473,29 @@ name = "proximadb-engine-core"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "bincode",
+ "bytemuck",
  "chrono",
  "half",
+ "proximadb-bloom",
  "proximadb-clustering-kernel",
+ "proximadb-codec",
  "proximadb-compression",
+ "proximadb-data-model",
  "proximadb-distance-kernel",
+ "proximadb-hardware-caps",
  "proximadb-kernel",
+ "proximadb-proto",
  "proximadb-quantization-model",
  "proximadb-records",
+ "proximadb-search-types",
  "proximadb-storage-common",
+ "rand 0.8.6",
+ "rayon",
  "serde",
  "serde_json",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -8096,6 +8108,7 @@ dependencies = [
 name = "proximadb-quantization-model"
 version = "0.2.0"
 dependencies = [
+ "proximadb-distance-kernel",
  "proximadb-quantization-types",
  "serde",
 ]

@@ -51,6 +51,15 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use thiserror::Error;
 
+/// Per-candidate accumulator during a BM25 search: (score, matched terms,
+/// per-term frequencies, per-term positions).
+type CandidateDoc = (
+    f64,
+    Vec<String>,
+    HashMap<String, u32>,
+    HashMap<String, Vec<u32>>,
+);
+
 /// Errors that can occur during full-text indexing
 #[derive(Error, Debug)]
 pub enum FullTextIndexError {
@@ -1103,15 +1112,7 @@ impl FullTextIndex {
         }
 
         // Build candidate documents
-        let mut doc_scores: HashMap<
-            String,
-            (
-                f64,
-                Vec<String>,
-                HashMap<String, u32>,
-                HashMap<String, Vec<u32>>,
-            ),
-        > = HashMap::new();
+        let mut doc_scores: HashMap<String, CandidateDoc> = HashMap::new();
 
         let query_terms: HashSet<_> = query_tokens.iter().cloned().collect();
         let n_query_terms = query_terms.len();
@@ -1387,7 +1388,7 @@ pub trait ChunkIndexing {
     fn index_chunks(
         &mut self,
         parent_doc_id: &str,
-        chunks: &[super::text_storage::TextChunk],
+        chunks: &[crate::text_search::text_storage::TextChunk],
     ) -> Result<(), FullTextIndexError>;
 
     /// Search across chunks
@@ -1413,7 +1414,7 @@ impl ChunkIndexing for FullTextIndex {
     fn index_chunks(
         &mut self,
         parent_doc_id: &str,
-        chunks: &[super::text_storage::TextChunk],
+        chunks: &[crate::text_search::text_storage::TextChunk],
     ) -> Result<(), FullTextIndexError> {
         for chunk in chunks {
             let mut metadata = HashMap::new();

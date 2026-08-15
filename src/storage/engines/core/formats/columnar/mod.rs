@@ -115,9 +115,9 @@ pub mod serialization;
 // NOTE: Distance computation has been moved to proximadb_distance_kernel::quantized
 
 // TEXT column storage, filtering, and full-text search (Phase 3)
-pub mod fulltext_index;
 pub mod text_filter;
-pub mod text_storage;
+pub use proximadb_storage_common::text_search::fulltext_index; // extracted TD-DECOMP-70
+pub use proximadb_storage_common::text_search::text_storage; // extracted TD-DECOMP-70
 
 // Examples demonstrating optimization benefits (moved to tests)
 #[cfg(test)]

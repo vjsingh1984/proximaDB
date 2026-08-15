@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{ProximaDataBlock, RowBasedConfig};
+use crate::proximablocks::block_structures::ProximaDataBlock;
+use crate::proximablocks::row_config::RowBasedConfig;
 use proximadb_hardware_caps::HardwareCapabilities;
 use proximadb_records::ProximaRecord;
 
@@ -691,8 +692,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::common::FilenameCodec;
-    use crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics;
+    use crate::proximablocks::block_structures::BlockStatistics;
     use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     fn test_record(oid: &str, values: Vec<f32>, timestamp_ms: i64) -> ProximaRecord {
@@ -729,11 +729,11 @@ mod tests {
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
-            vector_layout:
-                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            vector_layout: crate::proximablocks::block_structures::VectorEncodingLayout::Auto,
             quantized_section: None,
-            metadata: crate::storage::engines::core::formats::proximablocks::block_structures::ProximaBlockMetadata::default(),
-            compression_config: crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig::default(),
+            metadata: crate::proximablocks::block_structures::ProximaBlockMetadata::default(),
+            compression_config:
+                crate::proximablocks::block_structures::BlockCompressionConfig::default(),
             compression_algorithm: proximadb_compression::CompressionAlgorithm::None,
             uncompressed_size: 0,
             bloom_filter: None,
@@ -777,20 +777,9 @@ mod tests {
         assert!(report.success_rate < 0.5);
     }
 
-    #[test]
-    fn test_filename_generation() {
-        let codec = FilenameCodec::new();
-        let sst_filename = codec.generate(3, "sst");
-        assert!(sst_filename.contains("L3_"));
-        assert!(sst_filename.ends_with(".sst")); // Updated to use .sst extension
-
-        let swift_filename = codec.generate(2, "swift");
-        assert!(swift_filename.contains("L2_"));
-        assert!(swift_filename.ends_with(".swift"));
-
-        let level = codec.parse_level(&sst_filename);
-        assert_eq!(level, 3);
-    }
+    // NOTE: `test_filename_generation` (root `FilenameCodec`) stayed behind in the
+    // root `formats/proximablocks/mod.rs` test module — FilenameCodec is coupled
+    // to the unextracted root filesystem layer (TD-DECOMP-72).
 
     #[test]
     fn test_memory_estimation() {

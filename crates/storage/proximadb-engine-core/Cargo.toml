@@ -24,7 +24,20 @@ proximadb-records.workspace = true
 # spatial_* cohort (spatial_clustering k-means + hilbert_curve via storage_common).
 proximadb-clustering-kernel.workspace = true
 # smart_rowgroup_sizing (raptor rowgroup sizing heuristics, TD-DECOMP-69)
+# block_structures + index_structures (TD-DECOMP-71/72)
+proximadb-bloom.workspace = true
+proximadb-hardware-caps.workspace = true
+proximadb-codec.workspace = true
+proximadb-search-types.workspace = true
+proximadb-data-model.workspace = true
+# block_structures runtime deps: bincode serialization, rayon parallel encode, tokio spawn
+bincode.workspace = true
+bytemuck = { version = "1.14", features = ["derive"] }
 proximadb-quantization-model.workspace = true
+rayon.workspace = true
+tokio.workspace = true
+proximadb-proto.workspace = true
+tracing.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -34,6 +47,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 [dev-dependencies]
 # `half` (f16/bf16) used only in per_column_alignment unit tests.
 half = "2.4"
+rand.workspace = true
 
 [lints]
 workspace = true

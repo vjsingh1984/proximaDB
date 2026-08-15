@@ -681,3 +681,57 @@ pub struct StorageQuantizedData {
     /// Metadata about quantization quality
     pub metadata: QuantizationMetadata,
 }
+
+/// Common configuration for storage engine quantization (foundation-pure data
+/// struct; moved from modality-tier `proximadb-quantization-kernel`'s
+/// `storage_engine` module so storage-tier crates can hold it without a
+/// storage→modality up-edge — same pattern as `StorageQuantizedData` above).
+/// Re-exported from the kernel crate so its public API is unchanged.
+#[derive(Debug, Clone)]
+pub struct StorageQuantizationConfig {
+    /// Base quantization levels to use
+    pub primary_level: Option<UnifiedQuantizationLevel>, // e.g., PQ8
+    pub filter_level: Option<UnifiedQuantizationLevel>, // e.g., Binary
+    pub fast_level: Option<UnifiedQuantizationLevel>,   // e.g., INT8
+
+    /// Distance metric to use for quantization (affects PQ code generation)
+    pub distance_metric: proximadb_distance_kernel::engine::DistanceMetric,
+
+    /// Progressive resolution settings
+    pub enable_progressive: bool,
+    pub filter_threshold: f32, // Hamming distance threshold for binary filtering
+    pub candidate_multiplier: usize, // How many candidates to keep at each stage
+
+    /// Quality settings
+    pub training_sample_size: usize,
+
+    /// Resource settings
+    pub memory_budget_mb: usize,
+    pub enable_hardware_acceleration: bool,
+}
+
+impl Default for StorageQuantizationConfig {
+    fn default() -> Self {
+        Self {
+            // INT8 as default primary - fast, no training required, good compression
+            // PQ can be explicitly enabled in collection config when needed
+            primary_level: Some(UnifiedQuantizationLevel::int8()),
+            // Binary sketch for filtering (1-bit per dimension)
+            filter_level: Some(UnifiedQuantizationLevel::binary()),
+            // INT8 for fast approximation
+            fast_level: Some(UnifiedQuantizationLevel::int8()),
+
+            // Default to Cosine distance (most common for embeddings)
+            distance_metric: proximadb_distance_kernel::engine::DistanceMetric::Cosine,
+
+            enable_progressive: true,
+            filter_threshold: 0.3,
+            candidate_multiplier: 10,
+
+            training_sample_size: 10000,
+
+            memory_budget_mb: 1024,
+            enable_hardware_acceleration: true,
+        }
+    }
+}

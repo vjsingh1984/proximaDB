@@ -94,9 +94,11 @@ fn test_writer_inline() {
 
 #[test]
 fn test_writer_chunking() {
-    let mut config = TextStorageConfig::default();
-    config.strategy = TextStorageStrategy::Chunked;
-    config.chunk_size = 10; // Small chunks for testing
+    let config = TextStorageConfig {
+        strategy: TextStorageStrategy::Chunked,
+        chunk_size: 10, // Small chunks for testing
+        ..Default::default()
+    };
 
     let mut writer = TextColumnWriter::new(config);
 
