@@ -151,6 +151,9 @@ class ArrowFlightClient:
         self._tenant_id = tenant_id
         self._timeout_seconds = timeout_seconds
         self._max_message_size = max_message_size_mb * 1024 * 1024
+        # Unix-domain-socket targets need `grpc.default_authority` pinned (see
+        # `_get_client`); remember the transport before the prefix is stripped.
+        self._is_unix_socket = url.startswith(("grpc+unix://", "unix://"))
 
         # Parse URL for Flight client
         self._location = self._parse_location(url)
@@ -190,13 +193,22 @@ class ArrowFlightClient:
     def _get_client(self) -> "flight.FlightClient":
         """Get or create Flight client (lazy initialization)."""
         if self._client is None:
-            options = flight.FlightClientOptions(
-                generic_options=[
-                    ("grpc.max_send_message_length", self._max_message_size),
-                    ("grpc.max_receive_message_length", self._max_message_size),
-                ]
+            generic_options = [
+                ("grpc.max_send_message_length", self._max_message_size),
+                ("grpc.max_receive_message_length", self._max_message_size),
+            ]
+            # Over a Unix socket, grpc-c derives `:authority` from the
+            # percent-encoded socket path (`tmp%2F...%2Fflight.sock`), which the
+            # Rust h2 server rejects as malformed — every stream dies with
+            # RST_STREAM(PROTOCOL_ERROR) (tonic#742). Pin a valid authority so
+            # Flight works in portless embedded mode.
+            if self._is_unix_socket:
+                generic_options.append(("grpc.default_authority", "localhost"))
+            # The `generic_options` kwarg is the stable API across pyarrow
+            # versions; `flight.FlightClientOptions` was removed in pyarrow 24.
+            self._client = flight.FlightClient(
+                self._location, generic_options=generic_options
             )
-            self._client = flight.FlightClient(self._location, options)
 
             # Authenticate if API key provided
             if self._api_key:

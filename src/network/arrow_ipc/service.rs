@@ -2930,7 +2930,7 @@ impl ProximaFlightService {
                     .map_err(|e| TonicStatus::invalid_argument(format!("decode edges: {}", e)))?;
                 ops.batch_create_edges(&graph_id, edges)
                     .await
-                    .map(|created| created.len() as u64)
+                    .map(|outcome| outcome.created.len() as u64)
             };
 
             let (written, ok) = match written {

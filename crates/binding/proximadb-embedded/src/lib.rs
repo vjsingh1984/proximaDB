@@ -3449,7 +3449,7 @@ impl EmbeddedProximaDB {
             graph_service
                 .batch_create_edges(graph_id, proto_edges)
                 .await
-                .map(|inserted| inserted.len())
+                .map(|outcome| outcome.created.len())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
                 })
