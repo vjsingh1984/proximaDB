@@ -392,3 +392,84 @@ The query lane is the one that matters here.
 
 **Status change:** the previous entry's "coherent slice (both, or neither)" is superseded. Step 2
 of that slice is not a small addition — it is a gated re-land owned by TD-RECALL-2.
+
+
+== 2026-08-14 (3) — two mechanism hypotheses tested and FALSIFIED; the search is narrower
+
+The revert (#1425) named its cause only as a hedge: *"**Likely** path: changed OID/identity
+minting leaves the OID resolver cache stale after the 2nd flush's compaction."* That was never
+verified. Re-landing "fixed" against an unverified mechanism would be guesswork, so the
+mechanism was tested directly.
+
+=== Baseline (established, not assumed)
+
+`cargo test --test vector_ann_recall_e2e` on a worktree containing #1607:
+`vector_ann_recall_at_k` **ok**, `vector_ann_recall_under_deletes_and_compaction` **ok**
+(2 passed). This independently confirms the CI evidence that #1607's `mint_object_id` is safe.
+
+=== Hypothesis 1 — the collection-id floor raise. FALSIFIED.
+
+`shared_services.rs:1049` raises the collection-id allocator floor from
+`cat.max_object_id()`. `SystemCatalog` does not override it ⇒ default `Ok(None)` ⇒ the raise is
+a no-op. #1406 *did* override it, so the override arms a floor raise that is otherwise dead.
+
+**Experiment:** add ONLY that 3-line override (the state helper it needs already exists from
+#1607), rebuild, re-run. **Result: 2 passed — no collapse.**
+
+Scope limit, stated honestly: this shows the override does not collapse *this test*. The e2e
+likely never executes `shared_services` boot, so it is NOT evidence that the floor raise is
+harmless in a running server. It only removes the override from the suspect list for this gate.
+
+=== Hypothesis 2 — minting moves the on-disk path. FALSIFIED.
+
+`manager.rs:2053`: *"when `typed_identity` is `Some`, the data/wal/index dirs are created at the
+typed account-rooted path instead of the tenant/legacy path."* Since
+`mint_collection_typed_identity` is documented "ADR-0083 rev2 D3: **always mint**" (not
+env-gated), minting appeared to move storage — which would explain the signature exactly
+(cross-tier only, post-compaction only, pre/post-flush fine: writer on the typed path, reader or
+compactor on the legacy one).
+
+**It does not.** The single call site passes the **gated** value:
+`create_storage_directories(..., typed_path_identity(typed_identity))` (`manager.rs:1114`), and
+`typed_paths_enabled()` (`crates/storage/proximadb-storage-ports/src/path_resolver.rs:189`)
+returns false unless `PROXIMADB_TYPED_PATHS=1`. Default ⇒ `None` ⇒ byte-identical legacy paths.
+The design's stated split — *identity always minted, PATH env-gated* — is correctly implemented.
+
+=== 🔴 Method note — a false claim caught before publication
+
+While testing H2 I concluded `PROXIMADB_TYPED_PATHS` had **zero code sites** and was a
+documented-but-unimplemented gate. **That was wrong.** The sweep used an exclusion regex to drop
+comment lines, `grep -vE "^\S+:[0-9]+:\s*(///|//|\*)"`, and the one real code site is
+`    *FLAG.get_or_init(|| match std::env::var("PROXIMADB_TYPED_PATHS")` — which begins with `*`
+and was eaten as a block-comment continuation.
+
+A positive control (`PROXIMADB_DISABLE_SYSTEM_CATALOG`, found) had passed, which is what made the
+negative persuasive. **The control validated `grep`; it did not validate the filter** — the
+control line did not begin with `*`. The error was caught only because ENV_GATE_REGISTRY names an
+owning file for every gate, and that file was checked directly.
+
+Sharpened rule (extends the existing "a zero is evidence about the search"): **a positive control
+must exercise the same filter path as the negative result.** A control that would survive the
+filter for a different reason proves nothing about it. Registry-named owners are the cheap
+cross-check that caught this.
+
+=== What remains suspect
+
+Not `mint_object_id` (re-landed, proven). Not the `max_object_id` override (H1). Not path
+movement (H2). Remaining: `resolve_typed_triple` and the constructor-time
+`identity_allocator_seed` + `object_floor`/`namespace_floor`/`collection_floor`/`namespace_ids`,
+which run on every `SystemCatalog` construction **including recovery** — the phase the failing
+test exercises.
+
+=== The decisive experiment (next step)
+
+Re-apply the reverted 268 lines onto today's `develop` (resolving the one expected conflict:
+`mint_object_id` is already present from #1607) and run the recall e2e.
+
+* **Still collapses** ⇒ reproduction on current `develop`; bisect within `resolve_typed_triple`
+  vs the constructor seeding.
+* **Does NOT collapse** ⇒ the defect was incidentally fixed since 2026-08-05 (the DV-aware SST
+  compaction and async-compaction work landed in that window), and **TD-RECALL-2's re-land is
+  unblocked** — which would unblock the whole ADR-090 identity chain.
+
+The second outcome is plausible and cheap to test, so it should be tested before any redesign.
