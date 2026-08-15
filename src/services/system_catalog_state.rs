@@ -327,6 +327,17 @@ impl SystemCatalogState {
         self.inner.read().account_ids.values().copied().max()
     }
 
+    /// Snapshot the table identity rows used to recover the SystemCatalog's
+    /// transient allocator floors and namespace registry after WAL replay.
+    pub fn table_entries(&self) -> Vec<(TableIdentifier, Arc<CatalogTableSchema>)> {
+        self.inner
+            .read()
+            .tables
+            .iter()
+            .map(|(identifier, schema)| (identifier.clone(), schema.clone()))
+            .collect()
+    }
+
     /// The highest `object_id` folded into state, across tables AND the columns
     /// and indexes they carry (they all draw from one sequence).
     ///
