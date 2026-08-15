@@ -75,23 +75,27 @@ the risk is that someone follows the documented posture.
 
 == Related: the optimal cell size is also tier-dependent
 
-The same measurement sweep shows GET/query is U-shaped in `k_c` with its minimum
-at the natural `k_c` (≈4 MiB cells, vindicating ADR-065's IOP target), while
-**bytes/query fall monotonically** as cells get finer:
+Under the fixed 4 MiB read-planner cap, the same measurement sweep shows
+GET/query is U-shaped in `k_c` with its local minimum at the natural `k_c`,
+while **bytes/query fall monotonically** as cells get finer:
 
 ....
    k_c  MiB/cell  floor@10   GET/q   MB/q   %corpus touched
     30      12.0        12    49.5    170        40.0%
-    90       4.0        25    41.0    116        27.8%   <- GET minimum
+    90       4.0        25    41.0    116        27.8%   <- 4MiB-cap local minimum
    300       1.2        60    57.4     93        20.0%
 ....
 
-Because Hot bills requests and Cool bills bytes, the two tiers want different
-geometries: **Hot → k_c=90 (cheaper by 29%); Cool → k_c=300 (cheaper by 18%)**.
-`iop_target` is currently a single constant. If tiering is ever applied to a
-query-serving collection, its cell geometry is then optimised for a cost model it
-no longer pays. Filed here as an observation; a geometry change needs its own
-measurement.
+Because Hot bills requests and Cool bills bytes, the two tiers can want
+different geometries. The prior **Hot -> `k_c=90`** recommendation is withdrawn
+as a production conclusion: TD-SEARCH-3 subsequently reduced `k_c=30` from
+49.5 to approximately 17.9 wire GET/query by changing only the range cap from
+4 to 24 MiB. That does not prove `k_c=30` optimal either; `k_c=90` must be
+measured at the same eligible cap. The **Cool -> `k_c=300`** byte preference is
+still directionally supported because bytes fell monotonically, but its total
+cost must include requests and retrieval bytes. `iop_target` is currently a
+single constant. Any geometry recommendation needs an iso-cap, tier-priced
+measurement rather than inheriting the planner cap as a storage property.
 
 == What is NOT established
 
