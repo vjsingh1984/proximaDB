@@ -42,6 +42,10 @@ proximadb-cache = { workspace = true }
 # control-layer catalog), so storage -> foundation is a clean downward edge with
 # no grandfathered control-layer coupling (TD-DECOMP ratchet).
 proximadb-catalog-schema = { workspace = true }
+# text_search/text_filter n-gram bloom (TD-DECOMP-73)
+proximadb-bloom = { workspace = true }
+regex.workspace = true
+arrow-select = { version = "58", default-features = false }
 crc32fast.workspace = true
 proximadb-runtime-common.workspace = true
 serde.workspace = true

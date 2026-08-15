@@ -9,7 +9,10 @@
 //! the root re-exports it from there so existing import paths keep working.
 
 pub mod fulltext_index;
+pub mod metadata_filter_strategy;
+pub mod metadata_filter_types;
 pub mod sdp;
+pub mod text_filter;
 pub mod text_storage;
 
 pub use sdp::{SdpChunk, SdpChunker, SdpConfig};

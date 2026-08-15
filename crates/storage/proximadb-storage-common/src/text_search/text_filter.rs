@@ -37,7 +37,7 @@
 
 use std::collections::HashSet;
 
-use crate::core::bloom::{BloomFilter, BloomFilterConfig};
+use proximadb_bloom::{BloomFilter, BloomFilterConfig};
 use regex::Regex;
 use thiserror::Error;
 
@@ -614,7 +614,7 @@ impl TextFilterBuilder {
         });
 
         let config = BloomFilterConfig::for_sstable(estimated_count);
-        let mut bloom = crate::core::bloom::factory::BloomFilterFactory::create(&config);
+        let mut bloom = proximadb_bloom::factory::BloomFilterFactory::create(&config);
 
         for text in texts {
             let ngrams = TextColumnFilterEvaluator::extract_ngrams(text, ngram_size);
