@@ -1,0 +1,110 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-IVF-5: PCA deflation returns duplicate components past ~40, capping the usable projection width
+:status: Open
+:dim: D1
+:pillar: PERF
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open — reproduced by an executing unit test. Not yet observed on a production corpus.**
+| Priority | **P2 — blocks a measured COGS win.** No live defect: the shipped width is 10–14, far inside the safe region. It caps the TD-IVF-3 projection-width floor at 32 when the measured optimum at 384-d and 768-d is 64.
+| Component | `crates/storage/proximadb-engine-core/src/proximablocks/spatial_clustering.rs` — `IncrementalPCA::finalize`, `power_iteration`, `deflate_matrix`. Guarded by `deep_component_conditioning_tests` in the same file.
+| Evidence | Deterministic synthetic corpora (dim=96, 4000 rows), four spectra. Reproduced in-tree.
+|===
+
+== The defect
+
+`IncrementalPCA::finalize` extracts components one at a time: `power_iteration`
+finds the dominant eigenvector of the residual covariance, then `deflate_matrix`
+subtracts `λvvᵀ` and the loop repeats. Two properties combine badly:
+
+. `power_iteration` always starts from **the same fixed seed vector**
+  (`(i+1).sin()`), and runs a fixed 20 iterations.
+. Deflation is done in floating point with no re-orthogonalisation against the
+  components already extracted, so residue accumulates along directions that were
+  supposedly removed.
+
+Past a spectrum-dependent depth the residual matrix is small enough that the
+accumulated residue dominates it. Power iteration then converges to a direction
+**already extracted**, and — because the seed never varies — does so repeatedly.
+
+Measured onset, deterministic corpora, `dim=96`:
+
+[cols="1,1,1", options="header"]
+|===
+| spectrum | first near-duplicate pair | \|dot\|
+| `0.90^j` (fast geometric) | components **(2, 42)** | 0.994
+| `0.95^j` | components **(2, 59)** | 0.987
+| `0.97^j` (mild) | none within 96 | —
+| `1/sqrt(j+1)` (power law) | none within 96 | —
+|===
+
+Note *which* component is duplicated: **component 2**, an early, high-variance
+direction — not noise. That is the harmful case. A duplicated direction is
+counted twice in the projected distance that ranks coarse cells, so the metric is
+skewed toward whatever that direction encodes. It also consumes a coordinate in
+every centroid comparison and `n_comp·dim + k_c·n_comp` f32s of A0 for no
+information.
+
+== Why nothing caught it
+
+Recall cannot see it. The coarse projection only *selects cells*; survivors are
+re-ranked by the SQ8 tier and then exactly. A skewed cell ranking costs extra
+probes at the recall floor — it does not produce wrong results — so it surfaces as
+a slightly worse GET/query curve, indistinguishable from ordinary geometry
+variation. The entire 26-bed width study ran at widths where this never triggered
+(the deepest production width is 14) except at the sweep's own `n_comp=128`
+points, where it would have been present and unattributed.
+
+**This is a candidate explanation for the one anomaly in the TD-IVF-3 table:**
+width 64 was the optimum at 384-d and 768-d but *lost* to 32 at 128-d. If the
+128-d corpus has a faster-decaying effective spectrum, its components past ~40
+would be degenerate, which is exactly the shape of that result. Suggestive, not
+established — it predicts a testable signature (duplicate components in that
+bed's persisted A0 model) that has not been checked.
+
+== Effect on TD-IVF-3
+
+The projection-width floor ships with `IVF_NCOMP_FLOOR_CEILING = 32` rather than
+the measured optimum of 64. 32 is clear in every spectrum tested; 64 is inside the
+degenerate region for two of the four. That forfeits part of the measured win —
+the 48→64 step at 384-d was worth as much as 12→24 — but shipping 64 on top of a
+known-degenerate extractor would be optimising a metric the projection is
+silently corrupting.
+
+== Proposed resolution
+
+. **Re-orthogonalise each new component** against all previously extracted ones
+  (modified Gram-Schmidt) immediately after `power_iteration` returns, before
+  deflation. This is the standard fix and is `O(n_comp·dim)` per component —
+  negligible beside the `22·dim²·n_comp` the extraction already costs.
+. **Stop early when the residual eigenvalue collapses.** If the Rayleigh quotient
+  falls below a small fraction of the leading eigenvalue, the remaining
+  directions carry no usable signal; returning fewer components is strictly
+  better than returning duplicates, and the width is already self-describing
+  per segment (A0 stores `n_comp`), so a short model is legal on the read path.
+. **Vary the power-iteration seed per component** so a degenerate residual cannot
+  funnel every component to the same vector. Cheapest of the three, and the least
+  complete — do it in addition to (1), not instead.
+. Then **raise `IVF_NCOMP_FLOOR_CEILING` to 64**, delete
+  `deflation_still_degenerates_beyond_the_permitted_floor` (it exists to make this
+  TD executable and should fail once fixed), and re-run the width bake at 64.
+
+Any of these changes what gets written into A0, so it is a write-path change:
+mixed-read-safe by construction (the width and components are persisted per
+segment), but it must be measured against the recall baseline before the ceiling
+moves.
+
+== What is NOT established
+
+* **No production corpus has been checked.** The onset depth is spectrum-dependent
+  and every number above is synthetic. The cheap check is to read the persisted A0
+  model out of an existing wide bed (the `n_comp=128` beds) and compute the
+  pairwise dot products — the data is already on disk.
+* Whether the mild non-orthogonality seen at *all* depths (|dot| ≈ 0.02–0.06,
+  from 20 fixed iterations) matters at all. It is assumed benign; nothing
+  measures it.
+* Whether the 128-d anomaly is actually this. Stated as a hypothesis with a
+  testable signature, not a conclusion.

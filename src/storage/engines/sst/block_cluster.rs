@@ -297,10 +297,24 @@ fn default_train_sample(k: usize) -> usize {
 const IVF_NCOMP_FLOOR_DEFAULT: usize = 0;
 
 /// Ceiling applied to the *floor* (never to the legacy value, and never to the
-/// explicit `PROXIMADB_IVF_NCOMP` eval override). Bounds A0 growth: the coarse
-/// directory carries `n_comp·dim + k_c·n_comp` f32s, so width is linear in the
-/// cold-prefix bytes a first query fetches (`coarse_directory.rs` `serialized_len`).
-const IVF_NCOMP_FLOOR_CEILING: usize = 64;
+/// explicit `PROXIMADB_IVF_NCOMP` eval override).
+///
+/// **Set by numerical conditioning, not by byte budget** (TD-IVF-5). The PCA
+/// extractor uses power iteration with deflation from a fixed seed vector, and
+/// past a spectrum-dependent depth it stops producing new directions and returns
+/// near-duplicates of components already extracted — measured onset at component
+/// 42 for a `0.90^j` spectrum and 59 for `0.95^j`
+/// (`spatial_clustering.rs::deep_component_conditioning_tests`). A duplicate of
+/// an early component double-counts a high-variance direction and distorts the
+/// metric that ranks coarse cells, and end-to-end recall cannot detect it.
+///
+/// 32 is clear in every spectrum tested; 64 is not. This lifts to the measured
+/// optimum (64 at 384-d and 768-d) once the extractor re-orthogonalises.
+///
+/// A0 bytes are a *separate*, looser constraint — the directory carries
+/// `n_comp·dim + k_c·n_comp` f32s and is guarded independently at width 64 by
+/// `coarse_directory.rs::a0_size_budget_tests`.
+const IVF_NCOMP_FLOOR_CEILING: usize = 32;
 
 /// TD-WLP-4b: PCA projection dimensionality = max of two logarithmic terms
 /// (`a·log2 dim` intrinsic-dim, `b·log2 k` partition-granularity insurance),
@@ -1540,12 +1554,22 @@ mod ncomp_floor_tests {
     #[test]
     fn floor_raises_narrow_widths_and_never_lowers() {
         for (dim, k, legacy) in MEASURED {
-            for floor in [32usize, 64] {
+            for floor in [16usize, 24, 32] {
                 let got = projection_dims_with_floor(dim, k, 1.5, 1.5, floor);
-                assert_eq!(got, floor, "dim={dim} k={k} floor={floor}");
+                assert_eq!(got, floor.max(legacy), "dim={dim} k={k} floor={floor}");
                 assert!(got >= legacy, "the floor must never narrow the projection");
             }
         }
+    }
+
+    /// The measured optimum at 384-d and 768-d is 64, but the PCA extractor
+    /// degenerates past ~42 components (TD-IVF-5), so the ceiling holds the floor
+    /// at 32 until that is fixed. Asking for 64 must clamp — silently, but
+    /// documented — rather than producing duplicated components.
+    #[test]
+    fn requesting_the_measured_optimum_clamps_to_the_conditioning_limit() {
+        assert_eq!(IVF_NCOMP_FLOOR_CEILING, 32, "ceiling is set by TD-IVF-5");
+        assert_eq!(projection_dims_with_floor(768, 90, 1.5, 1.5, 64), 32);
     }
 
     /// A0 carries `n_comp·dim + k_c·n_comp` f32s, so width is linear in the cold
