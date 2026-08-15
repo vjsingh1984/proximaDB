@@ -16,4 +16,6 @@ pub mod spatial_clustering;
 pub mod spatial_encoding;
 pub mod spatial_pruning;
 pub mod spatial_traits;
+pub mod sst_metadata;
+pub mod swift_metadata;
 pub mod utilities;

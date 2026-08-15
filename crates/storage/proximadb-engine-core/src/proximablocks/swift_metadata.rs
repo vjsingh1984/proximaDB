@@ -6,11 +6,13 @@ use std::sync::Arc;
 
 use tracing::{trace, warn};
 
-use crate::storage::engines::core::io::zero_copy::traits::{
+use proximadb_storage_common::zero_copy_traits::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext, QueryType,
 };
-use crate::storage::persistence::filesystem::FilesystemFactory;
+// The serializer depends only on the `FilesystemPort` seam (get_filesystem); the
+// root `FilesystemFactory` implements it, so callers pass it unchanged.
 use proximadb_kernel::error::ProximaDBError;
+use proximadb_storage_ports::FilesystemPort;
 
 /// SWIFT global metadata header (bytemuck compatible)
 #[repr(C)]
@@ -243,12 +245,12 @@ impl SwiftMetadata {
 pub struct SwiftMetadataSerializer {
     /// Filesystem interface for reading files
     #[allow(dead_code)]
-    filesystem: Arc<FilesystemFactory>,
+    filesystem: Arc<dyn FilesystemPort>,
 }
 
 impl SwiftMetadataSerializer {
     /// Create new SWIFT serializer
-    pub fn new(filesystem: Arc<FilesystemFactory>) -> Self {
+    pub fn new(filesystem: Arc<dyn FilesystemPort>) -> Self {
         Self { filesystem }
     }
 
@@ -628,20 +630,61 @@ impl Clone for SwiftMetadata {
 }
 
 #[cfg(test)]
+mod test_fs_port {
+    //! The serializer's `extract_metadata` is a placeholder that never touches the
+    //! filesystem, so tests inject a no-op `FilesystemPort`.
+    use async_trait::async_trait;
+    use proximadb_storage_filesystem_types::{DirEntry, FileOptions, FileSystem, FsResult};
+    use std::sync::Arc;
+
+    pub(super) fn noop_port() -> Arc<dyn proximadb_storage_ports::FilesystemPort> {
+        Arc::new(NoopPort)
+    }
+
+    struct NoopPort;
+
+    #[async_trait]
+    impl proximadb_storage_ports::FilesystemPort for NoopPort {
+        fn get_filesystem(&self, _url: &str) -> FsResult<Arc<dyn FileSystem>> {
+            Err(
+                proximadb_storage_filesystem_types::FilesystemError::NotFound(
+                    "test stub".to_string(),
+                ),
+            )
+        }
+        async fn create_dir_all(&self, _url: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn write(
+            &self,
+            _url: &str,
+            _data: &[u8],
+            _options: Option<FileOptions>,
+        ) -> FsResult<()> {
+            Ok(())
+        }
+        async fn move_atomic(&self, _from: &str, _to: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn delete(&self, _url: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn read(&self, _url: &str) -> FsResult<Vec<u8>> {
+            Ok(Vec::new())
+        }
+        async fn list(&self, _url: &str) -> FsResult<Vec<DirEntry>> {
+            Ok(Vec::new())
+        }
+    }
+}
+#[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use test_fs_port::noop_port;
 
     #[tokio::test]
     async fn test_swift_metadata_serialization() {
-        let _temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(
-            FilesystemFactory::create(config)
-                .await
-                .expect("Failed to create filesystem"),
-        );
-        let serializer = SwiftMetadataSerializer::new(filesystem.clone());
+        let serializer = SwiftMetadataSerializer::new(noop_port());
 
         // Test serialization
         let serialized = serializer
@@ -659,14 +702,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_id_lookup_optimization() {
-        let _temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(
-            FilesystemFactory::create(config)
-                .await
-                .expect("Failed to create filesystem"),
-        );
-        let serializer = SwiftMetadataSerializer::new(filesystem.clone());
+        let serializer = SwiftMetadataSerializer::new(noop_port());
 
         let serialized = serializer
             .serialize_metadata("/test/file.swift", "test_collection")
@@ -692,14 +728,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_segment_optimization() {
-        let _temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(
-            FilesystemFactory::create(config)
-                .await
-                .expect("Failed to create filesystem"),
-        );
-        let serializer = SwiftMetadataSerializer::new(filesystem.clone());
+        let serializer = SwiftMetadataSerializer::new(noop_port());
 
         let serialized = serializer
             .serialize_metadata("/test/file.swift", "test_collection")

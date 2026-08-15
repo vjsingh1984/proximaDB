@@ -7473,10 +7473,13 @@ name = "proximadb-engine-core"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bincode",
  "bytemuck",
  "chrono",
+ "futures",
  "half",
+ "parking_lot",
  "proximadb-bloom",
  "proximadb-clustering-kernel",
  "proximadb-codec",
@@ -7490,6 +7493,8 @@ dependencies = [
  "proximadb-records",
  "proximadb-search-types",
  "proximadb-storage-common",
+ "proximadb-storage-filesystem-types",
+ "proximadb-storage-ports",
  "rand 0.8.6",
  "rayon",
  "serde",
