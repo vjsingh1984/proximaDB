@@ -1157,6 +1157,29 @@ def prefix_quality_checkpoints(
     return result
 
 
+def query_result_identity(returned_ids: list[str]) -> dict[str, object]:
+    """Hash one query's result IDs without persisting corpus identifiers.
+
+    Both forms are needed when a behavior-neutral storage experiment changes
+    an aggregate recall value: the ordered digest detects rank changes, while
+    the set digest distinguishes membership changes from tie-only reordering.
+    Each query is hashed separately so the evidence can localize divergence
+    without retaining corpus identifiers.
+    """
+    ordered_json = json.dumps(
+        returned_ids, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    set_json = json.dumps(
+        sorted(set(returned_ids)), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    return {
+        "ordered_ids_sha256": hashlib.sha256(ordered_json).hexdigest(),
+        "set_ids_sha256": hashlib.sha256(set_json).hexdigest(),
+        "result_count": len(returned_ids),
+        "unique_result_count": len(set(returned_ids)),
+    }
+
+
 def run_query_sweep(
     server: str,
     collection_id: str,
@@ -1176,6 +1199,11 @@ def run_query_sweep(
     before = scrape(server)
     latencies = []
     recalls = []
+    ordered_result_digests = []
+    set_result_digests = []
+    result_counts = []
+    unique_result_counts = []
+    recall_hits_by_query = []
     for offset, query in enumerate(queries):
         started = time.perf_counter()
         response = request_json(
@@ -1185,9 +1213,27 @@ def run_query_sweep(
             timeout=300,
         )
         latencies.append((time.perf_counter() - started) * 1000)
-        returned = {item.get("id") for item in response.get("results", [])}
+        response_results = response.get("results")
+        if not isinstance(response_results, list):
+            raise RuntimeError(f"{phase}: query {offset} returned no result list")
+        returned_ids = []
+        for item in response_results:
+            oid = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(oid, str):
+                raise RuntimeError(
+                    f"{phase}: query {offset} returned a result without a string id"
+                )
+            returned_ids.append(oid)
+        identity = query_result_identity(returned_ids)
+        ordered_result_digests.append(identity["ordered_ids_sha256"])
+        set_result_digests.append(identity["set_ids_sha256"])
+        result_counts.append(identity["result_count"])
+        unique_result_counts.append(identity["unique_result_count"])
+        returned = set(returned_ids)
         expected = {f"v{row}" for row in groundtruth[offset][:top_k]}
-        recalls.append(len(returned & expected) / top_k)
+        recall_hits = len(returned & expected)
+        recall_hits_by_query.append(recall_hits)
+        recalls.append(recall_hits / top_k)
     after = scrape(server)
     quality_checkpoints = prefix_quality_checkpoints(recalls, latencies)
     latencies.sort()
@@ -1226,6 +1272,16 @@ def run_query_sweep(
         "query_count": query_count,
         "top_k": top_k,
         "recall_at_k": sum(recalls) / len(recalls),
+        "recall_hits_total": sum(recall_hits_by_query),
+        "recall_denominator": query_count * top_k,
+        "result_identity": {
+            "schema": "sha256-query-result-ids-v1",
+            "ordered_ids_sha256_by_query": ordered_result_digests,
+            "set_ids_sha256_by_query": set_result_digests,
+            "recall_hits_by_query": recall_hits_by_query,
+            "result_count_by_query": result_counts,
+            "unique_result_count_by_query": unique_result_counts,
+        },
         "prefix_quality_checkpoints": quality_checkpoints,
         "latency_ms": {
             "p50": percentile(latencies, 0.50),

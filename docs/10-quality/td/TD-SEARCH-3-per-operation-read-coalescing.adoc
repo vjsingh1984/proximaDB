@@ -11,8 +11,11 @@
 
 | Status
 | **In Progress.** The physical-operation counter and bounded prefix read are
-implemented. The SIFT1M cloud/restart evidence gate is still open; projected
-GET reductions are not recorded as measured results.
+implemented. A fixed-bed Azurite wire experiment proves that 24--32 MiB ranges
+reduce physical GETs by 64--65% and that the Azure SDK does not split them.
+No larger default is promoted yet: 32 MiB exceeds the declared RSS bound, while
+24 MiB needs an exact-current paired rerun under the bounded recall
+non-inferiority gate. The SIFT1M cloud/restart evidence gate remains open.
 
 | Priority
 | **P1.** Operation count is a direct Hot-tier Blob cost and latency multiplier.
@@ -219,6 +222,75 @@ are bounded, p50/p95/RSS do not materially regress, and the wire/application
 ratio proves one HTTP request per issued large range. Repeat only eligible caps
 on the natural `k_c=90` bed; use `k_c=200` afterward to measure the independent
 byte/selectivity trade-off.
+
+=== S3b: measured wire range-cap knee
+
+The fixed-bed falsification experiment ran with an exact release binary from
+source revision `16712f1ac830556ebf3f62f41aabbb595ea838d9` (binary SHA-256
+`ff7675af778c04f280cf57fdf8093a49e51ec390a026baecc38de981b7996500`).
+Every point used the same one-segment 491,655-row, 768-dimensional `k_c=30`,
+width-32 bed, `nprobe=12`, 1,000 queries, a fresh process/cache, a 1 MiB gap
+cap, and the production Azure backend against Azurite. The isolated-port
+configuration SHA-256 was
+`f316a004ac4ff30a4114ba7d38662edf1845eded1b50ed5464423da854b88740`.
+
+The clean, caffeinated 4-versus-32 MiB run measured:
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| Range cap / top-k | Recall | Wire GET/q | App GET/q | MB/q | p50 / p95 ms | Peak RSS GB
+
+| 4 MiB / 10 | 0.9837 | 49.543 | 49.542 | 170.314 | 537.98 / 777.13 | 4.656
+| 32 MiB / 10 | 0.9837 | 17.084 | 17.083 | 176.132 | 200.15 / 252.32 | 5.228
+| 4 MiB / 20 | 0.9815 | 49.529 | 49.528 | 172.225 | 559.17 / 634.07 | 4.651
+| 32 MiB / 20 | 0.9815 | 17.169 | 17.168 | 178.973 | 208.53 / 256.69 | 5.158
+|===
+
+The wire counter saw exactly one HTTP range request per application-issued
+range at both caps. The extra approximately one wire GET per process is the
+non-range object request, amortized over 1,000 queries. Thus neither the SDK
+nor Azurite imposes a 4 MiB range split. At 32 MiB, GETs fell 65.3--65.5% and
+bytes rose only 3.4--3.9%, but peak RSS rose 10.9--12.3%. Top-10 therefore
+fails the experiment's predeclared `candidate/base <= 1.10` RSS gate; 32 MiB
+is not eligible for promotion.
+
+A focused 4-versus-24 MiB run then measured:
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| Range cap / top-k | Recall | Wire GET/q | App GET/q | MB/q | p50 / p95 ms | Peak RSS GB
+
+| 4 MiB / 10 | 0.9840 | 49.543 | 49.542 | 170.314 | 610.76 / 1197.05 | 4.654
+| 24 MiB / 10 | 0.9836 | 17.958 | 17.957 | 176.003 | 527.17 / 975.94 | 4.950
+| 4 MiB / 20 | 0.98155 | 49.529 | 49.528 | 172.225 | 604.23 / 849.99 | 4.658
+| 24 MiB / 20 | 0.98150 | 17.846 | 17.845 | 179.088 | 273.99 / 392.39 | 4.949
+|===
+
+This second run had unrelated host compilation and benchmark load. Its latency
+is therefore retained for provenance but is not accepted as isolated latency
+evidence. The operation shape, bytes, SDK ratio, and process RSS reproduced:
+24 MiB reduced wire GETs 63.8--64.0%, bounded bytes to +3.3--4.0%, and bounded
+RSS to +6.2--6.4%. It also crosses the `<=20 GET/query` economic threshold.
+
+Repeated 4 MiB controls span 0.9835--0.9840 at top-10, so requiring exact
+aggregate equality across fresh processes would mistake repeatability noise for
+a quality regression. The promotion gate instead requires candidate recall to
+remain at least 0.98 and permits at most 0.0005 absolute loss versus the paired
+4 MiB control. On 1,000 top-10 queries that margin is five ground-truth hits out
+of 10,000 and equals the observed control envelope; it does not lower the
+quality ratchet. The 24 MiB point satisfies this aggregate gate.
+
+Exact ordered result equality is diagnostic, not an acceptance requirement.
+The benchmark now records per-query ordered-ID, ID-set, recall-hit, and
+result-count hashes without retaining user IDs, plus total hit delta and counts
+of queries that gained or lost hits. An exact-current-binary rerun must rule out
+a systematic result-set shift and confirm the paired non-inferiority result
+before the default can change.
+
+These measurements invalidate two prior shortcuts: 4 MiB is neither a Blob
+billing quantum nor an SDK request quantum, and the `k_c=90` GET minimum
+measured under the 4 MiB cap is not yet a provider-independent geometry result.
+Repeat the eligible cap on `k_c=90` at iso-cap before choosing cell count.
 
 === S4: remove the redundant PAX-as-SST1 magic probe
 
@@ -436,10 +508,12 @@ materialized segment geometry:
 . recall@10 (must not regress below the ratchet);
 . prefix disabled (`0`) versus 1 MiB versus a justified alternative.
 
-Before interpreting finer `k_c` as GET-optimal, additionally complete the S3a
-4/8/16/32 MiB sweep with Azurite wire counts. Keep any resulting policy
-tier-aware: Hot flat Blob in the same region may prefer fewer, larger requests;
-Cool/Cold/remote placement must jointly price bytes and requests.
+Before interpreting finer `k_c` as GET-optimal, complete the paired
+non-inferiority/identity rerun for the 24 MiB candidate and repeat an eligible
+cap on `k_c=90`. Keep any
+resulting policy tier-aware: Hot flat Blob in the same region may prefer fewer,
+larger requests; Cool/Cold/remote placement must jointly price bytes and
+requests. The measured sweep does not authorize a production-default change.
 
 The benchmark must wait for flush/compaction quiescence and prove that all
 1M vectors are searchable from materialized segments before restarting.

@@ -274,14 +274,15 @@ exists to absorb CI hardware/threading differences, not scatter.
 
 == Adjacent findings (measured, not proposed here)
 
-* **The 4MiB IOP target is vindicated, and now bracketed on both sides.** GET/query
-  is U-shaped in `k_c` with its minimum at the natural value, while bytes/query
-  fall monotonically as cells get finer:
+* **The 4MiB-conditioned geometry is bracketed, but 4 MiB is not vindicated as
+  a provider optimum.** Under the fixed 4 MiB planner, GET/query is U-shaped in
+  `k_c` with its local minimum at the natural value, while bytes/query fall
+  monotonically as cells get finer:
 +
 ....
    k_c  MiB/cell  floor@10   GET/q   MB/q   %corpus touched
     30      12.0        12    49.5    170        40.0%
-    90       4.0        25    41.0    116        27.8%   <- GET minimum
+    90       4.0        25    41.0    116        27.8%   <- 4MiB-cap local minimum
    300       1.2        60    57.4     93        20.0%
 ....
 +
@@ -298,9 +299,14 @@ want different geometries — see link:TD-COST-1-cold-tier-posture-unsafe-for-qu
   counter sits above the SDK. On the 768-d `k_c=30`, width-32 bed, nprobe 12
   measured 49.542 application GET/query while Region B alone read 150.30 MB;
   the approximately 12.5 MiB average cell is mechanically split by the planner.
-  TD-SEARCH-3's fixed-bed 4/8/16/32 MiB wire sweep must complete before this TD
-  calls smaller cells GET-optimal. `k_c=200` remains useful afterward for the
-  independent byte/selectivity trade-off.
+  TD-SEARCH-3's fixed-bed wire sweep subsequently measured `k_c=30` at 24 MiB
+  near 17.9 wire GET/query versus 49.5 at 4 MiB, with only approximately 4%
+  more bytes and approximately 6% more RSS. That result is not directly
+  comparable to `k_c=90` at 4 MiB: cap and geometry changed together. A
+  `k_c=90` rerun at the same eligible cap is required before this TD calls any
+  cell size Hot-Blob GET-optimal. `k_c=200` remains useful afterward for the
+  independent byte/selectivity trade-off. The 24 MiB default remains blocked
+  on TD-SEARCH-3's exact-current paired non-inferiority rerun.
 * **Read metering, verified against vendor docs.** Azure **Blob** bills one
   transaction per request with **no 4 MiB increment** — that rule is ADLS Gen2
   (`dfs.`) only, and ADR-036 puts us on the flat Blob endpoint. S3 and GCS also

@@ -809,6 +809,44 @@ version = "binary/source aed724fc533dac595e6ac31894ea3e505e1bcdfd; matrix git re
 notes = "Raw matrix SHA-256 5536f57e2ae9a3c6d2b378e4659eac2349a33405f6da0f30693d167b37d03205; binary SHA-256 62677fb41686015569f7de408fbe8c9758dd7a469de582cb33c8c9d17d1efdae; bed-config SHA-256 1816b6e00cab6f69659f943ee93b2dbfafabb469f207cf8c0bd23feb30aad8dd. Azurite is operation-shape and relative-latency evidence, not Azure WAN latency. The application counter is above object_store.get_range; TD-SEARCH-3's range-cap sweep adds server-side wire counting."
 
 [[claims]]
+id = "bge768_k30_range_cap_4_vs_32_wire"
+claim = "On one immutable 491,655-row 768-dimensional PAX v3 segment (k_c=30, projection width 32), nprobe=12 and 1,000 fresh-process queries, increasing only the Azure coalesced-range cap from 4 to 32 MiB reduced wire GET/query from 49.543 to 17.084 at top-10 and 49.529 to 17.169 at top-20 (65.3-65.5%). Recall was unchanged in-run (0.9837 top-10, 0.9815 top-20), bytes rose 3.4-3.9%, and the Azure SDK emitted exactly one HTTP range request per application range. Peak RSS rose 10.9-12.3%, so 32 MiB fails the declared <=1.10 RSS-ratio gate and is not a production-default candidate."
+metric = "wire and application GET/query + recall@10/@20 + bytes/query + p50/p95 + peak RSS + SDK range-splitting ratio"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc",
+  "docs/10-quality/td/TD-IVF-3-coarse-pca-projection-width-miscalibrated.adoc",
+  "docs/10-quality/td/TD-COST-1-cold-tier-posture-unsafe-for-query-serving-collections.adoc",
+  "docs/12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc",
+]
+bench_source = "scripts/bench/range_cap_sweep.py"
+bench_command = "caffeinate -dimsu <repo-python> scripts/bench/range_cap_sweep.py --binary <release-server> --binary-source-revision 16712f1ac830556ebf3f62f41aabbb595ea838d9 --config <isolated-bed-config> --run-root <run-root> --output <matrix.json> --base-path <bge768-base> --base-format u8bin --query-path <bge768-query.u8bin> --query-format u8bin --groundtruth-path <bge768-top100.ivecs> --groundtruth-format ivecs --groundtruth-scope-rows 491655 --rows 491655 --nprobe 12 --range-caps-mib 4,32 --coalesce-gap-mib 1 --top-k-values 10,20 --queries 1000 --azurite-debug-log <azurite-debug.log> --storage-url az://proximadb-bge-phase2/run-768-k30-n32"
+artifact = "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc"
+hardware = "Local macOS arm64 Apple Silicon, 64 GiB, caffeinated serialized release-server precision run; Azurite localhost HTTP backend"
+date = "2026-08-14"
+version = "binary/source 16712f1ac830556ebf3f62f41aabbb595ea838d9"
+notes = "Matrix SHA-256 6366fddfc1b8e7e319cb48d26a9fcefcb82c4a830a23e6bb91a786926952b5d5; binary SHA-256 ff7675af778c04f280cf57fdf8093a49e51ec390a026baecc38de981b7996500; isolated config SHA-256 f316a004ac4ff30a4114ba7d38662edf1845eded1b50ed5464423da854b88740. External raw artifact: /Users/vijaysingh/proximadb-bench-data/runs/range-cap-precision-16712f1ac/matrix.json; raw logs are losslessly gzip-compressed and the regenerable PAX snapshot was removed. Azurite proves production-Azure-backend HTTP request shape/count and relative localhost latency, not Azure service latency."
+
+[[claims]]
+id = "bge768_k30_range_cap_24mib_knee"
+claim = "A focused repeat on the same immutable bed measured 24 MiB at 17.958 wire GET/query (top-10) and 17.846 (top-20), versus 49.543/49.529 at 4 MiB: a 63.8-64.0% reduction with 3.3-4.0% more bytes, 6.2-6.4% more peak RSS, and one wire range request per application range. Recall changed 0.9840->0.9836 at top-10 and 0.98155->0.98150 at top-20, remaining above 0.98 and within the 0.0005 non-inferiority margin. Promotion remains pending an exact-current paired per-query diagnostic rerun and iso-cap k_c=90 evidence."
+metric = "wire and application GET/query + paired recall delta + bytes/query + peak RSS + SDK range-splitting ratio"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc",
+  "docs/10-quality/td/TD-IVF-3-coarse-pca-projection-width-miscalibrated.adoc",
+  "docs/10-quality/td/TD-COST-1-cold-tier-posture-unsafe-for-query-serving-collections.adoc",
+  "docs/12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc",
+]
+bench_source = "scripts/bench/range_cap_sweep.py"
+bench_command = "caffeinate -dimsu <repo-python> scripts/bench/range_cap_sweep.py --binary <release-server> --binary-source-revision 16712f1ac830556ebf3f62f41aabbb595ea838d9 --config <isolated-bed-config> --run-root <run-root> --output <matrix.json> --base-path <bge768-base> --base-format u8bin --query-path <bge768-query.u8bin> --query-format u8bin --groundtruth-path <bge768-top100.ivecs> --groundtruth-format ivecs --groundtruth-scope-rows 491655 --rows 491655 --nprobe 12 --range-caps-mib 4,24 --coalesce-gap-mib 1 --top-k-values 10,20 --queries 1000 --azurite-debug-log <azurite-debug.log> --storage-url az://proximadb-bge-phase2/run-768-k30-n32"
+artifact = "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc"
+hardware = "Local macOS arm64 Apple Silicon, 64 GiB, caffeinated release-server; Azurite localhost HTTP backend; unrelated host Rust compilation and another benchmark make latency load-confounded"
+date = "2026-08-14"
+version = "binary/source 16712f1ac830556ebf3f62f41aabbb595ea838d9"
+notes = "Matrix SHA-256 bf9080c722d1b4dbc49f15ae62173a87c4b4e013bc093b6850cda012f9745149; binary SHA-256 ff7675af778c04f280cf57fdf8093a49e51ec390a026baecc38de981b7996500. External raw artifact: /Users/vijaysingh/proximadb-bench-data/runs/range-cap-knee24-16712f1ac/matrix.json; raw logs are losslessly gzip-compressed and the regenerable PAX snapshot was removed. Latency values are retained for provenance but are not accepted as isolated latency evidence. The repeated 4 MiB top-10 controls span 0.9835-0.9840, motivating paired per-query diagnostics instead of exact aggregate equality."
+
+[[claims]]
 id = "compaction_memory_amplification_3m3"
 claim = "After canonical-record and in-place-MVCC copy removal, a release-profile 3.3M-vector PAX compaction over the production Azure backend/Azurite path still consumes 9.85x incremental RSS per input-segment byte; input bytes are therefore a usable conservative admission currency, with 12x initial headroom"
 metric = "incremental_peak_rss_bytes / input_segment_bytes + compaction wall time + settled segment count + recall@10"
