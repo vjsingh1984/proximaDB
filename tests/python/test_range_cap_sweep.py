@@ -198,3 +198,56 @@ def test_decision_matches_application_reads_to_ranged_gets_not_control_gets():
     assert decision["checks"]["one_wire_range_get_per_application_get"] is True
     assert decision["wire_range_to_application_get_ratio"] == 1.0
     assert decision["promotion_eligible"] is True
+
+
+def test_decision_localizes_result_set_and_order_mismatches_without_relaxing_gate():
+    args = SimpleNamespace(
+        recall_tolerance=1e-12,
+        target_recall=0.98,
+        min_wire_get_reduction=0.2,
+        max_byte_amplification=1.5,
+        max_latency_ratio=1.1,
+        max_rss_ratio=1.1,
+    )
+    baseline = {
+        "range_cap_mib": 4,
+        "recall_at_k": 0.99,
+        "physical_gets": 100.0,
+        "bytes_read": 100.0,
+        "latency_ms": {"p50": 10.0, "p95": 20.0},
+        "process_rss": {"peak_bytes": 1_000},
+        "wire_http": {"get_requests": 101, "range_get_requests": 100},
+        "result_identity": {
+            "ordered_ids_sha256_by_query": ["order-a", "order-b"],
+            "set_ids_sha256_by_query": ["set-a", "set-b"],
+            "recall_hits_by_query": [10, 9],
+        },
+    }
+    candidate = copy.deepcopy(baseline)
+    candidate.update(
+        {
+            "range_cap_mib": 24,
+            "physical_gets": 60.0,
+            "bytes_read": 103.0,
+            "latency_ms": {"p50": 8.0, "p95": 16.0},
+            "process_rss": {"peak_bytes": 1_050},
+            "wire_http": {"get_requests": 61, "range_get_requests": 60},
+            "result_identity": {
+                "ordered_ids_sha256_by_query": ["order-a", "order-c"],
+                "set_ids_sha256_by_query": ["set-a", "set-b"],
+                "recall_hits_by_query": [10, 8],
+            },
+        }
+    )
+
+    decision = SWEEP.decision_for(candidate, baseline, args)
+
+    assert decision["result_identity_diagnostics"] == {
+        "ordered_result_mismatch_count": 1,
+        "ordered_result_first_mismatch_queries": [1],
+        "result_set_mismatch_count": 0,
+        "result_set_first_mismatch_queries": [],
+        "recall_hits_mismatch_count": 1,
+        "recall_hits_first_mismatch_queries": [1],
+    }
+    assert decision["promotion_eligible"] is True

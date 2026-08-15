@@ -106,6 +106,18 @@ def test_prefix_quality_checkpoints_reuse_one_query_execution() -> None:
     assert checkpoints[1]["latency_ms"]["p95"] == 950.0
 
 
+def test_query_result_identity_separates_membership_from_order() -> None:
+    first = HARNESS.query_result_identity(["v2", "v1", "v1"])
+    reordered = HARNESS.query_result_identity(["v1", "v2", "v1"])
+    changed = HARNESS.query_result_identity(["v1", "v3", "v1"])
+
+    assert first["ordered_ids_sha256"] != reordered["ordered_ids_sha256"]
+    assert first["set_ids_sha256"] == reordered["set_ids_sha256"]
+    assert first["set_ids_sha256"] != changed["set_ids_sha256"]
+    assert first["result_count"] == 3
+    assert first["unique_result_count"] == 2
+
+
 def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(
     tmp_path: Path,
 ) -> None:

@@ -217,6 +217,33 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
     # range requests for the SDK-splitting gate while retaining total GETs for
     # the economic reduction calculation.
     one_wire_range_per_application_get = abs(wire_ranges - app) < 0.5
+    baseline_identity = baseline.get("result_identity")
+    candidate_identity = candidate.get("result_identity")
+    identity_diagnostics = None
+    if isinstance(baseline_identity, dict) and isinstance(candidate_identity, dict):
+        identity_diagnostics = {}
+        for label, key in (
+            ("ordered_result", "ordered_ids_sha256_by_query"),
+            ("result_set", "set_ids_sha256_by_query"),
+            ("recall_hits", "recall_hits_by_query"),
+        ):
+            baseline_values = baseline_identity.get(key)
+            candidate_values = candidate_identity.get(key)
+            if not isinstance(baseline_values, list) or not isinstance(
+                candidate_values, list
+            ):
+                raise RuntimeError(f"result identity is missing {key}")
+            if len(baseline_values) != len(candidate_values):
+                raise RuntimeError(f"result identity length differs for {key}")
+            mismatches = [
+                index
+                for index, (before, after) in enumerate(
+                    zip(baseline_values, candidate_values, strict=True)
+                )
+                if before != after
+            ]
+            identity_diagnostics[f"{label}_mismatch_count"] = len(mismatches)
+            identity_diagnostics[f"{label}_first_mismatch_queries"] = mismatches[:20]
     checks = {
         "recall_identical": recall_identical,
         "target_recall_maintained": candidate["recall_at_k"] >= args.target_recall,
@@ -238,6 +265,7 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
         "rss_ratio": rss_ratio,
         "wire_to_application_get_ratio": wire / app if app else None,
         "wire_range_to_application_get_ratio": wire_ranges / app if app else None,
+        "result_identity_diagnostics": identity_diagnostics,
         "checks": checks,
         "promotion_eligible": all(checks.values()),
     }
