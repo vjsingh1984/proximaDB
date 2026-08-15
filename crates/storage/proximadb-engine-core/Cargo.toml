@@ -26,6 +26,10 @@ proximadb-clustering-kernel.workspace = true
 # smart_rowgroup_sizing (raptor rowgroup sizing heuristics, TD-DECOMP-69)
 # block_structures + index_structures (TD-DECOMP-71/72)
 proximadb-bloom.workspace = true
+# sst/swift metadata serializers (TD-DECOMP-75): FilesystemPort seam + zero-copy traits + futures block_on
+proximadb-storage-ports.workspace = true
+parking_lot.workspace = true
+futures.workspace = true
 proximadb-hardware-caps.workspace = true
 proximadb-codec.workspace = true
 proximadb-search-types.workspace = true
@@ -47,6 +51,8 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 [dev-dependencies]
 # `half` (f16/bf16) used only in per_column_alignment unit tests.
 half = "2.4"
+proximadb-storage-filesystem-types.workspace = true
+async-trait.workspace = true
 rand.workspace = true
 
 [lints]

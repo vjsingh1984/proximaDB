@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
 
-use crate::core::bloom::SstableBloomFilter;
-use crate::storage::engines::core::io::zero_copy::{
+use proximadb_bloom::SstableBloomFilter;
+use proximadb_kernel::error::ProximaDBError;
+use proximadb_storage_common::zero_copy_traits::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext,
 };
-use proximadb_kernel::error::ProximaDBError;
 
 /// SST Global metadata (fixed size, bytemuck-compatible)
 #[repr(C)]
@@ -112,13 +112,11 @@ pub struct SstMetadata {
 /// SST metadata serializer implementation
 pub struct SstMetadataSerializer {
     /// Filesystem for reading files
-    filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    filesystem: std::sync::Arc<dyn proximadb_storage_ports::FilesystemPort>,
 }
 
 impl SstMetadataSerializer {
-    pub fn new(
-        filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
-    ) -> Self {
+    pub fn new(filesystem: std::sync::Arc<dyn proximadb_storage_ports::FilesystemPort>) -> Self {
         Self { filesystem }
     }
 

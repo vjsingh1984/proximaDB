@@ -247,8 +247,8 @@ pub mod spatial_encoding; // 512-bit spatial codes for high-dimensional embeddin
 pub mod spatial_pruning; // SpatialPruner for unified block selection
 pub mod spatial_traits; // SpatialCurveEncoder trait for unified block clustering
 pub mod sst_io_layer; // Low-level I/O operations (formerly sst_io_layer)
-pub mod sst_metadata; // NEW: Zero-copy metadata serialization for SST
-pub mod swift_metadata;
+pub use proximadb_engine_core::proximablocks::sst_metadata; // extracted TD-DECOMP-75
+pub use proximadb_engine_core::proximablocks::swift_metadata; // extracted TD-DECOMP-75
 pub use proximadb_engine_core::proximablocks::utilities; // extracted TD-DECOMP-72
 
 // Re-exports for common use
