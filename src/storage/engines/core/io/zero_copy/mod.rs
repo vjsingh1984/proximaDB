@@ -20,7 +20,7 @@ pub use config::{WorkloadType, ZeroCopyIOSystemBuilder};
 pub use orchestrator::ZeroCopyIOSystem;
 
 // Common traits and types
-pub use traits::{DataRange, EngineMetadata, MetadataSerializer, QueryContext};
+pub use traits::MetadataSerializer;
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use proximadb_kernel::error::ProximaDBError;

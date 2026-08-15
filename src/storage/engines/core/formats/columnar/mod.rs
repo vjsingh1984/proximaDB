@@ -306,10 +306,8 @@ pub use fulltext_index::{
 use anyhow::Result;
 use arrow_schema::Schema;
 use parquet::file::metadata::RowGroupMetaData;
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use proximadb_distance_kernel::DistanceMetric;
 use proximadb_records::ProximaRecord;
 
 /// Search mode for columnar engines
