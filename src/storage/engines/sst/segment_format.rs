@@ -168,6 +168,40 @@ pub fn write_pax_segment_full(
         f32_tier,
         target_block,
         None,
+        &[],
+    )?
+    .meta)
+}
+
+/// TD-FPRUNE-1 (M1): [`write_pax_segment_full`] plus a P-Shred spec so the SST
+/// flush materializes declared filterable tags as typed user-columns (with
+/// min/max + bloom + the self-describing footer field-map), making footer-resident
+/// filter pruning fire end-to-end. Empty `shred_spec` ⇒ byte-identical to
+/// [`write_pax_segment_full`] (mixed-read-safe). Built from the flush's in-scope
+/// collection config via [`resolve_flush_shred_spec`].
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_full_shredded(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    shred_spec: &[(String, i32)],
+) -> Result<SegmentMeta> {
+    Ok(write_pax_segment_full_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        None,
+        shred_spec,
     )?
     .meta)
 }
@@ -194,6 +228,37 @@ pub fn write_pax_segment_full_with_cache_seed(
         f32_tier,
         target_block,
         Some(include_sq8),
+        &[],
+    )
+}
+
+/// TD-FPRUNE-1 (M1): [`write_pax_segment_full_with_cache_seed`] plus a P-Shred
+/// spec (see [`write_pax_segment_full_shredded`]). Empty `shred_spec` ⇒
+/// byte-identical to the non-shredded entry.
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_full_with_cache_seed_shredded(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    include_sq8: bool,
+    shred_spec: &[(String, i32)],
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
+    write_pax_segment_full_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        Some(include_sq8),
+        shred_spec,
     )
 }
 
@@ -208,6 +273,7 @@ fn write_pax_segment_full_internal(
     f32_tier: bool,
     target_block: Option<usize>,
     capture_sq8: Option<bool>,
+    shred_spec: &[(String, i32)],
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     // TD-RDSTRAT-5 S1 / TD-WLP-4 (default ON, kill-switch
     // `PROXIMADB_PAX_BLOCK_CLUSTER=0`): reorder records by the model-free
@@ -257,7 +323,7 @@ fn write_pax_segment_full_internal(
         plan,
         None, // two-level is compaction-only (TD-RDSTRAT-8)
         capture_sq8,
-        &[], // shred spec: the production flush path shreds via record_store
+        shred_spec, // TD-FPRUNE-1 M1: SST flush shreds declared filterable tags
     )
 }
 

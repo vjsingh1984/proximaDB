@@ -531,7 +531,8 @@ impl SstEngine {
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
                 use crate::storage::engines::sst::segment_format::{
-                    write_pax_segment_full, write_pax_segment_full_with_cache_seed,
+                    write_pax_segment_full_shredded,
+                    write_pax_segment_full_with_cache_seed_shredded,
                 };
                 // Local write path from the staged write (uploaded on finalize
                 // when the staging URL is remote).
@@ -577,8 +578,12 @@ impl SstEngine {
                     .map(|cfg| cfg.tags.as_slice())
                     .unwrap_or(&[]);
                 let rerank_quant = resolve_pax_rerank_quant(rerank_tags);
+                // TD-FPRUNE-1 M1: shred declared filterable tags into typed
+                // user-columns at flush so footer-resident filter pruning fires
+                // (empty spec ⇒ byte-identical to the non-shredded write).
+                let shred_spec = resolve_flush_shred_spec(params.collection_config.as_ref());
                 let meta = if cache_on_write.includes_invariants() {
-                    let write = write_pax_segment_full_with_cache_seed(
+                    let write = write_pax_segment_full_with_cache_seed_shredded(
                         std::path::Path::new(staging_path),
                         &records,
                         collection_id,
@@ -588,12 +593,13 @@ impl SstEngine {
                         f32_tier,
                         target_block,
                         cache_on_write.includes_survivors(),
+                        &shred_spec,
                     )
                     .context("Failed to write PAX vector segment")?;
                     pax_cache_seed = write.cache_seed;
                     write.meta
                 } else {
-                    write_pax_segment_full(
+                    write_pax_segment_full_shredded(
                         std::path::Path::new(staging_path),
                         &records,
                         collection_id,
@@ -602,6 +608,7 @@ impl SstEngine {
                         rerank_quant,
                         f32_tier,
                         target_block,
+                        &shred_spec,
                     )
                     .context("Failed to write PAX vector segment")?
                 };
@@ -1381,6 +1388,37 @@ fn resolve_pax_f32_tier(
     per_collection.unwrap_or_else(|| env_truthy("PROXIMADB_PAX_F32_TIER"))
 }
 
+/// TD-FPRUNE-1 (M1): build the P-Shred spec for the SST flush from the in-scope
+/// collection config, so declared filterable tags are materialized as typed
+/// user-columns (min/max + bloom + the self-describing footer field-map) —
+/// making footer-resident filter pruning fire end-to-end for vector collections.
+///
+/// This reconstructs the SAME `(prop_name, col_id)` pairs the catalog schema
+/// assigns (`collection_mapping::catalog_schema_from_collection`): `col_id =
+/// 100 + idx` over `config.filterable_columns` (skipping empties), gated on
+/// `enable_proxima_record == Some(true)`. It reads the proto config directly
+/// (no `CatalogTableSchema` at the flush site) — and the read path resolves via
+/// the segment's SELF-DESCRIBING footer field-map, so any consistent id works;
+/// matching the catalog assignment is just tidy. Empty spec (non-document
+/// collection, or no filterable columns) ⇒ byte-identical, mixed-read-safe.
+fn resolve_flush_shred_spec(
+    collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+) -> Vec<(String, i32)> {
+    let Some(config) = collection_config.and_then(|c| c.config.as_ref()) else {
+        return Vec::new();
+    };
+    if config.enable_proxima_record != Some(true) {
+        return Vec::new();
+    }
+    config
+        .filterable_columns
+        .iter()
+        .enumerate()
+        .filter(|(_, col)| !col.name.is_empty())
+        .map(|(idx, col)| (col.name.clone(), 100 + idx as i32))
+        .collect()
+}
+
 /// Tag prefix encoding the per-collection tier-2 rerank quant strategy.
 /// Mirrors the `pax_vector_quant:` convention. Values: `sq8`, `fp16`, `f32`.
 const PAX_RERANK_QUANT_TAG_PREFIX: &str = "pax_rerank_quant:";
@@ -1573,6 +1611,49 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
+
+    // TD-FPRUNE-1 M1: the flush-side shred spec reconstructs the SAME
+    // `(name, 100+idx)` pairs the catalog schema assigns, gated on
+    // `enable_proxima_record`. This is what makes footer filter-pruning fire for
+    // vector collections (the write path previously shredded nothing).
+    #[test]
+    fn resolve_flush_shred_spec_from_filterable_columns() {
+        use crate::proto::proximadb_v1::{Collection, CollectionConfig, FilterableColumnSpec};
+        let col = |name: &str| FilterableColumnSpec {
+            name: name.to_string(),
+            ..Default::default()
+        };
+        let mk = |enable: Option<bool>, cols: Vec<FilterableColumnSpec>| Collection {
+            config: Some(CollectionConfig {
+                filterable_columns: cols,
+                enable_proxima_record: enable,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // enable_proxima_record + two filterable columns → (name, 100+idx).
+        let c = mk(Some(true), vec![col("partition"), col("lang")]);
+        assert_eq!(
+            resolve_flush_shred_spec(Some(&c)),
+            vec![("partition".to_string(), 100), ("lang".to_string(), 101)]
+        );
+        // Empty column names are skipped but still advance the index (mirrors
+        // catalog_schema_from_collection's enumerate-then-skip).
+        let c = mk(Some(true), vec![col(""), col("lang")]);
+        assert_eq!(
+            resolve_flush_shred_spec(Some(&c)),
+            vec![("lang".to_string(), 101)]
+        );
+        // Not a document collection ⇒ no shredding (byte-identical write).
+        assert!(
+            resolve_flush_shred_spec(Some(&mk(Some(false), vec![col("partition")]))).is_empty()
+        );
+        assert!(resolve_flush_shred_spec(Some(&mk(None, vec![col("partition")]))).is_empty());
+        // No config / no collection ⇒ empty.
+        assert!(resolve_flush_shred_spec(Some(&Collection::default())).is_empty());
+        assert!(resolve_flush_shred_spec(None).is_empty());
+    }
 
     #[tokio::test]
     async fn test_sort_vectors_for_sstable_encoding() {
