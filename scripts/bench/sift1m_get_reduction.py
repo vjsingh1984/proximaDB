@@ -2329,18 +2329,13 @@ def main() -> int:
             capture_output=True,
             text=True,
         ).stdout.splitlines()
+        # Python harness tests cannot alter the Rust release executable. Keep
+        # the provenance boundary language-based instead of maintaining a
+        # filename allowlist every time a new benchmark protocol lands.
         unsafe_changes = [
             path
             for path in changed_since_build
-            if not path.startswith(("docs/", "scripts/"))
-            and path
-            not in {
-                "tests/python/test_sift_get_reduction_harness.py",
-                "tests/python/test_bigann_prefix_groundtruth.py",
-                "tests/python/test_nprobe_geometry_analysis.py",
-                "tests/python/test_nprobe_sweep.py",
-                "tests/python/test_range_cap_sweep.py",
-            }
+            if not path.startswith(("docs/", "scripts/", "tests/python/"))
         ]
         if unsafe_changes:
             raise RuntimeError(

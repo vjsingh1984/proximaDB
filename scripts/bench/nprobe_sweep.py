@@ -52,6 +52,11 @@ def git_output(repository: Path, *arguments: str) -> str:
     ).stdout.strip()
 
 
+def is_binary_neutral_path(path: str) -> bool:
+    """Whether a committed path can leave the Rust release binary unchanged."""
+    return path.startswith(("docs/", "scripts/", "tests/python/"))
+
+
 def require_release_provenance(
     repository: Path,
     binary: Path,
@@ -85,19 +90,7 @@ def require_release_provenance(
         "--name-only",
         f"{binary_source_revision}..{current_revision}",
     ).splitlines()
-    unsafe = [
-        path
-        for path in changed
-        if not path.startswith(("docs/", "scripts/"))
-        and path
-        not in {
-            "tests/python/test_sift_get_reduction_harness.py",
-            "tests/python/test_bigann_prefix_groundtruth.py",
-            "tests/python/test_nprobe_geometry_analysis.py",
-            "tests/python/test_nprobe_sweep.py",
-            "tests/python/test_range_cap_sweep.py",
-        }
-    ]
+    unsafe = [path for path in changed if not is_binary_neutral_path(path)]
     if unsafe:
         raise RuntimeError(
             f"binary source differs from executable source: {unsafe}; rebuild release"
