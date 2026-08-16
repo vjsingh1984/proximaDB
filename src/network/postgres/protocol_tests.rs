@@ -10,6 +10,17 @@ fn test_frontend_message() {
 }
 
 #[test]
+fn relational_backing_collection_uses_declared_vector_dimension() {
+    let statement = SqlFrontendParser::new()
+        .parse_ddl("CREATE TABLE memory (id TEXT PRIMARY KEY, embedding VECTOR(8))")
+        .expect("valid DDL")
+        .expect("CREATE TABLE is DDL");
+
+    let (_, dimension) = relational_backing_options(&statement);
+    assert_eq!(dimension, Some(8));
+}
+
+#[test]
 fn transaction_control_is_rejected_until_atomic_semantics_exist() {
     for statement in [
         "BEGIN",

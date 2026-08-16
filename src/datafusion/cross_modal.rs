@@ -107,7 +107,7 @@ pub struct VectorSearchTableProvider {
     collection_id: String,
     query_vector: Vec<f32>,
     top_k: u32,
-    tenant_id: Option<String>,
+    identity: proximadb_runtime::OwnedPortIdentity,
 }
 
 impl VectorSearchTableProvider {
@@ -117,14 +117,14 @@ impl VectorSearchTableProvider {
         collection_id: impl Into<String>,
         query_vector: Vec<f32>,
         top_k: u32,
-        tenant_id: Option<String>,
+        identity: proximadb_runtime::OwnedPortIdentity,
     ) -> Self {
         Self {
             vector_ops,
             collection_id: collection_id.into(),
             query_vector,
             top_k,
-            tenant_id,
+            identity,
         }
     }
 }
@@ -136,7 +136,7 @@ impl std::fmt::Debug for VectorSearchTableProvider {
         f.debug_struct("VectorSearchTableProvider")
             .field("collection_id", &self.collection_id)
             .field("top_k", &self.top_k)
-            .field("tenant_id", &self.tenant_id)
+            .field("tenant_id", &self.identity.tenant_id)
             .finish_non_exhaustive()
     }
 }
@@ -170,7 +170,8 @@ impl TableProvider for VectorSearchTableProvider {
                 self.query_vector.clone(),
                 self.top_k as usize,
                 None,
-                self.tenant_id.as_deref(),
+                None,
+                self.identity.as_borrowed(),
             )
             .await
             .map_err(|e| DataFusionError::Execution(format!("vector search: {e}")))?;
@@ -190,9 +191,9 @@ impl TableProvider for VectorSearchTableProvider {
 /// `ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::new(ops)))`.
 pub struct VectorSearchTableFunction {
     vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
-    /// The connection tenant, forwarded to `VectorOpsPort::search` so the search runs under the
-    /// same `TenantContext` the REST write used. `None` ⇒ unscoped (reads only tenant-less data).
-    tenant: Option<String>,
+    /// The complete connection identity forwarded to the canonical vector-search
+    /// port. ABAC must not be reduced to a tenant-only approximation here.
+    identity: proximadb_runtime::OwnedPortIdentity,
 }
 
 impl VectorSearchTableFunction {
@@ -200,18 +201,19 @@ impl VectorSearchTableFunction {
     pub fn new(vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>) -> Self {
         Self {
             vector_ops,
-            tenant: None,
+            identity: proximadb_runtime::OwnedPortIdentity::default(),
         }
     }
 
-    /// Capture the vector service AND the connection tenant — so the search reads the same
-    /// tenant partition a REST insert wrote. Without this the search runs `tenant_id=None` and
-    /// returns 0 rows for tenant-scoped data (TD-XMODAL-6).
-    pub fn with_tenant(
+    /// Capture the vector service and the complete request identity.
+    pub fn with_identity(
         vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
-        tenant: Option<String>,
+        identity: proximadb_runtime::OwnedPortIdentity,
     ) -> Self {
-        Self { vector_ops, tenant }
+        Self {
+            vector_ops,
+            identity,
+        }
     }
 }
 
@@ -263,7 +265,7 @@ impl TableFunctionImpl for VectorSearchTableFunction {
             collection,
             query_vector,
             top_k as u32,
-            self.tenant.clone(),
+            self.identity.clone(),
         )))
     }
 }
@@ -1167,7 +1169,8 @@ mod tests {
             _query_vector: Vec<f32>,
             _k: usize,
             _filter: Option<proximadb_filter_expression::FilterExpression>,
-            _tenant_id: Option<&str>,
+            _requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(self
                 .matches
@@ -1214,8 +1217,13 @@ mod tests {
         let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(FixedVectorOps {
             matches: vec![("a".into(), 0.95), ("b".into(), 0.80), ("c".into(), 0.70)],
         });
-        let provider =
-            VectorSearchTableProvider::new(ops, "docs_vec", vec![0.1, 0.2, 0.3], 10, None);
+        let provider = VectorSearchTableProvider::new(
+            ops,
+            "docs_vec",
+            vec![0.1, 0.2, 0.3],
+            10,
+            proximadb_runtime::OwnedPortIdentity::default(),
+        );
 
         let ctx = SessionContext::new();
         ctx.register_table("vsearch", Arc::new(provider)).unwrap();
@@ -1734,10 +1742,9 @@ mod tests {
         }
     }
 
-    /// A `VectorOpsPort` that records the `tenant_id` its `search` was called with — proves
-    /// `vector_search` forwards the connection tenant (TD-XMODAL-6).
+    /// A `VectorOpsPort` that records the complete identity at its search seam.
     struct RecordingVectorOps {
-        seen: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+        seen: Arc<std::sync::Mutex<Vec<proximadb_runtime::OwnedPortIdentity>>>,
     }
 
     #[async_trait]
@@ -1747,10 +1754,7 @@ mod tests {
             _request: VectorSearchRequest,
             identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<VectorOperationResponse> {
-            self.seen
-                .lock()
-                .unwrap()
-                .push(identity.tenant_id.map(str::to_string));
+            self.seen.lock().unwrap().push(identity.into_owned());
             Ok(VectorOperationResponse {
                 results: Some(SearchResult {
                     results: vec![],
@@ -1759,20 +1763,17 @@ mod tests {
                 ..Default::default()
             })
         }
-        // TD-XMODAL-4 S2: the UDTF now forwards the tenant through THIS kernel —
-        // record it here (proves tenant forwarding on the unified path, TD-XMODAL-6).
+        // TD-XMODAL-4 S2: the UDTF forwards identity through THIS kernel.
         async fn unified_search_native(
             &self,
             _collection_id: &str,
             _query_vector: Vec<f32>,
             _k: usize,
             _filter: Option<proximadb_filter_expression::FilterExpression>,
-            tenant_id: Option<&str>,
+            _requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+            identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-            self.seen
-                .lock()
-                .unwrap()
-                .push(tenant_id.map(str::to_string));
+            self.seen.lock().unwrap().push(identity.into_owned());
             Ok(vec![])
         }
         async fn batch_upsert(
@@ -1800,9 +1801,8 @@ mod tests {
         }
     }
 
-    /// TD-XMODAL-6: a tenant-scoped `vector_search` forwards the connection tenant to the search
-    /// (vectors are `TenantContext`-partitioned, not name-folded), so it reads the tenant's data
-    /// instead of the unscoped partition.
+    /// TD-XMODAL-6 / ADR-087: `vector_search` forwards one complete identity;
+    /// tenant scoping and ABAC subject resolution must not diverge by SQL syntax.
     #[tokio::test]
     async fn vector_search_udtf_forwards_tenant_to_search() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1812,9 +1812,14 @@ mod tests {
         let ctx = SessionContext::new();
         ctx.register_udtf(
             "vector_search",
-            Arc::new(VectorSearchTableFunction::with_tenant(
+            Arc::new(VectorSearchTableFunction::with_identity(
                 ops,
-                Some("acme".to_string()),
+                proximadb_runtime::OwnedPortIdentity {
+                    tenant_id: Some("acme".to_string()),
+                    subject: Some("alice".to_string()),
+                    tenant_stable_id: Some(7),
+                    auth_class: proximadb_tenant::AuthClass::Authenticated,
+                },
             )),
         );
         let _ = ctx
@@ -1824,7 +1829,15 @@ mod tests {
             .collect()
             .await
             .unwrap();
-        assert_eq!(seen.lock().unwrap().as_slice(), &[Some("acme".to_string())]);
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &[proximadb_runtime::OwnedPortIdentity {
+                tenant_id: Some("acme".to_string()),
+                subject: Some("alice".to_string()),
+                tenant_stable_id: Some(7),
+                auth_class: proximadb_tenant::AuthClass::Authenticated,
+            }]
+        );
     }
 
     // ── graph slice ───────────────────────────────────────────────────────────────

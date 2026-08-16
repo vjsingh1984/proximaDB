@@ -90,7 +90,7 @@ impl DataFusionLocalEngine {
         let ctx = crate::datafusion::create_session_context_with_ports(
             context.vector_ops.clone(),
             context.graph_ops.clone(),
-            context.tenant_id.clone(),
+            context.identity.clone(),
         )
         .map_err(|e| ExecutionError::Context(format!("session: {e}")))?;
         crate::observability::io_trace::record_session_ms(
@@ -118,7 +118,7 @@ impl DataFusionLocalEngine {
                     location,
                     tbl,
                     cfg.source.as_ref(),
-                    context.tenant_id.as_deref(),
+                    context.identity.tenant_id.as_deref(),
                 )
                 .await?;
                 continue;
@@ -135,7 +135,7 @@ impl DataFusionLocalEngine {
                 &ctx,
                 name,
                 location,
-                context.tenant_id.as_deref(),
+                context.identity.tenant_id.as_deref(),
                 stats_trust,
             )
             .await

@@ -1623,6 +1623,186 @@ impl DmlService {
         Ok((table_schema, rows))
     }
 
+    /// Execute an exact vector search against a catalog table's authoritative
+    /// `TableRecordStore` state.
+    ///
+    /// SQL tables with vector columns keep their rows in the relational primary
+    /// store; the vector layout is a rebuildable projection. Searching the
+    /// legacy vector WAL here would therefore read a different authority and can
+    /// return a false empty result immediately after a successful SQL INSERT.
+    /// `Ok(None)` means the identifier is not a catalog table, allowing the query
+    /// router to try the native collection authority instead.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_table_vectors_exact(
+        &self,
+        table_name: &str,
+        vector_column: &str,
+        query_vector: &[f32],
+        top_k: usize,
+        filter: Option<&proximadb_filter_expression::FilterExpression>,
+        metric: proximadb_distance_types::DistanceMetric,
+        tenant_context: Option<&TenantContext>,
+        identity: PortIdentity<'_>,
+    ) -> Result<Option<Vec<proximadb_search_types::results::OptimizedSearchRecord>>> {
+        let tenant = tenant_context.map(|context| context.tenant_id.as_str());
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
+        if !catalog.table_exists(&table_id).await? {
+            return Ok(None);
+        }
+        let schema = catalog.get_table(&table_id).await?;
+        let vector_index = schema
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(vector_column))
+            .ok_or_else(|| {
+                anyhow!(
+                    "vector column '{}' does not exist on table '{}'",
+                    vector_column,
+                    table_name
+                )
+            })?;
+        let vector_schema = &schema.columns[vector_index];
+        if !matches!(vector_schema.data_type, ProximaType::DenseVector { .. }) {
+            return Err(anyhow!(
+                "ORDER BY vector operator requires a dense-vector column; '{}.{}' is {:?}",
+                table_name,
+                vector_column,
+                vector_schema.data_type
+            ));
+        }
+        if let Some(expected) = vector_schema
+            .properties
+            .get("dimension")
+            .and_then(|value| value.parse::<usize>().ok())
+            && expected != query_vector.len()
+        {
+            return Err(anyhow!(
+                "query vector has dimension {}, but '{}.{}' requires {}",
+                query_vector.len(),
+                table_name,
+                vector_column,
+                expected
+            ));
+        }
+
+        let filter_columns = schema.columns.clone();
+        let filter_predicate = |row: &[ProximaValue]| -> Result<bool, ExprError> {
+            let Some(filter) = filter else {
+                return Ok(true);
+            };
+            let props = filter_columns
+                .iter()
+                .zip(row)
+                .map(|(column, value)| (column.name.clone(), ProximaTreeNode::Value(value.clone())))
+                .collect();
+            Ok(crate::core::search::sql_value_filter::evaluate_filter_proxima(filter, &props))
+        };
+        let (scan_schema, rows) = self
+            .scan_table_relational(
+                table_name,
+                None,
+                Some(&filter_predicate),
+                None,
+                tenant_context,
+                identity,
+            )
+            .await?;
+
+        let id_column = scan_schema
+            .primary_key
+            .first()
+            .or_else(|| {
+                scan_schema
+                    .columns
+                    .iter()
+                    .find(|column| {
+                        column.name.eq_ignore_ascii_case("id")
+                            || column.name.eq_ignore_ascii_case("record_id")
+                    })
+                    .map(|column| &column.name)
+            })
+            .ok_or_else(|| {
+                anyhow!(
+                    "vector-search table '{}' has no record identifier",
+                    table_name
+                )
+            })?;
+        let id_index = scan_schema
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(id_column))
+            .ok_or_else(|| {
+                anyhow!(
+                    "identifier column '{}' is absent from scan schema",
+                    id_column
+                )
+            })?;
+        let kernel_metric = match metric {
+            proximadb_distance_types::DistanceMetric::L2 => {
+                proximadb_distance_kernel::DistanceMetric::Euclidean
+            }
+            proximadb_distance_types::DistanceMetric::Cosine => {
+                proximadb_distance_kernel::DistanceMetric::Cosine
+            }
+            proximadb_distance_types::DistanceMetric::InnerProduct => {
+                proximadb_distance_kernel::DistanceMetric::DotProduct
+            }
+            proximadb_distance_types::DistanceMetric::L1 => {
+                proximadb_distance_kernel::DistanceMetric::Manhattan
+            }
+        };
+        let distance =
+            proximadb_distance_kernel::engine::UnifiedDistanceCompute::new(kernel_metric);
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let vector = match row.get(vector_index) {
+                Some(ProximaValue::DenseVector(vector)) => vector,
+                Some(ProximaValue::Null) | None => continue,
+                Some(other) => {
+                    return Err(anyhow!(
+                        "vector column '{}.{}' produced non-vector value {:?}",
+                        table_name,
+                        vector_column,
+                        other
+                    ));
+                }
+            };
+            let id = row
+                .get(id_index)
+                .map(proxima_value_to_unique_text)
+                .ok_or_else(|| anyhow!("identifier column '{}' is absent from row", id_column))?;
+            let semantic = distance.calculate_distance(query_vector, vector, &kernel_metric);
+            let metadata = scan_schema
+                .columns
+                .iter()
+                .zip(&row)
+                .filter(|(column, _)| !column.name.eq_ignore_ascii_case(vector_column))
+                .map(|(column, value)| (column.name.clone(), value.clone()))
+                .collect();
+            results.push(proximadb_search_types::results::OptimizedSearchRecord {
+                id: id.clone(),
+                vector_id: Some(id),
+                score: semantic.normalized_score,
+                similarity: Some(semantic.normalized_score),
+                vector: Some(Arc::new(vector.clone())),
+                semantic_similarity: Some(semantic),
+                metadata,
+                ..Default::default()
+            });
+        }
+        results.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(top_k);
+        Ok(Some(results))
+    }
+
     /// Materialize a relational table's current rows as a Parquet snapshot on object
     /// storage and flip its catalog storage layout to `Parquet` /
     /// `ProjectionPublication`, so the OLAP router's `catalog_table_is_parquet_backed`
