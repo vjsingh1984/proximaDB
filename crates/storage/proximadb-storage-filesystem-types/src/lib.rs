@@ -1354,6 +1354,9 @@ pub(crate) mod read_ranges_coalescing_tests {
 
     /// R7 — an inverted range underflows `range.end - range.start` today: debug
     /// panic, release ~u64::MAX length. Fail closed instead.
+    // See the planner's equivalent test: the inverted range IS the input under
+    // test, so the lint's advice would delete the case.
+    #[allow(clippy::reversed_empty_ranges)]
     #[test]
     fn inverted_range_is_rejected_not_silently_widened() {
         let fake = CountingFake::new(1024, EofMode::Clamp, policy(64, 4096));

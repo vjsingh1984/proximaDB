@@ -226,6 +226,10 @@ mod tests {
         assert_eq!(plan.overread_bytes(), 0);
     }
 
+    // The lint is right in general and wrong here: an inverted range is exactly
+    // the malformed input under test, and today it underflows rather than being
+    // rejected.
+    #[allow(clippy::reversed_empty_ranges)]
     #[test]
     fn inverted_range_fails_closed() {
         let err = coalesce_ranges_with_mapping(&[40..10], policy(64, 4096))
