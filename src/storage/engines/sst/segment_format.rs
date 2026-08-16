@@ -2471,6 +2471,7 @@ fn split_probe_metadata_cache_enabled() -> bool {
 /// fetched, so cold-query GETs/bytes drop from O(N) to O(nprobe). Returns `None`
 /// to fall back to the single-level whole-region scan (fail-safe: A0
 /// missing/corrupt, dim mismatch, or degenerate directory).
+#[allow(clippy::too_many_arguments)]
 async fn coarse_probe_survivors(
     fs: &dyn proximadb_storage_filesystem_types::FileSystem,
     path: &str,
@@ -2483,6 +2484,9 @@ async fn coarse_probe_survivors(
     prefix: &[u8],
     invariants_cache: Option<&SegmentInvariantsCache>,
     survivor_cache: Option<&SurvivorRangeCache>,
+    // TD-FPRUNE-1 M3: when a filter is active, the probe becomes a FILTERED ANN —
+    // adaptive nprobe by matching-row count + rank restricted to allowed rows.
+    row_allow: Option<&proximadb_block_format::RowAllow>,
 ) -> Result<Option<CoarseProbeResult>> {
     use proximadb_storage_common::coarse_directory::{CoarseDirectory, project_with_model};
 
@@ -2535,12 +2539,43 @@ async fn coarse_probe_survivors(
         .collect();
     cell_dist.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     let nprobe = coarse_probe_nprobe(k_c);
-    let mut probed: Vec<usize> = cell_dist
-        .iter()
-        .filter(|(c, _)| dir.cells[*c].row_end > dir.cells[*c].row_begin)
-        .take(nprobe)
-        .map(|(c, _)| *c)
-        .collect();
+    let mut probed: Vec<usize> = match row_allow {
+        // TD-FPRUNE-1 M3: FILTERED ANN — walk cells nearest-first and accumulate
+        // PREDICATE-MATCHING rows (allow ∩ cell row-range, computed in RAM from
+        // the cell directory + the allow-set — no extra I/O). Probe until at least
+        // the geometric `nprobe` cells AND enough matching candidates to fill the
+        // survivor pool are covered: a selective filter needs MORE cells to reach
+        // k matches (the recall fix that the disarmed-probe path traded away).
+        // Cells with zero matching rows are skipped (cell ∩ filter empty ⇒ no GET).
+        Some(allow) => {
+            let target = pax_rabitq_pool_for_top_k(k, allow.len().max(1)).max(k);
+            let mut selected = Vec::new();
+            let mut matched = 0usize;
+            for (c, _) in cell_dist.iter() {
+                let cell = &dir.cells[*c];
+                if cell.row_end <= cell.row_begin {
+                    continue;
+                }
+                let cell_matched =
+                    allow.count_in_range(cell.row_begin as usize..cell.row_end as usize);
+                if cell_matched == 0 {
+                    continue;
+                }
+                selected.push(*c);
+                matched += cell_matched;
+                if selected.len() >= nprobe && matched >= target {
+                    break;
+                }
+            }
+            selected
+        }
+        None => cell_dist
+            .iter()
+            .filter(|(c, _)| dir.cells[*c].row_end > dir.cells[*c].row_begin)
+            .take(nprobe)
+            .map(|(c, _)| *c)
+            .collect(),
+    };
     if probed.is_empty() {
         return Ok(None);
     }
@@ -2668,8 +2703,17 @@ async fn coarse_probe_survivors(
         }
     }
     let pool = pax_rabitq_pool_for_top_k(k, probed_rows as usize);
-    let survivors =
-        proximadb_block_format::rank_probed_rows(&rq_header, &runs, query, metric, pool.max(k))?;
+    // TD-FPRUNE-1 M3: rank the probed cells' codes RESTRICTED to allowed rows
+    // (`row_allow`) so the survivor pool fills with predicate-matching candidates;
+    // `None` is the unfiltered whole-cell rank (unchanged).
+    let survivors = proximadb_block_format::rank_probed_rows_allowed(
+        &rq_header,
+        &runs,
+        query,
+        metric,
+        pool.max(k),
+        row_allow,
+    )?;
 
     Ok(Some(CoarseProbeResult {
         survivors,
@@ -2843,12 +2887,14 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     //    nprobe nearest cells (whole Region A never fetched); else the
     //    single-level whole-region scan (cold: 1 GET; hot: 0 — Arc clone). Any
     //    probe miss falls through, fail-safe, to the whole-region path.
+    // TD-FPRUNE-1 M3: the probe is now armed UNDER A FILTER too (v3 segments) —
+    // `coarse_probe_survivors` becomes a filtered ANN (adaptive nprobe by matching
+    // count + allowed rank), restricting the whole fetch to relevant cells instead
+    // of the whole-region scan the disarmed path traded for. A probe miss still
+    // falls through to the whole-region allowed rank below (fail-safe).
     let probe_armed = header.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL
         && header.a0_len > 0
-        && coarse_probe_enabled()
-        // ADR-089 P1: filtered queries take the whole-region allowed rank
-        // (see `row_allow` doc above) — never the geometric probe.
-        && row_allow.is_none();
+        && coarse_probe_enabled();
     let probe = if probe_armed {
         coarse_probe_survivors(
             fs,
@@ -2862,6 +2908,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             &header_bytes,
             cache,
             survivor_cache,
+            row_allow,
         )
         .await
         .ok()
@@ -5795,6 +5842,165 @@ mod tests {
             std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
             std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
             std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+        }
+    }
+
+    /// TD-FPRUNE-1 M3: the FILTERED coarse probe holds recall AND cuts bytes.
+    /// Trace-driven: a filtered query previously DISARMED the geometric probe and
+    /// read whole Region-A/B (measured 3–7 MB vs the unfiltered 2 MB). M3 re-arms
+    /// the probe under a filter — adaptive nprobe by matching-row count + rank
+    /// restricted to allowed rows — so a filtered query becomes a filtered ANN
+    /// that touches only relevant cells. This asserts (a) recall parity vs the
+    /// FILTERED brute-force truth and (b) the probe engaged (a strict cell subset).
+    #[tokio::test]
+    async fn filtered_coarse_probe_holds_recall_and_cuts_bytes() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 32;
+        const G: usize = 8; // clusters (each on its own axis) == partitions
+        const PER: usize = 64;
+        const N: usize = G * PER;
+        const K: usize = 10;
+
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        // partition == cluster (correlated with vector space). Each cluster's
+        // members sit at increasing radius so the top-K are distinguishable.
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                let (g, j) = (i / PER, i % PER);
+                let radius = 0.1 + j as f32 * 0.03;
+                (0..DIM)
+                    .map(|d| (if d == g { 50.0 } else { 0.0 }) + radius * pseudo(i, d))
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut r = rec(&format!("r{i}"), 1000 + i as i64, v.clone());
+                r.props.insert(
+                    "partition".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(format!("p{}", i / PER)),
+                    ),
+                );
+                r
+            })
+            .collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fprobe.pax");
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "16");
+        }
+        // Compacted (v3, A0) + shredded so `partition` is a footer-resolvable column.
+        write_pax_segment_compacted_shredded(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+            &[("partition".to_string(), 100)],
+        )
+        .unwrap();
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+        }
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+        // Query at cluster 0's centre; filter partition=p0 (== cluster 0).
+        let query: Vec<f32> = (0..DIM).map(|d| if d == 0 { 50.0 } else { 0.0 }).collect();
+
+        // FILTERED brute-force truth: top-K among partition==p0 rows (cluster 0).
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut p0: Vec<usize> = (0..N).filter(|&i| i / PER == 0).collect();
+        p0.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            p0.iter().take(K).map(|i| format!("r{i}")).collect();
+
+        // Build the allow-set (partition==p0) from the segment's own footer.
+        let (allow, _stats) = pax_filtered_row_allow(&fs, p, &partition_filter("p0"))
+            .await
+            .unwrap()
+            .expect("shredded v3 segment yields a stage-F allow-set");
+        assert!(!allow.is_empty(), "partition=p0 must match rows");
+
+        // FILTERED probe ON, nprobe floor small — M3 expands adaptively to cover
+        // enough matching rows.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "2");
+            std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+        }
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        let hits = rabitq_search_segment_coalesced_allowed(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            None,
+            Some(&allow),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let ptrace = drain_probe_trace();
+
+        // (a) recall parity vs the FILTERED truth.
+        let got: std::collections::HashSet<String> = hits.iter().map(|h| h.oid.clone()).collect();
+        let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
+        assert!(
+            recall >= 0.9,
+            "filtered probe recall@{K} = {recall:.2} (want ≥0.9 vs filtered brute-force)"
+        );
+        // Every hit is a partition=p0 row (no cross-partition leakage).
+        for h in &hits {
+            let idx: usize = h.oid.trim_start_matches('r').parse().unwrap();
+            assert_eq!(idx / PER, 0, "hit {} is not partition p0", h.oid);
+        }
+        // (b) the probe engaged under the filter — a strict cell subset (not the
+        // whole-region fallback the disarmed path took).
+        assert_eq!(ptrace.len(), 1, "exactly one filtered probe recorded");
+        let (cells_total, cells_probed, probed_rows, _rounds) = ptrace[0];
+        assert_eq!(cells_total, 16);
+        assert!(
+            cells_probed > 0 && cells_probed < cells_total,
+            "filtered probe touched {cells_probed} of {cells_total} cells (strict subset)"
+        );
+        assert!(
+            probed_rows < N as u64,
+            "filtered probe read {probed_rows} of {N} rows (subset, not whole region)"
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
+            std::env::remove_var("PROXIMADB_TRACE_GETS");
+            std::env::remove_var("PROXIMADB_IVF_K");
         }
     }
 }
