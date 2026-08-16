@@ -1191,6 +1191,7 @@ def run_query_sweep(
     phase: str,
     query_format: str = "fvecs",
     groundtruth_format: str = "ivecs",
+    progress_guard=None,
 ) -> dict:
     queries = read_vectors(query_path, query_format, query_start, query_count)
     groundtruth = read_truth_ids(
@@ -1205,6 +1206,8 @@ def run_query_sweep(
     unique_result_counts = []
     recall_hits_by_query = []
     for offset, query in enumerate(queries):
+        if progress_guard is not None:
+            progress_guard()
         started = time.perf_counter()
         response = request_json(
             f"{server}/api/v2/collections/{collection_id}/search",
@@ -1234,6 +1237,8 @@ def run_query_sweep(
         recall_hits = len(returned & expected)
         recall_hits_by_query.append(recall_hits)
         recalls.append(recall_hits / top_k)
+    if progress_guard is not None:
+        progress_guard()
     after = scrape(server)
     quality_checkpoints = prefix_quality_checkpoints(recalls, latencies)
     latencies.sort()

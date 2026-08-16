@@ -138,6 +138,8 @@ def run_measured_phase(
     if server.process is None:
         raise RuntimeError("owned server did not expose its process")
     wire_offset = wire_log.snapshot()
+    contention = RANGE.HostContentionMonitor()
+    contention.start()
     sampler = RANGE.RssSampler(server.process.pid)
     sampler.start()
     try:
@@ -152,10 +154,14 @@ def run_measured_phase(
             label,
             query_format,
             groundtruth_format,
+            contention.raise_if_conflict,
         )
     finally:
         rss = sampler.stop()
+        contention_observation = contention.stop()
+    contention.raise_if_conflict()
     point["process_rss"] = rss
+    point["host_contention"] = contention_observation
     point["wire_http"] = wire_log.sample(wire_offset)
     RANGE.validate_wire_observation(label, point)
     point["wire_gets_per_query"] = point["wire_http"]["get_requests"] / query_count

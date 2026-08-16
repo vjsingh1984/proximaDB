@@ -82,6 +82,32 @@ def test_cap_values_are_positive_unique_mib():
         SWEEP.cap_mib_values("0,4")
 
 
+def test_compiler_process_parser_detects_builds_without_matching_benchmark_server():
+    sample = """\
+101 /usr/bin/python3
+102 /toolchains/bin/cargo
+103 /toolchains/bin/rustc
+104 /target/release-server/proximadb-server
+105 /toolchains/bin/cargo-nextest
+106 /toolchains/bin/cargo-clippy
+"""
+
+    assert SWEEP.compiler_processes_from_ps(sample) == [
+        {"pid": 102, "command": "cargo"},
+        {"pid": 103, "command": "rustc"},
+        {"pid": 105, "command": "cargo-nextest"},
+        {"pid": 106, "command": "cargo-clippy"},
+    ]
+
+
+def test_contention_monitor_fails_with_observed_compiler_identity():
+    monitor = SWEEP.HostContentionMonitor(interval_seconds=10)
+    monitor.conflicts = [{"pid": 42, "command": "rustc"}]
+
+    with pytest.raises(RuntimeError, match="rustc.*42"):
+        monitor.raise_if_conflict()
+
+
 def checkpoint_result() -> dict:
     return {
         "protocol": "pax_azure_range_cap_sweep",

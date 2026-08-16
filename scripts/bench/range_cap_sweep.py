@@ -46,6 +46,7 @@ REQUEST_LINE = re.compile(
     r"RequestHeaders:(?P<headers>\{.*\})(?:\s+ClientIP=|$)"
 )
 RANGE_HEADER = re.compile(r"^bytes=(?P<start>\d+)-(?P<end>\d+)$")
+COMPILER_COMMANDS = {"cargo", "cargo-clippy", "cargo-nextest", "rustc"}
 
 
 def cap_mib_values(raw: str) -> list[int]:
@@ -189,6 +190,81 @@ class RssSampler:
             "samples": len(self.samples_kib),
             "baseline_bytes": self.samples_kib[0] * 1024 if self.samples_kib else None,
             "peak_bytes": max(self.samples_kib) * 1024 if self.samples_kib else None,
+        }
+
+
+def compiler_processes_from_ps(output: str) -> list[dict]:
+    conflicts = []
+    for line in output.splitlines():
+        fields = line.strip().split(maxsplit=1)
+        if len(fields) != 2:
+            continue
+        try:
+            pid = int(fields[0])
+        except ValueError:
+            continue
+        command = Path(fields[1]).name
+        if command in COMPILER_COMMANDS:
+            conflicts.append({"pid": pid, "command": command})
+    return conflicts
+
+
+class HostContentionMonitor:
+    """Fail a latency/RSS point if an external Rust build overlaps it."""
+
+    def __init__(self, interval_seconds: float = 1.0):
+        self.interval_seconds = interval_seconds
+        self.conflicts: list[dict] = []
+        self.samples = 0
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def _sample(self) -> None:
+        completed = subprocess.run(
+            ["ps", "-Ao", "pid=,comm="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.samples += 1
+        if completed.returncode != 0:
+            return
+        observed = compiler_processes_from_ps(completed.stdout)
+        if observed:
+            known = {(item["pid"], item["command"]) for item in self.conflicts}
+            self.conflicts.extend(
+                item
+                for item in observed
+                if (item["pid"], item["command"]) not in known
+            )
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.interval_seconds):
+            self._sample()
+
+    def start(self) -> None:
+        self._sample()
+        self.raise_if_conflict()
+        self.thread.start()
+
+    def raise_if_conflict(self) -> None:
+        if not self.conflicts:
+            return
+        identities = ", ".join(
+            f"{item['command']} pid={item['pid']}" for item in self.conflicts
+        )
+        raise RuntimeError(f"host compiler contention observed: {identities}")
+
+    def stop(self) -> dict:
+        self.stop_event.set()
+        if self.thread.is_alive():
+            self.thread.join(timeout=max(1.0, self.interval_seconds * 2))
+        self._sample()
+        return {
+            "observer": "ps_compiler_process_monitor",
+            "sampling_interval_seconds": self.interval_seconds,
+            "samples": self.samples,
+            "conflicts": self.conflicts,
         }
 
 
@@ -557,7 +633,9 @@ def main() -> int:
                 coalesce_range_bytes=cap_mib * MIB,
             )
             sampler = None
+            contention = HostContentionMonitor()
             try:
+                contention.start()
                 server.start()
                 if server.process is None:
                     raise RuntimeError("owned server did not expose its process")
@@ -575,9 +653,12 @@ def main() -> int:
                     label,
                     args.query_format,
                     args.groundtruth_format,
+                    contention.raise_if_conflict,
                 )
                 point["process_rss"] = sampler.stop()
                 sampler = None
+                point["host_contention"] = contention.stop()
+                contention.raise_if_conflict()
                 point["wire_http"] = wire_log.sample(offset)
                 validate_wire_observation(label, point)
             except (Exception, KeyboardInterrupt) as error:
@@ -591,6 +672,7 @@ def main() -> int:
             finally:
                 if sampler is not None:
                     sampler.stop()
+                contention.stop()
                 server.stop()
             point["range_cap_mib"] = cap_mib
             point["coalesce_gap_mib"] = args.coalesce_gap_mib

@@ -118,6 +118,37 @@ def test_query_result_identity_separates_membership_from_order() -> None:
     assert first["unique_result_count"] == 2
 
 
+def test_query_sweep_checks_progress_guard_before_queries_and_after_measurement() -> None:
+    guard_calls = []
+    metrics = dict.fromkeys(HARNESS.METRICS, 0.0)
+    with (
+        patch.object(HARNESS, "read_vectors", return_value=[[0.0, 1.0]]),
+        patch.object(HARNESS, "read_truth_ids", return_value=[[1]]),
+        patch.object(HARNESS, "scrape", side_effect=[metrics, metrics]),
+        patch.object(
+            HARNESS,
+            "request_json",
+            return_value={"results": [{"id": "v1"}]},
+        ),
+    ):
+        result = HARNESS.run_query_sweep(
+            "http://127.0.0.1:5678",
+            "1",
+            Path("queries.u8bin"),
+            Path("truth.ivecs"),
+            0,
+            1,
+            1,
+            "guarded",
+            "u8bin",
+            "ivecs",
+            lambda: guard_calls.append("checked"),
+        )
+
+    assert result["recall_at_k"] == 1.0
+    assert guard_calls == ["checked", "checked"]
+
+
 def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(
     tmp_path: Path,
 ) -> None:
