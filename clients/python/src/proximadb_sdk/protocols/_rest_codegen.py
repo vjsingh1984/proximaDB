@@ -38,6 +38,8 @@ from .._generated.rest.api.collections import (
 )
 from .._generated.rest.api.collections import get_collection as _gen_get_collection
 from .._generated.rest.api.collections import list_collections as _gen_list_collections
+from .._generated.rest.api.graphs import batch_create_edges as _gen_batch_create_edges
+from .._generated.rest.api.graphs import batch_create_nodes as _gen_batch_create_nodes
 from .._generated.rest.api.graphs import create_edge as _gen_create_edge
 from .._generated.rest.api.graphs import create_graph as _gen_create_graph
 from .._generated.rest.api.graphs import create_node as _gen_create_node
@@ -58,6 +60,8 @@ from .._generated.rest.api.records import get_record as _gen_get_record
 from .._generated.rest.api.records import insert_records as _gen_insert_records
 from .._generated.rest.api.records import scan_records as _gen_scan_records
 from .._generated.rest.api.search import search_records as _gen_search_records
+from .._generated.rest.models.batch_create_edges_request import BatchCreateEdgesRequest
+from .._generated.rest.models.batch_create_nodes_request import BatchCreateNodesRequest
 from .._generated.rest.models.create_collection_v2_request import (
     CreateCollectionV2Request,
 )
@@ -267,6 +271,24 @@ def create_node(graph_id: str, body: dict[str, Any]) -> RestCall:
         lambda **_kw: _gen_create_node._get_kwargs(graph_id=graph_id, **_kw),
         body,
         CreateNodeRequest,
+    )
+
+
+def batch_create_nodes(graph_id: str, body: dict[str, Any]) -> RestCall:
+    # Same raw-body rationale as ``create_node``: node embeddings arrive as
+    # bare ``list[float]`` while the generated model nests them, so bind the
+    # spec-governed method+URL and send the raw body.
+    return _path_only(
+        lambda **_kw: _gen_batch_create_nodes._get_kwargs(graph_id=graph_id, **_kw),
+        body,
+        BatchCreateNodesRequest,
+    )
+
+
+def batch_create_edges(graph_id: str, body: dict[str, Any]) -> RestCall:
+    model = _from_dict(BatchCreateEdgesRequest, body)
+    return _normalize(
+        _gen_batch_create_edges._get_kwargs(graph_id=graph_id, body=model)
     )
 
 

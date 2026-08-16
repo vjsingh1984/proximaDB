@@ -179,6 +179,7 @@ def test_batch_create_nodes_empty():
 
 def test_batch_create_nodes_success_mixed_types():
     client = MagicMock()
+    del client.batch_create_nodes  # exercise the per-item fallback path
     g = ProximaDBGraph(client, "gid")
     nodes = [
         GraphNode(id="a", labels=["F"], properties={"n": 1}),
@@ -191,6 +192,7 @@ def test_batch_create_nodes_success_mixed_types():
 
 def test_batch_create_nodes_failure():
     client = MagicMock()
+    del client.batch_create_nodes  # exercise the per-item fallback path
     client.create_node.side_effect = RuntimeError("boom")
     g = ProximaDBGraph(client, "gid")
     res = g.batch_create_nodes([{"id": "a"}])
@@ -206,6 +208,7 @@ def test_batch_create_edges_empty():
 
 def test_batch_create_edges_success():
     client = MagicMock()
+    del client.batch_create_edges  # exercise the per-item fallback path
     g = ProximaDBGraph(client, "gid")
     edges = [
         GraphEdge(id="e1", from_node="a", to_node="b", edge_type="CALLS"),
@@ -218,10 +221,49 @@ def test_batch_create_edges_success():
 
 def test_batch_create_edges_missing_fields_records_failure():
     client = MagicMock()
+    del client.batch_create_edges  # exercise the per-item fallback path
     g = ProximaDBGraph(client, "gid")
     res = g.batch_create_edges([{"from": "a", "to": "b"}])
     assert res["success"] is False
     assert res["failed"] == 1
+
+
+def test_batch_create_nodes_uses_batch_endpoint():
+    client = MagicMock()
+    client.batch_create_nodes.return_value = {
+        "data": {"created_count": 2, "failed_count": 0, "results": [], "errors": []}
+    }
+    g = ProximaDBGraph(client, "gid")
+    res = g.batch_create_nodes([{"id": "a"}, {"id": "b"}])
+    assert res == {"success": True, "created": 2, "failed": 0, "errors": []}
+    client.batch_create_nodes.assert_called_once()
+    client.create_node.assert_not_called()
+
+
+def test_batch_create_edges_batch_endpoint_maps_per_edge_rejections():
+    # Server-side per-edge admission: one bad edge rejects only itself and is
+    # reported in errors[]; the valid rest lands (proximaDB#1647 semantics).
+    client = MagicMock()
+    client.batch_create_edges.return_value = {
+        "data": {
+            "created_count": 2,
+            "failed_count": 1,
+            "errors": [{"id": "e_bad", "error": "Source node ghost does not exist"}],
+        }
+    }
+    g = ProximaDBGraph(client, "gid")
+    res = g.batch_create_edges(
+        [
+            {"id": "e1", "from": "a", "to": "b", "type": "CALLS"},
+            {"id": "e_bad", "from": "ghost", "to": "b", "type": "CALLS"},
+            {"id": "e2", "from": "b", "to": "c", "type": "CALLS"},
+        ]
+    )
+    assert res["success"] is False
+    assert res["created"] == 2
+    assert res["failed"] == 1
+    assert "ghost" in str(res["errors"][0])
+    client.create_edge.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -435,18 +435,38 @@ class ProximaDBGraph:
             else:
                 node_dicts.append(node)
 
-        # Process in batches
+        # Process in batches. Prefer the true batch endpoint (one request per
+        # page) — the per-item loop cost 1,000 round trips per 1,000 nodes and
+        # dominated repo-scale ingest (5.2x slower than the sqlite baseline).
         total_created = 0
-        failed = []
+        failed_count = 0
+        failed: list[dict[str, Any]] = []
+        batch_method = getattr(self._client, "batch_create_nodes", None)
 
         for i in range(0, len(node_dicts), batch_size):
             batch = node_dicts[i : i + batch_size]
+            if callable(batch_method):
+                try:
+                    resp = batch_method(nodes=batch, graph_id=self._graph_id)
+                    data = resp.get("data", resp) if isinstance(resp, dict) else {}
+                    created = data.get("created_count")
+                    if created is None:
+                        created = len(data.get("results", []) or data.get("nodes", []))
+                    total_created += int(created or 0)
+                    page_failed = int(data.get("failed_count") or 0)
+                    failed_count += page_failed
+                    for err in data.get("errors", []) or []:
+                        failed.append({"batch": i // batch_size, "error": err})
+                    continue
+                except AttributeError:
+                    batch_method = None  # transport has no batch surface
+                except Exception as e:
+                    failed_count += len(batch)
+                    failed.append({"batch": i // batch_size, "error": str(e)})
+                    continue
 
-            # Use REST API for batch creation
-            # (This will call the client's internal batch operation)
+            # Per-item fallback for transports without a batch endpoint.
             try:
-                # For now, we'll use individual creates through the client
-                # TODO: Add true batch API to client
                 for node_dict in batch:
                     self._client.create_node(
                         graph_id=self._graph_id,
@@ -456,12 +476,13 @@ class ProximaDBGraph:
                     )
                     total_created += 1
             except Exception as e:
+                failed_count += 1
                 failed.append({"batch": i // batch_size, "error": str(e)})
 
         return {
-            "success": len(failed) == 0,
+            "success": failed_count == 0 and not failed,
             "created": total_created,
-            "failed": len(failed),
+            "failed": failed_count if failed_count else len(failed),
             "errors": failed,
         }
 
@@ -498,12 +519,63 @@ class ProximaDBGraph:
             else:
                 edge_dicts.append(edge)
 
-        # Process in batches
+        # Process in batches. Prefer the true batch endpoint — the server
+        # applies per-edge admission (a bad edge rejects only itself; the
+        # response's errors[] carries per-edge reasons) and one request
+        # replaces 1,000.
         total_created = 0
-        failed = []
+        failed_count = 0
+        failed: list[dict[str, Any]] = []
+        batch_method = getattr(self._client, "batch_create_edges", None)
 
         for i in range(0, len(edge_dicts), batch_size):
             batch = edge_dicts[i : i + batch_size]
+
+            if callable(batch_method):
+                try:
+                    normalized = []
+                    for edge_offset, edge_dict in enumerate(batch):
+                        from_node_id = (
+                            edge_dict.get("from_node_id")
+                            or edge_dict.get("from_node")
+                            or edge_dict.get("from")
+                        )
+                        to_node_id = (
+                            edge_dict.get("to_node_id")
+                            or edge_dict.get("to_node")
+                            or edge_dict.get("to")
+                        )
+                        edge_type = edge_dict.get("edge_type") or edge_dict.get("type")
+                        if not from_node_id or not to_node_id or not edge_type:
+                            raise ValueError(
+                                "Edge batch items must include from/to node IDs and edge type"
+                            )
+                        item = {
+                            "id": edge_dict.get("id", f"edge_{i + edge_offset}"),
+                            "from_node_id": from_node_id,
+                            "to_node_id": to_node_id,
+                            "edge_type": edge_type,
+                            "properties": edge_dict.get("properties", {}),
+                        }
+                        if edge_dict.get("weight") is not None:
+                            item["weight"] = edge_dict.get("weight")
+                        normalized.append(item)
+                    resp = batch_method(edges=normalized, graph_id=self._graph_id)
+                    data = resp.get("data", resp) if isinstance(resp, dict) else {}
+                    created = data.get("created_count")
+                    if created is None:
+                        created = len(data.get("results", []) or data.get("edges", []))
+                    total_created += int(created or 0)
+                    failed_count += int(data.get("failed_count") or 0)
+                    for err in data.get("errors", []) or []:
+                        failed.append({"batch": i // batch_size, "error": err})
+                    continue
+                except AttributeError:
+                    batch_method = None
+                except Exception as e:
+                    failed_count += len(batch)
+                    failed.append({"batch": i // batch_size, "error": str(e)})
+                    continue
 
             try:
                 for edge_offset, edge_dict in enumerate(batch):
@@ -533,12 +605,13 @@ class ProximaDBGraph:
                     )
                     total_created += 1
             except Exception as e:
+                failed_count += 1
                 failed.append({"batch": i // batch_size, "error": str(e)})
 
         return {
-            "success": len(failed) == 0,
+            "success": failed_count == 0 and not failed,
             "created": total_created,
-            "failed": len(failed),
+            "failed": failed_count if failed_count else len(failed),
             "errors": failed,
         }
 

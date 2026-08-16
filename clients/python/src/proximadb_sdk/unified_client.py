@@ -4243,6 +4243,29 @@ class ProximaDBClient:
     # Graph API Methods
     # ===========================
 
+    def batch_create_nodes(
+        self,
+        nodes: list[dict[str, Any]],
+        graph_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create many nodes in one request (falls to the protocol's batch
+        endpoint; raises AttributeError on transports without one — callers
+        like ``ProximaDBGraph`` fall back to per-item creates)."""
+        return self._invoke_graph_method(
+            "batch_create_nodes", graph_id=graph_id, nodes=nodes
+        )
+
+    def batch_create_edges(
+        self,
+        edges: list[dict[str, Any]],
+        graph_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create many edges in one request with per-edge admission — the
+        server reports rejections in ``errors[]`` while the valid rest lands."""
+        return self._invoke_graph_method(
+            "batch_create_edges", graph_id=graph_id, edges=edges
+        )
+
     def create_node(
         self,
         node_id: str,
