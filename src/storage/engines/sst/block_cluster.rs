@@ -798,16 +798,27 @@ pub fn ivf_probe_enabled() -> bool {
     }
 }
 
-/// TD-FPRUNE-1 M2: gate for the tag-aware two-level compaction layout
-/// (partition-by-tag, cluster-within). Default **OFF** — opt-in until the
-/// unfiltered-recall eval on a tagged corpus clears it (the filtered win is
-/// unit-proven; the risk is unfiltered recall from per-partition centroids).
-/// `PROXIMADB_PAX_PARTITION_LAYOUT=1|true|on|yes` engages it at compaction when
-/// the segment carries a shredded filterable tag. Mixed-read-safe: it emits the
-/// SAME A0 `CoarseModel` format (no layout_version change), only a different row
-/// placement, so every existing reader consumes it unchanged.
+/// TD-FPRUNE-1 M2 / C2: gate for the tag-aware two-level compaction layout
+/// (partition-by-tag, cluster-within). **Default ON** — engaged STRUCTURALLY at
+/// compaction whenever the segment carries a shredded filterable tag (the
+/// per-collection signal: the owner declared `filterable_columns`; the caller
+/// ANDs this with `shred_spec.first()`). Evidence-gated flip: C1 measured a 4.2×
+/// filtered byte cut for an UNCORRELATED tag (whose non-partitioned filtered
+/// query reads *more* than a full scan), and C2 measured UNFILTERED recall
+/// neutral vs the global layout (Δ=0.000). Mixed-read-safe: emits the SAME A0
+/// `CoarseModel` format (no layout_version change), only a different row
+/// placement. `PROXIMADB_PAX_PARTITION_LAYOUT=0|off|false|no` is the kill-switch
+/// back to the global (single-directory) plan.
 pub fn partition_layout_enabled() -> bool {
-    env_gate_on("PROXIMADB_PAX_PARTITION_LAYOUT")
+    !matches!(
+        std::env::var("PROXIMADB_PAX_PARTITION_LAYOUT")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("0" | "off" | "false" | "no")
+    )
 }
 
 /// Boolean gate read: truthy = `1|true|on|yes`.
