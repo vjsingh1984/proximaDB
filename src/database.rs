@@ -923,6 +923,60 @@ impl ProximaDB {
         }
         tracing::info!("✅ ProximaDB::start - Multi-server started successfully");
 
+        // Periodic graph WAL checkpoint (gated on the same canonical-replay
+        // scope as the checkpoint machinery itself). Without a cadence,
+        // `flush_wal` runs only at shutdown, so the graph WAL grows for the
+        // whole session and the shutdown snapshot is the first-ever (largest
+        // possible) one. Cadence 60s with an edge-epoch dirty check; every
+        // 10th tick runs unconditionally to cover node-only mutations, which
+        // do not bump the edge epoch.
+        if crate::storage::persistence::write_ahead_log::wal_operations::canonical_replay_scope_enabled()
+            && let Some(ref multi_server) = self.multi_server
+        {
+            let graph_service = multi_server.shared_services.graph_service.clone();
+            let (tx, mut rx) = tokio::sync::watch::channel(false);
+            crate::services::shutdown_registry::register("graph-wal-checkpoint", tx);
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(tokio::time::Duration::from_secs(60));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut last_epochs: std::collections::HashMap<String, u64> =
+                    std::collections::HashMap::new();
+                let mut ticks: u64 = 0;
+                loop {
+                    tokio::select! {
+                        _ = tick.tick() => {}
+                        _ = rx.changed() => break,
+                    }
+                    ticks += 1;
+                    let force = ticks.is_multiple_of(10);
+                    let graphs = match graph_service.list_graphs().await {
+                        Ok(g) => g,
+                        Err(e) => {
+                            tracing::debug!("graph checkpoint tick: list_graphs failed: {e}");
+                            continue;
+                        }
+                    };
+                    for graph_id in graphs {
+                        let epoch = graph_service.edge_epoch(&graph_id).0;
+                        let dirty = last_epochs.get(&graph_id) != Some(&epoch);
+                        if !(dirty || force) {
+                            continue;
+                        }
+                        match graph_service.flush_wal(&graph_id).await {
+                            Ok(()) => {
+                                last_epochs.insert(graph_id, epoch);
+                            }
+                            Err(e) => tracing::warn!(
+                                "periodic graph WAL checkpoint failed for {graph_id}: {e:#}"
+                            ),
+                        }
+                    }
+                }
+                tracing::debug!("graph WAL checkpoint loop exited");
+            });
+            tracing::info!("🕒 graph WAL checkpoint loop armed (60s, scope-gated)");
+        }
+
         tracing::info!(
             "🎉 ProximaDB::start - Database startup complete with full persistence recovery!"
         );
@@ -974,7 +1028,10 @@ impl ProximaDB {
         // 2. Flush graph WAL for all graphs before shutdown
         tracing::info!("Flushing graph WAL for all graphs...");
         if let Some(ref multi_server) = self.multi_server {
-            match tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+            // 15s (was 5s): with PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE on,
+            // each graph's flush also writes a full snapshot and truncates
+            // reclaimed WAL segments.
+            match tokio::time::timeout(tokio::time::Duration::from_secs(15), async {
                 let graphs = multi_server
                     .shared_services
                     .graph_service
@@ -1060,7 +1117,13 @@ impl ProximaDB {
         }
 
         // 4. Stop storage engine with timeout
-        match tokio::time::timeout(tokio::time::Duration::from_secs(3), async {
+        // 60s (was 3s): the final flush-on-stop is a real materialize —
+        // TD-FLUSH-4 measured 43.9s at 884k entries — and the same function
+        // already budgets 90s for drain_inline_flushes. 3s guaranteed the
+        // final flush (and with it WAL reclamation via free_wal) was
+        // truncated on every non-trivial embedded run. Returns early when
+        // the flush is small, which the embedded flush profile now ensures.
+        match tokio::time::timeout(tokio::time::Duration::from_secs(60), async {
             let mut storage = self.storage.write().await;
             storage.stop().await
         })

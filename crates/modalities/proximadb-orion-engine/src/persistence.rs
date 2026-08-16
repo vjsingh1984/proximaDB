@@ -677,6 +677,8 @@ impl OrionPersistence {
 
         // Clear existing data
         engine.memory_pool.nodes.clear();
+        engine.memory_pool.edges.clear();
+        engine.memory_pool.edge_composite_index.clear();
         engine.edge_metadata.clear();
         engine.node_to_index.clear();
 
@@ -688,9 +690,15 @@ impl OrionPersistence {
                 .insert(node.id.clone(), Arc::new(node));
         }
 
-        // Restore edges
+        // Restore edges into BOTH stores: `edge_metadata` (id lookup) AND the
+        // memory pool — `get_all_edges`/the composite-uniqueness index read the
+        // pool, so restoring only metadata left every full-snapshot load
+        // edge-blind on the read path (the #1549 read-blindness bug, snapshot
+        // edition; latent while snapshot loading was gated off).
         for edge in snapshot.edges {
-            engine.edge_metadata.insert(edge.id.clone(), Arc::new(edge));
+            let edge_id = edge.id.clone();
+            let edge_arc = engine.memory_pool.insert_edge(edge);
+            engine.edge_metadata.insert(edge_id, edge_arc);
         }
 
         // Restore CSR structures
