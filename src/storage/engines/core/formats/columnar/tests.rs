@@ -50,8 +50,7 @@ async fn test_id_column_always_preserved() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
-        .await
+    let mut writer = crate::storage::engines::core::formats::columnar::writer_port_helpers::make_streaming_writer(&file_path, 128, config).await
         .unwrap();
 
     // Write test records with IDs
@@ -108,6 +107,7 @@ async fn test_id_less_storage_warning() {
         config,
         None,
         filesystem_factory.clone(),
+        crate::storage::engines::core::formats::columnar::hybrid_writer::root_quantization_engine(),
     )
     .unwrap();
 
@@ -157,8 +157,7 @@ async fn test_parquet_flush_and_read_pattern() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
-        .await
+    let mut writer = crate::storage::engines::core::formats::columnar::writer_port_helpers::make_streaming_writer(&file_path, 128, config).await
         .unwrap();
 
     // Create records as would happen during flush
@@ -318,8 +317,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
-        .await
+    let mut writer = crate::storage::engines::core::formats::columnar::writer_port_helpers::make_streaming_writer(&file_path, 128, config).await
         .unwrap();
     writer.write_batch(&test_records).await.unwrap();
     let (stats, data, _collector) = writer.finalize().await.unwrap();
@@ -546,6 +544,7 @@ async fn test_multi_file_directory_scan() {
             config,
             None,
             filesystem.clone(),
+            crate::storage::engines::core::formats::columnar::hybrid_writer::root_quantization_engine(),
         )
         .unwrap();
 
@@ -686,8 +685,7 @@ async fn test_dictionary_encoding_optimization() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
-        .await
+    let mut writer = crate::storage::engines::core::formats::columnar::writer_port_helpers::make_streaming_writer(&file_path, 128, config).await
         .unwrap();
 
     // Create records with repeated ID patterns (good for dictionary encoding)
@@ -818,8 +816,7 @@ async fn test_customer_api_compatibility() {
 
     // Test that customer-facing APIs work correctly
     let config = ParquetWriterConfig::default(); // Uses default: id_less_storage = false
-    let mut writer = StreamingParquetWriter::new(&file_path, 384, config, None)
-        .await
+    let mut writer = crate::storage::engines::core::formats::columnar::writer_port_helpers::make_streaming_writer(&file_path, 384, config).await
         .unwrap();
 
     let test_records = vec![
@@ -999,8 +996,7 @@ async fn test_row_group_offset_optimization() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
-        .await
+    let mut writer = crate::storage::engines::core::formats::columnar::writer_port_helpers::make_streaming_writer(&file_path, 128, config).await
         .unwrap();
 
     let test_records = create_test_records(250); // Multiple row groups

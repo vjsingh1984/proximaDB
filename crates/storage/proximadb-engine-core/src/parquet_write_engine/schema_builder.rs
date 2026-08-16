@@ -10,8 +10,8 @@ use parquet::file::properties::WriterProperties;
 use std::sync::Arc;
 
 use super::writer_config::ParquetWriterConfig;
-use crate::proto::proximadb_v1::FilterableColumnSpec;
-use crate::storage::engines::core::formats::columnar::constants::*;
+use proximadb_proto::proximadb_v1::FilterableColumnSpec;
+use proximadb_storage_common::columnar_constants::*;
 
 /// Schema builder for Parquet files
 pub struct ParquetSchemaBuilder {
@@ -101,11 +101,15 @@ impl ParquetSchemaBuilder {
             tracing::debug!("Building schema with {} filterable columns", columns.len());
             for col_spec in columns {
                 let data_type_str = match col_spec.data_type() {
-                    crate::proto::proximadb_v1::FilterableDataType::FilterableString => "STRING",
-                    crate::proto::proximadb_v1::FilterableDataType::FilterableInteger => "INTEGER",
-                    crate::proto::proximadb_v1::FilterableDataType::FilterableFloat => "FLOAT",
-                    crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean => "BOOLEAN",
-                    crate::proto::proximadb_v1::FilterableDataType::FilterableDatetime => {
+                    proximadb_proto::proximadb_v1::FilterableDataType::FilterableString => "STRING",
+                    proximadb_proto::proximadb_v1::FilterableDataType::FilterableInteger => {
+                        "INTEGER"
+                    }
+                    proximadb_proto::proximadb_v1::FilterableDataType::FilterableFloat => "FLOAT",
+                    proximadb_proto::proximadb_v1::FilterableDataType::FilterableBoolean => {
+                        "BOOLEAN"
+                    }
+                    proximadb_proto::proximadb_v1::FilterableDataType::FilterableDatetime => {
                         "TIMESTAMP"
                     }
                     _ => "STRING", // Default to string for arrays and unknown types
@@ -233,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_schema_with_quantization() {
-        use crate::storage::engines::core::formats::columnar::constants::*;
+        use proximadb_storage_common::columnar_constants::*;
 
         let mut config = ParquetWriterConfig::default();
         config.quantization.enable_binary = Some(true);

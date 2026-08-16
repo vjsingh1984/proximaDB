@@ -90,8 +90,9 @@ pub use proximadb_storage_common::text_search::metadata_filter_strategy; // extr
 pub mod optimization; // NEW: Consolidated Parquet and Arrow IPC operations
 
 // Modular components with semantic names (replacing old monolithic files)
+pub use proximadb_engine_core::parquet_write_engine; // extracted TD-DECOMP-78
 pub mod columnar_query_engine;
-pub mod parquet_write_engine; // Columnar write operations and Parquet file generation // Columnar read operations and query execution
+
 // Quantization now handled by unified compute module
 pub mod batch_operations;
 pub use proximadb_engine_core::proximablocks::columnar_config_types::{
@@ -560,7 +561,35 @@ impl ColumnarFactory {
             ..Default::default()
         };
 
-        StreamingParquetWriter::new(file_path, dimension, config, None).await
+        // Root-side convenience: constructs the default filesystem + quantization
+        // engine and injects them through the ports (TD-DECOMP-78 moved the
+        // default-construction responsibility to the composition root).
+        let filesystem_factory: std::sync::Arc<dyn proximadb_storage_ports::FilesystemPort> =
+            std::sync::Arc::new(
+                crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                    .await?,
+            );
+        let quantization_engine: Option<
+            std::sync::Arc<dyn proximadb_storage_ports::QuantizationEnginePort>,
+        > = Some(std::sync::Arc::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
+                std::sync::Arc::new(
+                    proximadb_distance_kernel::engine::UnifiedDistanceCompute::default(),
+                ),
+                std::sync::Arc::new(
+                    crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+                ),
+            ),
+        ));
+        StreamingParquetWriter::new(
+            file_path,
+            dimension,
+            config,
+            None,
+            filesystem_factory,
+            quantization_engine,
+        )
+        .await
     }
 
     /// Create columnar optimizer with hardware-specific settings
@@ -809,5 +838,41 @@ mod inline_tests {
         assert_eq!(small.row_group_size, 1_000);
         assert_eq!(medium.row_group_size, 5_000);
         assert_eq!(large.row_group_size, 50_000);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod writer_port_helpers {
+    //! Test construction of the streaming-writer ports (TD-DECOMP-78): the
+    //! default factory + engine construction lives root-side now.
+    use std::sync::Arc;
+
+    pub(crate) async fn default_ports() -> (
+        Arc<dyn proximadb_storage_ports::FilesystemPort>,
+        Option<Arc<dyn proximadb_storage_ports::QuantizationEnginePort>>,
+    ) {
+        let factory: Arc<dyn proximadb_storage_ports::FilesystemPort> = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                .await
+                .expect("default filesystem"),
+        );
+        let quant = crate::storage::engines::core::formats::columnar::hybrid_writer::root_quantization_engine();
+        (factory, quant)
+    }
+
+    /// Test helper: build a StreamingParquetWriter with root-side default ports.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn make_streaming_writer<P: AsRef<std::path::Path>>(
+        file_path: P,
+        dimension: usize,
+        config: crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig,
+    ) -> anyhow::Result<
+        crate::storage::engines::core::formats::columnar::parquet_write_engine::streaming_writer::StreamingParquetWriter,
+    >{
+        let (factory, quant) = default_ports().await;
+        crate::storage::engines::core::formats::columnar::parquet_write_engine::streaming_writer::StreamingParquetWriter::new(
+            file_path, dimension, config, None, factory, quant,
+        )
+        .await
     }
 }

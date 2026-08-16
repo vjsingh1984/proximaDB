@@ -92,12 +92,7 @@ use proximadb_records::{EmbeddingCell, ProximaRecord};
             ..Default::default()
         };
 
-        let mut writer = StreamingParquetWriter::new(
-            file_path,
-            128,
-            config,
-            None,
-        ).await?;
+        let mut writer = crate::storage::engines::core::formats::columnar::writer_port_helpers::make_streaming_writer(&file_path, 128, config).await?;
 
         writer.write_batch(&records).await?;
         writer.finalize().await?;

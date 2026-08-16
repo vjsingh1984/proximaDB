@@ -12,7 +12,7 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
-use crate::core::bloom::{
+use proximadb_bloom::{
     BloomFilter, BloomFilterBuilder as CoreBloomBuilder, BloomFilterConfig as CoreConfig,
     BloomStrategy,
 };
@@ -86,7 +86,7 @@ impl BloomFilterBuilder {
                 false_positive_rate: Some(self.config.fpp),
                 expected_items: self.config.ndv as usize,
                 enabled: true,
-                hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+                hash_algorithm: proximadb_bloom::HashAlgorithm::Murmur3,
             };
 
             // Use core bloom filter builder
@@ -150,7 +150,7 @@ impl BloomFilterBuilder {
                 false_positive_rate: Some(self.config.fpp),
                 expected_items: self.config.ndv as usize,
                 enabled: true,
-                hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+                hash_algorithm: proximadb_bloom::HashAlgorithm::Murmur3,
             };
 
             let builder = CoreBloomBuilder::new(core_config);
@@ -192,13 +192,11 @@ impl BloomFilterBuilder {
                 false_positive_rate: Some(0.01),
                 expected_items: 1000,
                 enabled: true,
-                hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+                hash_algorithm: proximadb_bloom::HashAlgorithm::Murmur3,
             };
             // deserialize already returns Box<dyn BloomFilterStrategy>
-            let filter = crate::core::bloom::factory::BloomFilterFactory::deserialize(
-                &config,
-                &filter_bytes,
-            )?;
+            let filter =
+                proximadb_bloom::factory::BloomFilterFactory::deserialize(&config, &filter_bytes)?;
             bloom_filters.insert(row_group, filter);
         }
 

@@ -3,11 +3,9 @@
 //! This module defines configuration options for Parquet writers,
 //! including compression, encoding, and optimization settings.
 
-use crate::proto::proximadb_v1::QuantizationConfig;
-use crate::storage::engines::core::formats::columnar::constants::{
-    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
-};
 use parquet::basic::Compression;
+use proximadb_proto::proximadb_v1::QuantizationConfig;
+use proximadb_storage_common::columnar_constants::{DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE};
 
 /// Comprehensive configuration for Parquet writers
 #[derive(Debug, Clone)]

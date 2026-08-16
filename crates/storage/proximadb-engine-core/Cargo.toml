@@ -29,6 +29,7 @@ proximadb-bloom.workspace = true
 # sst/swift metadata serializers (TD-DECOMP-75): FilesystemPort seam + zero-copy traits + futures block_on
 proximadb-storage-ports.workspace = true
 proximadb-filter-expression.workspace = true
+proximadb-implicit-id-generator.workspace = true
 proximadb-storage-filesystem-types.workspace = true
 parking_lot.workspace = true
 futures.workspace = true
@@ -43,6 +44,11 @@ proximadb-data-model.workspace = true
 bincode.workspace = true
 bytemuck = { version = "1.14", features = ["derive"] }
 arrow-schema.workspace = true
+arrow.workspace = true
+arrow-array.workspace = true
+arrow-buffer = { version = "58", default-features = false }
+parquet.workspace = true
+bytes = "1.5"
 proximadb-quantization-model.workspace = true
 rayon.workspace = true
 tokio.workspace = true
@@ -56,6 +62,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 half = "2.4"
+tempfile.workspace = true
 async-trait.workspace = true
 rand.workspace = true
 

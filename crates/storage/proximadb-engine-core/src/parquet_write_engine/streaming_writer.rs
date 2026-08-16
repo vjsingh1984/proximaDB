@@ -3,21 +3,21 @@
 //! This module provides streaming write capabilities for Parquet files,
 //! optimized for large datasets with batch processing and row group management.
 
-use crate::storage::persistence::filesystem::FilesystemFactory;
+// FilesystemPort seam (TD-DECOMP-75 pattern): root FilesystemFactory implements it.
 use anyhow::{Result, anyhow};
 use arrow::array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
+use proximadb_storage_ports::FilesystemPort;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, error, info, trace};
 
-use crate::storage::engines::core::formats::columnar::ColumnarFilterableSpec;
-use crate::storage::engines::core::formats::columnar::{
-    metadata_collector::MetadataCollector, native_metadata::NativeMetadataHandler,
-};
 use proximadb_records::{ProximaRecord, ProximaTree, ProximaTreeNode};
+use proximadb_storage_common::columnar_schema_full::{ColumnarFilterableSpec, FilterableData};
+use proximadb_storage_common::metadata_collector::MetadataCollector;
+use proximadb_storage_common::native_metadata::NativeMetadataHandler;
 
 use super::{
     schema_builder::{ParquetSchemaBuilder, create_writer_properties},
@@ -37,12 +37,11 @@ pub struct StreamingParquetWriter {
 
     /// Custom ID bloom filters per row group (supplements Parquet native filters)
     #[allow(dead_code)]
-    id_bloom_filters: Vec<crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
+    id_bloom_filters: Vec<proximadb_storage_common::id_index::BloomFilter>,
 
     /// Metadata bloom filters for other columns
     #[allow(dead_code)]
-    metadata_bloom_filters:
-        HashMap<String, crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
+    metadata_bloom_filters: HashMap<String, proximadb_storage_common::id_index::BloomFilter>,
 
     file_path: String,
 
@@ -58,29 +57,39 @@ pub struct StreamingParquetWriter {
     /// Optional metadata collector for engine-specific sidecar files
     metadata_collector: Option<Box<dyn MetadataCollector>>,
 
-    /// Filesystem factory for cloud storage support
+    /// Filesystem port for cloud storage support (TD-DECOMP-75 seam; root
+    /// `FilesystemFactory` implements it and is injected by root-side callers).
     #[allow(dead_code)]
-    filesystem_factory: Arc<FilesystemFactory>,
+    filesystem_factory: Arc<dyn FilesystemPort>,
+
+    /// Level-specific quantization encoders behind the `QuantizationEnginePort`
+    /// seam (modality `UnifiedQuantizationEngine` impls it kernel-side; the
+    /// composition root injects). `None` disables the quantization-array paths.
+    quantization_engine: Option<Arc<dyn proximadb_storage_ports::QuantizationEnginePort>>,
 
     /// TD-040: Writer statistics tracking vector bounds
     writer_stats: StreamingParquetWriterStats,
 }
 
 impl StreamingParquetWriter {
-    /// Create new streaming writer with optional filterable columns
+    /// Create new streaming writer with optional filterable columns (ports
+    /// injected by the caller — the old default-factory construction moved
+    /// root-side with the composition root).
     pub async fn new<P: AsRef<Path>>(
         file_path: P,
         dimension: usize,
         config: ParquetWriterConfig,
-        filterable_columns: Option<&[crate::proto::proximadb_v1::FilterableColumnSpec]>,
+        filterable_columns: Option<&[proximadb_proto::proximadb_v1::FilterableColumnSpec]>,
+        filesystem_factory: Arc<dyn FilesystemPort>,
+        quantization_engine: Option<Arc<dyn proximadb_storage_ports::QuantizationEnginePort>>,
     ) -> Result<Self> {
-        let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
         Self::with_filesystem_factory(
             file_path,
             dimension,
             config,
             filterable_columns,
             filesystem_factory,
+            quantization_engine,
         )
     }
 
@@ -89,8 +98,9 @@ impl StreamingParquetWriter {
         file_path: P,
         dimension: usize,
         config: ParquetWriterConfig,
-        filterable_columns: Option<&[crate::proto::proximadb_v1::FilterableColumnSpec]>,
-        filesystem_factory: Arc<FilesystemFactory>,
+        filterable_columns: Option<&[proximadb_proto::proximadb_v1::FilterableColumnSpec]>,
+        filesystem_factory: Arc<dyn FilesystemPort>,
+        quantization_engine: Option<Arc<dyn proximadb_storage_ports::QuantizationEnginePort>>,
     ) -> Result<Self> {
         let file_path_str = file_path.as_ref().to_string_lossy().to_string();
         info!(
@@ -110,25 +120,25 @@ impl StreamingParquetWriter {
         let mut schema_builder = ParquetSchemaBuilder::new(dimension, config.clone());
 
         // Convert ColumnarFilterableSpec to proto FilterableColumnSpec for schema builder
-        let proto_filterable: Vec<crate::proto::proximadb_v1::FilterableColumnSpec> =
+        let proto_filterable: Vec<proximadb_proto::proximadb_v1::FilterableColumnSpec> =
             columnar_filterable
                 .iter()
                 .map(|spec| {
                     // Manual conversion since to_proto doesn't exist
-                    crate::proto::proximadb_v1::FilterableColumnSpec {
-                    name: spec.name.clone(),
-                    data_type: match spec.data_type {
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::String => 1,   // FILTERABLE_STRING = 1
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Integer => 2,  // FILTERABLE_INTEGER = 2
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Float => 3,    // FILTERABLE_FLOAT = 3
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Boolean => 4,  // FILTERABLE_BOOLEAN = 4
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Datetime => 5, // FILTERABLE_DATETIME = 5
-                        _ => 0,  // FILTERABLE_DATA_TYPE_UNSPECIFIED = 0
-                    },
-                    indexed: spec.indexed,
-                    estimated_cardinality: spec.estimated_cardinality.map(|c| c as u32),  // Convert Option<usize> to Option<u32>
-                    supports_range: false,
-                }
+                    proximadb_proto::proximadb_v1::FilterableColumnSpec {
+                        name: spec.name.clone(),
+                        data_type: match spec.data_type {
+                            FilterableData::String => 1,   // FILTERABLE_STRING = 1
+                            FilterableData::Integer => 2,  // FILTERABLE_INTEGER = 2
+                            FilterableData::Float => 3,    // FILTERABLE_FLOAT = 3
+                            FilterableData::Boolean => 4,  // FILTERABLE_BOOLEAN = 4
+                            FilterableData::Datetime => 5, // FILTERABLE_DATETIME = 5
+                            _ => 0,                        // FILTERABLE_DATA_TYPE_UNSPECIFIED = 0
+                        },
+                        indexed: spec.indexed,
+                        estimated_cardinality: spec.estimated_cardinality.map(|c| c as u32), // Convert Option<usize> to Option<u32>
+                        supports_range: false,
+                    }
                 })
                 .collect();
 
@@ -157,6 +167,7 @@ impl StreamingParquetWriter {
             config,
             schema,
             dimension,
+            quantization_engine,
             current_batch: Vec::new(),
             current_row_group: 0,
             total_records_written: 0,
@@ -379,7 +390,7 @@ impl StreamingParquetWriter {
 
         // Add filterable column arrays if specified
         if !self.filterable_columns.is_empty() {
-            use crate::storage::engines::core::formats::columnar::schema::FilterableData;
+            use FilterableData;
             use arrow_array::{BooleanArray, Float64Array, Int64Array};
 
             debug!(
@@ -621,22 +632,19 @@ impl StreamingParquetWriter {
         }
     }
 
-    /// Add quantization arrays to the record batch using UnifiedQuantizationEngine
+    /// Add quantization arrays to the record batch via the `QuantizationEnginePort`
+    /// seam (primitive in/out — no modality type crosses; the concrete engine is
+    /// injected by the root composition, previously constructed inline here).
     fn add_quantization_arrays(
         &self,
         arrays: &mut Vec<ArrayRef>,
         records: &[ProximaRecord],
     ) -> Result<()> {
-        use crate::compute::quantization::quantization_engine::{
-            InMemoryCodebookStore, UnifiedQuantizationEngine,
-        };
         use arrow::array::BinaryBuilder;
-        use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
 
-        // Create a quantization engine for this batch with in-memory codebook
-        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-        let codebook_store = Arc::new(InMemoryCodebookStore::new());
-        let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
+        let engine = self.quantization_engine.as_ref().ok_or_else(|| {
+            anyhow!("quantization arrays requested but no quantization engine was injected")
+        })?;
 
         // Binary quantization
         if self.config.quantization.enable_binary.unwrap_or(false) {
@@ -708,10 +716,7 @@ impl StreamingParquetWriter {
             let _estimated_items = self.config.bloom_filter_ndv.max(100000);
             // BloomFilter::new expects different parameters
             // Using default configuration for now
-            let bloom =
-                crate::storage::engines::core::formats::columnar::id_index::BloomFilter::new(
-                    1000, 0.01,
-                ); // expected_items, false_positive_rate
+            let bloom = proximadb_storage_common::id_index::BloomFilter::new(1000, 0.01); // expected_items, false_positive_rate
             self.id_bloom_filters.push(bloom);
         }
 
@@ -880,10 +885,10 @@ fn extract_vector_column_compressed_size(
     parquet_data: &[u8],
     fallback_uncompressed: u64,
 ) -> Result<u64> {
-    use crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_FP32;
     use bytes::Bytes;
     use parquet::file::reader::FileReader;
     use parquet::file::serialized_reader::SerializedFileReader;
+    use proximadb_storage_common::columnar_constants::FIELD_VECTOR_FP32;
 
     // Create a reader from the bytes
     let bytes = Bytes::copy_from_slice(parquet_data);
@@ -926,8 +931,9 @@ pub struct StreamingWriterBuilder {
     file_path: Option<String>,
     dimension: Option<usize>,
     config: ParquetWriterConfig,
-    filterable_columns: Option<Vec<crate::proto::proximadb_v1::FilterableColumnSpec>>,
-    filesystem_factory: Option<Arc<FilesystemFactory>>,
+    filterable_columns: Option<Vec<proximadb_proto::proximadb_v1::FilterableColumnSpec>>,
+    filesystem_factory: Option<Arc<dyn FilesystemPort>>,
+    quantization_engine: Option<Arc<dyn proximadb_storage_ports::QuantizationEnginePort>>,
 }
 
 impl StreamingWriterBuilder {
@@ -939,6 +945,7 @@ impl StreamingWriterBuilder {
             config: ParquetWriterConfig::default(),
             filterable_columns: None,
             filesystem_factory: None,
+            quantization_engine: None,
         }
     }
 
@@ -963,15 +970,24 @@ impl StreamingWriterBuilder {
     /// Set filterable columns
     pub fn with_filterable_columns(
         mut self,
-        columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>,
+        columns: Vec<proximadb_proto::proximadb_v1::FilterableColumnSpec>,
     ) -> Self {
         self.filterable_columns = Some(columns);
         self
     }
 
     /// Set filesystem factory
-    pub fn with_filesystem_factory(mut self, filesystem_factory: Arc<FilesystemFactory>) -> Self {
+    pub fn with_filesystem_factory(mut self, filesystem_factory: Arc<dyn FilesystemPort>) -> Self {
         self.filesystem_factory = Some(filesystem_factory);
+        self
+    }
+
+    /// Set the quantization encoder port (required when quantization arrays are enabled)
+    pub fn with_quantization_engine(
+        mut self,
+        quantization_engine: Arc<dyn proximadb_storage_ports::QuantizationEnginePort>,
+    ) -> Self {
+        self.quantization_engine = Some(quantization_engine);
         self
     }
 
@@ -984,24 +1000,17 @@ impl StreamingWriterBuilder {
             .dimension
             .ok_or_else(|| anyhow!("Dimension is required"))?;
 
-        match self.filesystem_factory {
-            Some(factory) => StreamingParquetWriter::with_filesystem_factory(
-                file_path,
-                dimension,
-                self.config,
-                self.filterable_columns.as_deref(),
-                factory,
-            ),
-            None => {
-                StreamingParquetWriter::new(
-                    file_path,
-                    dimension,
-                    self.config,
-                    self.filterable_columns.as_deref(),
-                )
-                .await
-            }
-        }
+        let factory = self.filesystem_factory.ok_or_else(|| {
+            anyhow!("filesystem factory is required (the root crate's default-factory convenience ctor moved root-side; use with_filesystem_factory)")
+        })?;
+        StreamingParquetWriter::with_filesystem_factory(
+            file_path,
+            dimension,
+            self.config,
+            self.filterable_columns.as_deref(),
+            factory,
+            self.quantization_engine,
+        )
     }
 }
 
