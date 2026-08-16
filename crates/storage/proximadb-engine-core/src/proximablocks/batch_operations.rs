@@ -5,8 +5,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::block_structures::ProximaDataBlock;
-use super::index_structures::RowBasedIdIndex;
+use crate::proximablocks::block_structures::ProximaDataBlock;
+use crate::proximablocks::index_structures::RowBasedIdIndex;
 use proximadb_kernel::uuid::Uuid;
 use proximadb_records::ProximaRecord;
 use proximadb_runtime_common::pool::VectorMemoryPool;

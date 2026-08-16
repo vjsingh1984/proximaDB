@@ -7473,6 +7473,7 @@ name = "proximadb-engine-core"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "arrow-schema",
  "async-trait",
  "bincode",
  "bytemuck",
@@ -7487,6 +7488,7 @@ dependencies = [
  "proximadb-compression",
  "proximadb-data-model",
  "proximadb-distance-kernel",
+ "proximadb-filter-expression",
  "proximadb-hardware",
  "proximadb-hardware-caps",
  "proximadb-kernel",

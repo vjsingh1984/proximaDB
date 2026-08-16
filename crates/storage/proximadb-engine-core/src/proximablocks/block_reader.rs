@@ -13,12 +13,9 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::storage::engines::core::formats::proximablocks::block_structures::{
-    ProximaBlockMetadata, ProximaDataBlock,
-};
-use crate::storage::persistence::filesystem::FileSystem;
-use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use crate::proximablocks::block_structures::{ProximaBlockMetadata, ProximaDataBlock};
 use proximadb_filter_expression::FilterExpression;
+use proximadb_storage_filesystem_types::FileSystem;
 
 /// ✅ Reading strategy for different access patterns
 #[derive(Debug, Clone)]
@@ -69,13 +66,13 @@ pub enum ProximaReadStrategy {
 /// ✅ Unified Proxima Block Reader
 /// All storage engines delegate to this reader for consistent block access
 pub struct ProximaBlockReader {
-    filesystem: Arc<UnifiedCachingFilesystem>,
+    filesystem: Arc<dyn FileSystem>,
     #[allow(dead_code)]
     collection_id: String,
 }
 
 impl ProximaBlockReader {
-    pub fn new(filesystem: Arc<UnifiedCachingFilesystem>, collection_id: String) -> Self {
+    pub fn new(filesystem: Arc<dyn FileSystem>, collection_id: String) -> Self {
         Self {
             filesystem,
             collection_id,
@@ -352,7 +349,7 @@ impl ProximaBlockReader {
     #[allow(clippy::only_used_in_recursion)]
     fn check_bloom_filter(
         &self,
-        bloom: &crate::core::bloom::SstableBloomFilter,
+        bloom: &proximadb_bloom::SstableBloomFilter,
         filter: &Option<&FilterExpression>,
     ) -> bool {
         // If no filter, always check the block
@@ -549,7 +546,7 @@ pub struct SstBlockReader {
 }
 
 impl SstBlockReader {
-    pub fn new(filesystem: Arc<UnifiedCachingFilesystem>, collection_id: String) -> Self {
+    pub fn new(filesystem: Arc<dyn FileSystem>, collection_id: String) -> Self {
         Self {
             inner: ProximaBlockReader::new(filesystem, collection_id),
         }
@@ -587,7 +584,7 @@ pub struct SwiftBlockReader {
 }
 
 impl SwiftBlockReader {
-    pub fn new(filesystem: Arc<UnifiedCachingFilesystem>, collection_id: String) -> Self {
+    pub fn new(filesystem: Arc<dyn FileSystem>, collection_id: String) -> Self {
         Self {
             inner: ProximaBlockReader::new(filesystem, collection_id),
         }
@@ -628,7 +625,7 @@ pub struct HelixBlockReader {
 }
 
 impl HelixBlockReader {
-    pub fn new(filesystem: Arc<UnifiedCachingFilesystem>, collection_id: String) -> Self {
+    pub fn new(filesystem: Arc<dyn FileSystem>, collection_id: String) -> Self {
         Self {
             inner: ProximaBlockReader::new(filesystem, collection_id),
         }
