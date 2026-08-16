@@ -7733,6 +7733,9 @@ mod tests {
         unsafe {
             std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
             std::env::set_var("PROXIMADB_IVF_K", "16");
+            // This test targets the GLOBAL single-directory probe; pin it off the
+            // now-default-on partition layout (C2) so its cell-count assertions hold.
+            std::env::set_var("PROXIMADB_PAX_PARTITION_LAYOUT", "0");
         }
         // Compacted (v3, A0) + shredded so `partition` is a footer-resolvable column.
         write_pax_segment_compacted_shredded(
@@ -7876,6 +7879,7 @@ mod tests {
             std::env::remove_var("PROXIMADB_TRACE_GETS");
             std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
             std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+            std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
             std::env::remove_var("PROXIMADB_IVF_K");
         }
     }
@@ -7966,11 +7970,12 @@ mod tests {
             unsafe {
                 std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
                 std::env::set_var("PROXIMADB_IVF_K", "16");
-                if layout_on {
-                    std::env::set_var("PROXIMADB_PAX_PARTITION_LAYOUT", "1");
-                } else {
-                    std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
-                }
+                // Explicit "1"/"0" (the layout is now default-on, C2): "0" is the
+                // kill-switch to the global layout for the OFF arm.
+                std::env::set_var(
+                    "PROXIMADB_PAX_PARTITION_LAYOUT",
+                    if layout_on { "1" } else { "0" },
+                );
             }
             write_pax_segment_compacted_shredded(
                 &path,
@@ -8150,11 +8155,12 @@ mod tests {
             unsafe {
                 std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
                 std::env::set_var("PROXIMADB_IVF_K", "64");
-                if m2_on {
-                    std::env::set_var("PROXIMADB_PAX_PARTITION_LAYOUT", "1");
-                } else {
-                    std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
-                }
+                // Explicit "1"/"0" (layout is now default-on, C2): "0" pins the OFF
+                // arm to the global layout via the kill-switch.
+                std::env::set_var(
+                    "PROXIMADB_PAX_PARTITION_LAYOUT",
+                    if m2_on { "1" } else { "0" },
+                );
             }
             // Small blocks ⇒ many Region-D blocks (footer-pruning needs blocks
             // small enough to be partition-homogeneous after clustering).
