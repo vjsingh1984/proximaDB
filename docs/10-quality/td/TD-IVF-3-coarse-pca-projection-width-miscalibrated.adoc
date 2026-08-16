@@ -224,6 +224,47 @@ than from the formula's shape:
   figure previously quoted in the comment (0.9786) does not appear in the source
   sweep at all (which reads 0.9795).
 
+== Where the GET cost actually is (measured 2026-08-16)
+
+The exact-current paired rerun TD-SEARCH-3 required is complete
+(`runs/range-cap-current-eb997aa6e`, binary `926900df04a5…` @ `eb997aa6e`,
+`status: pass`, promotion-eligible on all 8 checks: wire GETs −63.8%/−64.0%,
+bytes ×1.033/1.040, p50 ×0.398/0.402, p95 ×1.001/1.048, RSS ×1.064).
+
+Decomposing it moves the target of this TD.
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| cap | GET/q | Region-A rounds | non-A GETs | Region-B MB/q
+| 4 MiB | 49.54 | 8.80 | 40.75 | 143.3
+| 24 MiB | 17.96 | 7.43 (−15.6%) | 10.53 (**−74.2%**) | 145.7
+|===
+
+**Region A — the probe-cell path this TD's projection width governs, and the one
+ADR-065's "one cell ≈ one IOP" premise is about — is 18% of GETs and improves
+15.6%.** The entire saving is in the **rerank tier (Region B) and the OID blocks
+(Region D)**, which no width or `k_c` change touches.
+
+Corroborated structurally: D blocks are sized `DEFAULT_TARGET_BLOCK_SIZE_BYTES`
+= 3 MiB against a 4 MiB Azure cap, so `3 + 3 > 4` and **block coalescing merges
+nothing on Azure today**; at 24 MiB it merges 8. The same
+`MAX_TARGET_BLOCK_SIZE_BYTES` = 4 MiB clamp makes S3's 8 MiB target unreachable
+as a block size.
+
+Consequences for this TD, stated plainly:
+
+* The projection-width programme optimised the **cheap** tier's geometry. Region
+  B is 143 MB/q of 162 (88% of bytes) and ~82% of requests.
+* Width remains worth shipping — it is a **recall** fix at the shipped `nprobe`,
+  where both neural beds sit below the 0.98 SLA — but it should no longer be
+  described as the lever on GET/query. It is not.
+* The `k_c` U-curve recorded above is a curve in Region-A geometry under a fixed
+  4 MiB planner. Both conditions now look load-bearing.
+
+The cap decision itself belongs to **TD-SEARCH-3**, which owns the promotion gate
+and still requires the `k_c=90` repeat at an eligible cap. Nothing here
+authorizes a default change.
+
 == Resolution
 
 The factorial called for below has now been run: 26 beds across **three**
