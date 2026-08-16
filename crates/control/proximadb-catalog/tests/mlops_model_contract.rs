@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use proximadb_catalog::mlops::{
     CatalogArtifactDescriptor, CatalogDeploymentBinding, CatalogDimensionPolicy,
-    CatalogEmbeddingInputContract, CatalogEmbeddingModelRegistry, CatalogEmbeddingModelVersion,
-    CatalogEmbeddingOutputContract, CatalogEvaluationEvidence, CatalogMlopsAsset,
-    CatalogModelAccess, CatalogModelDecision, CatalogModelDecisionKind, CatalogModelGovernance,
-    CatalogModelRegistryMutation, CatalogModelUsePolicy,
+    CatalogDimensionRange, CatalogEmbeddingInputContract, CatalogEmbeddingModelRegistry,
+    CatalogEmbeddingModelVersion, CatalogEmbeddingOutputContract, CatalogEvaluationEvidence,
+    CatalogMlopsAsset, CatalogModelAccess, CatalogModelDecision, CatalogModelDecisionKind,
+    CatalogModelGovernance, CatalogModelRegistryMutation, CatalogModelUsePolicy,
 };
 use proximadb_catalog::native::{NativeCatalog, NativeCatalogConfig};
 use proximadb_catalog::schema::validate_schema;
@@ -19,6 +19,22 @@ const MODEL_DIGEST: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DATASET_DIGEST: &str =
     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+#[test]
+fn named_wire_payloads_preserve_the_existing_json_contract() {
+    let range = CatalogDimensionPolicy::Range(CatalogDimensionRange { minimum: 128 });
+    assert_eq!(
+        serde_json::to_value(range).unwrap(),
+        serde_json::json!({ "range": { "minimum": 128 } })
+    );
+    assert_eq!(
+        serde_json::to_value(CatalogModelRegistryMutation::set_alias("champion", 7)).unwrap(),
+        serde_json::json!({
+            "operation": "set_alias",
+            "payload": { "alias": "champion", "version": 7 }
+        })
+    );
+}
 
 fn version(number: u64) -> CatalogEmbeddingModelVersion {
     let artifact = CatalogArtifactDescriptor::new(
@@ -293,13 +309,7 @@ fn optimistic_revision_rejects_stale_catalog_writers() {
     assert_eq!(registry.revision, 1);
 
     let error = registry
-        .apply(
-            0,
-            CatalogModelRegistryMutation::SetAlias {
-                alias: "champion".to_string(),
-                version: 1,
-            },
-        )
+        .apply(0, CatalogModelRegistryMutation::set_alias("champion", 1))
         .unwrap_err();
     assert!(error.to_string().contains("revision conflict"));
     assert!(registry.aliases.is_empty());
@@ -420,10 +430,7 @@ async fn native_xcatalog_persists_command_shaped_registry_mutations() {
         .apply_model_registry_mutation(
             &id,
             1,
-            CatalogModelRegistryMutation::SetAlias {
-                alias: "champion".to_string(),
-                version: 1,
-            },
+            CatalogModelRegistryMutation::set_alias("champion", 1),
         )
         .await
         .unwrap();

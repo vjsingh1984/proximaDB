@@ -5,6 +5,11 @@
 # fails if this directory drifts from a fresh regeneration.
 """Contains all the data models used in inputs/outputs"""
 
+from .append_model_evidence_mutation import AppendModelEvidenceMutation
+from .append_model_evidence_mutation_operation import (
+    AppendModelEvidenceMutationOperation,
+)
+from .apply_model_registry_mutation_request import ApplyModelRegistryMutationRequest
 from .batch_create_edges_request import BatchCreateEdgesRequest
 from .batch_create_nodes_request import BatchCreateNodesRequest
 from .batch_edges_response import BatchEdgesResponse
@@ -14,6 +19,46 @@ from .batch_nodes_response_data import BatchNodesResponseData
 from .capabilities_response import CapabilitiesResponse
 from .capabilities_response_error_envelope import CapabilitiesResponseErrorEnvelope
 from .capabilities_response_limits import CapabilitiesResponseLimits
+from .catalog_artifact_descriptor import CatalogArtifactDescriptor
+from .catalog_deployment_binding import CatalogDeploymentBinding
+from .catalog_dimension_policy_type_0 import CatalogDimensionPolicyType0
+from .catalog_dimension_policy_type_1 import CatalogDimensionPolicyType1
+from .catalog_dimension_policy_type_2 import CatalogDimensionPolicyType2
+from .catalog_dimension_range import CatalogDimensionRange
+from .catalog_embedding_input_contract import CatalogEmbeddingInputContract
+from .catalog_embedding_input_contract_document_parameters import (
+    CatalogEmbeddingInputContractDocumentParameters,
+)
+from .catalog_embedding_input_contract_query_parameters import (
+    CatalogEmbeddingInputContractQueryParameters,
+)
+from .catalog_embedding_model_registry import CatalogEmbeddingModelRegistry
+from .catalog_embedding_model_registry_aliases import (
+    CatalogEmbeddingModelRegistryAliases,
+)
+from .catalog_embedding_model_registry_deployments import (
+    CatalogEmbeddingModelRegistryDeployments,
+)
+from .catalog_embedding_model_registry_tags import CatalogEmbeddingModelRegistryTags
+from .catalog_embedding_model_registry_versions import (
+    CatalogEmbeddingModelRegistryVersions,
+)
+from .catalog_embedding_model_version import CatalogEmbeddingModelVersion
+from .catalog_embedding_output_contract import CatalogEmbeddingOutputContract
+from .catalog_evaluation_evidence import CatalogEvaluationEvidence
+from .catalog_evaluation_evidence_metrics import CatalogEvaluationEvidenceMetrics
+from .catalog_lineage_input import CatalogLineageInput
+from .catalog_lineage_input_kind import CatalogLineageInputKind
+from .catalog_model_access import CatalogModelAccess
+from .catalog_model_alias_mutation import CatalogModelAliasMutation
+from .catalog_model_decision import CatalogModelDecision
+from .catalog_model_decision_kind import CatalogModelDecisionKind
+from .catalog_model_governance import CatalogModelGovernance
+from .catalog_model_lineage import CatalogModelLineage
+from .catalog_model_registry_mutation_type_1 import CatalogModelRegistryMutationType1
+from .catalog_model_registry_mutation_type_1_operation import (
+    CatalogModelRegistryMutationType1Operation,
+)
 from .collection_stats_v2 import CollectionStatsV2
 from .collection_v2_response import CollectionV2Response
 from .collection_v2_summary import CollectionV2Summary
@@ -23,6 +68,7 @@ from .create_document_collection_body import CreateDocumentCollectionBody
 from .create_document_collection_response_200 import CreateDocumentCollectionResponse200
 from .create_edge_request import CreateEdgeRequest
 from .create_graph_request import CreateGraphRequest
+from .create_model_registry_request import CreateModelRegistryRequest
 from .create_node_request import CreateNodeRequest
 from .delete_collection_v2_response import DeleteCollectionV2Response
 from .delete_graph_response import DeleteGraphResponse
@@ -81,6 +127,8 @@ from .ivf_config_output import IvfConfigOutput
 from .list_collections_v2_response import ListCollectionsV2Response
 from .list_document_collections_response_200 import ListDocumentCollectionsResponse200
 from .list_graphs_response import ListGraphsResponse
+from .list_model_registries_response import ListModelRegistriesResponse
+from .model_registry_record_response import ModelRegistryRecordResponse
 from .node_input import NodeInput
 from .node_input_properties import NodeInputProperties
 from .node_response import NodeResponse
@@ -98,8 +146,19 @@ from .query_logs_response_200 import QueryLogsResponse200
 from .query_request import QueryRequest
 from .query_request_parameters_type_0_item import QueryRequestParametersType0Item
 from .query_response import QueryResponse
+from .record_model_decision_mutation import RecordModelDecisionMutation
+from .record_model_decision_mutation_operation import (
+    RecordModelDecisionMutationOperation,
+)
 from .record_v2_response import RecordV2Response
 from .record_v2_response_props import RecordV2ResponseProps
+from .register_model_version_mutation import RegisterModelVersionMutation
+from .register_model_version_mutation_operation import (
+    RegisterModelVersionMutationOperation,
+)
+from .resolve_model_alias_request import ResolveModelAliasRequest
+from .resolved_embedding_model_response import ResolvedEmbeddingModelResponse
+from .resolved_model_binding_response import ResolvedModelBindingResponse
 from .rest_column_definition import RestColumnDefinition
 from .scan_records_request import ScanRecordsRequest
 from .scan_records_response import ScanRecordsResponse
@@ -126,8 +185,15 @@ from .update_schema_response import UpdateSchemaResponse
 from .upsert_entity_request import UpsertEntityRequest
 from .upsert_entity_request_flexible_metadata import UpsertEntityRequestFlexibleMetadata
 from .upsert_entity_response import UpsertEntityResponse
+from .upsert_model_deployment_mutation import UpsertModelDeploymentMutation
+from .upsert_model_deployment_mutation_operation import (
+    UpsertModelDeploymentMutationOperation,
+)
 
 __all__ = (
+    "AppendModelEvidenceMutation",
+    "AppendModelEvidenceMutationOperation",
+    "ApplyModelRegistryMutationRequest",
     "BatchCreateEdgesRequest",
     "BatchCreateNodesRequest",
     "BatchEdgesResponse",
@@ -137,6 +203,34 @@ __all__ = (
     "CapabilitiesResponse",
     "CapabilitiesResponseErrorEnvelope",
     "CapabilitiesResponseLimits",
+    "CatalogArtifactDescriptor",
+    "CatalogDeploymentBinding",
+    "CatalogDimensionPolicyType0",
+    "CatalogDimensionPolicyType1",
+    "CatalogDimensionPolicyType2",
+    "CatalogDimensionRange",
+    "CatalogEmbeddingInputContract",
+    "CatalogEmbeddingInputContractDocumentParameters",
+    "CatalogEmbeddingInputContractQueryParameters",
+    "CatalogEmbeddingModelRegistry",
+    "CatalogEmbeddingModelRegistryAliases",
+    "CatalogEmbeddingModelRegistryDeployments",
+    "CatalogEmbeddingModelRegistryTags",
+    "CatalogEmbeddingModelRegistryVersions",
+    "CatalogEmbeddingModelVersion",
+    "CatalogEmbeddingOutputContract",
+    "CatalogEvaluationEvidence",
+    "CatalogEvaluationEvidenceMetrics",
+    "CatalogLineageInput",
+    "CatalogLineageInputKind",
+    "CatalogModelAccess",
+    "CatalogModelAliasMutation",
+    "CatalogModelDecision",
+    "CatalogModelDecisionKind",
+    "CatalogModelGovernance",
+    "CatalogModelLineage",
+    "CatalogModelRegistryMutationType1",
+    "CatalogModelRegistryMutationType1Operation",
     "CollectionStatsV2",
     "CollectionV2Response",
     "CollectionV2Summary",
@@ -146,6 +240,7 @@ __all__ = (
     "CreateDocumentCollectionResponse200",
     "CreateEdgeRequest",
     "CreateGraphRequest",
+    "CreateModelRegistryRequest",
     "CreateNodeRequest",
     "DeleteCollectionV2Response",
     "DeleteGraphResponse",
@@ -204,6 +299,8 @@ __all__ = (
     "ListCollectionsV2Response",
     "ListDocumentCollectionsResponse200",
     "ListGraphsResponse",
+    "ListModelRegistriesResponse",
+    "ModelRegistryRecordResponse",
     "NodeInput",
     "NodeInputProperties",
     "NodeResponse",
@@ -221,8 +318,15 @@ __all__ = (
     "QueryRequest",
     "QueryRequestParametersType0Item",
     "QueryResponse",
+    "RecordModelDecisionMutation",
+    "RecordModelDecisionMutationOperation",
     "RecordV2Response",
     "RecordV2ResponseProps",
+    "RegisterModelVersionMutation",
+    "RegisterModelVersionMutationOperation",
+    "ResolvedEmbeddingModelResponse",
+    "ResolvedModelBindingResponse",
+    "ResolveModelAliasRequest",
     "RestColumnDefinition",
     "ScanRecordsRequest",
     "ScanRecordsResponse",
@@ -249,4 +353,6 @@ __all__ = (
     "UpsertEntityRequest",
     "UpsertEntityRequestFlexibleMetadata",
     "UpsertEntityResponse",
+    "UpsertModelDeploymentMutation",
+    "UpsertModelDeploymentMutationOperation",
 )

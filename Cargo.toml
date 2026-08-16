@@ -443,7 +443,7 @@ proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
-proximadb-catalog = { path = "crates/control/proximadb-catalog", features = ["fc-metamodel"] }
+proximadb-catalog = { path = "crates/control/proximadb-catalog", features = ["fc-metamodel", "openapi"] }
 proximadb-catalog-schema = { workspace = true }
 proximadb-multimodel-codec = { workspace = true }
 proximadb-cdc = { workspace = true }

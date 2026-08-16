@@ -47,6 +47,7 @@ pub enum ModelRegistryServiceError {
 
 /// Stable lifecycle response shared by transport adapters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogModelRegistryRecord {
     pub tenant_id: String,
     pub asset_id: u64,

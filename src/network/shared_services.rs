@@ -155,6 +155,11 @@ pub struct SharedServices {
     pub filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     /// Shared xCatalog control plane for REST, gRPC, Arrow Flight, SQL, and query routing.
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
+    /// Tenant-scoped embedding-model lifecycle authority. REST, gRPC, and
+    /// compatibility adapters receive this exact `Arc`, including its atomic
+    /// create coordination, instead of constructing transport-local registries.
+    pub model_registry_service:
+        Arc<proximadb_catalog::model_registry_service::CatalogModelRegistryService>,
     /// PAX segment registry — bridges write path with Iceberg REST snapshot stats.
     /// Shared with `AppState::segment_registry` via `Arc` clone in `build_router_for_unified`.
     pub segment_registry: Arc<crate::catalog::SegmentRegistry>,
@@ -802,6 +807,11 @@ impl SharedServices {
         }
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        let model_registry_service = Arc::new(
+            proximadb_catalog::model_registry_service::CatalogModelRegistryService::new(
+                catalog_manager.clone(),
+            ),
+        );
         // Inject the object-store filesystem resolver (root half of the
         // CatalogFilesystemResolver port-inversion). Lazily creates a
         // FilesystemFactory only if an s3://gs://az:// catalog URL is used;
@@ -2948,6 +2958,7 @@ impl SharedServices {
             Self {
                 filesystem_factory,
                 catalog_manager,
+                model_registry_service,
                 segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
                 collection_service: collection_service.clone(),
                 vector_operations_service: vector_operations_service.clone(),

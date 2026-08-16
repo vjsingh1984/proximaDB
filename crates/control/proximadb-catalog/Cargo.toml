@@ -26,6 +26,9 @@ aws                   = ["dep:aws-config", "dep:aws-sdk-glue"]
 delta-lake            = []
 polaris-catalog       = ["dep:reqwest", "dep:urlencoding"]
 unity-catalog         = ["dep:reqwest", "dep:urlencoding"]
+# API composition roots opt in to OpenAPI schemas for the stable catalog
+# contracts. Catalog-only consumers keep the control crate transport-neutral.
+openapi               = ["dep:utoipa"]
 
 [dependencies]
 anyhow.workspace = true
@@ -78,6 +81,7 @@ sqlx = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "fs", "io-util", "time", "macros", "rt"] }
 tracing.workspace = true
+utoipa = { version = "5", optional = true }
 uuid = { version = "1.0", features = ["v4"] }  # opaque server-issued namespace_id (ns_<uuid>)
 
 [dev-dependencies]

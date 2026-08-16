@@ -7127,6 +7127,7 @@ dependencies = [
  "tokio",
  "tracing",
  "urlencoding",
+ "utoipa",
  "uuid",
 ]
 
