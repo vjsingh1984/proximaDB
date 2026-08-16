@@ -6247,4 +6247,265 @@ mod tests {
              on={rows_on} vs off={rows_off}"
         );
     }
+
+    /// TD-FPRUNE-1 C1: integrated full-stack GET/byte breakdown for a filtered PAX
+    /// query at realistic multi-block, multi-partition scale — the co-design
+    /// "trace before you tune" evidence that Slice A + M3 + M2 actually moved the
+    /// dominant cost, and which term is the RESIDUAL. It SPLITS the filtered path
+    /// into its two I/O stages — the Stage-F allow-set build (`pax_filtered_row_allow`,
+    /// reads footer-surviving Region-D blocks) vs the probe+rerank
+    /// (`rabitq_search_segment_coalesced_allowed`, reads A0 + probe cells + Region-B)
+    /// — for BOTH a correlated and an uncorrelated tag, with M2 layout off vs on.
+    /// The printed breakdown identifies the residual dominant GET/byte term (does
+    /// the allow-set build dominate? → P3 per-cell stats is justified). Assertions
+    /// are the regression guards; the eprintln is the evidence.
+    #[tokio::test]
+    async fn filtered_stack_get_byte_breakdown() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 64;
+        const P: usize = 8; // partitions (the tag)
+        const N: usize = 4096;
+        const K: usize = 10;
+
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+
+        // One filtered measurement over a freshly built segment. `correlated`
+        // decides whether the tag tracks the vector cluster; `m2_on` toggles the
+        // partition layout at compaction. Returns the per-stage GET/byte split.
+        struct Measure {
+            filesize: u64,
+            allow_gets: u64,
+            allow_bytes: u64,
+            blocks_total: usize,
+            blocks_pruned_footer: usize,
+            search_gets: u64,
+            search_bytes: u64,
+            region_a_bytes: u64,
+            region_b_bytes: u64,
+            whole_region_fallback: u64,
+            recall: f32,
+        }
+        async fn measure(
+            fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+            pseudo: &dyn Fn(usize, usize) -> f32,
+            correlated: bool,
+            m2_on: bool,
+        ) -> Measure {
+            // partition = i%P; vector cluster = correlated ? partition : (i/P)%P.
+            let part = |i: usize| i % P;
+            let vclust = |i: usize| if correlated { i % P } else { (i / P) % P };
+            let corpus: Vec<Vec<f32>> = (0..N)
+                .map(|i| {
+                    let c = vclust(i);
+                    (0..DIM)
+                        .map(|d| (if d == c { 50.0 } else { 0.0 }) + 0.4 * pseudo(i, d))
+                        .collect()
+                })
+                .collect();
+            let records: Vec<ProximaRecord> = corpus
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let mut r = rec(&format!("r{i}"), 1000 + i as i64, v.clone());
+                    r.props.insert(
+                        "partition".to_string(),
+                        proximadb_records::ProximaTreeNode::Value(
+                            proximadb_data_model::ProximaValue::String(format!("p{}", part(i))),
+                        ),
+                    );
+                    r
+                })
+                .collect();
+
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("c1.pax");
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+                std::env::set_var("PROXIMADB_IVF_K", "64");
+                if m2_on {
+                    std::env::set_var("PROXIMADB_PAX_PARTITION_LAYOUT", "1");
+                } else {
+                    std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+                }
+            }
+            // Small blocks ⇒ many Region-D blocks (footer-pruning needs blocks
+            // small enough to be partition-homogeneous after clustering).
+            write_pax_segment_compacted_shredded(
+                &path,
+                &records,
+                "col",
+                1,
+                VectorQuant::RaBitQ,
+                VectorQuant::Sq8,
+                false,
+                Some(8 * 1024),
+                &[("partition".to_string(), 100)],
+            )
+            .unwrap();
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+                std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+            }
+            let p = path.to_str().unwrap();
+            let filesize = fs.metadata(p).await.unwrap().size;
+
+            // Filtered truth: top-K among partition==p0 rows.
+            let query: Vec<f32> = (0..DIM).map(|d| if d == 0 { 50.0 } else { 0.0 }).collect();
+            let l2 =
+                |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+            let mut p0: Vec<usize> = (0..N).filter(|&i| part(i) == 0).collect();
+            p0.sort_by(|&a, &b| {
+                l2(&corpus[a], &query)
+                    .partial_cmp(&l2(&corpus[b], &query))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let truth: std::collections::HashSet<String> =
+                p0.iter().take(K).map(|i| format!("r{i}")).collect();
+
+            // Isolate the ranged-GET regime (shrink prefetch so the segment isn't
+            // slurped whole; disable the cross-call metadata cache). GET/byte are
+            // measured via the FS-leaf `io_trace` accumulator (`read_range` feeds
+            // `record_range_gets`/`record_bytes_read`) — the SAME counters the
+            // route cost model + KRU meter price — NOT `drain_get_trace` (that
+            // `GET_TRACE` is a probe-only counter and misses the Stage-F reads).
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "4096");
+                std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "0");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "4");
+            }
+            use crate::observability::io_trace;
+
+            // Stage-F allow-set build (Region-D only), under its own trace scope.
+            let (allow_res, allow_snap) = io_trace::scope(async {
+                let r = pax_filtered_row_allow(fs, p, &partition_filter("p0")).await;
+                (r, io_trace::snapshot())
+            })
+            .await;
+            let (allow, stats) = allow_res
+                .unwrap()
+                .expect("shredded v3 segment yields an allow-set");
+            let allow_snap = allow_snap.expect("io_trace scope active");
+
+            // Probe + rerank (A0 + probe cells + Region-B), given the allow-set.
+            let (hits_res, search_snap) = io_trace::scope(async {
+                let r = rabitq_search_segment_coalesced_allowed(
+                    fs,
+                    p,
+                    &query,
+                    K,
+                    RankMetric::L2,
+                    None,
+                    None,
+                    Some(&allow),
+                )
+                .await;
+                (r, io_trace::snapshot())
+            })
+            .await;
+            let hits = hits_res.unwrap().unwrap();
+            let search_snap = search_snap.expect("io_trace scope active");
+
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+                std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
+                std::env::remove_var("PROXIMADB_IVF_K");
+            }
+
+            let got: std::collections::HashSet<String> =
+                hits.iter().map(|h| h.oid.clone()).collect();
+            let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
+            Measure {
+                filesize,
+                allow_gets: allow_snap.range_gets,
+                allow_bytes: allow_snap.bytes_read,
+                blocks_total: stats.blocks_total,
+                blocks_pruned_footer: stats.blocks_pruned_footer,
+                search_gets: search_snap.range_gets,
+                search_bytes: search_snap.bytes_read,
+                region_a_bytes: search_snap.ivf_region_a_bytes,
+                region_b_bytes: search_snap.ivf_region_b_bytes,
+                whole_region_fallback: search_snap.ivf_whole_region_fallback,
+                recall,
+            }
+        }
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+
+        let mut rows = Vec::new();
+        for (label, correlated, m2_on) in [
+            ("correlated       (M2 off)", true, false),
+            ("uncorrelated     (M2 off)", false, false),
+            ("uncorrelated     (M2 on )", false, true),
+        ] {
+            let m = measure(&fs, &pseudo, correlated, m2_on).await;
+            let total_bytes = m.allow_bytes + m.search_bytes;
+            let total_gets = m.allow_gets + m.search_gets;
+            eprintln!(
+                "[C1] {label} | file={fk}KB whole-scan | \
+                 allow-build: {ag} GETs {ab}KB ({bp}/{bt} D-blocks footer-pruned) | \
+                 probe+rerank: {sg} GETs {sb}KB (A={ra}KB B={rb}KB wholeB-fallback={wf}) | \
+                 TOTAL {tg} GETs {tk}KB ({pct}% of whole) | recall={r:.2}",
+                fk = m.filesize / 1024,
+                ag = m.allow_gets,
+                ab = m.allow_bytes / 1024,
+                bp = m.blocks_pruned_footer,
+                bt = m.blocks_total,
+                sg = m.search_gets,
+                sb = m.search_bytes / 1024,
+                ra = m.region_a_bytes / 1024,
+                rb = m.region_b_bytes / 1024,
+                wf = m.whole_region_fallback,
+                tg = total_gets,
+                tk = total_bytes / 1024,
+                pct = (total_bytes * 100).checked_div(m.filesize).unwrap_or(0),
+                r = m.recall,
+            );
+            // The stack composes end-to-end (finds real neighbors) in every config.
+            assert!(m.recall > 0.0, "{label}: filtered search returns matches");
+            rows.push(m);
+        }
+        // The measured residual: for an UNCORRELATED tag the Stage-F allow-set
+        // build reads ~all Region-D blocks (footer stats can't prune it), so M2's
+        // partition-homogeneous layout — which restores footer-pruning AND tightens
+        // survivor ranges — must cut BOTH the allow-build and the probe+rerank
+        // bytes. This is the end-to-end proof M2 attacks the dominant filtered term.
+        let off = &rows[1]; // uncorrelated M2 off
+        let on = &rows[2]; // uncorrelated M2 on
+        assert!(
+            on.blocks_pruned_footer > off.blocks_pruned_footer,
+            "M2 must restore footer-pruning for the uncorrelated tag: on={} off={}",
+            on.blocks_pruned_footer,
+            off.blocks_pruned_footer
+        );
+        let (on_total, off_total) = (
+            on.allow_bytes + on.search_bytes,
+            off.allow_bytes + off.search_bytes,
+        );
+        assert!(
+            on_total < off_total,
+            "M2 must cut total filtered bytes for the uncorrelated tag: on={on_total} off={off_total}"
+        );
+        // And with M2 the filtered stack reads strictly less than a whole-object
+        // scan (the cascade-OFF baseline) — the co-design win, restored.
+        assert!(
+            on_total < on.filesize,
+            "M2 uncorrelated total {on_total}B must be < whole-object {}B",
+            on.filesize
+        );
+    }
 }
