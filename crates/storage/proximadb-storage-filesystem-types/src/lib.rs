@@ -488,9 +488,45 @@ where
         .await
 }
 
+/// Policy for merging the logical ranges of one [`FileSystem::read_ranges`]
+/// call into fewer physical requests.
+///
+/// Object stores bill **per request** — Azure Hot, S3 Standard and GCS Standard
+/// each charge one transaction per ranged GET regardless of its size — so the
+/// count of physical reads is the billed read cost, and bytes are paid for in
+/// latency and memory rather than money. Merging therefore trades a bounded
+/// over-read for a saved round trip.
+///
+/// Both bounds are required. `max_gap_bytes` alone (which is all upstream
+/// `object_store` enforces) leaves the over-read unbounded: a hundred scattered
+/// 4 KiB ranges under a 1 MiB gap would materialise ~100 MB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RangeCoalescePolicy {
+    /// Largest gap between two logical ranges that may be bridged.
+    pub max_gap_bytes: u64,
+    /// Hard ceiling on a single merged physical read — the over-read/RSS bound.
+    pub max_merged_bytes: u64,
+}
+
 /// Abstract filesystem trait for strategy pattern
 #[async_trait]
 pub trait FileSystem: Send + Sync + std::fmt::Debug {
+    /// Range-merging policy for this filesystem instance, or `None` to issue one
+    /// physical read per logical range.
+    ///
+    /// Injected at construction rather than resolved inside the implementation:
+    /// this crate is a pure filesystem abstraction with no dependency on
+    /// `proximadb-storage-common`, so it cannot (and should not) reach for
+    /// `IopsBudget` itself. `FilesystemFactory` builds one instance per scheme,
+    /// so a backend-derived policy is fully expressible here.
+    ///
+    /// Any implementation that overrides [`FileSystem::read_ranges`] MUST also
+    /// override this to describe what it really does, or the physical-GET meter
+    /// in `CountingFileSystem` will report intent instead of truth.
+    fn range_coalesce_policy(&self) -> Option<RangeCoalescePolicy> {
+        None
+    }
+
     /// Get self as Any for downcasting to concrete types
     fn as_any(&self) -> &dyn std::any::Any;
 
@@ -1020,3 +1056,285 @@ mod read_ranges_buffered_tests {
 }
 pub mod range_coalescer;
 pub mod smart_io_traits;
+
+#[cfg(test)]
+mod read_ranges_coalescing_tests {
+    //! The `read_ranges` seam: N logical ranges must not cost N physical GETs.
+    //!
+    //! Object stores bill per request (Azure Hot, S3 Standard, GCS Standard all
+    //! charge one transaction per ranged GET regardless of size), so the number
+    //! of physical `read_range` calls IS the billed read cost. The trait has had
+    //! a multi-range signature since inception but no multi-range semantics —
+    //! and two call sites document the opposite.
+    //!
+    //! The fake below counts physical `read_range` invocations, so these assert
+    //! measured physics rather than intent. It deliberately does NOT override
+    //! `read_ranges`: the point is to exercise the trait default.
+    use super::{
+        DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata,
+        FsResult, RangeCoalescePolicy,
+    };
+    use std::ops::Range;
+    use std::sync::Mutex;
+
+    /// How a backend behaves when a range starts at or past EOF.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum EofMode {
+        /// Local filesystems: short read, `Ok`.
+        Clamp,
+        /// Azure/S3/GCS: `InvalidGetRange::StartTooLarge` / HTTP 416.
+        Error,
+    }
+
+    #[derive(Debug)]
+    struct CountingFake {
+        data: Vec<u8>,
+        calls: Mutex<Vec<(u64, u64)>>,
+        eof: EofMode,
+        policy: Option<RangeCoalescePolicy>,
+    }
+
+    impl CountingFake {
+        fn new(len: usize, eof: EofMode, policy: Option<RangeCoalescePolicy>) -> Self {
+            Self {
+                data: (0..len).map(|i| (i % 251) as u8).collect(),
+                calls: Mutex::new(Vec::new()),
+                eof,
+                policy,
+            }
+        }
+        fn calls(&self) -> Vec<(u64, u64)> {
+            self.calls.lock().expect("calls mutex").clone()
+        }
+        fn slice(&self, from: usize, to: usize) -> Vec<u8> {
+            self.data[from.min(self.data.len())..to.min(self.data.len())].to_vec()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileSystem for CountingFake {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        async fn read(&self, _path: &str) -> FsResult<Vec<u8>> {
+            Ok(self.data.clone())
+        }
+        async fn read_range(&self, _path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+            // Record BEFORE applying EOF semantics: this is the physical meter.
+            self.calls
+                .lock()
+                .expect("calls mutex")
+                .push((offset, length));
+            if length == 0 {
+                return Ok(Vec::new());
+            }
+            let start = offset as usize;
+            if start >= self.data.len() {
+                return match self.eof {
+                    EofMode::Clamp => Ok(Vec::new()),
+                    EofMode::Error => Err(FilesystemError::InvalidOperation(format!(
+                        "range start {offset} past EOF {}",
+                        self.data.len()
+                    ))),
+                };
+            }
+            Ok(self.slice(start, start + length as usize))
+        }
+        fn range_coalesce_policy(&self) -> Option<RangeCoalescePolicy> {
+            self.policy
+        }
+        async fn write(&self, _p: &str, _d: &[u8], _o: Option<FileOptions>) -> FsResult<()> {
+            unimplemented!("write not exercised")
+        }
+        async fn delete(&self, _path: &str) -> FsResult<()> {
+            unimplemented!("delete not exercised")
+        }
+        async fn exists(&self, _path: &str) -> FsResult<bool> {
+            Ok(true)
+        }
+        async fn metadata(&self, _path: &str) -> FsResult<FsFileMetadata> {
+            unimplemented!("metadata not exercised")
+        }
+        async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
+            unimplemented!("append not exercised")
+        }
+        async fn sync(&self) -> FsResult<()> {
+            Ok(())
+        }
+        async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+            unimplemented!("open_file not exercised")
+        }
+        async fn list(&self, _path: &str) -> FsResult<Vec<DirEntry>> {
+            Ok(Vec::new())
+        }
+        async fn create_dir(&self, _path: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn create_dir_all(&self, _path: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn copy(&self, _f: &str, _t: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn move_file(&self, _f: &str, _t: &str) -> FsResult<()> {
+            Ok(())
+        }
+        fn filesystem_type(&self) -> &'static str {
+            "counting-fake"
+        }
+    }
+
+    fn policy(gap: u64, max: u64) -> Option<RangeCoalescePolicy> {
+        Some(RangeCoalescePolicy {
+            max_gap_bytes: gap,
+            max_merged_bytes: max,
+        })
+    }
+
+    fn read(fake: &CountingFake, ranges: Vec<Range<u64>>) -> FsResult<Vec<Vec<u8>>> {
+        futures::executor::block_on(fake.read_ranges("p", ranges))
+    }
+
+    /// R1 — the headline. Adjacent and near-adjacent ranges become ONE request.
+    #[test]
+    fn coalescing_merges_adjacent_ranges_into_one_physical_read() {
+        let fake = CountingFake::new(4096, EofMode::Clamp, policy(16, 4096));
+        let out = read(&fake, vec![0..64, 64..128, 130..200]).expect("read");
+        assert_eq!(
+            fake.calls().len(),
+            1,
+            "3 near-adjacent ranges must cost ONE physical GET, got {:?}",
+            fake.calls()
+        );
+        assert_eq!(fake.calls()[0], (0, 200), "merged span covers all members");
+        // Exact slices: PaxBlockReader parses a footer at len-FOOTER and CRCs the
+        // body, so an extra trailing byte is a hard decode failure.
+        assert_eq!(out[0], fake.slice(0, 64));
+        assert_eq!(out[1], fake.slice(64, 128));
+        assert_eq!(out[2], fake.slice(130, 200));
+    }
+
+    /// R2 — output must be in INPUT order, not sorted order. The PAX adapter
+    /// builds RecordBatches positionally from this Vec, so a permutation is a
+    /// wrong-answer bug, not a crash.
+    #[test]
+    fn returned_buffers_are_in_input_order_not_sorted_order() {
+        let fake = CountingFake::new(4096, EofMode::Clamp, policy(4096, 8192));
+        let out = read(&fake, vec![200..264, 0..64, 100..164]).expect("read");
+        assert_eq!(out[0], fake.slice(200, 264), "input position 0");
+        assert_eq!(out[1], fake.slice(0, 64), "input position 1");
+        assert_eq!(out[2], fake.slice(100, 164), "input position 2");
+        assert_eq!(fake.calls().len(), 1, "all three merge into one span");
+    }
+
+    /// R3 — duplicates and overlaps each get their own buffer; never deduped.
+    #[test]
+    fn duplicate_and_overlapping_ranges_each_get_their_own_buffer() {
+        let fake = CountingFake::new(1024, EofMode::Clamp, policy(64, 4096));
+        let out = read(&fake, vec![0..32, 0..32, 16..48]).expect("read");
+        assert_eq!(out.len(), 3, "one buffer per INPUT range");
+        assert_eq!(out[0], fake.slice(0, 32));
+        assert_eq!(out[1], fake.slice(0, 32));
+        assert_eq!(out[2], fake.slice(16, 48));
+        assert_eq!(fake.calls().len(), 1);
+    }
+
+    /// R4 — the caps are the memory bound, asserted as physical fact. Upstream
+    /// object_store has a gap cap but NO size cap; we must not inherit that.
+    #[test]
+    fn gap_above_cap_and_span_above_max_are_not_merged() {
+        let far = CountingFake::new(4096, EofMode::Clamp, policy(8, 4096));
+        read(&far, vec![0..32, 1000..1032]).expect("read");
+        assert_eq!(far.calls().len(), 2, "gap 968 > cap 8 must not merge");
+
+        let big = CountingFake::new(4096, EofMode::Clamp, policy(64, 128));
+        read(&big, vec![0..64, 64..128, 128..192]).expect("read");
+        assert_eq!(
+            big.calls().len(),
+            2,
+            "merged span must never exceed max_merged_bytes, got {:?}",
+            big.calls()
+        );
+    }
+
+    /// R5 — EOF. Every backend clamps, so a merged buffer is SHORTER than the
+    /// requested span; slicing must saturate on both ends or it panics.
+    #[test]
+    fn merged_read_short_at_eof_slices_saturating_never_panics() {
+        // Arm 1: merged span crosses EOF; the tail range is partially satisfied.
+        let clamp = CountingFake::new(100, EofMode::Clamp, policy(4096, 8192));
+        let out = read(&clamp, vec![0..32, 90..140]).expect("clamped read");
+        assert_eq!(clamp.calls().len(), 1);
+        assert_eq!(out[0], clamp.slice(0, 32));
+        assert_eq!(out[1], clamp.slice(90, 100), "10 bytes, saturated at EOF");
+
+        // Arm 2: the tail range is entirely past EOF.
+        let past = CountingFake::new(100, EofMode::Clamp, policy(4096, 8192));
+        let out = read(&past, vec![0..32, 200..232]).expect("past-EOF read");
+        assert!(
+            out[1].is_empty(),
+            "entirely past EOF yields an empty buffer"
+        );
+
+        // Arm 3: DOCUMENTED BEHAVIOUR CHANGE. On object stores a range starting
+        // past EOF errors today (416 / StartTooLarge), so this call returns Err.
+        // After merging, the single physical read starts at 0 and clamps to Ok.
+        // Error becomes success — this converges Azure onto local semantics.
+        // Defensible, but locked here so it is reviewed, not discovered.
+        let store = CountingFake::new(100, EofMode::Error, policy(4096, 8192));
+        let out = read(&store, vec![0..32, 200..232]).expect("merged read clamps to Ok");
+        assert_eq!(store.calls().len(), 1);
+        assert!(out[1].is_empty());
+    }
+
+    /// R6 — a zero-length range must cost no request and must not shift output.
+    #[test]
+    fn zero_length_range_costs_no_physical_read_and_yields_empty() {
+        let fake = CountingFake::new(1024, EofMode::Clamp, policy(64, 4096));
+        let out = read(&fake, vec![0..32, 64..64, 100..132]).expect("read");
+        assert_eq!(out.len(), 3);
+        assert!(
+            out[1].is_empty(),
+            "zero-length yields empty, keeps its slot"
+        );
+        assert!(
+            fake.calls().iter().all(|(_, len)| *len > 0),
+            "no zero-length physical read may be issued, got {:?}",
+            fake.calls()
+        );
+    }
+
+    /// R7 — an inverted range underflows `range.end - range.start` today: debug
+    /// panic, release ~u64::MAX length. Fail closed instead.
+    #[test]
+    fn inverted_range_is_rejected_not_silently_widened() {
+        let fake = CountingFake::new(1024, EofMode::Clamp, policy(64, 4096));
+        let err = read(&fake, vec![0..32, 40..10]).expect_err("inverted must be rejected");
+        assert!(
+            matches!(err, FilesystemError::InvalidOperation(_)),
+            "expected InvalidOperation, got {err:?}"
+        );
+    }
+
+    /// R8 — the mixed-read-safety lock. With no policy the plan is the identity
+    /// and behaviour must be BYTE-IDENTICAL to the pre-change loop, including
+    /// the zero-length call and past-EOF error semantics. Passes today; must
+    /// keep passing, which is what makes "unset ⇒ unchanged" provable.
+    #[test]
+    fn policy_none_is_byte_identical_to_the_per_range_loop() {
+        let fake = CountingFake::new(100, EofMode::Clamp, None);
+        let out = read(&fake, vec![0..32, 200..232, 64..64]).expect("read");
+        assert_eq!(
+            fake.calls(),
+            vec![(0, 32), (200, 32), (64, 0)],
+            "identity plan must issue exactly the same calls, in order"
+        );
+        assert_eq!(out[0], fake.slice(0, 32));
+        assert!(out[1].is_empty());
+        assert!(out[2].is_empty());
+
+        // And the object-store error semantics survive untouched when OFF.
+        let store = CountingFake::new(100, EofMode::Error, None);
+        read(&store, vec![0..32, 200..232]).expect_err("past-EOF still errors when OFF");
+    }
+}
