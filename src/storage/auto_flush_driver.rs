@@ -225,6 +225,7 @@ impl AutoFlushDriver {
             });
         }
 
+        let mut any_flush_succeeded = false;
         while let Some(joined) = pending.join_next().await {
             let (collection_id, reason, dur, result) = match joined {
                 Ok(value) => value,
@@ -235,6 +236,7 @@ impl AutoFlushDriver {
             };
             match result {
                 Ok(Some(outcome)) => {
+                    any_flush_succeeded = true;
                     let remaining = write_buffer.unflushed_bytes(&collection_id).await;
                     wal_flush_metrics::record_successful_flush(
                         &collection_id,
@@ -275,6 +277,36 @@ impl AutoFlushDriver {
                     );
                 }
             }
+        }
+
+        if any_flush_succeeded {
+            Self::reap_manifest_segments().await;
+        }
+    }
+
+    /// Checkpoint the global WAL manifest and reap fully-flushed segments.
+    ///
+    /// The manifest writes one `manifest_*.jsonl` file per append AND per
+    /// status update, and its reaper previously had NO production caller —
+    /// so the `data/wal` directory grew monotonically for the life of the
+    /// data dir (~50 MB of dead manifest files after a Victor repo-scale
+    /// ingest). Running checkpoint+cleanup once per tick that completed at
+    /// least one flush bounds the directory to roughly one flush-interval
+    /// of files. Best-effort: reaping must never fail the flush tick.
+    pub(crate) async fn reap_manifest_segments() {
+        use crate::storage::persistence::write_ahead_log::manifest as manifest_singleton;
+        match manifest_singleton::create_checkpoint().await {
+            Ok(_) => match manifest_singleton::cleanup_checkpointed().await {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(
+                        "🧹 manifest reaper: removed {} checkpointed entries",
+                        removed
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("manifest cleanup failed (non-fatal): {:#}", e),
+            },
+            Err(e) => tracing::warn!("manifest checkpoint failed (non-fatal): {:#}", e),
         }
     }
 }

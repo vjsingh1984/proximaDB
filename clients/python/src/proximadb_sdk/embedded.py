@@ -518,6 +518,13 @@ class EmbeddedConfig:
     vector_engine: str = "SST"  # Best for real-time code indexing
     graph_engine: str = "ORION"  # In-memory with WAL for code relationships
 
+    # SIGTERM -> SIGKILL grace window on stop(). The server's final
+    # flush-on-stop is a real materialize (tens of seconds for large
+    # sessions); killing it strands the whole session's WAL on disk. The
+    # wait polls, so small sessions still exit in ~1-3s — this is a
+    # ceiling, not a sleep.
+    shutdown_timeout_s: float = 60.0
+
 
 class EmbeddedCollection:
     """A collection in the embedded database.
@@ -909,6 +916,14 @@ tags = ["embedded"]
 [storage.wal_config]
 enable_wal = true
 memory_flush_size_bytes = {self.config.memory_flush_size_mb * 1024 * 1024}
+# Embedded flush profile: the server's default 128MB predicted-segment floor
+# (TD-FLUSH-3) targets object-store GET economics; embedded is local mmap,
+# where the config docs themselves endorse a lower floor. 8MB keeps the
+# anti-tiny-segment floor while letting small sessions actually flush (and
+# with it reclaim WAL); 60s bounds the final at-shutdown flush to at most
+# one minute of ingest.
+flush_floor_predicted_mb = 8
+flush_interval_secs = 60
 
 [storage.sst_config]
 cache_size_mb = {self.config.cache_size_mb}
@@ -959,12 +974,22 @@ prefetch_budget = 4
             # Generate config
             config_path = self._generate_config()
 
-            # Start process
+            # Start process. Graph WAL retention opt-ins: the canonical
+            # replay scope turns on snapshot+truncate in flush_wal, and the
+            # 8MB segment size lets truncation actually reclaim (whole
+            # segments below the checkpoint marker are deleted; an embedded
+            # graph WAL rarely reaches the 64MB server default, which would
+            # reclaim nothing). An explicit value in the caller's environment
+            # wins.
+            child_env = dict(os.environ)
+            child_env.setdefault("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE", "1")
+            child_env.setdefault("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "8")
             self._process = subprocess.Popen(
                 [binary, "--config", config_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+                env=child_env,
             )
 
             # Wait for server to be ready
@@ -995,7 +1020,7 @@ prefetch_budget = 4
                     os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
                 else:
                     self._process.terminate()
-                self._process.wait(timeout=5)
+                self._process.wait(timeout=self.config.shutdown_timeout_s)
             except Exception:
                 if hasattr(os, "killpg"):
                     os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)

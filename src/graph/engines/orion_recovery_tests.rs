@@ -463,6 +463,117 @@ mod read_after_restart_tests {
 }
 
 #[cfg(test)]
+mod wal_segment_reclaim_tests {
+    //! WAL-retention slice: with a small `PROXIMADB_GRAPH_WAL_SEGMENT_MB`,
+    //! the marker→flush→snapshot→truncate sequence (the same one
+    //! `GraphOperationsService::flush_wal` runs under the canonical-replay
+    //! scope) must actually reclaim whole WAL segments below the checkpoint
+    //! marker — at the previous hardcoded 64MB segment size an embedded-scale
+    //! graph WAL was always a single segment and truncation reclaimed zero —
+    //! and a fresh engine must recover the exact graph from snapshot + tail.
+    use crate::graph::engines::orion::OrionGraphEngine;
+    use proximadb_graph_model::{Edge, Node, PropertyValue, property_value};
+    use std::collections::HashMap;
+
+    fn fat_node(i: u32) -> Node {
+        // ~20KB of properties so a few hundred nodes span multiple 1MB segments.
+        let blob = "x".repeat(20 * 1024);
+        Node {
+            id: format!("n{i:04}"),
+            labels: vec!["Sym".to_string()],
+            properties: HashMap::from([(
+                "blob".to_string(),
+                PropertyValue {
+                    value: Some(property_value::Value::StringValue(blob)),
+                },
+            )]),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn checkpoint_truncate_reclaims_segments_and_recovery_is_exact() {
+        // SAFETY: process-local env; nextest isolates test processes. The
+        // canonical-replay scope enables the snapshot-load half of recovery.
+        unsafe {
+            std::env::set_var("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "1");
+            std::env::set_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE", "1");
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base_url = format!("file://{}", tmp.path().display());
+        let gid = "wal_reclaim";
+        const NODES: u32 = 120; // ~2.4MB of ops → >= 3 segments at 1MB
+        const CHECKPOINT_LSN: u64 = 7;
+
+        {
+            let engine = OrionGraphEngine::with_persistence_for_graph(
+                gid.to_string(),
+                base_url.clone(),
+                true,
+                crate::graph::unified_wal_factory(),
+            )
+            .await
+            .expect("engine");
+            for i in 0..NODES {
+                engine.create_node(fat_node(i)).await.expect("node");
+            }
+            engine
+                .create_edge(Edge {
+                    id: "e0".to_string(),
+                    from_node_id: "n0000".to_string(),
+                    to_node_id: "n0001".to_string(),
+                    edge_type: "CALLS".to_string(),
+                    ..Default::default()
+                })
+                .await
+                .expect("edge");
+
+            let persistence = engine.persistence().expect("persistence").clone();
+            // The flush_wal Step-2 sequence: marker → flush → snapshot → truncate.
+            persistence
+                .append_canonical_emission_marker(CHECKPOINT_LSN)
+                .await
+                .expect("marker");
+            engine.flush_wal().await.expect("flush");
+            persistence
+                .save_snapshot(&engine, CHECKPOINT_LSN)
+                .await
+                .expect("snapshot");
+            let reclaimed = persistence
+                .truncate_wal_through_checkpoint(CHECKPOINT_LSN)
+                .await
+                .expect("truncate");
+            assert!(
+                reclaimed > 0,
+                "a multi-segment WAL must reclaim segments below the marker; got {reclaimed}"
+            );
+            assert_eq!(persistence.last_truncate_reclaimed(), reclaimed);
+        }
+
+        // Recovery on the truncated WAL + snapshot must yield the exact graph.
+        let engine = OrionGraphEngine::with_persistence_for_graph(
+            gid.to_string(),
+            base_url,
+            true,
+            crate::graph::unified_wal_factory(),
+        )
+        .await
+        .expect("recovery engine");
+        engine.recover().await.expect("recover");
+        assert_eq!(engine.memory_pool.nodes.len(), NODES as usize);
+        assert_eq!(engine.memory_pool.edges.len(), 1);
+
+        // SAFETY: matching set_var above.
+        unsafe {
+            std::env::remove_var("PROXIMADB_GRAPH_WAL_SEGMENT_MB");
+            std::env::remove_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE");
+        }
+    }
+}
+
+#[cfg(test)]
 mod topology_only_snapshot_tests {
     use crate::graph::engines::orion::OrionGraphEngine;
     use proximadb_graph_engine_traits::GraphEngine;
