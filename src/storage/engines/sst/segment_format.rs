@@ -366,6 +366,7 @@ pub fn write_pax_segment_compacted(
         target_block,
         rg_layout_enabled(),
         None,
+        &[],
     )
     .map(|write| write.meta)
 }
@@ -393,6 +394,71 @@ pub fn write_pax_segment_compacted_with_cache_seed(
         target_block,
         rg_layout_enabled(),
         Some(include_sq8),
+        &[],
+    )
+}
+
+/// TD-FPRUNE-1 (A1): [`write_pax_segment_compacted`] plus a P-Shred spec so
+/// compaction preserves shredded filterable-tag columns (see
+/// [`write_pax_segment_compacted_with_cache_seed_shredded`]).
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_compacted_shredded(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    shred_spec: &[(String, i32)],
+) -> Result<SegmentMeta> {
+    Ok(write_pax_segment_compacted_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        None,
+        shred_spec,
+    )?
+    .meta)
+}
+
+/// TD-FPRUNE-1 (A1): [`write_pax_segment_compacted_with_cache_seed`] plus a
+/// P-Shred spec so COMPACTION preserves the shredded filterable-tag user-columns
+/// (min/max + bloom + self-describing footer field-map) — otherwise a compacted
+/// L1/L2 segment drops them and filtered footer-pruning goes dark for it. The
+/// spec is rebuilt from an input segment's self-describing footer `shred_field_map`
+/// (no catalog/schema needed); merged records keep their `props` (ADR-055), so
+/// re-shred reproduces the columns. Empty spec ⇒ byte-identical (legacy inputs).
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_compacted_with_cache_seed_shredded(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    include_sq8: bool,
+    shred_spec: &[(String, i32)],
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
+    write_pax_segment_compacted_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        Some(include_sq8),
+        shred_spec,
     )
 }
 
@@ -408,6 +474,7 @@ fn write_pax_segment_compacted_internal(
     target_block: Option<usize>,
     rg_layout: bool,
     capture_sq8: Option<bool>,
+    shred_spec: &[(String, i32)],
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     use crate::storage::engines::sst::block_cluster;
     let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
@@ -460,7 +527,7 @@ fn write_pax_segment_compacted_internal(
         plan,
         probe_model,
         capture_sq8,
-        &[], // shred spec: the production flush path shreds via record_store
+        shred_spec, // TD-FPRUNE-1 A1: preserve shred columns across compaction
     )
 }
 
