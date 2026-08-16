@@ -20,6 +20,7 @@ import json
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -209,6 +210,39 @@ def compiler_processes_from_ps(output: str) -> list[dict]:
     return conflicts
 
 
+def current_compiler_processes() -> list[dict]:
+    completed = subprocess.run(
+        ["ps", "-Ao", "pid=,comm="],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("cannot sample host processes for contention")
+    return compiler_processes_from_ps(completed.stdout)
+
+
+def wait_for_host_quiet(quiet_seconds: float, timeout_seconds: float) -> None:
+    if quiet_seconds < 0 or timeout_seconds <= 0:
+        raise RuntimeError("quiet window must be non-negative and timeout positive")
+    if quiet_seconds == 0:
+        return
+    deadline = time.monotonic() + timeout_seconds
+    quiet_since = None
+    while time.monotonic() < deadline:
+        if current_compiler_processes():
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = time.monotonic()
+        elif time.monotonic() - quiet_since >= quiet_seconds:
+            return
+        time.sleep(1)
+    raise RuntimeError(
+        f"host did not provide a {quiet_seconds:g}s compiler-free window "
+        f"within {timeout_seconds:g}s"
+    )
+
+
 class HostContentionMonitor:
     """Fail a latency/RSS point if an external Rust build overlaps it."""
 
@@ -220,16 +254,8 @@ class HostContentionMonitor:
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _sample(self) -> None:
-        completed = subprocess.run(
-            ["ps", "-Ao", "pid=,comm="],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
         self.samples += 1
-        if completed.returncode != 0:
-            return
-        observed = compiler_processes_from_ps(completed.stdout)
+        observed = current_compiler_processes()
         if observed:
             known = {(item["pid"], item["command"]) for item in self.conflicts}
             self.conflicts.extend(
@@ -474,6 +500,8 @@ def main() -> int:
     parser.add_argument("--max-byte-amplification", type=float, default=1.50)
     parser.add_argument("--max-latency-ratio", type=float, default=1.10)
     parser.add_argument("--max-rss-ratio", type=float, default=1.10)
+    parser.add_argument("--host-quiet-window-secs", type=float, default=0)
+    parser.add_argument("--host-quiet-timeout-secs", type=float, default=3600)
     args = parser.parse_args()
 
     repository = Path(__file__).resolve().parents[2]
@@ -635,6 +663,10 @@ def main() -> int:
             sampler = None
             contention = HostContentionMonitor()
             try:
+                wait_for_host_quiet(
+                    args.host_quiet_window_secs,
+                    args.host_quiet_timeout_secs,
+                )
                 contention.start()
                 server.start()
                 if server.process is None:

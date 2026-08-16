@@ -108,6 +108,14 @@ def test_contention_monitor_fails_with_observed_compiler_identity():
         monitor.raise_if_conflict()
 
 
+def test_quiet_wait_rejects_invalid_windows_without_sleeping():
+    with pytest.raises(RuntimeError, match="non-negative"):
+        SWEEP.wait_for_host_quiet(-1, 10)
+    with pytest.raises(RuntimeError, match="timeout positive"):
+        SWEEP.wait_for_host_quiet(1, 0)
+    SWEEP.wait_for_host_quiet(0, 10)
+
+
 def checkpoint_result() -> dict:
     return {
         "protocol": "pax_azure_range_cap_sweep",
