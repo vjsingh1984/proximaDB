@@ -230,6 +230,7 @@ proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-graph-engine-traits = { path = "crates/foundation/proximadb-graph-engine-traits" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
+proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
@@ -307,7 +308,6 @@ proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
-proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
@@ -419,6 +419,7 @@ proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-document-query = { path = "crates/query/proximadb-document-query" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
+proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
@@ -454,7 +455,6 @@ proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-mcp = { path = "crates/platform/proximadb-mcp" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
-proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-common" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }

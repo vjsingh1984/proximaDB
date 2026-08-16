@@ -29,8 +29,8 @@
 // Core operations modules
 // NOTE: search modules moved to core/search
 // NOTE: quantization modules removed - use compute module directly
-pub mod compression_adapter;
-pub mod compression_common;
+pub use proximadb_engine_core::ops_compression::compression_adapter; // extracted TD-DECOMP-81
+pub use proximadb_engine_core::ops_compression::compression_common; // extracted TD-DECOMP-81
 /// Universal performance optimization module for all storage engines
 pub mod performance_optimization;
 
@@ -84,7 +84,7 @@ pub use crate::compute::proximacodec;
 /// Migration: replace `ProximaEncoder`/`ProximaDecoder` with
 /// `ProximaCodec::global()` or the canonical `proximadb-codec` strategy API.
 // SIMD configuration system for fine-tuning optimization behavior
-pub mod simd_config;
+pub use proximadb_engine_core::ops_compression::simd_config; // extracted TD-DECOMP-81
 
 /// SIMD-accelerated decode pipeline for the Native Compute Engine
 ///
@@ -141,7 +141,7 @@ pub fn estimate_vector_storage_size(
 
 /// Tensor-specific encoding operations (sparse tensors, quantization, transpose)
 /// Re-exported through proximaencoder for consolidated access
-pub mod proxima_tensor_encoding;
+pub use proximadb_engine_core::ops_compression::proxima_tensor_encoding; // extracted TD-DECOMP-81
 
 // Zero-copy I/O system moved to core/io/zero_copy
 // Import from there: use crate::storage::engines::core::io::zero_copy::*;

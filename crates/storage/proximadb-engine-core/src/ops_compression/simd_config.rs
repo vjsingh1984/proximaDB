@@ -276,8 +276,11 @@ impl SIMDConfiguration {
     }
 
     /// Initialize with custom configuration
-    pub fn init_with(config: SIMDConfiguration) -> Result<(), SIMDConfiguration> {
-        SIMD_CONFIG.set(config)
+    ///
+    /// The error is boxed to keep `Result`'s error variant small (clippy
+    /// `result_large_err`); the payload is the rejected config, as before.
+    pub fn init_with(config: SIMDConfiguration) -> Result<(), Box<SIMDConfiguration>> {
+        SIMD_CONFIG.set(config).map_err(Box::new)
     }
 
     /// Check if SIMD should be used for given parameters

@@ -4,9 +4,9 @@
 // functionality that is reused across all storage engines (SST, SWIFT, RAPTOR, PRISM)
 // to eliminate code duplication and ensure consistency.
 
-use super::proximacodec::types::ProximaScheme;
-use super::proximacodec::{ProximaCodec, analysis};
 use anyhow::Result;
+use proximadb_codec::types::ProximaScheme;
+use proximadb_codec::{ProximaCodec, analysis};
 use std::io::{Read, Write};
 
 // ============================================================================

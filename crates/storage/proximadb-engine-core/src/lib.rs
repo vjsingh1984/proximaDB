@@ -5,6 +5,7 @@
 //! raptor `smart_rowgroup_sizing` heuristics.
 
 pub mod coalesce_strategy;
+pub mod ops_compression;
 pub mod parquet_write_engine;
 pub mod proximablocks;
 pub mod simd_decode;

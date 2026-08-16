@@ -291,7 +291,9 @@ pub use parquet::file::properties::WriterProperties;
 pub use proximadb_compression_types::CompressionAlgorithm;
 
 // Compression markers module
+pub mod data_type;
 pub mod markers;
+pub use data_type::CompressionData;
 pub use markers::*;
 
 // Compression markers are defined in the markers.rs module
