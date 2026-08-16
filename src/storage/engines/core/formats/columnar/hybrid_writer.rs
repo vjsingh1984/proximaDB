@@ -139,7 +139,20 @@ impl Default for HybridWriterConfig {
     }
 }
 
-/// Hybrid Parquet writer with adaptive strategy
+/// Root-side quantization encoder for the streaming writer's port seam
+/// (TD-DECOMP-78): the level-specific `QuantizationEnginePort` implemented by
+/// the modality kernel's `UnifiedQuantizationEngine`.
+pub(crate) fn root_quantization_engine()
+-> Option<std::sync::Arc<dyn proximadb_storage_ports::QuantizationEnginePort>> {
+    use crate::compute::quantization::quantization_engine::{
+        InMemoryCodebookStore, UnifiedQuantizationEngine,
+    };
+    Some(std::sync::Arc::new(UnifiedQuantizationEngine::new(
+        std::sync::Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default()),
+        std::sync::Arc::new(InMemoryCodebookStore::new()),
+    )))
+}
+
 pub struct HybridParquetWriter {
     /// Configuration
     config: HybridWriterConfig,
@@ -233,6 +246,8 @@ impl HybridParquetWriter {
                 dimension,
                 config.base_config.clone(),
                 None, // Filterable columns will be set via setter method
+                filesystem_factory.clone(),
+                root_quantization_engine(),
             )
             .await?;
             trace!("HybridParquetWriter::new - StreamingParquetWriter created");
@@ -295,6 +310,7 @@ impl HybridParquetWriter {
                 config.base_config.clone(),
                 None, // Filterable columns will be set via setter method
                 filesystem_factory.clone(),
+                root_quantization_engine(),
             )?)
         } else {
             None
@@ -401,6 +417,7 @@ impl HybridParquetWriter {
                 self.config.base_config.clone(),
                 self.filterable_columns.as_deref(),
                 self.filesystem_factory.clone(),
+                root_quantization_engine(),
             )?;
 
             // Transfer metadata collector to streaming writer if present
@@ -470,12 +487,14 @@ impl HybridParquetWriter {
 
         info!("Flushing {} records to disk", records.len());
 
-        // Use batch writer for flush
+        // Use batch writer for flush (ports threaded from the hybrid writer's own
+        // injected factory/encoder — TD-DECOMP-78 composition-root pattern).
         let mut writer = BatchParquetWriter::new(
             &self.file_path,
             self.dimension,
             self.config.base_config.clone(),
-        );
+        )
+        .with_ports(self.filesystem_factory.clone(), root_quantization_engine());
 
         writer.write_all(&records).await?;
 
@@ -667,6 +686,7 @@ impl HybridParquetWriter {
                 self.config.base_config.clone(),
                 self.filterable_columns.as_deref(), // Pass filterable columns!
                 self.filesystem_factory.clone(),
+                root_quantization_engine(),
             )?);
         }
 
