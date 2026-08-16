@@ -5155,20 +5155,29 @@ mod tests {
             probed_rows > 0 && probed_rows < N as u64,
             "probed {probed_rows} of {N} rows (a strict subset)"
         );
-        // Probe ECONOMY, not just probe correctness. `fetch_rounds` is the count
-        // of coalesced Region-A ranged reads, so it is the request-side term of
-        // the cost model — and on Hot-tier object storage requests are the only
-        // billed read term. Nothing else in CI observes GET counts at all, so an
-        // upper bound here is the only thing standing between a coalescing or
-        // geometry regression and a silent multi-fold increase in per-query
-        // round-trips. It is bounded above by cells_probed because coalescing may
-        // merge adjacent cells into one range but must never split one cell into
-        // several.
+        // `fetch_rounds` is the count of coalesced Region-A ranged reads — the
+        // request-side term of the cost model, and on Hot-tier object storage
+        // requests are the only billed read term.
+        //
+        // What this pins: one probed cell costs AT MOST one ranged GET.
+        // `plan_probe_cell_ranges` either merges a cell into the previous range
+        // or emits it 1:1, never splitting one cell across several reads, so a
+        // future planner that chunked oversized cells to respect
+        // `max_range_bytes` would multiply per-query round-trips — and would
+        // trip this.
+        //
+        // What this does NOT catch, stated so the guard is not mistaken for
+        // more than it is: coalescing silently ceasing to merge. That keeps
+        // `fetch_rounds <= cells_probed` true while raising it toward the
+        // ceiling. The relative check further down (coalesced <= default policy)
+        // covers part of that; an absolute per-query ratchet needs a real bed
+        // and measured baselines, which is TD-IVF-3's deferred probe-economy
+        // ratchet, not something a synthetic 16-cell fixture can stand in for.
         assert!(
             (1..=cells_probed).contains(&fetch_rounds),
             "fetch_rounds={fetch_rounds} must be in 1..={cells_probed}: coalescing \
-             may merge probed cells into fewer ranged GETs but never split one \
-             cell across several"
+             may merge probed cells into fewer ranged GETs but must never split \
+             one cell across several"
         );
         assert_eq!(probe_snapshot.ivf_cells_total, cells_total);
         assert_eq!(probe_snapshot.ivf_cells_probed, cells_probed);
