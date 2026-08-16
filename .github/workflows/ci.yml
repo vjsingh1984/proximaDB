@@ -225,6 +225,12 @@ jobs:
               - 'tests/*storage*'
               - 'tests/*sst*'
               - 'tests/*wal*'
+              # The recall ratchet itself matched NONE of the globs above, so
+              # editing the ratchet did not run the ratchet — a change that
+              # weakened it would have gone unmeasured. Same class as
+              # TD-RECALL-2/#1406: track what can break the outcome, not who
+              # owns the file.
+              - 'tests/sift_pax_recall_ratchet_test.rs'
             # Cloud object-store Cool-tier validation (TD-168). The tier-mapping code
             # lives in the object-store crate + the cold-payload store; the orchestration
             # is scripts/run_cloud_emulator_tests.sh. Re-run the (cheap) emulator tier
@@ -2589,9 +2595,15 @@ jobs:
     # comfortable headroom without masking a genuine hang.
     timeout-minutes: 45
     # only run when search/flush/WAL/PAX/cascade code changes
+    # core_changes is required, not decorative: nprobe_multiplier/min/max and the
+    # coarse-probe gates live in src/core/config.rs, which matches core_changes
+    # and NOT storage_changes. Without it, a PR that lowers the probe count --
+    # the single most direct way to trade recall for GETs -- ran no recall
+    # ratchet at all.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (needs.changes.outputs.storage_changes == 'true')
+      needs.changes.outputs.storage_changes == 'true' ||
+      needs.changes.outputs.core_changes == 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0

@@ -29,6 +29,8 @@ def expected_result() -> dict:
             "top_k_values": [10, 20],
             "target_recall": 0.98,
             "quality_policy": "require",
+            "coalesce_gap_bytes": 1024 * 1024,
+            "coalesce_range_bytes": 4 * 1024 * 1024,
             "points": [],
         },
         "measurement_failures": [],
@@ -207,3 +209,45 @@ def test_resume_ignores_snapshot_mtime_but_still_detects_segment_change():
         assert SWEEP.checkpoint_identity(existing) != SWEEP.checkpoint_identity(changed)
         with pytest.raises(RuntimeError, match="provenance/configuration differs"):
             SWEEP.validate_resume(existing, changed)
+
+
+def test_read_planner_is_part_of_the_resume_identity():
+    """A matrix must never mix read planners across its points.
+
+    Every recall-floor nprobe published to date was measured at the Azure 4 MiB
+    planner because the sweep could not set it (TD-IVF-3 / TD-SEARCH-3). Now
+    that it can, resuming a 4 MiB matrix under a 24 MiB planner would silently
+    splice two geometries into one curve that no single configuration ever
+    exhibited.
+    """
+    existing = expected_result()
+    existing["status"] = "running"
+
+    same = copy.deepcopy(existing)
+    assert SWEEP.checkpoint_identity(existing) == SWEEP.checkpoint_identity(same)
+    assert SWEEP.validate_resume(existing, same) == set()
+
+    for field, value in (
+        ("coalesce_range_bytes", 24 * 1024 * 1024),
+        ("coalesce_gap_bytes", 4 * 1024 * 1024),
+    ):
+        changed = copy.deepcopy(existing)
+        changed["matrix"][field] = value
+        assert SWEEP.checkpoint_identity(existing) != SWEEP.checkpoint_identity(changed)
+        with pytest.raises(RuntimeError, match="provenance/configuration differs"):
+            SWEEP.validate_resume(existing, changed)
+
+
+def test_planner_defaults_reproduce_the_previous_pinned_behaviour():
+    """An unset invocation must be byte-identical to the pre-change sweep."""
+    parser_defaults = {
+        action.dest: action.default
+        for action in SWEEP.build_parser()._actions
+        if action.dest in {"coalesce_gap_mib", "coalesce_range_mib"}
+    }
+    assert parser_defaults["coalesce_gap_mib"] * SWEEP.MIB == (
+        SWEEP.ACCEPTANCE.AZURE_COALESCE_GAP_BYTES
+    )
+    assert parser_defaults["coalesce_range_mib"] * SWEEP.MIB == (
+        SWEEP.ACCEPTANCE.AZURE_COALESCE_RANGE_BYTES
+    )
