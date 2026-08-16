@@ -159,6 +159,28 @@ impl Default for IopsBudget {
     }
 }
 
+/// The IOP target a **writer** should size blocks/cells against.
+///
+/// Read-side planning resolves the backend from the object URL, but the write
+/// path stages segments to a LOCAL file and publishes afterwards, so at
+/// clustering time it does not know its destination backend. Passing the staging
+/// path here would resolve `LOCAL` and be actively wrong.
+///
+/// This exists so both sides share **one** definition of "the IOP target"
+/// (TD-IVF-4: two independent constants is the defect, a single helper consulted
+/// by both is the fix), and so the unknown-destination case is explicit in the
+/// signature instead of hidden inside a hard-coded constant.
+///
+/// `None` yields the `CLOUD` target, which is what the write path used
+/// implicitly before. Closing TD-IVF-4 fully means plumbing the destination URL
+/// from the flush/compaction caller — which does know it — down to clustering.
+pub fn write_target_block_bytes(destination_url: Option<&str>) -> u64 {
+    match destination_url {
+        Some(url) => IopsBudget::for_path(url).target_block_bytes(),
+        None => IopsBudget::CLOUD.target_block_bytes(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// ADR-073: the HDD disk-class hint swaps LOCAL for the CLOUD profile on
