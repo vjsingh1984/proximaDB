@@ -229,7 +229,7 @@
 //! | RAPTOR | `centroid_matrix` | Adaptive clustering |
 
 pub mod arrow_reader; // Arrow reader for .sst files - enables external tool access
-pub mod block_reader; // ✅ NEW: Unified Proxima block reader with strategies
+pub use proximadb_engine_core::proximablocks::block_reader; // extracted TD-DECOMP-77
 pub use proximadb_engine_core::proximablocks::block_structures; // extracted TD-DECOMP-71
 pub use proximadb_engine_core::proximablocks::bloom_filter; // extracted TD-DECOMP-72
 // Block-level compression now integrated into main block_structures.rs
@@ -237,7 +237,7 @@ pub use proximadb_engine_core::proximablocks::compression_config; // extracted T
 pub mod engine_profile; // Engine-specific optimization profiles
 pub use proximadb_engine_core::proximablocks::index_structures; // extracted TD-DECOMP-71
 // Quantization now handled by unified compute module
-pub mod batch_operations;
+pub use proximadb_engine_core::proximablocks::batch_operations; // extracted TD-DECOMP-77
 pub mod constants;
 pub mod header_metadata;
 // Embedding-precision rollout (PR 5 of EMBEDDING_PRECISION_LLD_2026_05_22).

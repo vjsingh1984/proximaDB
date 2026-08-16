@@ -5,10 +5,13 @@
 //! (bloom, compression, codec, search-types, proto, storage-common).
 //! Root keeps per-file re-export shims.
 
+pub mod batch_operations;
+pub mod block_reader;
 pub mod block_structures;
 pub mod bloom_filter;
 pub mod columnar_config_types;
 pub mod columnar_footer_cache;
+pub mod columnar_schema_types;
 pub mod columnar_utilities;
 pub mod compression_config;
 pub mod header_metadata;

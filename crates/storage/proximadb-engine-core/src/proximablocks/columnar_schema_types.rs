@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use super::{ColumnarFileMetadata, QuantizationConfig};
+use crate::proximablocks::columnar_config_types::{ColumnarFileMetadata, QuantizationConfig};
 
 /// Schema operations for columnar storage with quantization support
 #[derive(Debug)]

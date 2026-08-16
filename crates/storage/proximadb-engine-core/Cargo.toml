@@ -28,6 +28,8 @@ proximadb-clustering-kernel.workspace = true
 proximadb-bloom.workspace = true
 # sst/swift metadata serializers (TD-DECOMP-75): FilesystemPort seam + zero-copy traits + futures block_on
 proximadb-storage-ports.workspace = true
+proximadb-filter-expression.workspace = true
+proximadb-storage-filesystem-types.workspace = true
 parking_lot.workspace = true
 futures.workspace = true
 proximadb-hardware-caps.workspace = true
@@ -40,6 +42,7 @@ proximadb-data-model.workspace = true
 # block_structures runtime deps: bincode serialization, rayon parallel encode, tokio spawn
 bincode.workspace = true
 bytemuck = { version = "1.14", features = ["derive"] }
+arrow-schema.workspace = true
 proximadb-quantization-model.workspace = true
 rayon.workspace = true
 tokio.workspace = true
@@ -52,9 +55,7 @@ serde_json.workspace = true
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
-# `half` (f16/bf16) used only in per_column_alignment unit tests.
 half = "2.4"
-proximadb-storage-filesystem-types.workspace = true
 async-trait.workspace = true
 rand.workspace = true
 

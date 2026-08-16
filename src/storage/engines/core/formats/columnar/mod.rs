@@ -196,9 +196,9 @@ pub use self::metadata_filter_strategy::{
     FilterPerformanceMetrics, MetadataFilterAnalyzer, MetadataFilterStrategy,
 };
 pub use batch_operations::ColumnarBatchOperations;
-pub mod columnar_schema;
 pub use columnar_schema::ColumnarSchema;
 pub use footer_cache::{FooterCacheConfig, FooterCacheStats, ParquetFooterCache, WarmingStrategy};
+pub use proximadb_engine_core::proximablocks::columnar_schema_types as columnar_schema; // extracted TD-DECOMP-77
 pub use utilities::ColumnarUtilities;
 
 pub use config_builder::{
