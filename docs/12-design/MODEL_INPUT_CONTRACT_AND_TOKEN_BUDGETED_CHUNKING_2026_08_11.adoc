@@ -224,8 +224,13 @@ python scripts/bench/build_token_budget_corpus.py \
 ----
 
 The output includes shared `texts.json`, per-chunk provenance in `chunks.jsonl`, and
-`corpus.manifest.json` with hashes, policies, contract fingerprints, histograms and a zero-truncation
-assertion.
+`corpus.manifest.json` with hashes, policies, contract fingerprints, histograms, corpus scope and a
+zero-truncation assertion. Every stage records the SHA-256 of its tracked producer script, and
+embedding shard identity includes that transport digest. `--max-chunks` is a prefix-sampling
+diagnostic: if it would truncate the
+source, the builder fails unless `--allow-partial-corpus` is explicit and records
+`corpus_scope=partial_prefix`. A realistic full-corpus build must record
+`corpus_scope=complete_source`.
 
 For deterministic source-tree corpora, export whole documents first; the exporter owns discovery
 only and never tokenization:
@@ -242,10 +247,14 @@ python scripts/bench/build_token_budget_corpus.py \
   --contracts scripts/bench/bge_v15_projection_contracts.toml \
   --output-dir /Users/vijaysingh/proximadb-bench-data/token-aware-rebuild-v2/bge768 \
   --target-tokens 480 --overlap-tokens 72 \
-  --overflow-policy split --deduplicate exact --max-chunks 560000
+  --overflow-policy split --deduplicate exact
 ----
 
-The BGE contract pins base and small repository revisions independently while producing one shared
+The exporter fails closed on missing repository roots and unreadable UTF-8 source. A diagnostic may
+explicitly use `--allow-unreadable-sources`, which records every dropped source. The source manifest
+records content hashes plus each available Git HEAD, dirty bit and status hash. Content remains
+authoritative when intentionally dirty or unversioned sources are included. The
+BGE contract pins base and small repository revisions independently while producing one shared
 controlled-pair corpus. The 384-d embedding stage reads the 768-d `texts.json`; it does not emit or
 copy another text corpus.
 
@@ -272,7 +281,28 @@ python scripts/bench/embed_open_corpus.py \
 ----
 
 The transport refuses a loaded runtime whose tokenizer/renderer contract differs from the corpus,
-and cached 20k-row shards cannot be reused across a text hash, revision, contract or dimension.
+and cached 20k-row shards cannot be reused across a text hash, revision, contract, dimension or
+input role. Without external queries, `--query-rows` deliberately emits a `geometry_probe`: the
+first passage-role rows become mechanical ANN queries and are not RAG-quality evidence. Absolute
+retrieval evaluation instead supplies role-correct queries and qrels:
+
+[source,bash]
+----
+python scripts/bench/embed_open_corpus.py \
+  --texts corpus/texts.json --corpus-manifest corpus/corpus.manifest.json \
+  --model <model-id> --revision <immutable-40-char-sha> --dimension <dimension> \
+  --queries-jsonl eval/queries.jsonl --qrels eval/qrels.jsonl \
+  --chunks-jsonl corpus/chunks.jsonl \
+  --prefix eval --output-dir embeddings
+----
+
+Query JSONL contains unique `id` and `text` fields. Qrels JSONL contains unique
+`query_id`/`corpus_id` pairs and positive `relevance`; every query must have at least one relevant
+corpus row. Every `corpus_id` must exist as a `chunk_id` in the digest-matched corpus manifest.
+This path calls the model's query-role renderer/encoder and records query/qrels hashes. Passage-only
+quantization bounds keep the base/index stable across evaluation query sets; out-of-range query
+components are clipped and counted in the embedding manifest. A content-hashed query-ID sidecar
+preserves the exact query-binary row order.
 The example intentionally writes a new root: never overwrite the legacy `bge768`/`bge384` corpus,
 whose hashes remain provenance for the completed TD-IVF-3 geometry study.
 
