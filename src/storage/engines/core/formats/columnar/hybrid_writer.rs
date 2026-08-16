@@ -487,12 +487,14 @@ impl HybridParquetWriter {
 
         info!("Flushing {} records to disk", records.len());
 
-        // Use batch writer for flush
+        // Use batch writer for flush (ports threaded from the hybrid writer's own
+        // injected factory/encoder — TD-DECOMP-78 composition-root pattern).
         let mut writer = BatchParquetWriter::new(
             &self.file_path,
             self.dimension,
             self.config.base_config.clone(),
-        );
+        )
+        .with_ports(self.filesystem_factory.clone(), root_quantization_engine());
 
         writer.write_all(&records).await?;
 
