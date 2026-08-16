@@ -102,40 +102,10 @@ fn record_metadata(
     crate::core::search::sql_value_filter::proxima_tree_to_value_map(&record.props)
 }
 
-/// SSTable reading strategies for different access patterns
-#[derive(Debug, Clone)]
-pub enum SstableReadingStrategy {
-    /// Selective reads via cache with range optimization for normal queries
-    SelectiveWithCache {
-        use_range_reads: bool,
-        enable_bloom_filters: bool,
-        enable_cache_lookup: bool,
-        enable_metadata_cache: bool,
-    },
-    /// Full read strategy for compaction operations - avoid cache pollution
-    CompactionFullRead {
-        skip_bloom_filters: bool,
-        skip_indexes: bool,
-        bypass_write_cache: bool,
-        use_disk_cache_if_exists: bool,
-        sequential_io: bool,
-    },
-    /// Legacy strategies for backward compatibility
-    FullScan { use_block_cache: bool },
-    IndexRangeScan {
-        start_block: usize,
-        end_block: usize,
-        use_bloom_filter: bool,
-    },
-    MetadataFiltered {
-        selected_blocks: Vec<usize>,
-        skip_bloom_check: bool,
-    },
-    Hybrid {
-        primary_strategy: Box<SstableReadingStrategy>,
-        fallback_blocks: Vec<usize>,
-    },
-}
+/// SSTable reading strategies — hoisted to `proximadb-engine-core` (TD-DECOMP-79);
+/// re-exported here as the sst_query_engine remains the canonical consumer.
+pub use proximadb_engine_core::sst_format_types::SstableReadingStrategy;
+
 // NOTE: Removed specialized cache imports - using only zero-copy system for caching
 // Old: VectorStore, IndexNodeCache, BitmapFilterCache replaced by ZeroCopyIOSystem
 

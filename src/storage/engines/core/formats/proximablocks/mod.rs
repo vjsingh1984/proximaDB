@@ -228,7 +228,7 @@
 //! | SWIFT | `composite_indexes` | Ultra-low latency |
 //! | RAPTOR | `centroid_matrix` | Adaptive clustering |
 
-pub mod arrow_reader; // Arrow reader for .sst files - enables external tool access
+pub use proximadb_engine_core::proximablocks::arrow_reader; // extracted TD-DECOMP-79
 pub use proximadb_engine_core::proximablocks::block_reader; // extracted TD-DECOMP-77
 pub use proximadb_engine_core::proximablocks::block_structures; // extracted TD-DECOMP-71
 pub use proximadb_engine_core::proximablocks::bloom_filter; // extracted TD-DECOMP-72
@@ -246,7 +246,7 @@ pub mod spatial_clustering; // PCA-based clustering and Z-Order spatial indexing
 pub mod spatial_encoding; // 512-bit spatial codes for high-dimensional embeddings
 pub mod spatial_pruning; // SpatialPruner for unified block selection
 pub mod spatial_traits; // SpatialCurveEncoder trait for unified block clustering
-pub mod sst_io_layer; // Low-level I/O operations (formerly sst_io_layer)
+pub use proximadb_engine_core::proximablocks::sst_io_layer; // extracted TD-DECOMP-79
 pub use proximadb_engine_core::proximablocks::sst_metadata; // extracted TD-DECOMP-75
 pub use proximadb_engine_core::proximablocks::swift_metadata; // extracted TD-DECOMP-75
 pub use proximadb_engine_core::proximablocks::utilities; // extracted TD-DECOMP-72

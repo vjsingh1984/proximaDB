@@ -4,7 +4,9 @@
 //! `proximablocks` sub-leaves (header_metadata, per_column_alignment), and the
 //! raptor `smart_rowgroup_sizing` heuristics.
 
+pub mod coalesce_strategy;
 pub mod parquet_write_engine;
 pub mod proximablocks;
 pub mod simd_decode;
 pub mod smart_rowgroup_sizing;
+pub mod sst_format_types;

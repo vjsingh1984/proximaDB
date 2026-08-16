@@ -47,6 +47,8 @@ arrow-schema.workspace = true
 arrow.workspace = true
 arrow-array.workspace = true
 arrow-buffer = { version = "58", default-features = false }
+arrow-select = { version = "58", default-features = false }
+memmap2 = "0.9"
 parquet.workspace = true
 bytes = "1.5"
 proximadb-quantization-model.workspace = true

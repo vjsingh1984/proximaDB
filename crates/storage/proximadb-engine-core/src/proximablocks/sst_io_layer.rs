@@ -59,17 +59,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use tracing::info;
 
-use crate::storage::engines::core::coalesce_strategy::{
+use crate::coalesce_strategy::{
     CoalesceStrategy, choose_read_strategy, read_strategy_chooser_enabled,
 };
-use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
-use crate::storage::persistence::filesystem::smart_io::range_coalescer::DefaultRangeCoalescer;
-use crate::storage::persistence::filesystem::smart_io::traits::{
-    ByteRange, RangeMapping, RangeOptimizerWithMapping,
-};
+// FilesystemPort seam (TD-DECOMP-75 pattern): root FilesystemFactory implements it.
 use proximadb_kernel::error::{ProximaDBError, StorageError};
 use proximadb_records::ProximaRecord;
+use proximadb_storage_filesystem_types::range_coalescer::DefaultRangeCoalescer;
+use proximadb_storage_filesystem_types::smart_io_traits::{
+    ByteRange, RangeMapping, RangeOptimizerWithMapping,
+};
+use proximadb_storage_ports::FilesystemPort;
 
 #[inline]
 fn record_vector(record: &ProximaRecord) -> &[f32] {
@@ -140,15 +140,15 @@ const DATA_BLOCK_SIZE: usize = 65536; // 64KB data blocks
 /// Shared SST format reader with zero-copy cache-first architecture
 /// Leverages OS page cache for optimal memory management vs dedicated VectorStore
 pub struct SharedSstFormatReader {
-    /// Filesystem for I/O operations
-    filesystem: Arc<FilesystemFactory>,
+    /// Filesystem port for I/O operations (TD-DECOMP-75 seam)
+    filesystem: Arc<dyn FilesystemPort>,
 
     /// Memory mapping strategy (kept for region-specific optimizations)
     #[allow(dead_code)]
     mmap_strategy: SstMmapStrategy,
 
     /// UNIFIED CACHE: UnifiedCachingFilesystem replaces all specialized caches
-    caching_filesystem: Arc<UnifiedCachingFilesystem>,
+    caching_filesystem: Arc<dyn proximadb_storage_filesystem_types::FileSystem>,
 
     /// Collection ID for filename-based cache keys
     #[allow(dead_code)]
@@ -165,13 +165,13 @@ pub struct SharedSstFormatReader {
 /// Shared SST format writer with compression and Proxima encoding
 /// Complements the reader for full read/write support
 pub struct SharedSstFormatWriter {
-    /// Filesystem for I/O operations
+    /// Filesystem port for I/O operations (TD-DECOMP-75 seam)
     #[allow(dead_code)]
-    filesystem: Arc<FilesystemFactory>,
+    filesystem: Arc<dyn FilesystemPort>,
 
     /// Unified filesystem for write operations
     #[allow(dead_code)]
-    caching_filesystem: Arc<UnifiedCachingFilesystem>,
+    caching_filesystem: Arc<dyn proximadb_storage_filesystem_types::FileSystem>,
 
     /// Collection ID for filename-based cache keys
     #[allow(dead_code)]
@@ -179,7 +179,7 @@ pub struct SharedSstFormatWriter {
 
     /// Compression configuration
     #[allow(dead_code)]
-    compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
+    compression_config: Option<proximadb_proto::proximadb_v1::CompressionConfig>,
 
     /// Stats for monitoring writes
     #[allow(dead_code)]
@@ -234,9 +234,9 @@ pub struct ReaderStats {
 
 impl SharedSstFormatReader {
     pub fn new(
-        filesystem: Arc<FilesystemFactory>,
+        filesystem: Arc<dyn FilesystemPort>,
         mmap_strategy: SstMmapStrategy,
-        caching_filesystem: Arc<UnifiedCachingFilesystem>,
+        caching_filesystem: Arc<dyn proximadb_storage_filesystem_types::FileSystem>,
         collection_id: String,
     ) -> Self {
         use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
@@ -255,11 +255,21 @@ impl SharedSstFormatReader {
     pub fn read_with_strategy<'a>(
         &'a self,
         file_path: &'a str,
-        strategy: &'a crate::storage::engines::sst::readers::sst_query_engine::SstableReadingStrategy,
+        strategy: &'a crate::sst_format_types::SstableReadingStrategy,
         _filter_expression: Option<&'a proximadb_filter_expression::FilterExpression>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>> + Send + 'a>>{
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        Vec<crate::proximablocks::block_structures::ProximaDataBlock>,
+                        ProximaDBError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async move {
-            use crate::storage::engines::sst::readers::sst_query_engine::SstableReadingStrategy;
+            use crate::sst_format_types::SstableReadingStrategy;
 
             match strategy {
                 SstableReadingStrategy::FullScan { use_block_cache } => {
@@ -357,8 +367,6 @@ impl SharedSstFormatReader {
         file_path: &str,
         use_cache: bool,
     ) -> Result<MmapOrVec, ProximaDBError> {
-        use crate::storage::persistence::filesystem::FileSystem;
-
         // Try mmap first for local files (zero-copy)
         if self.caching_filesystem.supports_mmap()
             && let Ok(Some(mmap)) = self.caching_filesystem.get_mmap(file_path).await
@@ -384,7 +392,7 @@ impl SharedSstFormatReader {
         &self,
         file_path: &str,
         use_block_cache: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
+    ) -> Result<Vec<crate::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         // Use mmap-first reading for zero-copy performance
         let data = self
             .read_with_mmap_fallback(file_path, use_block_cache)
@@ -394,7 +402,10 @@ impl SharedSstFormatReader {
         // For now, try to deserialize as a single block
         // Deferred: Implement multi-block file format
         let blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
+            crate::proximablocks::block_structures::ProximaDataBlock::deserialize(
+                data.as_slice(),
+                None,
+            ) {
             vec![single_block]
         } else {
             // If single block fails, assume empty or corrupted file
@@ -412,7 +423,7 @@ impl SharedSstFormatReader {
         enable_cache_lookup: bool,
         _enable_metadata_cache: bool,
         _filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
+    ) -> Result<Vec<crate::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         // Use mmap-first reading for zero-copy performance
         let data = self
             .read_with_mmap_fallback(file_path, enable_cache_lookup)
@@ -421,7 +432,10 @@ impl SharedSstFormatReader {
         // Deserialize blocks
         // Deferred: Implement multi-block file format
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
+            crate::proximablocks::block_structures::ProximaDataBlock::deserialize(
+                data.as_slice(),
+                None,
+            ) {
             vec![single_block]
         } else {
             Vec::new()
@@ -453,7 +467,7 @@ impl SharedSstFormatReader {
         _bypass_write_cache: bool,
         use_disk_cache_if_exists: bool,
         _sequential_io: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
+    ) -> Result<Vec<crate::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         // Use mmap-first reading (mmap is ideal for sequential compaction reads)
         let data = self
             .read_with_mmap_fallback(file_path, use_disk_cache_if_exists)
@@ -462,7 +476,10 @@ impl SharedSstFormatReader {
         // Deserialize blocks
         // Deferred: Implement multi-block file format
         let blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
+            crate::proximablocks::block_structures::ProximaDataBlock::deserialize(
+                data.as_slice(),
+                None,
+            ) {
             vec![single_block]
         } else {
             Vec::new()
@@ -477,13 +494,16 @@ impl SharedSstFormatReader {
         start_block: u32,
         end_block: u32,
         _use_bloom_filter: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
+    ) -> Result<Vec<crate::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         // Use mmap-first reading for zero-copy performance
         let data = self.read_with_mmap_fallback(file_path, true).await?;
 
         // Deserialize and filter blocks by range
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
+            crate::proximablocks::block_structures::ProximaDataBlock::deserialize(
+                data.as_slice(),
+                None,
+            ) {
             vec![single_block]
         } else {
             Vec::new()
@@ -507,13 +527,16 @@ impl SharedSstFormatReader {
         selected_blocks: &[u32],
         _skip_bloom_check: bool,
         _filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
+    ) -> Result<Vec<crate::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         // Use mmap-first reading for zero-copy performance
         let data = self.read_with_mmap_fallback(file_path, true).await?;
 
         // Deserialize all blocks
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
+            crate::proximablocks::block_structures::ProximaDataBlock::deserialize(
+                data.as_slice(),
+                None,
+            ) {
             vec![single_block]
         } else {
             Vec::new()
@@ -534,13 +557,16 @@ impl SharedSstFormatReader {
         &self,
         file_path: &str,
         block_ids: &[u32],
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
+    ) -> Result<Vec<crate::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         // Use mmap-first reading for zero-copy performance
         let data = self.read_with_mmap_fallback(file_path, true).await?;
 
         // Deserialize all blocks
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
+            crate::proximablocks::block_structures::ProximaDataBlock::deserialize(
+                data.as_slice(),
+                None,
+            ) {
             vec![single_block]
         } else {
             Vec::new()
@@ -559,13 +585,13 @@ impl SharedSstFormatReader {
     /// Search Proxima blocks with predicate pushdown
     pub async fn search_blocks_with_predicate(
         &self,
-        blocks: &[crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock],
+        blocks: &[crate::proximablocks::block_structures::ProximaDataBlock],
         query_vector: &[f32],
         filter_expression: Option<&proximadb_filter_expression::FilterExpression>,
         k: usize,
         distance_metric: proximadb_distance_kernel::DistanceMetric,
         distance_compute: &proximadb_distance_kernel::engine::UnifiedDistanceCompute, // ✅ Pass from caller for reuse
-    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, ProximaDBError> {
+    ) -> Result<Vec<proximadb_search_types::results::OptimizedSearchRecord>, ProximaDBError> {
         let mut all_results = Vec::new();
 
         // Process each block with batch distance computation
@@ -577,7 +603,7 @@ impl SharedSstFormatReader {
             for record in &block.records {
                 // Apply filter expression against canonical ProximaRecord props.
                 if let Some(filter) = filter_expression
-                    && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                    && !proximadb_search_types::sql_value_filter::evaluate_filter_proxima(
                         filter,
                         &record.props,
                     )
@@ -604,14 +630,15 @@ impl SharedSstFormatReader {
 
                 // Create search records with batch distances
                 for (record, distance_result) in block_records.into_iter().zip(distances.iter()) {
-                    let search_record = crate::core::search::results::OptimizedSearchRecord {
+                    let search_record = proximadb_search_types::results::OptimizedSearchRecord {
                         id: record.oid.clone(),
                         vector_id: record.local_id.clone().or_else(|| Some(record.oid.clone())),
                         score: distance_result.normalized_score,
                         similarity: Some(distance_result.normalized_score),
-                        metadata: crate::core::search::sql_value_filter::proxima_tree_to_value_map(
-                            &record.props,
-                        ),
+                        metadata:
+                            proximadb_search_types::sql_value_filter::proxima_tree_to_value_map(
+                                &record.props,
+                            ),
                         vector: Some(Arc::new(record_vector(&record).to_vec())),
                         timestamp: Some(record.created_at_ns),
                         ..Default::default()
@@ -926,7 +953,9 @@ impl SharedSstFormatReader {
         let mut results = vec![None; keys.len()];
         if !blocks_to_read.is_empty() {
             // Collect unique blocks (offset → (BlockInfo, keys)), ordered by offset for determinism.
-            let mut blocks: Vec<(BlockInfo, Vec<(usize, &Vec<u8>)>)> =
+            // (block descriptor, [(column idx, column bytes)]) pairs per file read
+            type ColSlice<'a> = (usize, &'a Vec<u8>);
+            let mut blocks: Vec<(BlockInfo, Vec<ColSlice>)> =
                 blocks_to_read.into_values().collect();
             blocks.sort_by_key(|(b, _)| b.offset);
 
@@ -1193,8 +1222,8 @@ fn slice_coalesced_ranges(coalesced_bufs: &[Vec<u8>], mappings: &[RangeMapping])
 #[cfg(test)]
 mod td151_tests {
     use super::*;
-    use crate::storage::persistence::filesystem::smart_io::range_coalescer::DefaultRangeCoalescer;
-    use crate::storage::persistence::filesystem::smart_io::traits::{
+    use proximadb_storage_filesystem_types::range_coalescer::DefaultRangeCoalescer;
+    use proximadb_storage_filesystem_types::smart_io_traits::{
         ByteRange, RangeOptimizerWithMapping,
     };
 
