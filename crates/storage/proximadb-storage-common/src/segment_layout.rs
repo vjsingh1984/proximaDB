@@ -1621,7 +1621,13 @@ mod tests {
         let footer = sample_typed_footer();
         let mut bytes = footer.to_bytes()?;
         let section_count_offset = typed_footer_section_count_offset(&bytes)?;
-        bytes[section_count_offset..section_count_offset + 2].copy_from_slice(&2u16.to_le_bytes());
+        // Bump the existing section count by one to account for the unknown
+        // section appended below — robust to however many real sections
+        // `sample_typed_footer` emits (TD-FPRUNE-1 added a shred-field-map section).
+        let current =
+            u16::from_le_bytes([bytes[section_count_offset], bytes[section_count_offset + 1]]);
+        bytes[section_count_offset..section_count_offset + 2]
+            .copy_from_slice(&(current + 1).to_le_bytes());
         bytes.push(0xfe);
         bytes.push(1);
         bytes.extend_from_slice(&3u32.to_le_bytes());

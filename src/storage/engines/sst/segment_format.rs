@@ -876,19 +876,22 @@ pub(crate) fn pax_field_to_col(field: &str) -> Option<i32> {
     }
 }
 
-/// ADR-089 / TD-FPRUNE-1 P1: default-OFF gate for the filter-aware cascade.
-/// `PROXIMADB_PAX_FILTERED_CASCADE=1|on|true|yes` routes filtered PAX queries
-/// through the metadata pre-stage + row-restricted cascade instead of the
-/// whole-object exact scan. Mixed-read-safe: OFF preserves today's behavior.
+/// ADR-089 / TD-FPRUNE-1: gate for the filter-aware cascade — routes filtered PAX
+/// queries through the metadata pre-stage + row-restricted cascade instead of the
+/// whole-object exact scan. **Default ON** (TD-FPRUNE-1 A3, evidence-gated: a
+/// filtered query is 8.4× faster than the exact scan at recall parity — the
+/// allow-set is row-accurate via `evaluate_filter_proxima`, and unfiltered
+/// queries never take this path). `PROXIMADB_PAX_FILTERED_CASCADE=0|off|false|no`
+/// is the kill-switch back to the whole-object exact scan.
 pub(crate) fn pax_filtered_cascade_enabled() -> bool {
-    matches!(
+    !matches!(
         std::env::var("PROXIMADB_PAX_FILTERED_CASCADE")
             .ok()
             .as_deref()
             .map(str::trim)
             .map(str::to_ascii_lowercase)
             .as_deref(),
-        Some("1" | "on" | "true" | "yes")
+        Some("0" | "off" | "false" | "no")
     )
 }
 
@@ -4818,11 +4821,12 @@ mod tests {
         assert!(none_hits.is_empty());
     }
 
-    /// ADR-089 P1: the filter-aware cascade is DEFAULT-OFF (mixed-read-safe).
+    /// TD-FPRUNE-1 A3: the filter-aware cascade is DEFAULT-ON (evidence-gated:
+    /// 8.4× faster than the exact scan at recall parity), with a kill-switch.
     #[test]
-    fn filtered_cascade_gate_defaults_off() {
-        // The suite never sets the gate env, so the default must hold here.
-        assert!(!pax_filtered_cascade_enabled());
+    fn filtered_cascade_gate_defaults_on() {
+        // The suite never sets the gate env, so the default (ON) must hold here.
+        assert!(pax_filtered_cascade_enabled());
     }
 
     /// ADR-089 / TD-FPRUNE-1 P1 EVIDENCE HARNESS (engine-level A/B on a real

@@ -322,20 +322,22 @@ impl BlockIndexEntry {
     }
 }
 
-/// TD-FPRUNE-1 P2 (default-OFF): `PROXIMADB_PAX_FOOTER_STATS=1|on|true|yes`
-/// makes the writer lift per-block bounded-column `ColumnMeta` into the segment
-/// footer, so a filtered query can prune a block without a body GET. OFF keeps
-/// the footer byte-identical to today (mixed-read-safe: the reader treats an
-/// absent payload as "may match").
+/// TD-FPRUNE-1 P2: the writer lifts per-block bounded-column `ColumnMeta` (min/max)
+/// + the shredded-tag field-map into the segment footer, so a filtered query can
+/// prune a block without a body GET. **Default ON** (TD-FPRUNE-1 A3, evidence-gated:
+/// footer pruning survives compaction and is 8.4× faster at recall parity;
+/// mixed-read-safe — an absent payload reads as "may match", so old readers and
+/// old segments are unaffected). `PROXIMADB_PAX_FOOTER_STATS=0|off|false|no` is the
+/// kill-switch back to a stats-free footer.
 fn footer_stats_enabled() -> bool {
-    matches!(
+    !matches!(
         std::env::var("PROXIMADB_PAX_FOOTER_STATS")
             .ok()
             .as_deref()
             .map(str::trim)
             .map(str::to_ascii_lowercase)
             .as_deref(),
-        Some("1" | "on" | "true" | "yes")
+        Some("0" | "off" | "false" | "no")
     )
 }
 
