@@ -1149,10 +1149,16 @@ impl FilesystemFactory {
         fs.read_range(&path, offset, length).await
     }
 
-    /// Read multiple byte ranges from `url` in one batched call — the object-store
-    /// backend coalesces adjacent ranges into fewer GETs. Mirrors [`Self::read`];
-    /// the ranged PAX reader uses this to fetch all surviving blocks of a pruned
-    /// scan together.
+    /// Read multiple byte ranges from `url` in one batched call. Mirrors
+    /// [`Self::read`]; the ranged PAX reader uses this to fetch all surviving
+    /// blocks of a pruned scan together.
+    ///
+    /// Whether those logical ranges become fewer physical requests depends on
+    /// the filesystem's [`FileSystem::range_coalesce_policy`]. With no policy
+    /// — the default — each range is one physical GET, and object stores bill
+    /// per request. This doc comment previously asserted that the backend
+    /// coalesced; it did not, and no backend overrode `read_ranges`, so callers
+    /// trusting it silently paid one billed request per range.
     pub async fn read_ranges(
         &self,
         url: &str,

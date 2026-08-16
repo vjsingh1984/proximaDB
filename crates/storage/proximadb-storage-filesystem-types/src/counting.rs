@@ -3,7 +3,8 @@
 //! `CountingFileSystem` is a pass-through wrapper around `Arc<dyn FileSystem>` that
 //! tallies the read operations (the object-store GET surface) — `read` (full
 //! object), `read_range` (ranged GET), `read_ranges` (a logical batch whose
-//! constituent ranges are physical GETs), and `get_mmap`
+//! **physical** reads are counted from the plan, which may be fewer than the
+//! logical ranges when the filesystem coalesces), and `get_mmap`
 //! (whole-file map) — plus total bytes returned. It is wired in by
 //! `FilesystemFactory::get_filesystem` only when `PROXIMADB_COUNT_FS_IO=1`
 //! (default OFF → zero behavior change), so a bench can measure the per-search
@@ -38,12 +39,21 @@ pub struct GetCounters {
     pub range_reads: AtomicU64,
     /// Physical ranged reads issued by logical `read_ranges` calls.
     ///
-    /// The current [`FileSystem::read_ranges`] contract delegates to one
-    /// `read_range` per constituent range. Concurrency reduces elapsed rounds;
-    /// it does not turn them into one cloud transaction.
+    /// Counted from [`FileSystem::plan_read_ranges`], so this is the number of
+    /// requests the wire actually sees — one per logical range when no
+    /// coalescing policy is set, fewer when one is. Concurrency reduces elapsed
+    /// rounds; it does not turn them into one cloud transaction.
+    ///
+    /// Cross-check, do not trust in isolation: this is *predicted* from the
+    /// plan, while `io_trace.range_gets` is *measured* at the leaf. The two
+    /// agreeing is the proof that neither is lying.
     pub batched_range_reads: AtomicU64,
-    /// Total bytes returned across all counted reads.
+    /// Total bytes returned to callers (logical bytes).
     pub bytes_read: AtomicU64,
+    /// Bytes fetched but never returned — the gap over-read coalescing paid to
+    /// save a request. Kept separate so `bytes_read` keeps meaning "what the
+    /// caller got" instead of silently becoming "what the wire moved".
+    pub coalesced_overread_bytes: AtomicU64,
 }
 
 impl GetCounters {
@@ -60,22 +70,67 @@ impl GetCounters {
         self.range_reads.store(0, RELAXED);
         self.batched_range_reads.store(0, RELAXED);
         self.bytes_read.store(0, RELAXED);
+        self.coalesced_overread_bytes.store(0, RELAXED);
     }
 }
 
 #[cfg(test)]
 mod physical_get_meter_tests {
-    use super::{GetCounters, RELAXED};
+    use super::{CountingFileSystem, GetCounters, RELAXED};
+    use crate::{FileSystem, RangeCoalescePolicy};
+    use std::sync::Arc;
 
     #[test]
-    fn batched_ranges_are_metered_as_constituent_physical_gets() {
+    fn total_gets_sums_the_three_surfaces() {
         let counters = GetCounters::default();
-
-        // FileSystem::read_ranges currently delegates to one read_range call
-        // per range. A logical batch is not a multipart cloud GET.
+        counters.full_reads.fetch_add(1, RELAXED);
+        counters.range_reads.fetch_add(1, RELAXED);
         counters.batched_range_reads.fetch_add(3, RELAXED);
+        assert_eq!(counters.total_gets(), 5);
+    }
 
-        assert_eq!(counters.total_gets(), 3);
+    /// The meter must report MEASURED physical reads, not `ranges.len()`.
+    ///
+    /// This replaces a test that asserted `read_ranges` always costs one
+    /// physical GET per range. That was true of the old implementation, but it
+    /// was pure arithmetic on the counter struct and never exercised
+    /// `read_ranges` — so it would have kept passing while its own comment
+    /// became false. A green test asserting a stale invariant is worse than a
+    /// red one.
+    #[test]
+    fn batched_ranges_are_metered_from_the_plan_not_the_request() {
+        let inner = Arc::new(crate::read_ranges_coalescing_tests::CountingFake::new(
+            4096,
+            crate::read_ranges_coalescing_tests::EofMode::Clamp,
+            Some(RangeCoalescePolicy {
+                max_gap_bytes: 64,
+                max_merged_bytes: 4096,
+            }),
+        ));
+        let counted = CountingFileSystem::new(inner, Arc::new(GetCounters::default()));
+
+        // Three near-adjacent ranges collapse to ONE physical read.
+        let plan = counted
+            .plan_read_ranges(&[0..64, 64..128, 130..200])
+            .expect("plan");
+        assert_eq!(
+            plan.physical.len(),
+            1,
+            "policy must reach through the decorator"
+        );
+
+        // ...and with no policy the plan is the identity, so the meter reports
+        // one physical read per logical range exactly as before.
+        let bare = Arc::new(crate::read_ranges_coalescing_tests::CountingFake::new(
+            4096,
+            crate::read_ranges_coalescing_tests::EofMode::Clamp,
+            None,
+        ));
+        let counted_bare = CountingFileSystem::new(bare, Arc::new(GetCounters::default()));
+        let identity = counted_bare
+            .plan_read_ranges(&[0..64, 64..128, 130..200])
+            .expect("plan");
+        assert_eq!(identity.physical.len(), 3);
     }
 }
 
@@ -181,18 +236,34 @@ impl FileSystem for CountingFileSystem {
         Ok(buf)
     }
 
+    fn range_coalesce_policy(&self) -> Option<crate::RangeCoalescePolicy> {
+        // Delegate so the policy query traverses the whole decorator chain to
+        // whichever layer actually holds it. Without this the counter would
+        // plan with `None` and report one physical read per logical range even
+        // when the inner filesystem coalesces.
+        self.inner.range_coalesce_policy()
+    }
+
     async fn read_ranges(
         &self,
         path: &str,
         ranges: Vec<std::ops::Range<u64>>,
     ) -> FsResult<Vec<Vec<u8>>> {
-        let physical_gets = ranges.len() as u64;
+        // Count what the wire will see, not what the caller asked for. Ask the
+        // inner filesystem to plan: it owns the coalescing policy, so this
+        // traverses the decorator chain to whoever actually holds it.
+        let plan = self.inner.plan_read_ranges(&ranges)?;
+        let physical_gets = plan.physical.len() as u64;
+        let overread = plan.overread_bytes();
         let bufs = self.inner.read_ranges(path, ranges).await?;
         let bytes: u64 = bufs.iter().map(Vec::len).sum::<usize>() as u64;
         self.counters
             .batched_range_reads
             .fetch_add(physical_gets, RELAXED);
         self.counters.bytes_read.fetch_add(bytes, RELAXED);
+        self.counters
+            .coalesced_overread_bytes
+            .fetch_add(overread, RELAXED);
         if let Some(recorder) = &self.recorder {
             recorder.record_batched_ranges(physical_gets, bytes);
         }

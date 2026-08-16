@@ -1106,7 +1106,7 @@ pub mod range_coalescer;
 pub mod smart_io_traits;
 
 #[cfg(test)]
-mod read_ranges_coalescing_tests {
+pub(crate) mod read_ranges_coalescing_tests {
     //! The `read_ranges` seam: N logical ranges must not cost N physical GETs.
     //!
     //! Object stores bill per request (Azure Hot, S3 Standard, GCS Standard all
@@ -1127,7 +1127,7 @@ mod read_ranges_coalescing_tests {
 
     /// How a backend behaves when a range starts at or past EOF.
     #[derive(Clone, Copy, PartialEq, Debug)]
-    enum EofMode {
+    pub(crate) enum EofMode {
         /// Local filesystems: short read, `Ok`.
         Clamp,
         /// Azure/S3/GCS: `InvalidGetRange::StartTooLarge` / HTTP 416.
@@ -1135,7 +1135,7 @@ mod read_ranges_coalescing_tests {
     }
 
     #[derive(Debug)]
-    struct CountingFake {
+    pub(crate) struct CountingFake {
         data: Vec<u8>,
         calls: Mutex<Vec<(u64, u64)>>,
         eof: EofMode,
@@ -1143,7 +1143,7 @@ mod read_ranges_coalescing_tests {
     }
 
     impl CountingFake {
-        fn new(len: usize, eof: EofMode, policy: Option<RangeCoalescePolicy>) -> Self {
+        pub(crate) fn new(len: usize, eof: EofMode, policy: Option<RangeCoalescePolicy>) -> Self {
             Self {
                 data: (0..len).map(|i| (i % 251) as u8).collect(),
                 calls: Mutex::new(Vec::new()),
@@ -1151,7 +1151,7 @@ mod read_ranges_coalescing_tests {
                 policy,
             }
         }
-        fn calls(&self) -> Vec<(u64, u64)> {
+        pub(crate) fn calls(&self) -> Vec<(u64, u64)> {
             self.calls.lock().expect("calls mutex").clone()
         }
         fn slice(&self, from: usize, to: usize) -> Vec<u8> {

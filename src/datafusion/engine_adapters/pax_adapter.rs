@@ -156,7 +156,12 @@ impl PaxSplitReader {
 
     /// Ranged read (TD-DOC-PUSHDOWN-1): locate the segment index from a small tail
     /// suffix, prune blocks against the **index zone summary** (no block body GET),
-    /// then `read_ranges` only the SURVIVING blocks and decode each to Arrow. This
+    /// then `read_ranges` only the SURVIVING blocks and decode each to Arrow.
+    ///
+    /// NOTE: `read_ranges` issues one physical GET per surviving block unless
+    /// the filesystem carries a range-coalescing policy (default: none). The
+    /// byte win below is real; the request count is not reduced by batching
+    /// alone. This
     /// is the byte-read win the whole-file [`Self::load_bytes`] path leaves on the
     /// table: a temporal/canonical-column predicate prunes whole blocks off the
     /// wire (`bytes_read` < segment, `range_gets` > 0), reusing the SAME
