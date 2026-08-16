@@ -13,13 +13,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, trace, warn};
 
-use super::QuantizationConfig;
-use crate::compute::quantization::storage_engine::{
-    StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
-};
+use crate::proximablocks::columnar_config_types::QuantizationConfig;
 use proximadb_compression::CompressionAlgorithm;
 use proximadb_distance_kernel::SelectedFormat;
+use proximadb_quantization_model::StorageQuantizedData;
 use proximadb_records::{EmbeddingCell, ProximaRecord};
+use proximadb_storage_ports::StorageQuantizationEnginePort;
 
 /// Serialization configuration for columnar storage
 #[derive(Debug, Clone)]
@@ -157,7 +156,7 @@ pub struct ColumnarSerializer {
     config: ColumnarSerializationConfig,
 
     /// Quantization engine for transparent conversion
-    quantization_engine: Option<Arc<StorageQuantizationEngine>>,
+    quantization_engine: Option<Arc<dyn StorageQuantizationEnginePort>>,
 
     /// Memory pools for reuse
     memory_pools: MemoryPools,
@@ -355,33 +354,29 @@ pub struct ColumnarSerPerformanceStats {
 }
 
 impl ColumnarSerializer {
-    /// Create new serializer
+    /// Create new serializer without a quantization engine (no transparent quantization).
+    ///
+    /// Composition-root pattern (TD-DECOMP-78): callers that need transparent quantization
+    /// inject the concrete engine (which impls `StorageQuantizationEnginePort` in its own
+    /// crate) via [`ColumnarSerializer::with_quantization_engine`].
     pub fn new(config: ColumnarSerializationConfig) -> Result<Self> {
-        let quantization_engine = if config.quantization.is_some() {
-            let quant_config = StorageQuantizationConfig::default(); // Deferred: Convert from QuantizationConfig
-            let distance_compute =
-                Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
-            let codebook_store = Arc::new(crate::compute::InMemoryCodebookStore::new());
-            let unified_engine = Arc::new(
-                crate::compute::quantization::UnifiedQuantizationEngine::new(
-                    distance_compute.clone(),
-                    codebook_store,
-                ),
-            );
-            Some(Arc::new(StorageQuantizationEngine::new(
-                unified_engine,
-                distance_compute,
-                quant_config,
-            )))
-        } else {
-            None
-        };
-
         Ok(Self {
             config,
-            quantization_engine,
+            quantization_engine: None,
             memory_pools: MemoryPools::new(),
         })
+    }
+
+    /// Builder: inject a quantization engine (port). No-op unless the config enables
+    /// quantization, mirroring the previous default-construction semantics.
+    pub fn with_quantization_engine(
+        mut self,
+        engine: Arc<dyn StorageQuantizationEnginePort>,
+    ) -> Self {
+        if self.config.quantization.is_some() {
+            self.quantization_engine = Some(engine);
+        }
+        self
     }
 
     /// Serialize vector records with transparent quantization
@@ -415,7 +410,7 @@ impl ColumnarSerializer {
                 (&self.quantization_engine, &self.config.quantization)
             {
                 let quant_start = std::time::Instant::now();
-                let quantized_data = self.quantize_vectors(&vectors, engine).await?;
+                let quantized_data = self.quantize_vectors(&vectors, engine.as_ref()).await?;
                 quantization_time = quant_start.elapsed().as_secs_f64() * 1000.0;
 
                 let binary = if quant_config.enable_binary.unwrap_or(false) {
@@ -683,7 +678,7 @@ impl ColumnarSerializer {
     async fn quantize_vectors(
         &self,
         vectors: &[&[f32]],
-        engine: &StorageQuantizationEngine,
+        engine: &dyn StorageQuantizationEnginePort,
     ) -> Result<Vec<StorageQuantizedData>> {
         // Convert vector slices to owned vectors and create IDs
         let owned_vectors: Vec<Vec<f32>> = vectors.iter().map(|v| v.to_vec()).collect();

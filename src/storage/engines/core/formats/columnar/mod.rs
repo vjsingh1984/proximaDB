@@ -115,8 +115,8 @@ pub mod columnar_compaction; // Unified Parquet compaction using StreamingParque
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure
-pub mod common;
-pub mod serialization;
+pub use proximadb_engine_core::proximablocks::columnar_common as common; // extracted TD-DECOMP-80
+pub use proximadb_engine_core::proximablocks::columnar_serialization as serialization; // extracted TD-DECOMP-80
 // NOTE: Distance computation has been moved to proximadb_distance_kernel::quantized
 
 // TEXT column storage, filtering, and full-text search (Phase 3)
