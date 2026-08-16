@@ -6043,6 +6043,154 @@ fn sql_like_fast_paths_match_dp() {
     }
 }
 
+#[tokio::test]
+async fn exact_table_vector_search_is_bounded_projection_aware_and_uses_full_primary_key() {
+    use crate::services::record_store::DirectWalTableRecordStore;
+    use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let manager = Arc::new(CatalogManager::new());
+    manager
+        .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+        .await
+        .expect("native catalog");
+    DdlService::new(manager.clone())
+        .execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("namespace");
+
+    let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+    let ddl = parser
+        .parse_ddl(
+            "CREATE TABLE vector_rows (scope TEXT, id TEXT, payload JSONB, \
+             embedding VECTOR(2), image_embedding VECTOR(3), PRIMARY KEY (scope, id));",
+        )
+        .expect("parse ddl")
+        .expect("ddl");
+    DdlService::new(manager.clone())
+        .execute(ddl)
+        .await
+        .expect("create table");
+
+    let wal_path = temp_dir.path().join("vector-search.wal");
+    let dml = DmlService::with_record_store_and_table_write_executor(
+        manager,
+        Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        )),
+        Arc::new(PlannedOnlyTableWriteExecutor::new()),
+    );
+    for sql in [
+        r#"INSERT INTO vector_rows (scope, id, payload, embedding, image_embedding) VALUES ('a', '1', '{"rank":1}'::jsonb, '[1,0]'::vector, '[0,0,1]'::vector)"#,
+        r#"INSERT INTO vector_rows (scope, id, payload, embedding, image_embedding) VALUES ('a', '2', '{"rank":2}'::jsonb, '[0.9,0.1]'::vector, '[0,1,0]'::vector)"#,
+        r#"INSERT INTO vector_rows (scope, id, payload, embedding, image_embedding) VALUES ('b', '1', '{"rank":3}'::jsonb, '[0,1]'::vector, '[1,0,0]'::vector)"#,
+    ] {
+        let statement = parser
+            .parse_dml(sql)
+            .expect("parse insert")
+            .expect("insert");
+        dml.execute(statement).await.expect("insert row");
+    }
+
+    let requested = vec!["payload".to_string()];
+    let results = dml
+        .search_table_vectors_exact(
+            "vector_rows",
+            "embedding",
+            &[1.0, 0.0],
+            2,
+            None,
+            proximadb_distance_types::DistanceMetric::L2,
+            Some(&requested),
+            None,
+            proximadb_runtime::PortIdentity::default(),
+            &ExecutionControls::default(),
+        )
+        .await
+        .expect("search")
+        .expect("catalog table");
+
+    assert_eq!(results.len(), 2, "the exact route must retain only top_k");
+    assert_eq!(results[0].id, "a\u{1f}1");
+    assert_eq!(results[1].id, "a\u{1f}2");
+    assert!(results.iter().all(|record| record.vector.is_none()));
+    assert!(
+        results
+            .iter()
+            .all(|record| record.metadata.keys().map(String::as_str).eq(["payload"])),
+        "only requested metadata columns should be materialized"
+    );
+
+    let image_results = dml
+        .search_table_vectors_exact(
+            "vector_rows",
+            "image_embedding",
+            &[1.0, 0.0, 0.0],
+            1,
+            None,
+            proximadb_distance_types::DistanceMetric::L2,
+            Some(&requested),
+            None,
+            proximadb_runtime::PortIdentity::default(),
+            &ExecutionControls::default(),
+        )
+        .await
+        .expect("second vector-column search")
+        .expect("catalog table");
+    assert_eq!(
+        image_results[0].id, "b\u{1f}1",
+        "the named vector column, not the table's first vector, defines ordering"
+    );
+
+    let missing = vec!["does_not_exist".to_string()];
+    let error = dml
+        .search_table_vectors_exact(
+            "vector_rows",
+            "embedding",
+            &[1.0, 0.0],
+            1,
+            None,
+            proximadb_distance_types::DistanceMetric::L2,
+            Some(&missing),
+            None,
+            proximadb_runtime::PortIdentity::default(),
+            &ExecutionControls::default(),
+        )
+        .await
+        .expect_err("unknown projection must fail instead of becoming NULL");
+    assert!(error.to_string().contains("does not exist"), "{error}");
+
+    let cancellation_flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let error = dml
+        .search_table_vectors_exact(
+            "vector_rows",
+            "embedding",
+            &[1.0, 0.0],
+            1,
+            None,
+            proximadb_distance_types::DistanceMetric::L2,
+            Some(&requested),
+            None,
+            proximadb_runtime::PortIdentity::default(),
+            &ExecutionControls {
+                cancellation_flag: Some(cancellation_flag),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("cancelled scoring must stop cooperatively");
+    assert!(error.to_string().contains("cancelled"), "{error}");
+}
+
 #[cfg(all(test, feature = "abac-policy"))]
 mod abac_relational_enforcement_tests {
     //! FA-c Phase 2 e2e: the ABAC enforcement is wired into `DmlService`. Proves

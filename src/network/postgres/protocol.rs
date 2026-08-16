@@ -422,25 +422,6 @@ pub enum FrontendMessage {
     CopyFail = b'f',
 }
 
-fn relational_backing_options(
-    statement: &crate::services::DdlStatement,
-) -> (Option<String>, Option<u32>) {
-    match statement {
-        crate::services::DdlStatement::CreateTable {
-            columns,
-            properties,
-            ..
-        } => (
-            properties.get("canonical_embedding_precision").cloned(),
-            columns.iter().find_map(|column| match column.data_type {
-                crate::services::SqlDataType::Vector { dimension } => Some(dimension),
-                _ => None,
-            }),
-        ),
-        _ => (None, None),
-    }
-}
-
 impl PostgresProtocol {
     /// Create a new protocol handler
     pub fn new(
@@ -1597,8 +1578,12 @@ impl PostgresProtocol {
                     // collection and sees fp32 even though the
                     // relational schema row got the operator's
                     // chosen precision.
-                    let (backing_precision, backing_vector_dimension) =
-                        relational_backing_options(&statement);
+                    let backing_precision: Option<String> = match &statement {
+                        crate::services::DdlStatement::CreateTable { properties, .. } => {
+                            properties.get("canonical_embedding_precision").cloned()
+                        }
+                        _ => None,
+                    };
                     // TD-064: scope table-targeting DDL (CREATE/DROP/ALTER TABLE,
                     // CREATE/DROP INDEX) onto the connection's tenant so a tenant's
                     // CREATE-then-INSERT address one tenant-prefixed schema row.
@@ -1632,7 +1617,6 @@ impl PostgresProtocol {
                                     &table_name,
                                     ddl_scope.as_deref(),
                                     backing_precision.as_deref(),
-                                    backing_vector_dimension,
                                 )
                                 .await?;
                             }
@@ -1744,7 +1728,6 @@ impl PostgresProtocol {
         table_name: &str,
         tenant_id: Option<&str>,
         canonical_embedding_precision_label: Option<&str>,
-        vector_dimension: Option<u32>,
     ) -> Result<()> {
         use crate::proto::proximadb_v1::{CollectionConfig, EmbeddingPrecision, StorageEngine};
 
@@ -1768,13 +1751,12 @@ impl PostgresProtocol {
             })
             .map(|p| p as i32);
 
-        // A table with a vector column must expose the same dimension through
-        // its collection identity. Pure relational tables have no vector
-        // dimension; CollectionService currently requires a positive value, so
-        // their catalog-visibility handle remains dimension 1.
+        // Relational tables don't carry vectors; the backing collection is a
+        // catalog-visibility shim. CollectionService rejects dimension=0, so
+        // pin the shim at 1 (matches other zero-vector compatibility paths).
         let config = CollectionConfig {
             name: table_name.to_string(),
-            dimension: vector_dimension.unwrap_or(1),
+            dimension: 1,
             storage_engine: Some(StorageEngine::Sst as i32),
             description: Some(format!(
                 "Relational table backing collection: {}",

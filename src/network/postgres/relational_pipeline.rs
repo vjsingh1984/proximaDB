@@ -60,6 +60,7 @@ use crate::query::cache::query_result_cache::{QueryKey, QueryResultCache, Struct
 use crate::services::dml::DmlService;
 use crate::storage::tenant::context::TenantContext;
 use proximadb_runtime::{OwnedPortIdentity, PortIdentity};
+use proximadb_vector_query::{VectorSearchExpr, VectorSearchParams};
 
 use super::types::PgType;
 
@@ -74,12 +75,7 @@ use super::types::PgType;
 /// The private type deliberately exposes no second public vector API.
 #[derive(Debug, Clone, PartialEq)]
 struct PgVectorSelectPlan {
-    collection: String,
-    vector_column: String,
-    query_vector: Vec<f32>,
-    top_k: usize,
-    metric: proximadb_distance_types::DistanceMetric,
-    filter: Option<proximadb_filter_expression::FilterExpression>,
+    search: VectorSearchExpr,
     output: Vec<PgVectorOutputColumn>,
 }
 
@@ -87,7 +83,7 @@ struct PgVectorSelectPlan {
 enum PgVectorOutputColumn {
     Id(String),
     Distance(String),
-    Metadata(String),
+    Metadata { source: String, output: String },
 }
 
 impl PgVectorOutputColumn {
@@ -95,7 +91,7 @@ impl PgVectorOutputColumn {
         match self {
             Self::Id(name) => ColumnInfo::new(name, ProximaType::String, false),
             Self::Distance(name) => ColumnInfo::new(name, ProximaType::Float64, false),
-            Self::Metadata(name) => ColumnInfo::new(name, ProximaType::Jsonb, false),
+            Self::Metadata { output, .. } => ColumnInfo::new(output, ProximaType::Jsonb, false),
         }
     }
 
@@ -103,15 +99,11 @@ impl PgVectorOutputColumn {
         match self {
             Self::Id(name) => super::types::FieldDescription::new(name, PgType::Text),
             Self::Distance(name) => super::types::FieldDescription::new(name, PgType::Float8),
-            Self::Metadata(name) => super::types::FieldDescription::new(name, PgType::Jsonb),
+            Self::Metadata { output, .. } => {
+                super::types::FieldDescription::new(output, PgType::Jsonb)
+            }
         }
     }
-}
-
-fn contains_pgvector_operator(sql: &str) -> bool {
-    ["<->", "<=>", "<#>"]
-        .iter()
-        .any(|operator| sql.contains(operator))
 }
 
 /// Lower the supported pgvector nearest-neighbour SELECT into one typed plan.
@@ -119,14 +111,15 @@ fn contains_pgvector_operator(sql: &str) -> bool {
 /// is present, malformed or unsupported semantics are errors; they must never
 /// fall through to a string parser or silently widen a metadata predicate.
 fn lower_pgvector_select(sql: &str) -> Result<Option<PgVectorSelectPlan>, String> {
-    if !contains_pgvector_operator(sql) {
-        return Ok(None);
-    }
-
-    let statements = Parser::parse_sql(&PostgreSqlDialect {}, sql)
-        .map_err(|error| format!("invalid pgvector SELECT: {error}"))?;
+    let statements = match Parser::parse_sql(&PostgreSqlDialect {}, sql) {
+        Ok(statements) => statements,
+        Err(_) => return Ok(None),
+    };
     let [Statement::Query(query)] = statements.as_slice() else {
-        return Err("pgvector operators are supported only in one SELECT statement".to_string());
+        return Ok(None);
+    };
+    let Some(metric) = pgvector_ordering_metric(query)? else {
+        return Ok(None);
     };
     let SetExpr::Select(select) = query.body.as_ref() else {
         return Err("pgvector operators require a simple SELECT body".to_string());
@@ -171,8 +164,7 @@ fn lower_pgvector_select(sql: &str) -> Result<Option<PgVectorSelectPlan>, String
     let SqlExpr::BinaryOp { left, op, right } = &order.expr else {
         return Err("ORDER BY must contain a pgvector distance operator".to_string());
     };
-    let metric = pgvector_metric(op)
-        .ok_or_else(|| "ORDER BY must contain one of <->, <=>, or <#>".to_string())?;
+    debug_assert_eq!(pgvector_metric(op), Some(metric));
     let vector_column = sql_column_name(left)
         .ok_or_else(|| "pgvector distance left operand must be a vector column".to_string())?;
     let query_vector = parse_vector_expr(right)?;
@@ -191,6 +183,8 @@ fn lower_pgvector_select(sql: &str) -> Result<Option<PgVectorSelectPlan>, String
             return Err("pgvector search supports LIMIT without OFFSET or LIMIT BY".to_string());
         }
     };
+    let top_k = u32::try_from(top_k)
+        .map_err(|_| "pgvector LIMIT exceeds the supported u32 result cardinality".to_string())?;
 
     let filter = select
         .selection
@@ -200,14 +194,48 @@ fn lower_pgvector_select(sql: &str) -> Result<Option<PgVectorSelectPlan>, String
     let output = lower_pgvector_projection(&select.projection, metric)?;
 
     Ok(Some(PgVectorSelectPlan {
-        collection: name.to_string(),
-        vector_column,
-        query_vector,
-        top_k,
-        metric,
-        filter,
+        search: VectorSearchExpr {
+            collection: name.to_string(),
+            vector_column: Some(vector_column),
+            query_vector,
+            top_k,
+            threshold: None,
+            metric,
+            filter,
+            params: VectorSearchParams::default(),
+        },
         output,
     }))
+}
+
+/// Return the metric only when the parsed query's ordering expression is a
+/// pgvector operator. Literal/comment text is deliberately irrelevant to this
+/// routing decision.
+fn pgvector_ordering_metric(
+    query: &SqlQuery,
+) -> Result<Option<proximadb_distance_types::DistanceMetric>, String> {
+    let Some(order_by) = query.order_by.as_ref() else {
+        return Ok(None);
+    };
+    let OrderByKind::Expressions(order_exprs) = &order_by.kind else {
+        return Ok(None);
+    };
+    let metrics = order_exprs
+        .iter()
+        .filter_map(|order| match &order.expr {
+            SqlExpr::BinaryOp { op, .. } => pgvector_metric(op),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if metrics.is_empty() {
+        return Ok(None);
+    }
+    if order_exprs.len() != 1 || metrics.len() != 1 {
+        return Err(
+            "pgvector search requires exactly one distance expression in ORDER BY".to_string(),
+        );
+    }
+    Ok(metrics.first().copied())
 }
 
 fn pgvector_metric(operator: &BinaryOperator) -> Option<proximadb_distance_types::DistanceMetric> {
@@ -229,7 +257,10 @@ fn lower_pgvector_projection(
         return Ok(vec![
             PgVectorOutputColumn::Id("id".to_string()),
             PgVectorOutputColumn::Distance("distance".to_string()),
-            PgVectorOutputColumn::Metadata("metadata".to_string()),
+            PgVectorOutputColumn::Metadata {
+                source: "metadata".to_string(),
+                output: "metadata".to_string(),
+            },
         ]);
     }
 
@@ -246,9 +277,10 @@ fn lower_pgvector_projection(
                     "id" => Ok(PgVectorOutputColumn::Id(
                         alias.unwrap_or(column.as_str()).to_string(),
                     )),
-                    "payload" | "metadata" => Ok(PgVectorOutputColumn::Metadata(
-                        alias.unwrap_or(column.as_str()).to_string(),
-                    )),
+                    "payload" | "metadata" => Ok(PgVectorOutputColumn::Metadata {
+                        source: column.clone(),
+                        output: alias.unwrap_or(column.as_str()).to_string(),
+                    }),
                     _ => Err(format!("unsupported pgvector projection column: {column}")),
                 };
             }
@@ -268,13 +300,15 @@ fn lower_pgvector_projection(
 pub(super) fn describe_pgvector_select(
     sql: &str,
 ) -> Result<Option<Vec<super::types::FieldDescription>>, String> {
-    if !contains_pgvector_operator(sql) {
-        return Ok(None);
-    }
-    let statements = Parser::parse_sql(&PostgreSqlDialect {}, sql)
-        .map_err(|error| format!("invalid pgvector SELECT: {error}"))?;
+    let statements = match Parser::parse_sql(&PostgreSqlDialect {}, sql) {
+        Ok(statements) => statements,
+        Err(_) => return Ok(None),
+    };
     let [Statement::Query(query)] = statements.as_slice() else {
-        return Err("pgvector operators are supported only in one SELECT statement".to_string());
+        return Ok(None);
+    };
+    let Some(metric) = pgvector_ordering_metric(query)? else {
+        return Ok(None);
     };
     let SetExpr::Select(select) = query.body.as_ref() else {
         return Err("pgvector operators require a simple SELECT body".to_string());
@@ -291,8 +325,7 @@ pub(super) fn describe_pgvector_select(
     let SqlExpr::BinaryOp { op, .. } = &order.expr else {
         return Err("ORDER BY must contain a pgvector distance operator".to_string());
     };
-    let metric = pgvector_metric(op)
-        .ok_or_else(|| "ORDER BY must contain one of <->, <=>, or <#>".to_string())?;
+    debug_assert_eq!(pgvector_metric(op), Some(metric));
     Ok(Some(
         lower_pgvector_projection(&select.projection, metric)?
             .iter()
@@ -340,10 +373,16 @@ fn parse_vector_expr(expr: &SqlExpr) -> Result<Vec<f32>, String> {
     values
         .split(',')
         .map(|value| {
-            value
+            let parsed = value
                 .trim()
                 .parse::<f32>()
-                .map_err(|error| format!("invalid pgvector component `{value}`: {error}"))
+                .map_err(|error| format!("invalid pgvector component `{value}`: {error}"))?;
+            if !parsed.is_finite() {
+                return Err(format!(
+                    "invalid pgvector component `{value}`: value must be finite"
+                ));
+            }
+            Ok(parsed)
         })
         .collect()
 }
@@ -487,16 +526,38 @@ async fn execute_pgvector_plan(
     // collections search VectorOps. The catalog existence check is the one route
     // decision; there is no dual read and no empty-result fallback between stores.
     let results = if let Some(dml) = dml {
+        let vector_column =
+            plan.search.vector_column.as_deref().ok_or_else(|| {
+                "pgvector table search requires a named vector column".to_string()
+            })?;
+        let requested_metadata: Vec<String> = plan
+            .output
+            .iter()
+            .filter_map(|column| match column {
+                PgVectorOutputColumn::Metadata { source, .. }
+                    if !source.eq_ignore_ascii_case("metadata") =>
+                {
+                    Some(source.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        let metadata_columns = (!plan.output.iter().any(|column| {
+            matches!(column, PgVectorOutputColumn::Metadata { source, .. } if source.eq_ignore_ascii_case("metadata"))
+        }))
+        .then_some(requested_metadata.as_slice());
         match dml
             .search_table_vectors_exact(
-                &plan.collection,
-                &plan.vector_column,
-                &plan.query_vector,
-                plan.top_k,
-                plan.filter.as_ref(),
-                plan.metric,
+                &plan.search.collection,
+                vector_column,
+                &plan.search.query_vector,
+                plan.search.top_k as usize,
+                plan.search.filter.as_ref(),
+                plan.search.metric,
+                metadata_columns,
                 tenant_context,
                 identity,
+                &controls,
             )
             .await
             .map_err(|error| format!("catalog-table vector search failed: {error}"))?
@@ -504,11 +565,11 @@ async fn execute_pgvector_plan(
             Some(results) => results,
             None => vector_ops
                 .unified_search_native(
-                    &plan.collection,
-                    plan.query_vector.clone(),
-                    plan.top_k,
-                    plan.filter.clone(),
-                    Some(plan.metric),
+                    &plan.search.collection,
+                    plan.search.query_vector.clone(),
+                    plan.search.top_k as usize,
+                    plan.search.filter.clone(),
+                    Some(plan.search.metric),
                     identity,
                 )
                 .await
@@ -517,11 +578,11 @@ async fn execute_pgvector_plan(
     } else {
         vector_ops
             .unified_search_native(
-                &plan.collection,
-                plan.query_vector.clone(),
-                plan.top_k,
-                plan.filter.clone(),
-                Some(plan.metric),
+                &plan.search.collection,
+                plan.search.query_vector.clone(),
+                plan.search.top_k as usize,
+                plan.search.filter.clone(),
+                Some(plan.search.metric),
                 identity,
             )
             .await
@@ -542,18 +603,18 @@ async fn execute_pgvector_plan(
                 .map(|column| match column {
                     PgVectorOutputColumn::Id(_) => Ok(ProximaValue::String(record.id.clone())),
                     PgVectorOutputColumn::Distance(_) => {
-                        pgvector_distance(&record, plan.metric).map(ProximaValue::Float64)
+                        pgvector_distance(&record, plan.search.metric).map(ProximaValue::Float64)
                     }
-                    PgVectorOutputColumn::Metadata(name)
-                        if name.eq_ignore_ascii_case("metadata") =>
+                    PgVectorOutputColumn::Metadata { source, .. }
+                        if source.eq_ignore_ascii_case("metadata") =>
                     {
                         serde_json::to_value(&record.metadata)
                             .map(ProximaValue::Jsonb)
                             .map_err(|error| format!("vector metadata conversion failed: {error}"))
                     }
-                    PgVectorOutputColumn::Metadata(name) => Ok(record
+                    PgVectorOutputColumn::Metadata { source, .. } => Ok(record
                         .metadata
-                        .get(name)
+                        .get(source)
                         .cloned()
                         .unwrap_or(ProximaValue::Null)),
                 })
@@ -4101,20 +4162,26 @@ mod tests {
         .expect("vector SQL must parse")
         .expect("vector operator must engage");
 
-        assert_eq!(plan.collection, "public.memories");
-        assert_eq!(plan.vector_column, "embedding");
-        assert_eq!(plan.query_vector, vec![0.1, -0.2, 0.3]);
-        assert_eq!(plan.top_k, 7);
-        assert_eq!(plan.metric, proximadb_distance_types::DistanceMetric::L2);
+        assert_eq!(plan.search.collection, "public.memories");
+        assert_eq!(plan.search.vector_column.as_deref(), Some("embedding"));
+        assert_eq!(plan.search.query_vector, vec![0.1, -0.2, 0.3]);
+        assert_eq!(plan.search.top_k, 7);
+        assert_eq!(
+            plan.search.metric,
+            proximadb_distance_types::DistanceMetric::L2
+        );
         assert_eq!(
             plan.output,
             vec![
                 PgVectorOutputColumn::Id("id".to_string()),
-                PgVectorOutputColumn::Metadata("payload".to_string()),
+                PgVectorOutputColumn::Metadata {
+                    source: "payload".to_string(),
+                    output: "payload".to_string(),
+                },
             ]
         );
         assert_eq!(
-            plan.filter,
+            plan.search.filter,
             Some(proximadb_filter_expression::FilterExpression::And(vec![
                 proximadb_filter_expression::FilterExpression::Comparison {
                     field: "payload.type".to_string(),
@@ -4131,6 +4198,25 @@ mod tests {
     }
 
     #[test]
+    fn pgvector_operator_detection_uses_the_ast_not_literal_or_comment_text() {
+        for sql in [
+            "SELECT '<->' AS operator_name",
+            "SELECT 1 /* <=> is documentation, not an expression */",
+            "SELECT '<#>' AS operator_name ORDER BY operator_name",
+        ] {
+            assert_eq!(
+                lower_pgvector_select(sql),
+                Ok(None),
+                "non-operator SQL must stay on the relational path: {sql}"
+            );
+            assert!(
+                matches!(describe_pgvector_select(sql), Ok(None)),
+                "describe must make the same AST-based routing decision: {sql}"
+            );
+        }
+    }
+
+    #[test]
     fn pgvector_filter_accepts_translator_normalized_json_path_ast() {
         let plan = lower_pgvector_select(
             "SELECT id FROM memories \
@@ -4141,7 +4227,7 @@ mod tests {
         .expect("vector operator must engage");
 
         assert_eq!(
-            plan.filter,
+            plan.search.filter,
             Some(proximadb_filter_expression::FilterExpression::Comparison {
                 field: "payload.type".to_string(),
                 operator: proximadb_filter_expression::ComparisonOperator::Equals,
@@ -4166,7 +4252,7 @@ mod tests {
             let plan = lower_pgvector_select(&sql)
                 .expect("vector SQL must parse")
                 .expect("vector operator must engage");
-            assert_eq!(plan.metric, expected, "operator {operator}");
+            assert_eq!(plan.search.metric, expected, "operator {operator}");
         }
     }
 
@@ -4209,7 +4295,10 @@ mod tests {
             vec![
                 PgVectorOutputColumn::Id("id".to_string()),
                 PgVectorOutputColumn::Distance("cosine_distance".to_string()),
-                PgVectorOutputColumn::Metadata("payload".to_string()),
+                PgVectorOutputColumn::Metadata {
+                    source: "payload".to_string(),
+                    output: "payload".to_string(),
+                },
             ]
         );
 
@@ -4219,6 +4308,24 @@ mod tests {
         )
         .expect_err("projection and ordering metrics must agree");
         assert!(error.contains("must use the ORDER BY metric"), "{error}");
+    }
+
+    #[test]
+    fn pgvector_projection_alias_does_not_replace_its_catalog_source() {
+        let plan = lower_pgvector_select(
+            "SELECT payload AS body FROM docs \
+             ORDER BY embedding <-> '[1,2]'::vector LIMIT 2",
+        )
+        .expect("vector SQL must parse")
+        .expect("vector operator must engage");
+
+        assert_eq!(
+            plan.output,
+            vec![PgVectorOutputColumn::Metadata {
+                source: "payload".to_string(),
+                output: "body".to_string(),
+            }]
+        );
     }
 
     #[test]
@@ -4233,6 +4340,24 @@ mod tests {
             error.contains("unsupported vector-search filter"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn pgvector_limit_cannot_wrap_the_canonical_top_k() {
+        let error = lower_pgvector_select(
+            "SELECT id FROM docs ORDER BY embedding <-> '[1,2]'::vector LIMIT 4294967296",
+        )
+        .expect_err("LIMIT must not truncate while lowering into the canonical u32 top_k");
+        assert!(error.contains("u32 result cardinality"), "{error}");
+    }
+
+    #[test]
+    fn pgvector_query_vector_rejects_non_finite_components() {
+        let error = lower_pgvector_select(
+            "SELECT id FROM docs ORDER BY embedding <-> '[NaN,2]'::vector LIMIT 2",
+        )
+        .expect_err("non-finite components must not enter distance or heap ordering");
+        assert!(error.contains("must be finite"), "{error}");
     }
 
     fn gate(sql: &str) -> bool {

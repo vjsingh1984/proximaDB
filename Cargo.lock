@@ -9001,6 +9001,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "proximadb-distance-types",
+ "proximadb-filter-expression",
  "proximadb-kernel",
  "proximadb-records",
 ]

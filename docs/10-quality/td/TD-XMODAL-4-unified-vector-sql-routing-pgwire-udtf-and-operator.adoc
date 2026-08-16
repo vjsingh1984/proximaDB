@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress**. The first clean-break slice removes the protocol regex bypass, preserves pgvector operators through translation, and lowers them from the PostgreSQL AST onto the shared native vector-search port with full request identity, metric, filter, limit, and projection. The explicit shared logical `VectorSearch` node and cost-router integration remain open.
+| Status | **In progress**. Both SQL syntaxes now lower to the existing canonical `proximadb_vector_query::VectorSearchExpr` (named vector column, query vector, metric, typed filter, threshold, top-k, and search parameters) and execute through the shared native vector-search port. Cost-router integration and cross-surface parity gates remain open.
 | Severity | Medium-High (surface consistency + moat: one internal vector-search intent behind every SQL surface; removes the hardcoded pgwire `<->` bypass and the pgwire/UDTF reachability gap)
 | Component | pgwire (`src/network/postgres/relational_pipeline.rs`, `pgvector_params.rs`) ; router (`src/query/compute_scheduler.rs` `QueryShape`/`route_select_inner`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
 | Governs / derives from | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — "no new DSL; reuse SQL + table functions") ; the reserved TD-XMODAL-4 forward-reference therein.
@@ -16,11 +16,11 @@
 
 A pgwire/UDTF audit found the building blocks already present but **disconnected**:
 
-* **The `vector_search(collection, query, k)` UDTF is built** — `VectorSearchTableFunction` (`cross_modal.rs:154-223`) → `VectorSearchTableProvider` over `VectorOpsPort`, registered via `ctx.register_udtf("vector_search", …)` (`datafusion/mod.rs:203-207`). But it lives **only** in the DataFusion `SessionContext`, so it's reachable via the OLAP/parquet route + gRPC-federated — **NOT over pgwire** (pgwire builds a DataFusion context only when `parquet_backed=true`; native vector storage never gets there).
+* **The `vector_search(collection, query, k)` UDTF is live-backed and pgwire-reachable** — `VectorSearchTableFunction` → `VectorSearchTableProvider` carries a `VectorSearchExpr` and complete request identity to `VectorOpsPort::unified_search_native`; the pgwire DataFusion context registers the same function.
 * **Before the 2026-08-15 slice, pgvector `<->`/`<=>`/`<#>` worked over pgwire via a hardcoded bypass**: regex-extract the vector literal + `LIMIT`, then call `unified_search_native()`. It skipped the relational pipeline and router — no typed plan, cost, or shape. That bypass is now deleted; router integration remains open.
 * **The router has no vector signal** — `QueryShape` (`compute_scheduler.rs:121-144`) is `(engages_relational × parquet_backed × cardinality × fanout)`; `route_select_inner` (`:323-348`) has no vector-search branch.
 
-So there is a hardcoded operator path, an unreachable UDTF, and a router blind to both. The fix is one canonical intent + router integration.
+The two SQL spellings now share one typed intent and runtime port. The remaining gap is policy: the cost router is still blind to that intent, so exact/ANN/striped/pruned route selection is not yet one observable decision.
 
 == Design: one canonical `VectorSearch` node
 
@@ -28,8 +28,8 @@ The load-bearing decision: **both syntaxes lower to the *same* logical node**, s
 
 [source]
 ----
-VectorSearch { collection, query_embedding, k, metric, filter?, projection?,
-               include_vectors, knobs(nprobe/prune/striped) }
+VectorSearchExpr { collection, vector_column?, query_vector, top_k, threshold?,
+                   metric, filter?, params(mode/ef_search/n_probes) }
 ----
 
 * **UDTF** `SELECT * FROM vector_search('col', $q, 10)` → this node (reuse `VectorSearchTableFunction`).
@@ -45,7 +45,7 @@ VectorSearch { collection, query_embedding, k, metric, filter?, projection?,
 | Slice | Deliverable | Gate
 
 | **S1 — canonical node + pgwire UDTF + operator lowering** (first PR, per decision)
-| Define the `VectorSearch` logical node. Make `vector_search(...)` reachable over pgwire (register the UDTF on the pgwire SQL path / route the call to the node). Lower the pgvector `<->`/`<=>`/`<#>` + `ORDER BY … LIMIT k` shape to the **same** node, replacing the hardcoded bypass. Result shape follows SQL projection and operator-distance semantics.
+| Reuse the existing `VectorSearchExpr` logical node. Make `vector_search(...)` reachable over pgwire and lower pgvector `<->`/`<=>`/`<#>` + `ORDER BY … LIMIT k` to the **same** node, replacing the hardcoded bypass. Result shape follows SQL projection and operator-distance semantics.
 | pgwire integration test: `vector_search(...)` AND `ORDER BY <-> LIMIT k` return the **same** top-k as the REST/gRPC vector search (cross-surface parity) for L2 + Cosine; recall unchanged (same engine).
 
 | **S2 — router shape + cost integration**
@@ -65,22 +65,24 @@ VectorSearch { collection, query_embedding, k, metric, filter?, projection?,
 
 `VectorSearchTableFunction` / `VectorSearchTableProvider` (`cross_modal.rs`), `register_udtf` (`datafusion/mod.rs`), `VectorOpsPort::unified_search_native`, `SstEngine::search_vectors_unified`, and the `ComputeScheduler`/`route_cost_model`/`QueryShape` router already exist — S1–S4 wire them behind one node, they do not rebuild them. Distance-metric mapping follows pgvector semantics for ecosystem compatibility.
 
-== Implemented clean-break slice (2026-08-15)
+== Implemented clean-break slice (2026-08-16)
 
 The current implementation establishes one trustworthy boundary before adding router policy:
 
 * deleted `protocol.rs::execute_vector_search` and the translator's regex operator rewrite;
 * added PostgreSQL-AST lowering for `<->`, `<=>`, and `<#>`, including typed filters, positive `LIMIT`, and SQL projection; unsupported shapes fail with `0A000` rather than falling through or widening a filter;
+* made vector dispatch AST-only: operator-looking text in literals/comments remains on the ordinary relational path, and oversized `LIMIT` values fail rather than truncating into the canonical `u32 top_k`;
 * made extended-protocol `Describe` reuse the same projection lowerer as `Execute`;
-* extended `VectorOpsPort::unified_search_native` with the requested metric and complete `PortIdentity`; its default implementation now errors instead of returning a false empty success;
+* extended the existing `VectorSearchExpr` instead of adding a pgwire-only public plan: it now carries a named vector column and typed filter, and both pgvector lowering and the UDTF construct it. Shared validation rejects empty/non-finite vectors, zero top-k, and invalid thresholds. The UQL/multimodel executor now forwards metric/filter, applies its similarity threshold, and rejects unsupported non-default per-query tuning instead of silently dropping it;
+* extended `VectorOpsPort::unified_search_native` with the requested metric and complete `PortIdentity`; its default implementation now errors instead of returning a false empty success. The canonical multimodel executor likewise propagates missing-service and backend failures, preserving the semantic distinction between "not executed" and a successful zero-match result;
 * included metric in query-cache identity and threaded it through planner, WAL, storage, and delta merge;
 * made `SearchMode::Exact` and metric/index incompatibility bypass AXIS, then enriched the bounded result set with metric-tagged semantic distances when an engine returned only a normalized score;
 * established a single source-of-truth rule for SQL tables: pgvector search reads the catalog table's `TableRecordStore`, with tenant/ABAC enforcement and the typed predicate evaluated at that boundary. It never treats an empty legacy vector-WAL result as evidence that a SQL table is empty. Exact table scan is the correctness floor; an ANN/PAX structure may accelerate it only as a rebuildable projection of that same primary;
+* bounded exact ranking to `O(top_k)` retained candidates with cooperative cancellation checks, no result-vector copies, projection-late metadata materialization, full composite-primary-key identity, named multi-vector-column selection, dimension validation, and route timing/cardinality telemetry. The current record-store API still materializes the filtered authority scan itself, so scan memory remains `O(matches)` until a streaming scan contract lands;
 * preserved JSON/JSONB container paths (`payload.type`) through AST lowering and filter evaluation instead of flattening them into an ambiguous global metadata namespace;
-* propagated a declared `VECTOR(n)` dimension into the table's collection identity. The former hardcoded dimension `1` made the catalog representation disagree with the SQL schema;
 * hardened the pgwire integration fixtures: metadata/catalog state is temp-directory scoped, setup errors are fatal, and both filtered and unfiltered searches assert exact non-empty ID sets. These gates exposed the previously false-green split-store behavior.
 
-This does **not** close TD-XMODAL-4. The UDTF and operator now converge on typed vector-search semantics and identity, but they do not yet lower to one explicit logical node or pass through one cost-router decision. The current authoritative table scan is intentionally unbounded and exact, so it is a correctness baseline rather than the target performance architecture. Cross-surface parity, route-level I/O traces, projection freshness/rebuild tests, and geometry-driven exact/ANN selection remain the acceptance gate for S2/S3.
+This does **not** close TD-XMODAL-4. The UDTF and operator now converge on the explicit `VectorSearchExpr` node and one native port, but they do not yet pass through one cost-router decision. Exact ranking is bounded; the underlying authoritative record scan is not yet streaming. Cross-surface parity, full route-level I/O traces, projection freshness/rebuild tests, and geometry-driven exact/ANN selection remain the acceptance gate for S2/S3.
 
 == Constraints
 

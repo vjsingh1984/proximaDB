@@ -45,6 +45,7 @@ use proximadb_query::graph_lowering::parse_supported_graph_query;
 use proximadb_query::graph_runtime::{
     execute_supported_graph_query_with_start_nodes, graph_query_row_id,
 };
+use proximadb_vector_query::{VectorSearchExpr, VectorSearchParams};
 
 // TD-XMODAL-4 S2: only the test mocks' (v1) `search()` impls reference these proto
 // types now — the production UDTF scan uses the v2 `unified_search_native` kernel.
@@ -104,9 +105,7 @@ pub fn vector_matches_to_batch(
 /// `SessionContext` and the query planner can scan/join/order it like any table.
 pub struct VectorSearchTableProvider {
     vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
-    collection_id: String,
-    query_vector: Vec<f32>,
-    top_k: u32,
+    search: VectorSearchExpr,
     identity: proximadb_runtime::OwnedPortIdentity,
 }
 
@@ -114,16 +113,12 @@ impl VectorSearchTableProvider {
     /// Build a provider for one parameterized similarity search.
     pub fn new(
         vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
-        collection_id: impl Into<String>,
-        query_vector: Vec<f32>,
-        top_k: u32,
+        search: VectorSearchExpr,
         identity: proximadb_runtime::OwnedPortIdentity,
     ) -> Self {
         Self {
             vector_ops,
-            collection_id: collection_id.into(),
-            query_vector,
-            top_k,
+            search,
             identity,
         }
     }
@@ -134,8 +129,9 @@ impl VectorSearchTableProvider {
 impl std::fmt::Debug for VectorSearchTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VectorSearchTableProvider")
-            .field("collection_id", &self.collection_id)
-            .field("top_k", &self.top_k)
+            .field("collection_id", &self.search.collection)
+            .field("vector_column", &self.search.vector_column)
+            .field("top_k", &self.search.top_k)
             .field("tenant_id", &self.identity.tenant_id)
             .finish_non_exhaustive()
     }
@@ -166,11 +162,11 @@ impl TableProvider for VectorSearchTableProvider {
         let results = self
             .vector_ops
             .unified_search_native(
-                &self.collection_id,
-                self.query_vector.clone(),
-                self.top_k as usize,
-                None,
-                None,
+                &self.search.collection,
+                self.search.query_vector.clone(),
+                self.search.top_k as usize,
+                self.search.filter.clone(),
+                Some(self.search.metric),
                 self.identity.as_borrowed(),
             )
             .await
@@ -260,11 +256,21 @@ impl TableFunctionImpl for VectorSearchTableFunction {
                 "vector_search: top_k must be greater than zero".into(),
             ));
         }
+        let top_k = u32::try_from(top_k).map_err(|_| {
+            DataFusionError::Plan("vector_search: top_k exceeds the supported u32 range".into())
+        })?;
         Ok(Arc::new(VectorSearchTableProvider::new(
             self.vector_ops.clone(),
-            collection,
-            query_vector,
-            top_k as u32,
+            VectorSearchExpr {
+                collection,
+                vector_column: None,
+                query_vector,
+                top_k,
+                threshold: None,
+                metric: proximadb_distance_types::DistanceMetric::L2,
+                filter: None,
+                params: VectorSearchParams::default(),
+            },
             self.identity.clone(),
         )))
     }
@@ -284,7 +290,7 @@ fn arg_i64(args: &[Expr], i: usize) -> Option<i64> {
     match args.get(i)? {
         Expr::Literal(ScalarValue::Int64(Some(n)), _) => Some(*n),
         Expr::Literal(ScalarValue::Int32(Some(n)), _) => Some(*n as i64),
-        Expr::Literal(ScalarValue::UInt64(Some(n)), _) => Some(*n as i64),
+        Expr::Literal(ScalarValue::UInt64(Some(n)), _) => i64::try_from(*n).ok(),
         _ => None,
     }
 }
@@ -295,10 +301,14 @@ fn parse_vector_literal(text: &str) -> Option<Vec<f32>> {
     if inner.trim().is_empty() {
         return Some(Vec::new());
     }
-    inner
-        .split(',')
-        .map(|p| p.trim().parse::<f32>().ok())
-        .collect()
+    inner.split(',').try_fold(Vec::new(), |mut values, part| {
+        let value = part.trim().parse::<f32>().ok()?;
+        if !value.is_finite() {
+            return None;
+        }
+        values.push(value);
+        Some(values)
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1219,9 +1229,16 @@ mod tests {
         });
         let provider = VectorSearchTableProvider::new(
             ops,
-            "docs_vec",
-            vec![0.1, 0.2, 0.3],
-            10,
+            VectorSearchExpr {
+                collection: "docs_vec".to_string(),
+                vector_column: None,
+                query_vector: vec![0.1, 0.2, 0.3],
+                top_k: 10,
+                threshold: None,
+                metric: proximadb_distance_types::DistanceMetric::L2,
+                filter: None,
+                params: VectorSearchParams::default(),
+            },
             proximadb_runtime::OwnedPortIdentity::default(),
         );
 
@@ -1356,6 +1373,14 @@ mod tests {
             (
                 "SELECT * FROM vector_search('docs_vec', '[0.1,0.2]', 0)",
                 "top_k must be greater than zero",
+            ),
+            (
+                "SELECT * FROM vector_search('docs_vec', '[NaN,0.2]', 10)",
+                "cannot parse query vector",
+            ),
+            (
+                "SELECT * FROM vector_search('docs_vec', '[0.1,0.2]', 4294967296)",
+                "top_k exceeds the supported u32 range",
             ),
         ] {
             let error = ctx.sql(sql).await.expect_err("invalid vector_search");
@@ -1745,6 +1770,7 @@ mod tests {
     /// A `VectorOpsPort` that records the complete identity at its search seam.
     struct RecordingVectorOps {
         seen: Arc<std::sync::Mutex<Vec<proximadb_runtime::OwnedPortIdentity>>>,
+        seen_metrics: Arc<std::sync::Mutex<Vec<Option<proximadb_distance_types::DistanceMetric>>>>,
     }
 
     #[async_trait]
@@ -1770,10 +1796,11 @@ mod tests {
             _query_vector: Vec<f32>,
             _k: usize,
             _filter: Option<proximadb_filter_expression::FilterExpression>,
-            _requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+            requested_metric: Option<proximadb_distance_types::DistanceMetric>,
             identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             self.seen.lock().unwrap().push(identity.into_owned());
+            self.seen_metrics.lock().unwrap().push(requested_metric);
             Ok(vec![])
         }
         async fn batch_upsert(
@@ -1806,8 +1833,10 @@ mod tests {
     #[tokio::test]
     async fn vector_search_udtf_forwards_tenant_to_search() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_metrics = Arc::new(std::sync::Mutex::new(Vec::new()));
         let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(RecordingVectorOps {
             seen: Arc::clone(&seen),
+            seen_metrics: Arc::clone(&seen_metrics),
         });
         let ctx = SessionContext::new();
         ctx.register_udtf(
@@ -1837,6 +1866,11 @@ mod tests {
                 tenant_stable_id: Some(7),
                 auth_class: proximadb_tenant::AuthClass::Authenticated,
             }]
+        );
+        assert_eq!(
+            seen_metrics.lock().unwrap().as_slice(),
+            &[Some(proximadb_distance_types::DistanceMetric::L2)],
+            "the UDTF must not discard the metric carried by its canonical vector intent"
         );
     }
 
