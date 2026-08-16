@@ -116,6 +116,14 @@ def test_quiet_wait_rejects_invalid_windows_without_sleeping():
     SWEEP.wait_for_host_quiet(0, 10)
 
 
+def test_only_typed_host_contention_errors_are_retryable():
+    assert SWEEP.is_host_contention_error(
+        RuntimeError("host compiler contention observed: rustc pid=42")
+    )
+    assert not SWEEP.is_host_contention_error(RuntimeError("server exited"))
+    assert not SWEEP.is_host_contention_error(KeyboardInterrupt())
+
+
 def checkpoint_result() -> dict:
     return {
         "protocol": "pax_azure_range_cap_sweep",

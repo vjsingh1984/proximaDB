@@ -243,6 +243,12 @@ def wait_for_host_quiet(quiet_seconds: float, timeout_seconds: float) -> None:
     )
 
 
+def is_host_contention_error(error: BaseException) -> bool:
+    return isinstance(error, RuntimeError) and str(error).startswith(
+        "host compiler contention observed:"
+    )
+
+
 class HostContentionMonitor:
     """Fail a latency/RSS point if an external Rust build overlaps it."""
 
@@ -502,6 +508,7 @@ def main() -> int:
     parser.add_argument("--max-rss-ratio", type=float, default=1.10)
     parser.add_argument("--host-quiet-window-secs", type=float, default=0)
     parser.add_argument("--host-quiet-timeout-secs", type=float, default=3600)
+    parser.add_argument("--max-contention-retries", type=int, default=0)
     args = parser.parse_args()
 
     repository = Path(__file__).resolve().parents[2]
@@ -518,6 +525,8 @@ def main() -> int:
         raise RuntimeError("coalescing gap must be non-negative and nprobe positive")
     if args.max_recall_regression < 0:
         raise RuntimeError("--max-recall-regression must be non-negative")
+    if args.max_contention_retries < 0:
+        raise RuntimeError("--max-contention-retries must be non-negative")
     if args.groundtruth_scope_rows != args.rows:
         raise RuntimeError("ground-truth scope must equal measured corpus rows")
     if not args.collection_id.isdecimal():
@@ -631,6 +640,7 @@ def main() -> int:
             "points": [],
         },
         "measurement_failures": [],
+        "rejected_attempts": [],
         "decisions": [],
     }
 
@@ -649,63 +659,71 @@ def main() -> int:
             if (cap_mib, top_k) in completed:
                 continue
             label = f"range-{cap_mib}mib-top-{top_k}"
-            server = ACCEPTANCE.OwnedServer(
-                binary=binary,
-                config=config,
-                server=server_url,
-                log_path=run_root / f"{label}.log",
-                local_disk_path=None,
-                nprobe=args.nprobe,
-                azure_emulator=True,
-                coalesce_gap_bytes=args.coalesce_gap_mib * MIB,
-                coalesce_range_bytes=cap_mib * MIB,
-            )
-            sampler = None
-            contention = HostContentionMonitor()
-            try:
-                wait_for_host_quiet(
-                    args.host_quiet_window_secs,
-                    args.host_quiet_timeout_secs,
+            attempt = 0
+            while True:
+                server = ACCEPTANCE.OwnedServer(
+                    binary=binary,
+                    config=config,
+                    server=server_url,
+                    log_path=run_root / f"{label}-attempt-{attempt}.log",
+                    local_disk_path=None,
+                    nprobe=args.nprobe,
+                    azure_emulator=True,
+                    coalesce_gap_bytes=args.coalesce_gap_mib * MIB,
+                    coalesce_range_bytes=cap_mib * MIB,
                 )
-                contention.start()
-                server.start()
-                if server.process is None:
-                    raise RuntimeError("owned server did not expose its process")
-                offset = wire_log.snapshot()
-                sampler = RssSampler(server.process.pid)
-                sampler.start()
-                point = ACCEPTANCE.run_query_sweep(
-                    server_url,
-                    args.collection_id,
-                    query_path,
-                    args.groundtruth_path.resolve(),
-                    args.query_start,
-                    args.queries,
-                    top_k,
-                    label,
-                    args.query_format,
-                    args.groundtruth_format,
-                    contention.raise_if_conflict,
-                )
-                point["process_rss"] = sampler.stop()
                 sampler = None
-                point["host_contention"] = contention.stop()
-                contention.raise_if_conflict()
-                point["wire_http"] = wire_log.sample(offset)
-                validate_wire_observation(label, point)
-            except (Exception, KeyboardInterrupt) as error:
-                write_checkpoint(
-                    output,
-                    result,
-                    "incomplete",
-                    f"{label}: {type(error).__name__}: {error}",
-                )
-                raise
-            finally:
-                if sampler is not None:
-                    sampler.stop()
-                contention.stop()
-                server.stop()
+                contention = HostContentionMonitor()
+                try:
+                    wait_for_host_quiet(
+                        args.host_quiet_window_secs,
+                        args.host_quiet_timeout_secs,
+                    )
+                    contention.start()
+                    server.start()
+                    if server.process is None:
+                        raise RuntimeError("owned server did not expose its process")
+                    offset = wire_log.snapshot()
+                    sampler = RssSampler(server.process.pid)
+                    sampler.start()
+                    point = ACCEPTANCE.run_query_sweep(
+                        server_url,
+                        args.collection_id,
+                        query_path,
+                        args.groundtruth_path.resolve(),
+                        args.query_start,
+                        args.queries,
+                        top_k,
+                        label,
+                        args.query_format,
+                        args.groundtruth_format,
+                        contention.raise_if_conflict,
+                    )
+                    point["process_rss"] = sampler.stop()
+                    sampler = None
+                    point["host_contention"] = contention.stop()
+                    contention.raise_if_conflict()
+                    point["wire_http"] = wire_log.sample(offset)
+                    validate_wire_observation(label, point)
+                except (Exception, KeyboardInterrupt) as error:
+                    reason = f"{label}: {type(error).__name__}: {error}"
+                    if is_host_contention_error(error) and (
+                        attempt < args.max_contention_retries
+                    ):
+                        result["rejected_attempts"].append(
+                            {"label": label, "attempt": attempt, "reason": reason}
+                        )
+                        write_checkpoint(output, result, "running", reason)
+                        attempt += 1
+                        continue
+                    write_checkpoint(output, result, "incomplete", reason)
+                    raise
+                finally:
+                    if sampler is not None:
+                        sampler.stop()
+                    contention.stop()
+                    server.stop()
+                break
             point["range_cap_mib"] = cap_mib
             point["coalesce_gap_mib"] = args.coalesce_gap_mib
             point["nprobe"] = args.nprobe
