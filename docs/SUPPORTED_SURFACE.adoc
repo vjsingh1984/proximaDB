@@ -463,7 +463,7 @@ must not list them under "supported", "production", or "ready":
   Codecs/kernels are tested; no per-collection policy or recall SLA is claimed.
 * Arrow Flight / gRPC service multiplexing as a customer-facing transport.
 * Trino / Spark compute adapters — _scaffolded_ (Spark JNI bridge per TD-097; Trino Flight per TD-098). Structural contract gates land in 2026-05-30 connector sprint (`tests/connectors_flight_contract.rs`); end-to-end wire impl deferred.
-* Hadoop InputFormat / OutputFormat — _write-side wire-true_ (`ProximaRecordWriter::flush_now` posts spec-true `/api/v2/.../records/batch`); read-side blocked on the records-scan endpoint gap tracked under TD-099.
+* Hadoop InputFormat / OutputFormat — _write-side wire-true_ (`ProximaRecordWriter::flush_now` posts spec-true `/api/v2/.../records/batch`); read-side unblocked: the records-scan endpoint pages by cursor (TD-099; the cursor-identity 400 fixed 2026-08).
 * DuckDB connector — _Rust-side wire-true for bind / search / insert_ (`src/connectors/duckdb.rs`); DuckDB extension binary compilation + scan-via-Flight are separate follow-ups.
 * All "Not Supported in v0.2" items above.
 

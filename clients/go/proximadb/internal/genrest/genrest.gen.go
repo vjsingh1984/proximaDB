@@ -4246,13 +4246,12 @@ type ClientInterface interface {
 
 	// ScanRecordsWithBody Paginated scan of records in a collection.
 	//
-	// Returns the next page of records (TD-099 acceptance 2, live). The
-	// handler resolves the collection id, calls
-	// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-	// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-	// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-	// still deferred: `next_cursor` is always `None` today; callers bump
-	// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+	// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+	// Cursor-based pagination: pass the response's `next_cursor` back as
+	// `cursor` to fetch the next page; a `null` cursor means the scan is
+	// exhausted. Cursors are minted and validated against the caller-facing
+	// collection id in the URL path, expire after 24h (HTTP 410), and reject
+	// cross-collection reuse (HTTP 400).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4261,13 +4260,12 @@ type ClientInterface interface {
 
 	// ScanRecords Paginated scan of records in a collection.
 	//
-	// Returns the next page of records (TD-099 acceptance 2, live). The
-	// handler resolves the collection id, calls
-	// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-	// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-	// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-	// still deferred: `next_cursor` is always `None` today; callers bump
-	// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+	// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+	// Cursor-based pagination: pass the response's `next_cursor` back as
+	// `cursor` to fetch the next page; a `null` cursor means the scan is
+	// exhausted. Cursors are minted and validated against the caller-facing
+	// collection id in the URL path, expire after 24h (HTTP 410), and reject
+	// cross-collection reuse (HTTP 400).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5148,13 +5146,12 @@ func (c *Client) InsertRecords(ctx context.Context, collectionId string, params 
 
 // ScanRecordsWithBody Paginated scan of records in a collection.
 //
-// Returns the next page of records (TD-099 acceptance 2, live). The
-// handler resolves the collection id, calls
-// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-// still deferred: `next_cursor` is always `None` today; callers bump
-// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+// Cursor-based pagination: pass the response's `next_cursor` back as
+// `cursor` to fetch the next page; a `null` cursor means the scan is
+// exhausted. Cursors are minted and validated against the caller-facing
+// collection id in the URL path, expire after 24h (HTTP 410), and reject
+// cross-collection reuse (HTTP 400).
 //
 // Takes any type of body and a specified content type.
 //
@@ -5173,13 +5170,12 @@ func (c *Client) ScanRecordsWithBody(ctx context.Context, collectionId string, p
 
 // ScanRecords Paginated scan of records in a collection.
 //
-// Returns the next page of records (TD-099 acceptance 2, live). The
-// handler resolves the collection id, calls
-// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-// still deferred: `next_cursor` is always `None` today; callers bump
-// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+// Cursor-based pagination: pass the response's `next_cursor` back as
+// `cursor` to fetch the next page; a `null` cursor means the scan is
+// exhausted. Cursors are minted and validated against the caller-facing
+// collection id in the URL path, expire after 24h (HTTP 410), and reject
+// cross-collection reuse (HTTP 400).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9396,13 +9392,12 @@ type ClientWithResponsesInterface interface {
 
 	// ScanRecordsWithBodyWithResponse Paginated scan of records in a collection.
 	//
-	// Returns the next page of records (TD-099 acceptance 2, live). The
-	// handler resolves the collection id, calls
-	// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-	// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-	// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-	// still deferred: `next_cursor` is always `None` today; callers bump
-	// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+	// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+	// Cursor-based pagination: pass the response's `next_cursor` back as
+	// `cursor` to fetch the next page; a `null` cursor means the scan is
+	// exhausted. Cursors are minted and validated against the caller-facing
+	// collection id in the URL path, expire after 24h (HTTP 410), and reject
+	// cross-collection reuse (HTTP 400).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -9411,13 +9406,12 @@ type ClientWithResponsesInterface interface {
 
 	// ScanRecordsWithResponse Paginated scan of records in a collection.
 	//
-	// Returns the next page of records (TD-099 acceptance 2, live). The
-	// handler resolves the collection id, calls
-	// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-	// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-	// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-	// still deferred: `next_cursor` is always `None` today; callers bump
-	// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+	// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+	// Cursor-based pagination: pass the response's `next_cursor` back as
+	// `cursor` to fetch the next page; a `null` cursor means the scan is
+	// exhausted. Cursors are minted and validated against the caller-facing
+	// collection id in the URL path, expire after 24h (HTTP 410), and reject
+	// cross-collection reuse (HTTP 400).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10543,6 +10537,8 @@ type ScanRecordsHTTPResp struct {
 	JSON400 *ErrorResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *ErrorResponse
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -10558,6 +10554,11 @@ func (r ScanRecordsHTTPResp) GetJSON400() *ErrorResponse {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ScanRecordsHTTPResp) GetJSON404() *ErrorResponse {
 	return r.JSON404
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r ScanRecordsHTTPResp) GetJSON410() *ErrorResponse {
+	return r.JSON410
 }
 
 // GetBody returns the raw response body bytes
@@ -12716,13 +12717,12 @@ func (c *ClientWithResponses) InsertRecordsWithResponse(ctx context.Context, col
 
 // ScanRecordsWithBodyWithResponse Paginated scan of records in a collection.
 //
-// Returns the next page of records (TD-099 acceptance 2, live). The
-// handler resolves the collection id, calls
-// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-// still deferred: `next_cursor` is always `None` today; callers bump
-// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+// Cursor-based pagination: pass the response's `next_cursor` back as
+// `cursor` to fetch the next page; a `null` cursor means the scan is
+// exhausted. Cursors are minted and validated against the caller-facing
+// collection id in the URL path, expire after 24h (HTTP 410), and reject
+// cross-collection reuse (HTTP 400).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12737,13 +12737,12 @@ func (c *ClientWithResponses) ScanRecordsWithBodyWithResponse(ctx context.Contex
 
 // ScanRecordsWithResponse Paginated scan of records in a collection.
 //
-// Returns the next page of records (TD-099 acceptance 2, live). The
-// handler resolves the collection id, calls
-// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-// still deferred: `next_cursor` is always `None` today; callers bump
-// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+// Cursor-based pagination: pass the response's `next_cursor` back as
+// `cursor` to fetch the next page; a `null` cursor means the scan is
+// exhausted. Cursors are minted and validated against the caller-facing
+// collection id in the URL path, expire after 24h (HTTP 410), and reject
+// cross-collection reuse (HTTP 400).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -14094,6 +14093,13 @@ func ParseScanRecordsHTTPResp(rsp *http.Response) (*ScanRecordsHTTPResp, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	}
 

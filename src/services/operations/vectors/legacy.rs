@@ -1237,9 +1237,17 @@ impl VectorOperationsService {
     /// collection. A future storage range-scan trait can replace this
     /// materialization without changing the API semantics pinned here.
     #[allow(clippy::too_many_arguments)]
+    /// `cursor_scope` is the CALLER-FACING collection identifier — the exact
+    /// string the caller validated the inbound cursor against and will
+    /// validate the next cursor against. Cursors must be minted and decoded
+    /// against ONE identity; minting with the resolved internal
+    /// `CollectionObjectId` while callers validate against the URL-path name
+    /// made every page-2 request fail `CollectionMismatch` → HTTP 400
+    /// (the "HTTP 400 after 10000 rows" wall).
     pub async fn scan_records_paginated(
         &self,
         collection_id: &str,
+        cursor_scope: &str,
         cursor: Option<&crate::services::scan_cursor::ScanCursor>,
         limit: usize,
         include_vector: bool,
@@ -1272,7 +1280,7 @@ impl VectorOperationsService {
             records,
             cursor,
             limit,
-            &collection_id,
+            cursor_scope,
             now_ns,
         );
 

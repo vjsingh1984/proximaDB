@@ -60,6 +60,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 410:
+        response_410 = ErrorResponse.from_dict(response.json())
+
+        return response_410
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -86,13 +91,12 @@ def sync_detailed(
 ) -> Response[ErrorResponse | ScanRecordsResponse]:
     """Paginated scan of records in a collection.
 
-     Returns the next page of records (TD-099 acceptance 2, live). The
-    handler resolves the collection id, calls
-    `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-    `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-    `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-    still deferred: `next_cursor` is always `None` today; callers bump
-    `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+     Returns the next page of records (TD-099 acceptance 2 + 3, live).
+    Cursor-based pagination: pass the response's `next_cursor` back as
+    `cursor` to fetch the next page; a `null` cursor means the scan is
+    exhausted. Cursors are minted and validated against the caller-facing
+    collection id in the URL path, expire after 24h (HTTP 410), and reject
+    cross-collection reuse (HTTP 400).
 
     Args:
         collection_id (str):
@@ -131,13 +135,12 @@ def sync(
 ) -> ErrorResponse | ScanRecordsResponse | None:
     """Paginated scan of records in a collection.
 
-     Returns the next page of records (TD-099 acceptance 2, live). The
-    handler resolves the collection id, calls
-    `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-    `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-    `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-    still deferred: `next_cursor` is always `None` today; callers bump
-    `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+     Returns the next page of records (TD-099 acceptance 2 + 3, live).
+    Cursor-based pagination: pass the response's `next_cursor` back as
+    `cursor` to fetch the next page; a `null` cursor means the scan is
+    exhausted. Cursors are minted and validated against the caller-facing
+    collection id in the URL path, expire after 24h (HTTP 410), and reject
+    cross-collection reuse (HTTP 400).
 
     Args:
         collection_id (str):
@@ -171,13 +174,12 @@ async def asyncio_detailed(
 ) -> Response[ErrorResponse | ScanRecordsResponse]:
     """Paginated scan of records in a collection.
 
-     Returns the next page of records (TD-099 acceptance 2, live). The
-    handler resolves the collection id, calls
-    `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-    `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-    `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-    still deferred: `next_cursor` is always `None` today; callers bump
-    `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+     Returns the next page of records (TD-099 acceptance 2 + 3, live).
+    Cursor-based pagination: pass the response's `next_cursor` back as
+    `cursor` to fetch the next page; a `null` cursor means the scan is
+    exhausted. Cursors are minted and validated against the caller-facing
+    collection id in the URL path, expire after 24h (HTTP 410), and reject
+    cross-collection reuse (HTTP 400).
 
     Args:
         collection_id (str):
@@ -214,13 +216,12 @@ async def asyncio(
 ) -> ErrorResponse | ScanRecordsResponse | None:
     """Paginated scan of records in a collection.
 
-     Returns the next page of records (TD-099 acceptance 2, live). The
-    handler resolves the collection id, calls
-    `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-    `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-    `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-    still deferred: `next_cursor` is always `None` today; callers bump
-    `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+     Returns the next page of records (TD-099 acceptance 2 + 3, live).
+    Cursor-based pagination: pass the response's `next_cursor` back as
+    `cursor` to fetch the next page; a `null` cursor means the scan is
+    exhausted. Cursors are minted and validated against the caller-facing
+    collection id in the URL path, expire after 24h (HTTP 410), and reject
+    cross-collection reuse (HTTP 400).
 
     Args:
         collection_id (str):
