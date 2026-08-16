@@ -14,6 +14,9 @@ use std::io::Error as IoError;
 /// TD-096 S2 / S1.5: GET-count instrumentation on the filesystem seam.
 pub mod counting;
 
+/// Turning logical byte needs into physical requests (ADR-034 P7).
+pub mod read_ranges_plan;
+
 /// Filesystem operation result type
 pub type FsResult<T> = Result<T, FilesystemError>;
 
@@ -504,7 +507,13 @@ where
 pub struct RangeCoalescePolicy {
     /// Largest gap between two logical ranges that may be bridged.
     pub max_gap_bytes: u64,
-    /// Hard ceiling on a single merged physical read — the over-read/RSS bound.
+    /// Ceiling on a **merged** physical read — the over-read/RSS bound.
+    ///
+    /// This bounds merging, not individual reads: a single logical range larger
+    /// than this is still issued whole, because the caller needs those bytes
+    /// contiguously and splitting them would leave no single buffer to slice
+    /// from. So a physical read exceeds this value only when it serves exactly
+    /// one logical range.
     pub max_merged_bytes: u64,
 }
 
@@ -525,6 +534,19 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// in `CountingFileSystem` will report intent instead of truth.
     fn range_coalesce_policy(&self) -> Option<RangeCoalescePolicy> {
         None
+    }
+
+    /// Which physical reads would serve these logical ranges, and where each
+    /// range's bytes land inside them.
+    ///
+    /// Pure and synchronous — no I/O. Exposed on the trait so a decorator can
+    /// report **measured** physical requests rather than assuming one per
+    /// logical range: `CountingFileSystem` charges `plan.physical.len()`.
+    fn plan_read_ranges(
+        &self,
+        ranges: &[std::ops::Range<u64>],
+    ) -> FsResult<read_ranges_plan::RangePlan> {
+        read_ranges_plan::coalesce_ranges_with_mapping(ranges, self.range_coalesce_policy())
     }
 
     /// Get self as Any for downcasting to concrete types
@@ -589,22 +611,48 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(0)
         });
-        if parallel <= 1 {
-            // Sequential (the default): one range at a time.
-            let mut results = Vec::with_capacity(ranges.len());
-            for range in ranges {
+        // Plan first: which physical reads serve which logical ranges. With no
+        // policy this is the identity plan, so the requests issued below are
+        // exactly the ones this method issued before coalescing existed.
+        let plan = self.plan_read_ranges(&ranges)?;
+        let identity = self.range_coalesce_policy().is_none();
+
+        let buffers = if parallel <= 1 {
+            // Sequential (the default): one physical read at a time.
+            let mut buffers = Vec::with_capacity(plan.physical.len());
+            for range in &plan.physical {
                 let length = range.end - range.start;
-                results.push(self.read_range(path, range.start, length).await?);
+                buffers.push(self.read_range(path, range.start, length).await?);
             }
-            return Ok(results);
+            buffers
+        } else {
+            // Bounded-concurrent (order-preserving, short-circuit-on-error) —
+            // TD-RDSTRAT-8 rev-2.1. Delegated to `read_ranges_buffered` so the
+            // concurrency contract is unit-testable without a full FileSystem impl.
+            read_ranges_buffered(plan.physical.clone(), parallel, |offset, length| {
+                self.read_range(path, offset, length)
+            })
+            .await?
+        };
+
+        if identity {
+            // MOVE the buffers out untouched rather than re-slicing them. A
+            // backend that clamped at EOF returned a short buffer; re-slicing it
+            // through the mapping would clamp it a second time and could differ
+            // from the pre-change loop. Moving makes "policy unset ⇒ byte-identical"
+            // a property of the code, not a hope.
+            return Ok(buffers);
         }
-        // Bounded-concurrent (order-preserving, short-circuit-on-error) —
-        // TD-RDSTRAT-8 rev-2.1. Delegated to `read_ranges_buffered` so the
-        // concurrency contract is unit-testable without a full FileSystem impl.
-        read_ranges_buffered(ranges, parallel, |offset, length| {
-            self.read_range(path, offset, length)
-        })
-        .await
+
+        Ok(plan
+            .mapping
+            .iter()
+            .map(|slice| match slice.physical {
+                Some(idx) => read_ranges_plan::slice_from_physical(&buffers[idx], *slice),
+                // Zero-length range: satisfied without issuing any request.
+                None => Vec::new(),
+            })
+            .collect())
     }
 
     /// Write file contents
