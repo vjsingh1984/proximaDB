@@ -8326,4 +8326,172 @@ mod tests {
             on.filesize
         );
     }
+
+    /// TD-FPRUNE-1 C2: M2's per-partition clustering must not degrade UNFILTERED
+    /// recall vs the global layout — the SILENT boundary-miss risk (a row assigned
+    /// to its within-partition centroid can fall outside the nprobe-nearest cells
+    /// of a globally-ranked unfiltered query). The SIFT ratchet cannot see this
+    /// (SIFT carries no tag, so M2 never engages there). This builds the SAME
+    /// uncorrelated-tag corpus twice (M2 off vs on) and runs UNFILTERED recall@10
+    /// vs the f32 brute-force truth over many queries, requiring the partition
+    /// layout to hold recall within tolerance of the global layout. It is the eval
+    /// that gates any M2 default change.
+    #[tokio::test]
+    async fn m2_unfiltered_recall_neutral_vs_global() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 64;
+        const P: usize = 8;
+        const N: usize = 4096;
+        const K: usize = 10;
+        const NQ: usize = 32;
+
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        // Uncorrelated tag (worst case for M2): partition = i%P, vector cluster =
+        // (i/P)%P — disjoint index ranges ⇒ every partition spans every cluster,
+        // so per-partition centroids overlap maximally (the boundary-miss surface).
+        let part = |i: usize| i % P;
+        let vclust = |i: usize| (i / P) % P;
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                let c = vclust(i);
+                (0..DIM)
+                    .map(|d| (if d == c { 50.0 } else { 0.0 }) + 0.6 * pseudo(i, d))
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut r = rec(&format!("r{i}"), 1000 + i as i64, v.clone());
+                r.props.insert(
+                    "partition".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(format!("p{}", part(i))),
+                    ),
+                );
+                r
+            })
+            .collect();
+
+        async fn build(
+            records: &[ProximaRecord],
+            m2_on: bool,
+        ) -> (tempfile::TempDir, std::path::PathBuf) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("c2.pax");
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+                std::env::set_var("PROXIMADB_IVF_K", "64");
+                // Explicit "1"/"0" (not present/absent) so this eval is robust to
+                // the default flip — the off case is the GLOBAL layout via the
+                // kill-switch, on is the partition layout.
+                std::env::set_var(
+                    "PROXIMADB_PAX_PARTITION_LAYOUT",
+                    if m2_on { "1" } else { "0" },
+                );
+            }
+            write_pax_segment_compacted_shredded(
+                &path,
+                records,
+                "col",
+                1,
+                VectorQuant::RaBitQ,
+                VectorQuant::Sq8,
+                false,
+                Some(16 * 1024),
+                &[("partition".to_string(), 100)],
+            )
+            .unwrap();
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+                std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+            }
+            (dir, path)
+        }
+
+        let (_d_off, path_off) = build(&records, false).await;
+        let (_d_on, path_on) = build(&records, true).await;
+        let (p_off, p_on) = (path_off.to_str().unwrap(), path_on.to_str().unwrap());
+
+        // Guard against a VACUOUS pass: M2 must actually have changed the layout
+        // (partition-contiguous rows ⇒ different physical bytes). If the two
+        // segments were byte-identical, `cluster_plan_ivf_probe_partitioned` fell
+        // back to the global plan and the recall comparison below would be a no-op.
+        let bytes_off = std::fs::read(&path_off).unwrap();
+        let bytes_on = std::fs::read(&path_on).unwrap();
+        assert_ne!(
+            bytes_off, bytes_on,
+            "M2 partition layout did not engage — segments are byte-identical"
+        );
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+        }
+
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+
+        let (mut sum_off, mut sum_on) = (0f32, 0f32);
+        for qi in (0..N).step_by(N / NQ).take(NQ) {
+            let query = &corpus[qi];
+            // f32 brute-force ground truth top-K over ALL rows (unfiltered).
+            let mut idx: Vec<usize> = (0..N).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], query)
+                    .partial_cmp(&l2(&corpus[b], query))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let gt: std::collections::HashSet<String> =
+                idx.iter().take(K).map(|i| format!("r{i}")).collect();
+            let recall = |hits: &[CascadeHit]| {
+                let got: std::collections::HashSet<String> =
+                    hits.iter().map(|h| h.oid.clone()).collect();
+                gt.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32
+            };
+            let h_off =
+                rabitq_search_segment_coalesced(&fs, p_off, query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let h_on =
+                rabitq_search_segment_coalesced(&fs, p_on, query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            sum_off += recall(&h_off);
+            sum_on += recall(&h_on);
+        }
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
+        let (r_off, r_on) = (sum_off / NQ as f32, sum_on / NQ as f32);
+        eprintln!(
+            "[C2] unfiltered recall@{K} over {NQ} queries: \
+             global(M2 off)={r_off:.3}  partition(M2 on)={r_on:.3}  Δ={:.3}",
+            r_on - r_off
+        );
+        // The gate: partition clustering must hold unfiltered recall within one
+        // quantization step of the global layout. If this ever fails, M2 must stay
+        // opt-in and the dual-directory follow-up is justified.
+        assert!(
+            r_on >= r_off - 0.05,
+            "M2 partition layout degrades unfiltered recall vs global: \
+             on={r_on:.3} off={r_off:.3} (tol 0.05)"
+        );
+    }
 }
