@@ -464,7 +464,7 @@ async fn test_batch_operations() {
         .batch_create_edges(TEST_GRAPH_ID, edges)
         .await
         .unwrap();
-    assert_eq!(created_edges.len(), 4);
+    assert_eq!(created_edges.created.len(), 4);
 
     // Verify the chain
     let neighbors = service
