@@ -35,6 +35,7 @@ pub mod fusion_service;
 pub mod graph_service;
 #[cfg(feature = "experimental-ledger")]
 pub mod ledger_service;
+pub mod model_registry_service;
 pub mod record_service;
 
 pub use document_service::ProximaDocumentServiceImpl;
@@ -43,4 +44,5 @@ pub use fusion_service::ProximaFusionServiceImpl;
 pub use graph_service::ProximaGraphServiceImpl;
 #[cfg(feature = "experimental-ledger")]
 pub use ledger_service::ProximaLedgerServiceImpl;
+pub use model_registry_service::ProximaModelRegistryServiceImpl;
 pub use record_service::ProximaRecordServiceImpl;

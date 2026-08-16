@@ -229,6 +229,19 @@ impl MultiServer {
         .into_server()
     }
 
+    /// Build the native model-registry facade over the exact application
+    /// service instance also exposed through REST.
+    fn canonical_model_registry_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_model_registry_service_server::ProximaModelRegistryServiceServer<
+        crate::network::grpc::v2::ProximaModelRegistryServiceImpl,
+    >{
+        crate::network::grpc::v2::ProximaModelRegistryServiceImpl::new(
+            services.model_registry_service.clone(),
+        )
+        .into_server()
+    }
+
     /// Create new multi-server instance (orchestrator only)
     /// MultiServer focuses on network orchestration, SharedServices handles business logic
     pub fn new(
@@ -643,6 +656,7 @@ impl MultiServer {
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
+                .add_service(Self::canonical_model_registry_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
@@ -1207,6 +1221,7 @@ impl MultiServer {
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
+                .add_service(Self::canonical_model_registry_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1586,6 +1601,7 @@ impl MultiServer {
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
+                .add_service(Self::canonical_model_registry_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only

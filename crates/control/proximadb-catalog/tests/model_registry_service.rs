@@ -108,10 +108,7 @@ async fn alias_resolution_returns_a_concrete_binding_that_does_not_drift() {
                 "tenant-a",
                 "search-embedding",
                 0,
-                CatalogModelRegistryMutation::SetAlias {
-                    alias: "stale".to_string(),
-                    version: 1,
-                },
+                CatalogModelRegistryMutation::set_alias("stale", 1),
             )
             .await,
         Err(ModelRegistryServiceError::Contract(
@@ -126,10 +123,7 @@ async fn alias_resolution_returns_a_concrete_binding_that_does_not_drift() {
             "tenant-a",
             "search-embedding",
             1,
-            CatalogModelRegistryMutation::SetAlias {
-                alias: "champion".to_string(),
-                version: 1,
-            },
+            CatalogModelRegistryMutation::set_alias("champion", 1),
         )
         .await
         .unwrap();
@@ -169,10 +163,7 @@ async fn alias_resolution_returns_a_concrete_binding_that_does_not_drift() {
             "tenant-a",
             "search-embedding",
             3,
-            CatalogModelRegistryMutation::SetAlias {
-                alias: "champion".to_string(),
-                version: 2,
-            },
+            CatalogModelRegistryMutation::set_alias("champion", 2),
         )
         .await
         .unwrap();

@@ -1543,10 +1543,7 @@ mod tests {
             cat.apply_model_registry_mutation(
                 &identifier,
                 0,
-                CatalogModelRegistryMutation::SetAlias {
-                    alias: "champion".to_string(),
-                    version: 1,
-                },
+                CatalogModelRegistryMutation::set_alias("champion", 1),
             )
             .await?;
             asset_id
@@ -1594,18 +1591,12 @@ mod tests {
         let left = cat.apply_model_registry_mutation(
             &identifier,
             0,
-            CatalogModelRegistryMutation::SetAlias {
-                alias: "left".to_string(),
-                version: 1,
-            },
+            CatalogModelRegistryMutation::set_alias("left", 1),
         );
         let right = cat.apply_model_registry_mutation(
             &identifier,
             0,
-            CatalogModelRegistryMutation::SetAlias {
-                alias: "right".to_string(),
-                version: 1,
-            },
+            CatalogModelRegistryMutation::set_alias("right", 1),
         );
         let (left, right) = tokio::join!(left, right);
         assert_ne!(

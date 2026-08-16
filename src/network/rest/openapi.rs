@@ -50,7 +50,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use crate::network::rest::v2::{
-    collections, documents, entities, graphs, query, records, schema, sql,
+    collections, documents, entities, graphs, model_registry, query, records, schema, sql,
 };
 
 /// Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
@@ -134,6 +134,11 @@ part of this publishable SDK surface.",
         entities::search_entities_v2,
         // Canonical document-ingest surface (ADR-041). Native server-side embedding.
         documents::ingest_documents,
+        model_registry::create_model_registry,
+        model_registry::list_model_registries,
+        model_registry::get_model_registry,
+        model_registry::apply_model_registry_mutation,
+        model_registry::resolve_model_alias,
     ),
     components(
         schemas(
@@ -153,6 +158,13 @@ part of this publishable SDK surface.",
             documents::IngestDocumentsRequest,
             documents::IngestedRecord,
             documents::IngestDocumentsResponse,
+            model_registry::CreateModelRegistryRequest,
+            model_registry::ModelRegistryRecordResponse,
+            model_registry::ListModelRegistriesResponse,
+            model_registry::ApplyModelRegistryMutationRequest,
+            model_registry::ResolveModelAliasRequest,
+            model_registry::ResolvedEmbeddingModelResponse,
+            model_registry::ResolvedModelBindingResponse,
         ),
     ),
     tags(
@@ -164,6 +176,7 @@ part of this publishable SDK surface.",
         (name = "SQL", description = "Authenticated single-statement SQL transport."),
         (name = "Entities", description = "Entity orchestration (graph node + embeddings + provenance)."),
         (name = "Documents", description = "Native-embedding document ingest."),
+        (name = "Model Registry", description = "Tenant-scoped embedding-model lifecycle backed by xCatalog."),
     ),
 )]
 pub struct ApiDoc;

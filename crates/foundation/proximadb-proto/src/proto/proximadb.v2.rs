@@ -9238,3 +9238,1108 @@ pub mod proxima_ledger_service_server {
         const NAME: &'static str = SERVICE_NAME;
     }
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ModelArtifactDescriptor {
+    #[prost(string, tag = "1")]
+    pub uri: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub digest: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "3")]
+    pub size_bytes: u64,
+    #[prost(string, tag = "4")]
+    pub media_type: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EmbeddingInputContract {
+    #[prost(string, tag = "1")]
+    pub model_revision: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub tokenizer_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub tokenizer_revision: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub tokenizer_fingerprint: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "5")]
+    pub declared_context_limit: u32,
+    #[prost(uint32, tag = "6")]
+    pub effective_context_limit: u32,
+    #[prost(uint32, tag = "7")]
+    pub special_token_count: u32,
+    #[prost(string, tag = "8")]
+    pub document_template: ::prost::alloc::string::String,
+    #[prost(string, tag = "9")]
+    pub query_template: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "10")]
+    pub document_parameters: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(map = "string, string", tag = "11")]
+    pub query_parameters: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ModelGovernance {
+    #[prost(string, tag = "1")]
+    pub license_id: ::prost::alloc::string::String,
+    #[prost(enumeration = "ModelAccess", tag = "2")]
+    pub access: i32,
+    #[prost(bool, tag = "3")]
+    pub requires_remote_code: bool,
+    #[prost(string, repeated, tag = "4")]
+    pub approved_runtimes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ModelLineageInput {
+    #[prost(enumeration = "LineageInputKind", tag = "1")]
+    pub kind: i32,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub digest: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ModelLineage {
+    #[prost(string, optional, tag = "1")]
+    pub producer_execution_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "2")]
+    pub code_revision: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "3")]
+    pub inputs: ::prost::alloc::vec::Vec<ModelLineageInput>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EmbeddingOutputContract {
+    #[prost(uint32, tag = "1")]
+    pub native_dimension: u32,
+    #[prost(enumeration = "DimensionPolicyKind", tag = "2")]
+    pub dimension_policy: i32,
+    /// Required only when dimension_policy is RANGE.
+    #[prost(uint32, optional, tag = "3")]
+    pub range_minimum: ::core::option::Option<u32>,
+    #[prost(uint32, repeated, tag = "4")]
+    pub supported_dimensions: ::prost::alloc::vec::Vec<u32>,
+    #[prost(bool, tag = "5")]
+    pub normalized: bool,
+    #[prost(string, tag = "6")]
+    pub pooling: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EmbeddingModelVersion {
+    #[prost(uint64, tag = "1")]
+    pub version: u64,
+    #[prost(string, tag = "2")]
+    pub provider_model_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub artifact: ::core::option::Option<ModelArtifactDescriptor>,
+    #[prost(message, optional, tag = "4")]
+    pub input: ::core::option::Option<EmbeddingInputContract>,
+    #[prost(message, optional, tag = "5")]
+    pub output: ::core::option::Option<EmbeddingOutputContract>,
+    #[prost(message, optional, tag = "6")]
+    pub governance: ::core::option::Option<ModelGovernance>,
+    #[prost(message, optional, tag = "7")]
+    pub lineage: ::core::option::Option<ModelLineage>,
+    #[prost(int64, tag = "8")]
+    pub created_at_ms: i64,
+    #[prost(string, optional, tag = "9")]
+    pub source_run_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EvaluationEvidence {
+    #[prost(string, tag = "1")]
+    pub evidence_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub version: u64,
+    #[prost(string, tag = "3")]
+    pub dataset_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub dataset_digest: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub evaluator: ::prost::alloc::string::String,
+    #[prost(map = "string, double", tag = "6")]
+    pub metrics: ::std::collections::HashMap<::prost::alloc::string::String, f64>,
+    #[prost(int64, tag = "7")]
+    pub created_at_ms: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ModelDecision {
+    #[prost(string, tag = "1")]
+    pub decision_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub version: u64,
+    #[prost(enumeration = "ModelDecisionKind", tag = "3")]
+    pub decision: i32,
+    #[prost(string, repeated, tag = "4")]
+    pub evidence_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "5")]
+    pub principal: ::prost::alloc::string::String,
+    #[prost(int64, tag = "6")]
+    pub created_at_ms: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeploymentBinding {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub version: u64,
+    #[prost(string, tag = "3")]
+    pub artifact_digest: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub runtime: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub endpoint: ::prost::alloc::string::String,
+    #[prost(int64, tag = "6")]
+    pub updated_at_ms: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AliasEntry {
+    #[prost(string, tag = "1")]
+    pub alias: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub version: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ModelRegistry {
+    #[prost(uint32, tag = "1")]
+    pub schema_version: u32,
+    #[prost(uint64, tag = "2")]
+    pub revision: u64,
+    #[prost(string, tag = "3")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "4")]
+    pub versions: ::prost::alloc::vec::Vec<EmbeddingModelVersion>,
+    #[prost(message, repeated, tag = "5")]
+    pub aliases: ::prost::alloc::vec::Vec<AliasEntry>,
+    #[prost(message, repeated, tag = "6")]
+    pub evidence: ::prost::alloc::vec::Vec<EvaluationEvidence>,
+    #[prost(message, repeated, tag = "7")]
+    pub decisions: ::prost::alloc::vec::Vec<ModelDecision>,
+    #[prost(message, repeated, tag = "8")]
+    pub deployments: ::prost::alloc::vec::Vec<DeploymentBinding>,
+    #[prost(map = "string, string", tag = "9")]
+    pub tags: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ModelRegistryRecord {
+    #[prost(string, tag = "1")]
+    pub tenant_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub asset_id: u64,
+    #[prost(message, optional, tag = "3")]
+    pub registry: ::core::option::Option<ModelRegistry>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateModelRegistryRequest {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateModelRegistryResponse {
+    #[prost(message, optional, tag = "1")]
+    pub record: ::core::option::Option<ModelRegistryRecord>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetModelRegistryRequest {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetModelRegistryResponse {
+    #[prost(message, optional, tag = "1")]
+    pub record: ::core::option::Option<ModelRegistryRecord>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListModelRegistriesRequest {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListModelRegistriesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub registries: ::prost::alloc::vec::Vec<ModelRegistryRecord>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetModelAliasCommand {
+    #[prost(string, tag = "1")]
+    pub alias: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub version: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ApplyModelRegistryMutationRequest {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub expected_revision: u64,
+    #[prost(
+        oneof = "apply_model_registry_mutation_request::Mutation",
+        tags = "3, 4, 5, 6, 7"
+    )]
+    pub mutation: ::core::option::Option<
+        apply_model_registry_mutation_request::Mutation,
+    >,
+}
+/// Nested message and enum types in `ApplyModelRegistryMutationRequest`.
+pub mod apply_model_registry_mutation_request {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Mutation {
+        #[prost(message, tag = "3")]
+        RegisterVersion(super::EmbeddingModelVersion),
+        #[prost(message, tag = "4")]
+        SetAlias(super::SetModelAliasCommand),
+        #[prost(message, tag = "5")]
+        AppendEvidence(super::EvaluationEvidence),
+        #[prost(message, tag = "6")]
+        RecordDecision(super::ModelDecision),
+        #[prost(message, tag = "7")]
+        UpsertDeployment(super::DeploymentBinding),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ApplyModelRegistryMutationResponse {
+    #[prost(message, optional, tag = "1")]
+    pub record: ::core::option::Option<ModelRegistryRecord>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResolveModelAliasRequest {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub alias: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "3")]
+    pub dimension: u32,
+    #[prost(string, optional, tag = "4")]
+    pub runtime: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag = "5")]
+    pub require_approved: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResolvedEmbeddingModel {
+    #[prost(uint64, tag = "1")]
+    pub asset_id: u64,
+    #[prost(string, tag = "2")]
+    pub registry_name: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "3")]
+    pub registry_revision: u64,
+    #[prost(string, tag = "4")]
+    pub contract_sha256: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "5")]
+    pub model: ::core::option::Option<EmbeddingModelVersion>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResolvedModelBinding {
+    #[prost(string, tag = "1")]
+    pub model: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub dimension: u32,
+    #[prost(uint64, tag = "3")]
+    pub model_asset_id: u64,
+    #[prost(uint64, tag = "4")]
+    pub model_version: u64,
+    #[prost(string, tag = "5")]
+    pub contract_sha256: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "6")]
+    pub snapshot: ::core::option::Option<ResolvedEmbeddingModel>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResolveModelAliasResponse {
+    #[prost(message, optional, tag = "1")]
+    pub resolved: ::core::option::Option<ResolvedModelBinding>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ModelAccess {
+    Unspecified = 0,
+    Open = 1,
+    Gated = 2,
+    Unreviewed = 3,
+}
+impl ModelAccess {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "MODEL_ACCESS_UNSPECIFIED",
+            Self::Open => "MODEL_ACCESS_OPEN",
+            Self::Gated => "MODEL_ACCESS_GATED",
+            Self::Unreviewed => "MODEL_ACCESS_UNREVIEWED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "MODEL_ACCESS_UNSPECIFIED" => Some(Self::Unspecified),
+            "MODEL_ACCESS_OPEN" => Some(Self::Open),
+            "MODEL_ACCESS_GATED" => Some(Self::Gated),
+            "MODEL_ACCESS_UNREVIEWED" => Some(Self::Unreviewed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum LineageInputKind {
+    Unspecified = 0,
+    Dataset = 1,
+    FeatureSet = 2,
+    Model = 3,
+    Artifact = 4,
+}
+impl LineageInputKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "LINEAGE_INPUT_KIND_UNSPECIFIED",
+            Self::Dataset => "LINEAGE_INPUT_KIND_DATASET",
+            Self::FeatureSet => "LINEAGE_INPUT_KIND_FEATURE_SET",
+            Self::Model => "LINEAGE_INPUT_KIND_MODEL",
+            Self::Artifact => "LINEAGE_INPUT_KIND_ARTIFACT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "LINEAGE_INPUT_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "LINEAGE_INPUT_KIND_DATASET" => Some(Self::Dataset),
+            "LINEAGE_INPUT_KIND_FEATURE_SET" => Some(Self::FeatureSet),
+            "LINEAGE_INPUT_KIND_MODEL" => Some(Self::Model),
+            "LINEAGE_INPUT_KIND_ARTIFACT" => Some(Self::Artifact),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DimensionPolicyKind {
+    Unspecified = 0,
+    Fixed = 1,
+    Discrete = 2,
+    Range = 3,
+}
+impl DimensionPolicyKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DIMENSION_POLICY_KIND_UNSPECIFIED",
+            Self::Fixed => "DIMENSION_POLICY_KIND_FIXED",
+            Self::Discrete => "DIMENSION_POLICY_KIND_DISCRETE",
+            Self::Range => "DIMENSION_POLICY_KIND_RANGE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DIMENSION_POLICY_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "DIMENSION_POLICY_KIND_FIXED" => Some(Self::Fixed),
+            "DIMENSION_POLICY_KIND_DISCRETE" => Some(Self::Discrete),
+            "DIMENSION_POLICY_KIND_RANGE" => Some(Self::Range),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ModelDecisionKind {
+    Unspecified = 0,
+    Approved = 1,
+    Rejected = 2,
+    Deprecated = 3,
+}
+impl ModelDecisionKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "MODEL_DECISION_KIND_UNSPECIFIED",
+            Self::Approved => "MODEL_DECISION_KIND_APPROVED",
+            Self::Rejected => "MODEL_DECISION_KIND_REJECTED",
+            Self::Deprecated => "MODEL_DECISION_KIND_DEPRECATED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "MODEL_DECISION_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "MODEL_DECISION_KIND_APPROVED" => Some(Self::Approved),
+            "MODEL_DECISION_KIND_REJECTED" => Some(Self::Rejected),
+            "MODEL_DECISION_KIND_DEPRECATED" => Some(Self::Deprecated),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod proxima_model_registry_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    #[derive(Debug, Clone)]
+    pub struct ProximaModelRegistryServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl ProximaModelRegistryServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> ProximaModelRegistryServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> ProximaModelRegistryServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            ProximaModelRegistryServiceClient::new(
+                InterceptedService::new(inner, interceptor),
+            )
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        pub async fn create_model_registry(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateModelRegistryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateModelRegistryResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaModelRegistryService/CreateModelRegistry",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaModelRegistryService",
+                        "CreateModelRegistry",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_model_registry(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetModelRegistryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetModelRegistryResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaModelRegistryService/GetModelRegistry",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaModelRegistryService",
+                        "GetModelRegistry",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_model_registries(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListModelRegistriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListModelRegistriesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaModelRegistryService/ListModelRegistries",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaModelRegistryService",
+                        "ListModelRegistries",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn apply_model_registry_mutation(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ApplyModelRegistryMutationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ApplyModelRegistryMutationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaModelRegistryService/ApplyModelRegistryMutation",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaModelRegistryService",
+                        "ApplyModelRegistryMutation",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn resolve_model_alias(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ResolveModelAliasRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ResolveModelAliasResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaModelRegistryService/ResolveModelAlias",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaModelRegistryService",
+                        "ResolveModelAlias",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod proxima_model_registry_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with ProximaModelRegistryServiceServer.
+    #[async_trait]
+    pub trait ProximaModelRegistryService: std::marker::Send + std::marker::Sync + 'static {
+        async fn create_model_registry(
+            &self,
+            request: tonic::Request<super::CreateModelRegistryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateModelRegistryResponse>,
+            tonic::Status,
+        >;
+        async fn get_model_registry(
+            &self,
+            request: tonic::Request<super::GetModelRegistryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetModelRegistryResponse>,
+            tonic::Status,
+        >;
+        async fn list_model_registries(
+            &self,
+            request: tonic::Request<super::ListModelRegistriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListModelRegistriesResponse>,
+            tonic::Status,
+        >;
+        async fn apply_model_registry_mutation(
+            &self,
+            request: tonic::Request<super::ApplyModelRegistryMutationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ApplyModelRegistryMutationResponse>,
+            tonic::Status,
+        >;
+        async fn resolve_model_alias(
+            &self,
+            request: tonic::Request<super::ResolveModelAliasRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ResolveModelAliasResponse>,
+            tonic::Status,
+        >;
+    }
+    #[derive(Debug)]
+    pub struct ProximaModelRegistryServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> ProximaModelRegistryServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>>
+    for ProximaModelRegistryServiceServer<T>
+    where
+        T: ProximaModelRegistryService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v2.ProximaModelRegistryService/CreateModelRegistry" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateModelRegistrySvc<T: ProximaModelRegistryService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ProximaModelRegistryService,
+                    > tonic::server::UnaryService<super::CreateModelRegistryRequest>
+                    for CreateModelRegistrySvc<T> {
+                        type Response = super::CreateModelRegistryResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateModelRegistryRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaModelRegistryService>::create_model_registry(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateModelRegistrySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaModelRegistryService/GetModelRegistry" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetModelRegistrySvc<T: ProximaModelRegistryService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ProximaModelRegistryService,
+                    > tonic::server::UnaryService<super::GetModelRegistryRequest>
+                    for GetModelRegistrySvc<T> {
+                        type Response = super::GetModelRegistryResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetModelRegistryRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaModelRegistryService>::get_model_registry(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetModelRegistrySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaModelRegistryService/ListModelRegistries" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListModelRegistriesSvc<T: ProximaModelRegistryService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ProximaModelRegistryService,
+                    > tonic::server::UnaryService<super::ListModelRegistriesRequest>
+                    for ListModelRegistriesSvc<T> {
+                        type Response = super::ListModelRegistriesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListModelRegistriesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaModelRegistryService>::list_model_registries(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListModelRegistriesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaModelRegistryService/ApplyModelRegistryMutation" => {
+                    #[allow(non_camel_case_types)]
+                    struct ApplyModelRegistryMutationSvc<T: ProximaModelRegistryService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ProximaModelRegistryService,
+                    > tonic::server::UnaryService<
+                        super::ApplyModelRegistryMutationRequest,
+                    > for ApplyModelRegistryMutationSvc<T> {
+                        type Response = super::ApplyModelRegistryMutationResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::ApplyModelRegistryMutationRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaModelRegistryService>::apply_model_registry_mutation(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ApplyModelRegistryMutationSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaModelRegistryService/ResolveModelAlias" => {
+                    #[allow(non_camel_case_types)]
+                    struct ResolveModelAliasSvc<T: ProximaModelRegistryService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ProximaModelRegistryService,
+                    > tonic::server::UnaryService<super::ResolveModelAliasRequest>
+                    for ResolveModelAliasSvc<T> {
+                        type Response = super::ResolveModelAliasResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ResolveModelAliasRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaModelRegistryService>::resolve_model_alias(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ResolveModelAliasSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for ProximaModelRegistryServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v2.ProximaModelRegistryService";
+    impl<T> tonic::server::NamedService for ProximaModelRegistryServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}
