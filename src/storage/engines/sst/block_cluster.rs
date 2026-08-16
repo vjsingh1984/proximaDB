@@ -804,6 +804,18 @@ pub fn ivf_probe_enabled() -> bool {
     }
 }
 
+/// TD-FPRUNE-1 M2: gate for the tag-aware two-level compaction layout
+/// (partition-by-tag, cluster-within). Default **OFF** — opt-in until the
+/// unfiltered-recall eval on a tagged corpus clears it (the filtered win is
+/// unit-proven; the risk is unfiltered recall from per-partition centroids).
+/// `PROXIMADB_PAX_PARTITION_LAYOUT=1|true|on|yes` engages it at compaction when
+/// the segment carries a shredded filterable tag. Mixed-read-safe: it emits the
+/// SAME A0 `CoarseModel` format (no layout_version change), only a different row
+/// placement, so every existing reader consumes it unchanged.
+pub fn partition_layout_enabled() -> bool {
+    env_gate_on("PROXIMADB_PAX_PARTITION_LAYOUT")
+}
+
 /// Boolean gate read: truthy = `1|true|on|yes`.
 pub(crate) fn env_gate_on(name: &str) -> bool {
     std::env::var(name)
@@ -955,6 +967,193 @@ pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<I
             tot = (t_end - t_start).as_secs_f64() * 1e3,
         );
     }
+    Some(IvfProbePlan {
+        plan: ClusterPlan { order, runs },
+        model,
+    })
+}
+
+/// TD-FPRUNE-1 M2: canonical equality-group key for a filterable tag value. Low-
+/// cardinality categorical/scalar values group by value (type-prefixed so an
+/// int `1` and a string `"1"` never collide); float/complex/missing values share
+/// a single sentinel group (they are not the low-card tags partitioning targets).
+/// A deterministic `String` — the physical layout must never depend on map
+/// iteration order or RNG.
+fn partition_group_key(v: &proximadb_data_model::ProximaValue) -> String {
+    use proximadb_data_model::ProximaValue as V;
+    match v {
+        V::Boolean(b) => format!("b:{b}"),
+        V::Int8(x) => format!("i:{x}"),
+        V::Int16(x) => format!("i:{x}"),
+        V::Int32(x) => format!("i:{x}"),
+        V::Int64(x) => format!("i:{x}"),
+        V::UInt8(x) => format!("u:{x}"),
+        V::UInt16(x) => format!("u:{x}"),
+        V::UInt32(x) => format!("u:{x}"),
+        V::UInt64(x) => format!("u:{x}"),
+        V::String(s) | V::Symbol(s) => format!("s:{s}"),
+        V::Decimal(s) => format!("d:{s}"),
+        V::Date(x) => format!("dt:{x}"),
+        // Floats/complex/binary are not low-card partition keys — sentinel group.
+        _ => "\u{0}none".to_string(),
+    }
+}
+
+/// TD-FPRUNE-1 M2: tag-aware two-level compaction layout. Trains ONE global PCA
+/// (a shared projection space, so the reader's coarse probe is unchanged), then
+/// clusters vectors SEPARATELY within each partition group of the declared
+/// low-card filterable tag and concatenates the per-group centroids. Rows are
+/// ordered partition-contiguous (group order, Hilbert within group), so every A0
+/// cell is partition-HOMOGENEOUS. A filtered query then skips the other
+/// partitions' cells for free via the M3 `count_in_range` test — this is the
+/// LAYOUT lever that makes UNCORRELATED tags prune (min/max/bloom cannot, because
+/// every geometric cell contains every value). Emits the SAME A0 `CoarseModel`
+/// cell format (no `layout_version` change) — mixed-read-safe; only the row
+/// placement differs. Returns `None` (caller falls back to the global
+/// [`cluster_plan_ivf_probe`]) when the tag is absent, degenerate (a single
+/// group), or the corpus is below the IVF floor.
+pub fn cluster_plan_ivf_probe_partitioned(
+    records: &[ProximaRecord],
+    idx: usize,
+    partition_key: &str,
+) -> Option<IvfProbePlan> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
+
+    let usable: Vec<(usize, &[f32])> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| embedding_f32(r, idx).map(|v| (i, v)))
+        .collect();
+    if usable.len() < MIN_ROWS_FOR_IVF {
+        return None;
+    }
+    let dim = usable[0].1.len();
+    if dim == 0 || usable.iter().any(|(_, v)| v.len() != dim) {
+        return None;
+    }
+
+    // Group usable-row POSITIONS (indices into `usable`) by the tag value. A
+    // BTreeMap keeps the group order deterministic (sorted key) — the physical
+    // layout must not depend on hash iteration order.
+    let mut groups: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (pos, (orig, _)) in usable.iter().enumerate() {
+        let key = match records[*orig].props.get(partition_key) {
+            Some(proximadb_records::ProximaTreeNode::Value(v)) => partition_group_key(v),
+            _ => "\u{0}none".to_string(),
+        };
+        groups.entry(key).or_default().push(pos);
+    }
+    // A single group ⇒ no partitioning benefit; let the caller use the global plan.
+    if groups.len() < 2 {
+        return None;
+    }
+
+    // ONE global PCA over the whole corpus (the shared projection space the
+    // reader's probe already assumes).
+    let shape = ivf_training_shape(usable.len(), dim)?;
+    let mut pca = IncrementalPCA::new(dim, shape.n_components);
+    for (_, v) in usable.iter().step_by(shape.sample_step) {
+        pca.add_sample(v);
+    }
+    pca.finalize();
+    let projection = IvfPcaProjection::from_finalized(&pca)?;
+    let coords: Vec<Vec<f32>> = usable.iter().map(|(_, v)| projection.project(v)).collect();
+    let IvfPcaProjection {
+        pca_mean,
+        pca_components,
+        n_comp,
+    } = projection;
+    let k_total = shape.k;
+
+    // Per-partition k-means in the shared space; concatenate the centroids into a
+    // single global cell space, keeping cells of one group contiguous in rank so
+    // rows land partition-contiguous.
+    let mut centroids: Vec<Vec<f32>> = Vec::new();
+    let mut assignments = vec![0usize; usable.len()];
+    let mut cell_rank: Vec<usize> = Vec::new();
+    let mut rank_base = 0usize;
+    for positions in groups.values() {
+        let g = positions.len();
+        // Cells proportional to the group's share of the corpus, ≥1 and ≤ |group|.
+        let k_g = ((k_total as f64 * g as f64 / usable.len() as f64).round() as usize)
+            .max(1)
+            .min(g);
+        let group_coords: Vec<Vec<f32>> = positions.iter().map(|&p| coords[p].clone()).collect();
+        let mut train: Vec<Vec<f32>> = group_coords
+            .iter()
+            .step_by(shape.sample_step.max(1))
+            .cloned()
+            .collect();
+        if train.is_empty() {
+            train = group_coords.clone();
+        }
+        let k_g = k_g.min(train.len()).max(1);
+        let Ok(cg) = proximadb_clustering_kernel::kmeans_clustering_seeded(
+            &train,
+            k_g,
+            15,
+            1e-3,
+            pax_ivf_kmeans_seed(),
+        ) else {
+            return None;
+        };
+        if cg.is_empty() {
+            return None;
+        }
+        let offset = centroids.len();
+        let local = proximadb_clustering_kernel::kmeans_assign(&group_coords, &cg);
+        for (lp, &pos) in positions.iter().enumerate() {
+            assignments[pos] = offset + local[lp];
+        }
+        // Hilbert order WITHIN the group; the global rank stays partition-blocked.
+        let (_ord, local_rank) = hilbert_cell_order(&cg);
+        cell_rank.resize(offset + cg.len(), 0);
+        for (lc, &lr) in local_rank.iter().enumerate() {
+            cell_rank[offset + lc] = rank_base + lr;
+        }
+        rank_base += cg.len();
+        centroids.extend(cg);
+    }
+
+    let total_cells = centroids.len();
+    let mut counts = vec![0u64; total_cells];
+    let mut radii_sq = vec![0f32; total_cells];
+    for (pos, &cell) in assignments.iter().enumerate() {
+        counts[cell] = counts[cell].saturating_add(1);
+        let d = coords[pos]
+            .iter()
+            .zip(&centroids[cell])
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum::<f32>();
+        if d > radii_sq[cell] {
+            radii_sq[cell] = d;
+        }
+    }
+
+    let pc1: Vec<f32> = coords
+        .iter()
+        .map(|c| c.first().copied().unwrap_or(0.0))
+        .collect();
+    let usable_orig: Vec<usize> = usable.iter().map(|(i, _)| *i).collect();
+    let (order, runs) =
+        order_rows_by_cell(records.len(), &usable_orig, &pc1, &assignments, &cell_rank);
+
+    // Emission order = cells sorted by rank (partition-blocked, Hilbert within).
+    let mut cell_order: Vec<usize> = (0..total_cells).collect();
+    cell_order.sort_by_key(|&c| cell_rank[c]);
+
+    let classifier = IvfProbeClassifier {
+        dim,
+        n_comp,
+        pca_mean,
+        pca_components,
+        centroids,
+        cell_order,
+        cell_rank,
+        trained_on: usable.len(),
+    };
+    let model = classifier.finish_model(&counts, &radii_sq)?;
     Some(IvfProbePlan {
         plan: ClusterPlan { order, runs },
         model,
