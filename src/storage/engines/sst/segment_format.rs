@@ -7766,11 +7766,16 @@ mod tests {
         assert!(!allow.is_empty(), "partition=p0 must match rows");
 
         // FILTERED probe ON, nprobe floor small — M3 expands adaptively to cover
-        // enough matching rows.
+        // enough matching rows. Shrink the prefix prefetch (default 1 MiB slurps a
+        // small test segment WHOLE, masking the ranged-read win) and disable the
+        // cross-call metadata cache so the byte A/B below isolates the region reads
+        // — the cloud-GET cost term the co-design mandate targets.
         unsafe {
             std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
             std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "2");
             std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "4096");
+            std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "0");
         }
         let _ = drain_get_trace();
         let _ = drain_probe_trace();
@@ -7788,6 +7793,7 @@ mod tests {
         .unwrap()
         .unwrap();
         let ptrace = drain_probe_trace();
+        let bytes_on: u64 = drain_get_trace().iter().map(|(_, b)| b).sum();
 
         // (a) recall parity vs the FILTERED truth.
         let got: std::collections::HashSet<String> = hits.iter().map(|h| h.oid.clone()).collect();
@@ -7814,10 +7820,50 @@ mod tests {
             probed_rows < N as u64,
             "filtered probe read {probed_rows} of {N} rows (subset, not whole region)"
         );
+
+        // (c) the byte cut is MEASURED, not asserted: re-run the SAME filtered query
+        // with the probe DISARMED (the pre-M3 behavior — whole Region-A/B allowed
+        // rank) and confirm the armed probe fetched strictly fewer bytes. With the
+        // prefix prefetch shrunk above, this reflects the ranged-GET (cloud) regime.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
+        }
+        let _ = drain_get_trace();
+        let base = rabitq_search_segment_coalesced_allowed(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            None,
+            Some(&allow),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let bytes_off: u64 = drain_get_trace().iter().map(|(_, b)| b).sum();
+        assert!(
+            drain_probe_trace().is_empty(),
+            "probe OFF must not record a probe (whole-region baseline)"
+        );
+        // The disarmed baseline is still correct (whole-region allowed rank) — same
+        // filtered top-K — so the armed probe trades no recall for the byte cut.
+        let base_got: std::collections::HashSet<String> =
+            base.iter().map(|h| h.oid.clone()).collect();
+        assert_eq!(got, base_got, "armed probe and whole-region baseline agree");
+        assert!(
+            bytes_on < bytes_off,
+            "filtered probe fetched {bytes_on} B vs the disarmed {bytes_off} B \
+             (want strictly fewer — the ranged-read win)"
+        );
+
         unsafe {
             std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
             std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
             std::env::remove_var("PROXIMADB_TRACE_GETS");
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+            std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
             std::env::remove_var("PROXIMADB_IVF_K");
         }
     }
