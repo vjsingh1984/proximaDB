@@ -228,13 +228,12 @@ export interface paths {
         put?: never;
         /**
          * Paginated scan of records in a collection.
-         * @description Returns the next page of records (TD-099 acceptance 2, live). The
-         *     handler resolves the collection id, calls
-         *     `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-         *     `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-         *     `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-         *     still deferred: `next_cursor` is always `None` today; callers bump
-         *     `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+         * @description Returns the next page of records (TD-099 acceptance 2 + 3, live).
+         *     Cursor-based pagination: pass the response's `next_cursor` back as
+         *     `cursor` to fetch the next page; a `null` cursor means the scan is
+         *     exhausted. Cursors are minted and validated against the caller-facing
+         *     collection id in the URL path, expire after 24h (HTTP 410), and reject
+         *     cross-collection reuse (HTTP 400).
          */
         post: operations["scanRecords"];
         delete?: never;
@@ -2935,7 +2934,7 @@ export interface operations {
                     "application/json": components["schemas"]["ScanRecordsResponse"];
                 };
             };
-            /** @description Invalid request. */
+            /** @description Invalid request (including a cursor minted for a different collection). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2946,6 +2945,15 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Cursor expired (older than 24h); restart the scan. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };

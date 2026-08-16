@@ -2193,6 +2193,9 @@ impl EmbeddedProximaDB {
                 .vector_operations_service
                 .scan_records_paginated(
                     collection,
+                    // Cursor identity: mint against the caller-facing name this
+                    // method decoded the inbound cursor against.
+                    collection,
                     inbound_cursor.as_ref(),
                     limit,
                     true,

@@ -2368,13 +2368,12 @@ const SCAN_RECORDS_DEFAULT_LIMIT: usize = 1_000;
 
 /// POST /api/v2/collections/{collection_id}/records/scan
 ///
-/// Returns the next page of records (TD-099 acceptance 2, live). The
-/// handler resolves the collection id, calls
-/// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-/// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-/// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-/// still deferred: `next_cursor` is always `None` today; callers bump
-/// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+/// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+/// Cursor-based pagination: pass the response's `next_cursor` back as
+/// `cursor` to fetch the next page; a `null` cursor means the scan is
+/// exhausted. Cursors are minted and validated against the caller-facing
+/// collection id in the URL path, expire after 24h (HTTP 410), and reject
+/// cross-collection reuse (HTTP 400).
 #[utoipa::path(
     post,
     path = "/api/v2/collections/{collection_id}/records/scan",
@@ -2387,8 +2386,9 @@ const SCAN_RECORDS_DEFAULT_LIMIT: usize = 1_000;
     request_body = ScanRecordsRequest,
     responses(
         (status = 200, description = "Page of records + optional next cursor.", body = ScanRecordsResponse),
-        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+        (status = 400, description = "Invalid request (including a cursor minted for a different collection).", body = crate::network::rest::openapi::ErrorResponse),
         (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+        (status = 410, description = "Cursor expired (older than 24h); restart the scan.", body = crate::network::rest::openapi::ErrorResponse),
     ),
 )]
 pub async fn scan_records(
@@ -2428,9 +2428,12 @@ pub async fn scan_records(
         None => None,
     };
 
-    // TD-099(3d): cursor + limit + tenant predicate are pushed into the WAL
-    // streaming layer; the handler returns a single ordered page plus the next
-    // cursor (O(log d + limit) per page once the scan index is warm).
+    // The scan merges flushed segments + unflushed WAL, filters dead records
+    // and the metadata predicate, then pages by the (updated_at_ns, oid)
+    // keyset cursor. NOTE: this path fully materializes the collection per
+    // page today — the TD-099(3d) WAL push-down is NOT wired here (immutable
+    // engines expose only read_all_records); restoring it is tracked in
+    // TECHNICAL_DEBT.adoc under TD-099.
     let (page, next_cursor) = state
         .record_ops
         .handle_record_scan_paginated_for_tenant(

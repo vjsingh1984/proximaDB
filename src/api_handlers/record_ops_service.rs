@@ -864,6 +864,9 @@ impl RecordOpsService {
         self.vector_operations_service
             .scan_records_paginated(
                 &resolved_id,
+                // Cursor identity: mint against the same caller-facing id the
+                // REST handler decodes against, not the resolved internal id.
+                collection_id,
                 cursor,
                 limit,
                 include_vector,
