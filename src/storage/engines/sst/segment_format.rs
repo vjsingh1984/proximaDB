@@ -481,7 +481,19 @@ fn write_pax_segment_compacted_internal(
     let mut probe_model = None;
     let plan = if cluster {
         if coalesced && block_cluster::ivf_probe_enabled() {
-            match block_cluster::cluster_plan_ivf_probe(records, 0) {
+            // TD-FPRUNE-1 M2 (opt-in): when the segment carries a shredded
+            // filterable tag and the partition-layout gate is on, cluster
+            // partition-first (cells become partition-homogeneous → uncorrelated
+            // tags prune via the M3 probe). Falls back to the global probe plan
+            // when the tag is absent/degenerate — same A0 format either way.
+            let two_level = block_cluster::partition_layout_enabled()
+                .then(|| shred_spec.first())
+                .flatten()
+                .and_then(|(tag, _)| {
+                    block_cluster::cluster_plan_ivf_probe_partitioned(records, 0, tag)
+                })
+                .or_else(|| block_cluster::cluster_plan_ivf_probe(records, 0));
+            match two_level {
                 Some(tl) => {
                     probe_model = Some(tl.model);
                     Some(tl.plan)
@@ -6048,5 +6060,191 @@ mod tests {
             std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
             std::env::remove_var("PROXIMADB_IVF_K");
         }
+    }
+
+    /// TD-FPRUNE-1 M2: the tag-aware layout makes an UNCORRELATED tag prune —
+    /// the case M3 alone cannot help (every geometric cell holds every value, so
+    /// `count_in_range` skips nothing). With partition-by-tag layout the cells
+    /// are partition-homogeneous, so the filtered probe accumulates its matching
+    /// pool from FEWER cells. This builds the SAME uncorrelated corpus twice
+    /// (layout ON vs OFF) and asserts the ON segment reads strictly fewer rows to
+    /// serve the same filtered top-K, at recall parity and with no leakage.
+    #[tokio::test]
+    async fn partition_layout_prunes_uncorrelated_tag() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 32;
+        const P: usize = 4; // partitions (the tag)
+        const GV: usize = 8; // vector clusters (independent of the tag)
+        const N: usize = 512;
+        const K: usize = 10;
+
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        // partition = i % P; vector cluster = (i / P) % GV. Disjoint index ranges
+        // ⇒ the tag is UNCORRELATED with vector geometry (every cluster carries
+        // every partition). This is the case zone-maps/blooms cannot prune.
+        let part = |i: usize| i % P;
+        let vclust = |i: usize| (i / P) % GV;
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                let c = vclust(i);
+                (0..DIM)
+                    .map(|d| (if d == c { 50.0 } else { 0.0 }) + 0.4 * pseudo(i, d))
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut r = rec(&format!("r{i}"), 1000 + i as i64, v.clone());
+                r.props.insert(
+                    "partition".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(format!("p{}", part(i))),
+                    ),
+                );
+                r
+            })
+            .collect();
+
+        // Query at vector cluster 0; filter partition == p0 (UNCORRELATED with it).
+        let query: Vec<f32> = (0..DIM).map(|d| if d == 0 { 50.0 } else { 0.0 }).collect();
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut p0: Vec<usize> = (0..N).filter(|&i| part(i) == 0).collect();
+        p0.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            p0.iter().take(K).map(|i| format!("r{i}")).collect();
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+
+        // Build one v3 shredded segment with the partition-layout gate `on`, and
+        // measure a filtered probe on it: returns (hits, probed_rows).
+        async fn build_and_probe(
+            fs: &LocalFileSystem,
+            records: &[ProximaRecord],
+            query: &[f32],
+            k: usize,
+            layout_on: bool,
+        ) -> (Vec<CascadeHit>, u64) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("m2.pax");
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+                std::env::set_var("PROXIMADB_IVF_K", "16");
+                if layout_on {
+                    std::env::set_var("PROXIMADB_PAX_PARTITION_LAYOUT", "1");
+                } else {
+                    std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+                }
+            }
+            write_pax_segment_compacted_shredded(
+                &path,
+                records,
+                "col",
+                1,
+                VectorQuant::RaBitQ,
+                VectorQuant::Sq8,
+                false,
+                Some(16 * 1024),
+                &[("partition".to_string(), 100)],
+            )
+            .unwrap();
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+                std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+            }
+            let p = path.to_str().unwrap();
+            let (allow, _s) = pax_filtered_row_allow(fs, p, &partition_filter("p0"))
+                .await
+                .unwrap()
+                .expect("shredded v3 segment yields an allow-set");
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "2");
+                std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+                std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "0");
+            }
+            let _ = drain_probe_trace();
+            let hits = rabitq_search_segment_coalesced_allowed(
+                fs,
+                p,
+                query,
+                k,
+                RankMetric::L2,
+                None,
+                None,
+                Some(&allow),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let ptrace = drain_probe_trace();
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
+                std::env::remove_var("PROXIMADB_TRACE_GETS");
+                std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+                std::env::remove_var("PROXIMADB_IVF_K");
+            }
+            let probed_rows = ptrace.first().map(|t| t.2).unwrap_or(u64::MAX);
+            (hits, probed_rows)
+        }
+
+        let (hits_on, rows_on) = build_and_probe(&fs, &records, &query, K, true).await;
+        let (hits_off, rows_off) = build_and_probe(&fs, &records, &query, K, false).await;
+
+        // The M2 risk is a RELATIVE one — does per-partition clustering degrade
+        // recall vs the global layout at identical settings? So compare the two,
+        // not an absolute bar (1-bit RaBitQ over a 512-row toy corpus is coarse by
+        // construction; the absolute recall gate is the SIFT ratchet + a real
+        // eval, not this unit).
+        let recall = |hits: &[CascadeHit]| {
+            let got: std::collections::HashSet<String> =
+                hits.iter().map(|h| h.oid.clone()).collect();
+            truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32
+        };
+        let (r_on, r_off) = (recall(&hits_on), recall(&hits_off));
+        eprintln!(
+            "[M2] recall on={r_on:.2} off={r_off:.2} | probed_rows on={rows_on} off={rows_off}"
+        );
+        // No cross-partition leakage under the layout (the allow-set is exact).
+        for h in &hits_on {
+            let idx: usize = h.oid.trim_start_matches('r').parse().unwrap();
+            assert_eq!(part(idx), 0, "hit {} is not partition p0", h.oid);
+        }
+        // Both layouts find real neighbors (search works at all).
+        assert!(r_on > 0.0 && r_off > 0.0, "both layouts return matches");
+        // Partition clustering does not MATERIALLY degrade recall vs the global
+        // layout at the same settings (within one RaBitQ quantization step).
+        assert!(
+            r_on >= r_off - 0.15,
+            "partition layout must not hurt recall vs global: on={r_on:.2} off={r_off:.2}"
+        );
+        // THE M2 WIN: partition-homogeneous cells let the filtered probe reach its
+        // matching pool from fewer rows than the global (mixed-cell) layout, where
+        // every probed cell is only ~1/P matching. This is the uncorrelated-tag
+        // prune that M3 alone cannot deliver.
+        assert!(
+            rows_on < rows_off,
+            "partition layout must probe FEWER rows for an uncorrelated tag: \
+             on={rows_on} vs off={rows_off}"
+        );
     }
 }
