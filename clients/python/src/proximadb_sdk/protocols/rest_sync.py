@@ -1823,7 +1823,7 @@ class ProximaDBClient:
         include_vectors: bool = False,
         include_metadata: bool = True,
         timeout: float | None = None,
-    ) -> "SearchEnvelope":
+    ) -> SearchEnvelope:
         """Search returning SKS envelope (cursor/progress) when supported.
 
         Falls back to legacy path and returns envelope with no cursor/progress.
@@ -1965,7 +1965,7 @@ class ProximaDBClient:
         include_vectors: bool = False,
         include_metadata: bool = True,
         timeout: float | None = None,
-    ) -> "SearchEnvelope":
+    ) -> SearchEnvelope:
         """Fetch next SKS search page by cursor. Returns empty envelope if unsupported."""
         from ..models import SearchEnvelope, SearchProgress
 
@@ -2842,6 +2842,35 @@ class ProximaDBClient:
         self._batch_processor.reset_metrics()
 
     # === GRAPH OPERATIONS ===
+
+    def batch_create_nodes(
+        self,
+        nodes: list[dict[str, Any]],
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Create many graph nodes in ONE request via the batch endpoint.
+
+        The per-item ``create_node`` loop cost 1,000 round trips per 1,000
+        nodes; this posts the whole page to
+        ``/api/v2/graphs/{graph_id}/nodes/batch``.
+        """
+        call = _gen.batch_create_nodes(graph_id, {"nodes": nodes})
+        response = self._make_request(call.method, call.endpoint, json=call.json)
+        return response.json()
+
+    def batch_create_edges(
+        self,
+        edges: list[dict[str, Any]],
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Create many graph edges in ONE request via the batch endpoint.
+
+        The server applies per-edge admission (rejections are reported in the
+        response's ``errors[]``; the valid rest of the batch lands).
+        """
+        call = _gen.batch_create_edges(graph_id, {"edges": edges})
+        response = self._make_request(call.method, call.endpoint, json=call.json)
+        return response.json()
 
     def create_node(
         self,
