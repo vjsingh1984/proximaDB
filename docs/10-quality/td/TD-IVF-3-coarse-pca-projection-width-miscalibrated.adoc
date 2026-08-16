@@ -200,6 +200,30 @@ Probe requirement is not a function of cell count alone — embedding geometry
 matters. A policy fitted on BIGANN under-provisions neural corpora at identical
 `k_c`, landing below the 0.98 SLA.
 
+=== Why a retune is not a one-line change
+
+Three structural facts, recorded so the retune is scoped from evidence rather
+than from the formula's shape:
+
+* **`nprobe` is process-global.** `coarse_probe_nprobe(k_c)` takes only the cell
+  count — no collection, no tenant, no query
+  (`src/storage/engines/sst/segment_format.rs`). A per-collection or
+  per-corpus-class policy is a signature change through
+  `coarse_probe_survivors`, not a config edit. `IndexPolicyInput.nprobe`
+  (ADR-028) and `SearchEffort` look like they would serve, but both feed the
+  **AXIS warm-index** path and never reach the segment probe. TD-RDSTRAT-9 is
+  the open TD for the missing collection read-cost controller.
+* **The signal that would drive a controller is already emitted and read by
+  nothing.** `proximadb_ivf_whole_region_fallback_total` is documented as
+  "climbing ⇒ nprobe too small" (`src/storage/engines/sst/metrics.rs`), but no
+  code consumes it. It is observability without a control loop.
+* **The multiplier's own justification is weaker than it reads.** See the
+  corrected note on `nprobe_multiplier` in `src/core/config.rs`: the 6-cell and
+  11-cell arms were measured under *different read planners* (local vs Azure),
+  so the request-cost half of that comparison is confounded, and the recall
+  figure previously quoted in the comment (0.9786) does not appear in the source
+  sweep at all (which reads 0.9795).
+
 == Resolution
 
 The factorial called for below has now been run: 26 beds across **three**

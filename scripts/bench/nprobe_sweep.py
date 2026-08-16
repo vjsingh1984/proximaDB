@@ -27,6 +27,8 @@ if SPEC is None or SPEC.loader is None:
 ACCEPTANCE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ACCEPTANCE)
 
+MIB = 1024 * 1024
+
 
 def comma_separated_ints(raw: str, label: str) -> list[int]:
     try:
@@ -201,6 +203,11 @@ def checkpoint_identity(result: dict) -> dict:
             "top_k_values": matrix["top_k_values"],
             "target_recall": matrix["target_recall"],
             "quality_policy": matrix["quality_policy"],
+            # Part of the identity: resuming a 4 MiB matrix under a 24 MiB
+            # planner would silently mix read geometries across points and
+            # produce a curve no single configuration ever exhibited.
+            "coalesce_gap_bytes": matrix["coalesce_gap_bytes"],
+            "coalesce_range_bytes": matrix["coalesce_range_bytes"],
         },
     }
 
@@ -340,7 +347,13 @@ def final_status(
     return "pass"
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Construct the CLI.
+
+    Split out of ``main`` so the defaults are assertable without running a
+    sweep — in particular that an unset invocation still pins the historical
+    Azure read planner.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--binary-source-revision", required=True)
@@ -372,6 +385,26 @@ def main() -> int:
     parser.add_argument("--rows", type=int, required=True)
     parser.add_argument("--nprobes", required=True)
     parser.add_argument("--top-k-values", default="10,20")
+    # Read-planner coalescing, held FIXED across every point of a matrix.
+    #
+    # Until this was threaded through, the sweep always ran at the Azure profile
+    # (1 MiB gap / 4 MiB range) because OwnedServer's defaults applied. Every
+    # recall-floor nprobe in TD-IVF-3 is therefore 4 MiB-conditioned, which is
+    # exactly what TD-SEARCH-3 says is unestablished now that 24 MiB is a
+    # candidate default. Defaults here reproduce the historical behaviour, so an
+    # unset invocation is byte-identical to the previous one.
+    parser.add_argument(
+        "--coalesce-gap-mib",
+        type=int,
+        default=ACCEPTANCE.AZURE_COALESCE_GAP_BYTES // MIB,
+        help="max byte gap bridged when coalescing ranged GETs (fixed per matrix)",
+    )
+    parser.add_argument(
+        "--coalesce-range-mib",
+        type=int,
+        default=ACCEPTANCE.AZURE_COALESCE_RANGE_BYTES // MIB,
+        help="max application-issued coalesced range (fixed per matrix)",
+    )
     parser.add_argument("--queries", type=int, default=1_000)
     parser.add_argument("--query-start", type=int, default=0)
     parser.add_argument("--port", type=int, default=5690)
@@ -388,7 +421,11 @@ def main() -> int:
         ),
     )
     parser.add_argument("--azurite", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     repository = Path(__file__).resolve().parents[2]
     binary = args.binary.resolve()
@@ -410,6 +447,13 @@ def main() -> int:
         raise RuntimeError("query count must be positive and start non-negative")
     if not 0.0 < args.target_recall <= 1.0:
         raise RuntimeError("--target-recall must be in (0, 1]")
+    # OwnedServer rejects these too, but only once the first point starts. Fail
+    # here instead so an invalid planner cannot burn a bed setup first.
+    if args.coalesce_gap_mib < 0 or args.coalesce_range_mib <= 0:
+        raise RuntimeError(
+            "--coalesce-gap-mib must be non-negative and "
+            "--coalesce-range-mib must be positive"
+        )
     if not args.collection_id.isdecimal():
         raise RuntimeError("--collection-id must be a decimal catalog object id")
 
@@ -528,6 +572,11 @@ def main() -> int:
             "top_k_values": top_k_values,
             "target_recall": args.target_recall,
             "quality_policy": args.quality_policy,
+            # Fixed for the whole matrix. Recorded so a recall-floor nprobe can
+            # never again be quoted without the read planner it was measured
+            # under (TD-SEARCH-3 / TD-IVF-3).
+            "coalesce_gap_bytes": args.coalesce_gap_mib * MIB,
+            "coalesce_range_bytes": args.coalesce_range_mib * MIB,
             "points": [],
         },
         "measurement_failures": [],
@@ -562,6 +611,8 @@ def main() -> int:
                 log_path=run_root / f"{label}.log",
                 local_disk_path=None,
                 nprobe=nprobe,
+                coalesce_gap_bytes=args.coalesce_gap_mib * MIB,
+                coalesce_range_bytes=args.coalesce_range_mib * MIB,
                 azure_emulator=args.azurite,
             )
             try:

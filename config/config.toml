@@ -326,9 +326,14 @@ collection_affinity = true
 # [storage.sst_config.coarse_probe]
 # enable_read_probe = true                   # search probes A0 (kill-switch)
 # enable_write_train = true                  # compaction emits v3/A0 (the COGS unblock)
-# nprobe_multiplier = 1.0                    # nprobe = ceil(sqrt(ncells) x mult); 1.5 = higher recall
+# nprobe_multiplier = 2.0                    # nprobe = ceil(sqrt(ncells) x mult)
+#                                            # 2.0 is the compiled default. 1.0 was measured
+#                                            # BELOW the recall@10 >= 0.98 ratchet (0.9795 at
+#                                            # k_c=30) -- do not copy it. Lower only behind a
+#                                            # representative recall gate.
 # nprobe_min = 3
 # nprobe_max = 0                             # 0 = unlimited (capped at ncells)
+# ncomp_floor = 0                            # 0 = legacy coarse-PCA width formula (TD-IVF-3)
 
 # [storage.viper_config]
 # row_group_size = 100000

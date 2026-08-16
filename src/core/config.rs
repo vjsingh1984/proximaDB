@@ -1475,12 +1475,26 @@ pub struct CoarseProbeConfig {
     /// Geometric nprobe multiplier: `nprobe = ceil(sqrt(ncells) × multiplier)`.
     ///
     /// Default 2.0. The settled one-segment SIFT1M geometry has 30 cells:
-    /// multiplier 1.0 probes 6 and missed the recall@10 ratchet (0.9786), while
-    /// multiplier 2.0 probes 11 and cleared the hardest measured 1,000-query
-    /// acceptance slice. Backend-bounded range coalescing absorbs the added
-    /// cell fanout (15.90 GET/query under the Azure policy); the full
-    /// three-phase harness remains the release gate. Operators may lower this
-    /// only with a representative recall gate.
+    /// multiplier 1.0 probes 6 and measured **recall@10 = 0.9795**, below the
+    /// 0.98 ratchet, while multiplier 2.0 probes 11 and measured 0.9822 on an
+    /// independent 1,000-query slice (TD-SEARCH-3 §S5).
+    ///
+    /// Two caveats that the sweep records and this default should not obscure:
+    ///
+    /// * **The GET comparison is not planner-matched.** The 6-cell reading was
+    ///   taken under the *local* planner (26.69 GET/query); the 11-cell reading
+    ///   under the *Azure* planner (15.90). The multiplier change and the
+    ///   bounded-coalescing change were measured together, so "2.0 costs
+    ///   nothing in requests" does not follow from these two rows. Bytes did
+    ///   rise, 24.66 → 48.82 MB/query.
+    /// * Those are **diagnostic sweeps over the immutable acceptance segment**,
+    ///   not a post-change evidence run; the full three-phase harness remains
+    ///   the release gate.
+    ///
+    /// This is process-global: `coarse_probe_nprobe` takes only `k_c`, with no
+    /// collection or query identity, so there is no per-collection retune
+    /// without a signature change (TD-RDSTRAT-9 tracks the missing controller).
+    /// Operators may lower this only with a representative recall gate.
     #[serde(default = "default_nprobe_multiplier")]
     pub nprobe_multiplier: f32,
     /// Minimum nprobe (floor). Default 3.

@@ -5155,7 +5155,21 @@ mod tests {
             probed_rows > 0 && probed_rows < N as u64,
             "probed {probed_rows} of {N} rows (a strict subset)"
         );
-        assert!(fetch_rounds >= 1, "at least one Region-A ranged GET");
+        // Probe ECONOMY, not just probe correctness. `fetch_rounds` is the count
+        // of coalesced Region-A ranged reads, so it is the request-side term of
+        // the cost model — and on Hot-tier object storage requests are the only
+        // billed read term. Nothing else in CI observes GET counts at all, so an
+        // upper bound here is the only thing standing between a coalescing or
+        // geometry regression and a silent multi-fold increase in per-query
+        // round-trips. It is bounded above by cells_probed because coalescing may
+        // merge adjacent cells into one range but must never split one cell into
+        // several.
+        assert!(
+            (1..=cells_probed).contains(&fetch_rounds),
+            "fetch_rounds={fetch_rounds} must be in 1..={cells_probed}: coalescing \
+             may merge probed cells into fewer ranged GETs but never split one \
+             cell across several"
+        );
         assert_eq!(probe_snapshot.ivf_cells_total, cells_total);
         assert_eq!(probe_snapshot.ivf_cells_probed, cells_probed);
         assert_eq!(probe_snapshot.ivf_probed_rows, probed_rows);

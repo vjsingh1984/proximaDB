@@ -1470,6 +1470,7 @@ class OwnedServer:
         log_path: Path,
         local_disk_path: Path | None,
         ivf_k: int | None = None,
+        n_comp: int | None = None,
         nprobe: int | None = None,
         training_compaction_min_mb: int | None = None,
         azure_emulator: bool = False,
@@ -1482,6 +1483,7 @@ class OwnedServer:
         self.log_path = log_path
         self.local_disk_path = local_disk_path
         self.ivf_k = ivf_k
+        self.n_comp = n_comp
         self.nprobe = nprobe
         self.training_compaction_min_mb = training_compaction_min_mb
         self.azure_emulator = azure_emulator
@@ -1516,12 +1518,15 @@ class OwnedServer:
             "PROXIMADB_CACHE_NVME_PATH",
             "PROXIMADB_CACHE_NVME_MAX_GB",
             "PROXIMADB_IVF_K",
+            "PROXIMADB_IVF_NCOMP",
             "PROXIMADB_PAX_READ_COARSE_NPROBE",
             "PROXIMADB_TRAINING_COMPACTION_MIN_MB",
         ):
             environment.pop(inherited_gate, None)
         if self.ivf_k is not None:
             environment["PROXIMADB_IVF_K"] = str(self.ivf_k)
+        if self.n_comp is not None:
+            environment["PROXIMADB_IVF_NCOMP"] = str(self.n_comp)
         if self.nprobe is not None:
             environment["PROXIMADB_PAX_READ_COARSE_NPROBE"] = str(self.nprobe)
         if self.training_compaction_min_mb is not None:
@@ -2189,6 +2194,16 @@ def main() -> int:
         help="force compaction-time coarse cell count (scale experiments only)",
     )
     parser.add_argument(
+        "--n-comp",
+        type=int,
+        help=(
+            "force compaction-time coarse-PCA projection width (width "
+            "experiments only). Forced AND verified against the persisted A0 "
+            "model, unlike a bare PROXIMADB_IVF_NCOMP env var, whose value the "
+            "bed never recorded (TD-IVF-3)"
+        ),
+    )
+    parser.add_argument(
         "--nprobe",
         type=int,
         help="force query-time coarse cells (scale experiments only)",
@@ -2237,6 +2252,8 @@ def main() -> int:
             )
     if args.ivf_k is not None and args.ivf_k <= 0:
         raise RuntimeError("--ivf-k must be positive")
+    if args.n_comp is not None and args.n_comp <= 0:
+        raise RuntimeError("--n-comp must be positive")
     if args.nprobe is not None and args.nprobe <= 0:
         raise RuntimeError("--nprobe must be positive")
     if (
@@ -2520,6 +2537,7 @@ def main() -> int:
         },
         "probe_policy": {
             "ivf_k_override": args.ivf_k,
+            "n_comp_override": args.n_comp,
             "nprobe_override": args.nprobe,
             "training_compaction_min_mb_override": (
                 args.training_compaction_min_mb
@@ -2592,6 +2610,7 @@ def main() -> int:
             log_path=root / "server-ingest.log",
             local_disk_path=local_disk,
             ivf_k=args.ivf_k,
+            n_comp=args.n_comp,
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
@@ -2661,6 +2680,16 @@ def main() -> int:
             if wrong_cells:
                 raise RuntimeError(
                     f"forced ivf_k={args.ivf_k} was not persisted: {wrong_cells}"
+                )
+        if args.n_comp is not None:
+            wrong_width = [
+                segment
+                for segment in geometry["segments"]
+                if segment.get("coarse_components") != args.n_comp
+            ]
+            if wrong_width:
+                raise RuntimeError(
+                    f"forced n_comp={args.n_comp} was not persisted: {wrong_width}"
                 )
         result["settled_geometry"] = geometry
         if resource_sampler is not None:
