@@ -2307,9 +2307,20 @@ impl Compaction {
                         .max()
                         .unwrap_or(1)
                         .max(1);
+                    // TD-FPRUNE-1 A1: preserve the shredded filterable-tag columns
+                    // across compaction. Rebuild the P-Shred spec from an input
+                    // segment's SELF-DESCRIBING footer `shred_field_map` (no catalog
+                    // / schema in hand at compaction). The merged records keep their
+                    // `props` (ADR-055), so re-shred with the same spec reproduces
+                    // the columns. Empty (legacy/non-shredded inputs) ⇒ byte-identical.
+                    let shred_spec = Self::extract_shred_spec_from_inputs(
+                        &self.filesystem_factory,
+                        &task.input_files,
+                    )
+                    .await;
                     if cache_on_write.includes_invariants() {
                         let write = crate::storage::engines::sst::segment_format::
-                            write_pax_segment_compacted_with_cache_seed(
+                            write_pax_segment_compacted_with_cache_seed_shredded(
                                 &staging_file_path,
                                 &records,
                                 &collection_id,
@@ -2319,6 +2330,7 @@ impl Compaction {
                                 f32_tier,
                                 None,
                                 cache_on_write.includes_survivors(),
+                                &shred_spec,
                             )
                             .map_err(|e| {
                                 crate::core::StorageError::SstEngine(format!(
@@ -2327,7 +2339,7 @@ impl Compaction {
                             })?;
                         pax_cache_seed = write.cache_seed;
                     } else {
-                        crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
+                        crate::storage::engines::sst::segment_format::write_pax_segment_compacted_shredded(
                             &staging_file_path,
                             &records,
                             &collection_id,
@@ -2336,6 +2348,7 @@ impl Compaction {
                             rerank_quant,
                             f32_tier,
                             None,
+                            &shred_spec,
                         )
                         .map_err(|e| {
                             crate::core::StorageError::SstEngine(format!(
@@ -2456,9 +2469,17 @@ impl Compaction {
                         .max()
                         .unwrap_or(1)
                         .max(1);
+                    // TD-FPRUNE-1 A1: preserve shredded filterable-tag columns across
+                    // compaction (see the atomic arm above) — rebuild the spec from an
+                    // input segment's self-describing footer.
+                    let shred_spec = Self::extract_shred_spec_from_inputs(
+                        &self.filesystem_factory,
+                        &task.input_files,
+                    )
+                    .await;
                     if cache_on_write.includes_invariants() {
                         let write = crate::storage::engines::sst::segment_format::
-                            write_pax_segment_compacted_with_cache_seed(
+                            write_pax_segment_compacted_with_cache_seed_shredded(
                                 &task.output_file,
                                 &records,
                                 &collection_id,
@@ -2468,6 +2489,7 @@ impl Compaction {
                                 f32_tier,
                                 None,
                                 cache_on_write.includes_survivors(),
+                                &shred_spec,
                             )
                             .map_err(|e| {
                                 crate::core::StorageError::SstEngine(format!(
@@ -2476,7 +2498,7 @@ impl Compaction {
                             })?;
                         pax_cache_seed = write.cache_seed;
                     } else {
-                        crate::storage::engines::sst::segment_format::write_pax_segment_compacted(
+                        crate::storage::engines::sst::segment_format::write_pax_segment_compacted_shredded(
                             &task.output_file,
                             &records,
                             &collection_id,
@@ -2485,6 +2507,7 @@ impl Compaction {
                             rerank_quant,
                             f32_tier,
                             None,
+                            &shred_spec,
                         )
                         .map_err(|e| {
                             crate::core::StorageError::SstEngine(format!(
@@ -2795,6 +2818,36 @@ impl Compaction {
         };
         let filename = codec.generate(level as u32, extension);
         collection_dir.join(filename)
+    }
+
+    /// TD-FPRUNE-1 A1: rebuild the P-Shred `(name, col-id)` spec from the input
+    /// segments' SELF-DESCRIBING footer `shred_field_map` so compaction preserves
+    /// the shredded filterable-tag user-columns (footer filter-pruning survives
+    /// L1/L2). Compaction has no catalog/schema in hand — the segment footer is
+    /// the authority. Reads input footers in order and takes the FIRST non-empty
+    /// map (all L0 flushes of one collection share the same filterable schema; a
+    /// full union across inputs is a robustness follow-up for cross-flush schema
+    /// evolution). Any read/parse failure ⇒ empty spec (byte-identical, no shred),
+    /// never a compaction failure.
+    async fn extract_shred_spec_from_inputs(
+        factory: &Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        input_files: &[PathBuf],
+    ) -> Vec<(String, i32)> {
+        use proximadb_storage_common::segment_layout::SegmentFooterIndex;
+        for input in input_files {
+            let url = input.to_string_lossy();
+            let Ok(bytes) =
+                crate::storage::engines::sst::staged_write::read_object_bytes(factory, &url).await
+            else {
+                continue;
+            };
+            if let Ok(Some(footer)) = SegmentFooterIndex::locate_in_segment(&bytes)
+                && !footer.shred_field_map.is_empty()
+            {
+                return footer.shred_field_map;
+            }
+        }
+        Vec::new()
     }
 
     /// 🚀 NEW: Read all records from SSTable using unified reader with compaction optimizations
