@@ -323,7 +323,7 @@ impl BlockIndexEntry {
 }
 
 /// TD-FPRUNE-1 P2: the writer lifts per-block bounded-column `ColumnMeta` (min/max)
-/// + the shredded-tag field-map into the segment footer, so a filtered query can
+/// and the shredded-tag field-map into the segment footer, so a filtered query can
 /// prune a block without a body GET. **Default ON** (TD-FPRUNE-1 A3, evidence-gated:
 /// footer pruning survives compaction and is 8.4× faster at recall parity;
 /// mixed-read-safe — an absent payload reads as "may match", so old readers and
