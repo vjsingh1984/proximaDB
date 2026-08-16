@@ -1489,6 +1489,18 @@ pub struct CoarseProbeConfig {
     /// Maximum nprobe (0 = unlimited; capped at ncells anyway). Default 0.
     #[serde(default)]
     pub nprobe_max: usize,
+    /// WRITE gate (TD-IVF-3): floor on the coarse-PCA projection width used to
+    /// train the A0 directory. **0 = disabled** (the legacy
+    /// `max(1.5·log2 dim, 1.5·log2 k)` formula, which yields 10–14 components).
+    ///
+    /// Measurement puts the GET/query optimum at 32 (128-d) and 64 (384-d and
+    /// 768-d), and wider widths are markedly more robust to poor cell geometry
+    /// (degrading `k_c` 90→30 costs +21% at width 32 but only +2.6% at 64) —
+    /// which matters because production `k_c` is derived from corpus size and
+    /// varies over orders of magnitude. Ships at 0 pending the seed-sensitivity
+    /// and PCA-conditioning bake. Env: `PROXIMADB_IVF_NCOMP_FLOOR`.
+    #[serde(default)]
+    pub ncomp_floor: usize,
 }
 
 /// Cache population performed only after a segment is atomically published.
@@ -1538,6 +1550,7 @@ impl Default for CoarseProbeConfig {
             nprobe_multiplier: default_nprobe_multiplier(),
             nprobe_min: default_nprobe_min(),
             nprobe_max: 0,
+            ncomp_floor: 0, // TD-IVF-3: disabled until the bake clears it
         }
     }
 }
