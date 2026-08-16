@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -42,6 +43,40 @@ DEFAULT_SKIP_DIRS = (
     "target",
     "vendor",
 )
+
+
+def repository_provenance(root: Path) -> dict[str, Any]:
+    """Return reproducible VCS context without making Git the content authority."""
+    revision = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+        capture_output=True,
+        check=False,
+        text=False,
+    )
+    if revision.returncode != 0:
+        return {"vcs": "unversioned"}
+    status = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=normal",
+        ],
+        capture_output=True,
+        check=False,
+        text=False,
+    )
+    if status.returncode != 0:
+        raise RuntimeError(f"git status failed for source repository {root}")
+    status_bytes = status.stdout
+    return {
+        "vcs": "git",
+        "head_revision": revision.stdout.decode("ascii").strip(),
+        "dirty": bool(status_bytes.strip()),
+        "status_sha256": hashlib.sha256(status_bytes).hexdigest(),
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -82,6 +117,16 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
     repositories = tuple(dict.fromkeys(args.repositories))
     if not repositories:
         raise ValueError("at least one repository is required")
+    missing_repositories = [
+        repository
+        for repository in repositories
+        if not (args.code_root / repository).is_dir()
+        or (args.code_root / repository).is_symlink()
+    ]
+    if missing_repositories:
+        raise ValueError(
+            "missing source repositories: " + ", ".join(missing_repositories)
+        )
     extensions = {
         value if value.startswith(".") else f".{value}" for value in args.extensions
     }
@@ -94,6 +139,11 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
     temporary = Path(temp_name)
     inventory = hashlib.sha256()
     repository_counts = dict.fromkeys(repositories, 0)
+    provenance = {
+        repository: repository_provenance(args.code_root / repository)
+        for repository in repositories
+        if (args.code_root / repository).is_dir()
+    }
     unreadable: list[str] = []
     document_count = 0
     try:
@@ -104,8 +154,8 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
                 relative = path.relative_to(root).as_posix()
                 source_id = f"{repository}/{relative}"
                 try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                except OSError:
+                    text = path.read_text(encoding="utf-8", errors="strict")
+                except (OSError, UnicodeDecodeError):
                     unreadable.append(source_id)
                     continue
                 content_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -129,18 +179,25 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 repository_counts[repository] += 1
                 document_count += 1
+            if unreadable and not getattr(args, "allow_unreadable_sources", False):
+                raise ValueError(
+                    "unreadable source files require --allow-unreadable-sources: "
+                    + ", ".join(unreadable[:5])
+                )
         os.replace(temporary, args.output)
     finally:
         temporary.unlink(missing_ok=True)
 
     manifest = {
         "schema_version": 1,
+        "exporter_sha256": _sha256(Path(__file__).resolve()),
         "code_root": str(args.code_root.resolve()),
         "repositories": list(repositories),
         "extensions": sorted(extensions),
         "skip_dirs": sorted(skip_dirs),
         "document_count": document_count,
         "repository_document_counts": repository_counts,
+        "repository_provenance": provenance,
         "unreadable_sources": unreadable,
         "source_inventory_sha256": inventory.hexdigest(),
         "jsonl_sha256": _sha256(args.output),
@@ -172,6 +229,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--extension", dest="extensions", action="append")
     parser.add_argument("--skip-dir", dest="skip_dirs", action="append")
+    parser.add_argument(
+        "--allow-unreadable-sources",
+        action="store_true",
+        help="record and drop files that cannot be decoded as UTF-8",
+    )
     args = parser.parse_args()
     args.extensions = args.extensions or list(DEFAULT_EXTENSIONS)
     args.skip_dirs = args.skip_dirs or list(DEFAULT_SKIP_DIRS)

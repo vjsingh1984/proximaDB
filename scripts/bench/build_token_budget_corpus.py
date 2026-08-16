@@ -187,6 +187,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     split_sources = 0
     dropped_spans: list[dict[str, Any]] = []
     stopped_at_max_chunks = False
+    allow_partial_corpus = getattr(args, "allow_partial_corpus", False)
     seen_chunk_digests: set[bytes] = set()
     duplicate_chunk_count = 0
     try:
@@ -279,6 +280,12 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             texts.write("]\n")
         if chunk_count == 0:
             raise ValueError("corpus builder emitted no chunks")
+        if stopped_at_max_chunks and not allow_partial_corpus:
+            raise ValueError(
+                "max_chunks produced a partial corpus; remove --max-chunks for a "
+                "full build or pass --allow-partial-corpus for an explicitly "
+                "prefix-sampled diagnostic corpus"
+            )
         if _sha256(args.input) != input_sha256:
             raise RuntimeError("input JSONL changed while the corpus was being built")
         os.replace(texts_tmp, texts_path)
@@ -305,6 +312,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     }
     manifest = {
         "schema_version": 1,
+        "builder_sha256": _sha256(Path(__file__).resolve()),
         "input": str(args.input.resolve()),
         "input_sha256": input_sha256,
         "texts_sha256": _sha256(texts_path),
@@ -313,6 +321,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "chunk_count": chunk_count,
         "max_chunks": args.max_chunks,
         "stopped_at_max_chunks": stopped_at_max_chunks,
+        "corpus_scope": (
+            "partial_prefix" if stopped_at_max_chunks else "complete_source"
+        ),
         "deduplication_policy": args.deduplicate,
         "duplicate_chunk_count": duplicate_chunk_count,
         "split_oversized_source_count": split_sources,
@@ -364,7 +375,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-chunks",
         type=int,
-        help="stop after this many chunks, preserving deterministic input order",
+        help=(
+            "stop after this many chunks, preserving deterministic input order; "
+            "requires --allow-partial-corpus when the cap truncates the source"
+        ),
+    )
+    parser.add_argument(
+        "--allow-partial-corpus",
+        action="store_true",
+        help="explicitly permit a prefix-sampled diagnostic corpus",
     )
     parser.add_argument(
         "--deduplicate",
@@ -392,6 +411,7 @@ def main() -> None:
         json.dumps(
             {
                 "chunk_count": manifest["chunk_count"],
+                "corpus_scope": manifest["corpus_scope"],
                 "texts_sha256": manifest["texts_sha256"],
                 "token_histogram": manifest["token_histogram"],
                 "zero_truncation_asserted": manifest["zero_truncation_asserted"],
