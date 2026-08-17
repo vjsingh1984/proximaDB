@@ -52,7 +52,9 @@ That does **not** make bytes free:
 * ProximaDB's own scanned-byte KRU term still meters bytes;
 * Cool/Cold/Archive tiers add data-retrieval charges;
 * hierarchical-namespace/Data Lake endpoints can have different transaction
-  categorization and must not be conflated with the flat Blob endpoint.
+  categorization, but ProximaDB does not route to them: `az://`, `azure://`,
+  `adls://`, and `abfs://` are aliases for the same flat Blob backend. Path
+  spelling therefore cannot select a different range-cost policy.
 
 Therefore a merge is admissible only when the saved round trip is worth its
 bounded gap over-read. Optimizing GET count without a byte cap merely moves
@@ -118,25 +120,31 @@ over-read. Logical selected slices remain unchanged, so recall is invariant.
 
 === S1: physical GET accounting
 
-`CountingFileSystem::read_ranges(path, ranges)` now adds `ranges.len()` physical
-range operations because the trait's default implementation issues exactly
-that many `read_range()` calls. The recorder receives the physical count too.
-This fixes the unencrypted local/object-store benchmark route's under-counting.
-The encryption wrapper is a documented exception: an encrypted batch can
-materialize the encrypted object once and slice it locally. HTTP-boundary
-instrumentation is still required before calling this counter universally
-physical for encrypted deployments. A future true one-request multi-range
-backend likewise needs an explicit physical-operation report.
+`FileSystem::read_ranges(path, ranges)` now has an explicit plan/execute split
+(#1649). `plan_read_ranges()` converts logical ranges into physical reads plus
+an input-order slice mapping under an optional `RangeCoalescePolicy`; execution
+issues exactly the physical plan and reconstructs the original logical result
+vector. With no policy the plan is the byte-identical identity path.
+
+`CountingFileSystem` delegates policy lookup through its decorator chain and
+meters `plan.physical.len()`, not `ranges.len()`. It separately records
+coalesced over-read bytes so logical bytes returned and physical bytes fetched
+cannot be conflated. The counter remains a prediction from the same plan;
+`io_trace.range_gets` and the Azurite request log are the independent leaf/wire
+measurements required for promotion. The encryption wrapper remains a
+documented exception because it can materialize one encrypted object and slice
+locally.
 
 The invariant is:
 
 [source,text]
 ----
-unencrypted current backends:
-physical ranged requests == counted range operations
+unencrypted current backends with a stable policy:
+planned physical reads == counted range operations == leaf range_gets
 ----
 
-A Rust function call named `read_ranges` is not evidence of one cloud request.
+A Rust function call named `read_ranges` is still not evidence of one cloud
+request; the physical plan and leaf/wire observations are.
 
 === S2: bounded prefix read
 
@@ -222,6 +230,12 @@ are bounded, p50/p95/RSS do not materially regress, and the wire/application
 ratio proves one HTTP request per issued large range. Repeat only eligible caps
 on the natural `k_c=90` bed; use `k_c=200` afterward to measure the independent
 byte/selectivity trade-off.
+
+The harness snapshots the release binary into each run directory before
+starting any server process and verifies its SHA-256. Cargo atomically replaces
+profile binaries after a rebuild; launching later points from the mutable
+`target/` path could otherwise mix revisions while retaining the hash captured
+at startup. A pre-existing snapshot with a different hash now fails closed.
 
 === S3b: measured wire range-cap knee
 
