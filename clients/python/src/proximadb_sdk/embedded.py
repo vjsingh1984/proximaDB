@@ -52,7 +52,10 @@ Usage:
 """
 
 import asyncio
+import atexit
 import base64
+import json
+import logging
 import os
 import signal
 import subprocess
@@ -61,6 +64,7 @@ import tempfile
 import threading
 import time
 import uuid
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -489,6 +493,78 @@ def _collection_field(entry: Any, field: str) -> Any:
     return None
 
 
+logger = logging.getLogger(__name__)
+
+# Servers spawned by THIS process, weakly held so a garbage-collected handle
+# does not keep an instance alive. Drained at interpreter exit.
+_OWNED_SERVERS: "weakref.WeakSet[Any]" = weakref.WeakSet()
+_ATEXIT_REGISTERED = False
+
+
+def _register_owned_server(db: Any) -> None:
+    """Track a spawned server so interpreter exit tears it down."""
+    global _ATEXIT_REGISTERED
+    _OWNED_SERVERS.add(db)
+    if not _ATEXIT_REGISTERED:
+        atexit.register(_stop_owned_servers)
+        _ATEXIT_REGISTERED = True
+
+
+def _stop_owned_servers() -> None:
+    """Stop every server this process started. Best-effort and idempotent:
+    exit-time teardown must never raise, and stopping twice is harmless."""
+    for db in list(_OWNED_SERVERS):
+        try:
+            if getattr(db, "_process", None) is not None:
+                db._kill_process()
+        except Exception:  # pragma: no cover - exit path must not raise
+            pass
+
+
+RUNTIME_STATE_FILE = ".proximadb-runtime.json"
+# Mirrors the server's contract constants (apps/proximadb-server/src/runtime_state.rs).
+_STALE_AFTER_INTERVALS = 15
+
+
+def read_runtime_state(data_dir: "str | Path") -> dict[str, Any] | None:
+    """Read the server lifecycle record for a data dir, or None if absent.
+
+    A malformed record reads as None ("no owner") — a corrupt file must never
+    wedge a client, exactly as it must never block the server.
+    """
+    try:
+        raw = (Path(data_dir) / RUNTIME_STATE_FILE).read_text()
+        state = json.loads(raw)
+        return state if isinstance(state, dict) else None
+    except Exception:
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, ValueError):
+        return False
+    except PermissionError:
+        # Exists but owned by another user.
+        return True
+
+
+def runtime_state_is_stale(state: dict[str, Any], now_ms: float) -> bool:
+    """True when the recorded owner is gone or its heartbeat stopped advancing.
+
+    Pure function of the record + a caller-supplied clock, so the decision is
+    testable without spawning anything.
+    """
+    pid = state.get("pid")
+    if not isinstance(pid, int) or not _pid_alive(pid):
+        return True
+    interval = float(state.get("heartbeat_interval_ms") or 2000) or 2000.0
+    updated = float(state.get("updated_at_ms") or 0)
+    return (now_ms - updated) > interval * _STALE_AFTER_INTERVALS
+
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -517,6 +593,18 @@ class EmbeddedConfig:
     # Engine selection (opinionated defaults for code knowledge store)
     vector_engine: str = "SST"  # Best for real-time code indexing
     graph_engine: str = "ORION"  # In-memory with WAL for code relationships
+
+    # Absolute ceiling on startup. This is a SAFETY STOP, not a schedule:
+    # while the server's runtime-state record shows an advancing heartbeat the
+    # SDK keeps waiting, because recovery time scales with data (a 1.3GB dir
+    # measured >180s) and any fixed constant eventually kills a healthy
+    # server and silently falls back to another backend (proximaDB#1667).
+    startup_timeout_s: float = 900.0
+    # Refuse to spawn when another LIVE server already owns the data dir.
+    # Set False to spawn anyway (tests/diagnostics) — never silently, since a
+    # second writer on one data dir is how "cleared" state resurrects
+    # (anvai-labs/victor#911).
+    fail_on_foreign_owner: bool = True
 
     # SIGTERM -> SIGKILL grace window on stop(). The server's final
     # flush-on-stop is a real materialize (tens of seconds for large
@@ -955,7 +1043,7 @@ prefetch_budget = 4
         config_path.write_text(config_content)
         return str(config_path)
 
-    async def start(self, timeout: float = 30.0) -> None:
+    async def start(self, timeout: float | None = None) -> None:
         """Start the embedded database.
 
         Args:
@@ -967,6 +1055,42 @@ prefetch_budget = 4
         with self._lock:
             if self._started:
                 return
+
+            # Ownership check BEFORE spawning. A server spawned with setsid
+            # outlives its parent and keeps writing its data dir, so a second
+            # spawn on the same dir yields two writers and silently
+            # resurrects state a caller believed it had cleared
+            # (anvai-labs/victor#911). A STALE record (owner dead or frozen)
+            # is reclaimed automatically; a LIVE one is reported, never
+            # ignored.
+            owner = read_runtime_state(self._data_dir)
+            if owner is not None:
+                if runtime_state_is_stale(owner, time.time() * 1000):
+                    logger.info(
+                        "Reclaiming data dir from a dead ProximaDB owner "
+                        "(pid=%s, phase=%s)",
+                        owner.get("pid"),
+                        owner.get("phase"),
+                    )
+                    try:
+                        (self._data_dir / RUNTIME_STATE_FILE).unlink()
+                    except OSError:
+                        pass
+                elif self.config.fail_on_foreign_owner:
+                    raise RuntimeError(
+                        "Another ProximaDB server is already serving "
+                        f"{self._data_dir} (pid={owner.get('pid')}, "
+                        f"phase={owner.get('phase')}). Stop it first, or set "
+                        "EmbeddedConfig.fail_on_foreign_owner=False to run a "
+                        "second writer deliberately."
+                    )
+                else:
+                    logger.warning(
+                        "Spawning a SECOND writer on %s (existing pid=%s) — "
+                        "concurrent writers can corrupt or resurrect state",
+                        self._data_dir,
+                        owner.get("pid"),
+                    )
 
             # Find binary
             binary = self._find_binary()
@@ -984,6 +1108,13 @@ prefetch_budget = 4
             child_env = dict(os.environ)
             child_env.setdefault("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE", "1")
             child_env.setdefault("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "8")
+            # Own the child's lifetime. It is spawned setsid (its own process
+            # group) so it survives our exit — which is how orphaned servers
+            # accumulated and kept rewriting data dirs callers believed they
+            # had cleared (anvai-labs/victor#911). Registering teardown at
+            # spawn time makes ownership symmetric with the runtime-state
+            # record the server writes.
+            _register_owned_server(self)
             self._process = subprocess.Popen(
                 [binary, "--config", config_path],
                 stdout=subprocess.PIPE,
@@ -992,9 +1123,46 @@ prefetch_budget = 4
                 env=child_env,
             )
 
-            # Wait for server to be ready
+            # Wait for readiness. The server publishes a lifecycle record
+            # (pid + phase + heartbeat) BEFORE recovery, precisely because
+            # listeners bind only after recovery finishes: polling HTTP alone
+            # cannot tell "replaying a 1.3GB WAL" from "crashed", so a fixed
+            # deadline kills healthy servers (proximaDB#1667). We therefore
+            # wait as long as the server proves progress, bounded by an
+            # absolute safety ceiling.
+            # An EXPLICIT caller timeout wins — callers that pass one mean it
+            # (tests, probes, callers with their own deadline). Only the
+            # implicit case gets the generous config ceiling, because that is
+            # the case that used to hard-code 30s and kill healthy servers.
+            ceiling = (
+                float(timeout)
+                if timeout is not None
+                else float(self.config.startup_timeout_s)
+            )
             start_time = time.time()
-            while time.time() - start_time < timeout:
+            last_phase: str | None = None
+            last_heartbeat: float = -1.0
+            last_progress_at = start_time
+
+            while time.time() - start_time < ceiling:
+                exit_code = self._process.poll() if self._process else None
+                if exit_code is not None:
+                    # Died during startup: surface it immediately instead of
+                    # polling a socket that will never appear.
+                    stderr_tail = ""
+                    try:
+                        if self._process is not None and self._process.stderr:
+                            stderr_tail = self._process.stderr.read().decode(
+                                "utf-8", "replace"
+                            )[-2000:]
+                    except Exception:
+                        pass
+                    self._process = None
+                    raise RuntimeError(
+                        "ProximaDB server exited during startup with status "
+                        f"{exit_code}. {stderr_tail}"
+                    )
+
                 try:
                     with self._sync_http_client(timeout=1.0) as client:
                         response = client.get(f"{self.rest_url}/health")
@@ -1003,13 +1171,37 @@ prefetch_budget = 4
                         return
                 except Exception:
                     pass
-                await asyncio.sleep(0.1)
 
-            # Timeout - kill process and raise error
+                # No socket yet — consult the lifecycle record.
+                state = read_runtime_state(self._data_dir)
+                if state is not None:
+                    phase = state.get("phase")
+                    heartbeat = float(state.get("updated_at_ms") or 0)
+                    if phase != last_phase or heartbeat > last_heartbeat:
+                        # Progress: the server is alive and working.
+                        last_phase, last_heartbeat = phase, heartbeat
+                        last_progress_at = time.time()
+                        logger.debug(
+                            "ProximaDB starting: phase=%s (waiting; ceiling %.0fs)",
+                            phase,
+                            ceiling,
+                        )
+                    elif runtime_state_is_stale(state, time.time() * 1000):
+                        self._kill_process()
+                        raise RuntimeError(
+                            "ProximaDB stopped making progress during startup "
+                            f"(phase={phase}, heartbeat frozen for more than "
+                            f"{_STALE_AFTER_INTERVALS} beats)"
+                        )
+                await asyncio.sleep(0.2)
+
+            # Ceiling reached — report the phase we last saw, so the failure
+            # says what the server was doing rather than just "didn't start".
             self._kill_process()
             raise TimeoutError(
-                f"ProximaDB failed to start within {timeout}s. "
-                "Check logs for errors."
+                f"ProximaDB failed to start within {ceiling:.0f}s "
+                f"(last phase: {last_phase or 'unknown'}, "
+                f"stalled {time.time() - last_progress_at:.0f}s)."
             )
 
     def _kill_process(self) -> None:

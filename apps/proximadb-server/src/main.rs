@@ -43,6 +43,8 @@ compile_error!(
      target a little-endian arch (x86_64, aarch64, etc.)"
 );
 
+mod runtime_state;
+
 use clap::Parser;
 use proximadb::ProximaDB;
 use proximadb::core::ConfigLoader;
@@ -179,6 +181,7 @@ async fn run() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // Load configuration first to get log level from TOML
+    let config_path_for_state = args.config.to_string_lossy().to_string();
     let mut config = ConfigLoader::load_with_defaults(args.config.to_string_lossy().as_ref())
         .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
 
@@ -322,13 +325,57 @@ async fn run() -> anyhow::Result<()> {
     // Ensure all required directories exist
     ensure_required_directories(&config).await?;
 
+    // Publish the lifecycle record BEFORE any slow work. Recovery can run for
+    // minutes on a large data dir and binds no socket until it finishes, so a
+    // supervising client that polls HTTP cannot distinguish "recovering" from
+    // "dead" — it applied a fixed timeout and killed healthy servers (#1667).
+    // The record carries pid + phase + an advancing heartbeat, and doubles as
+    // the ownership marker that makes orphaned servers detectable
+    // (anvai-labs/victor#911).
+    // Symmetry with the client-side check: if a LIVE server already owns this
+    // data dir, say so loudly. Two writers on one dir is how "cleared" state
+    // silently resurrects. Not fatal — an operator may be doing this
+    // deliberately, and refusing to boot would be a worse failure mode than
+    // a warning they can see.
+    if let Some(existing) = runtime_state::read_state(&config.server.data_dir) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if existing.is_live_owner(now_ms) {
+            tracing::warn!(
+                owner_pid = existing.pid,
+                owner_phase = ?existing.phase,
+                data_dir = %config.server.data_dir.display(),
+                "another ProximaDB process appears to be serving this data dir;                  concurrent writers can corrupt or resurrect state"
+            );
+        } else {
+            tracing::info!(
+                stale_pid = existing.pid,
+                "reclaiming data dir from a previous owner that did not shut down cleanly"
+            );
+        }
+    }
+
+    let runtime_state = runtime_state::RuntimeStateWriter::start(
+        &config.server.data_dir,
+        Some(config_path_for_state.clone()),
+    );
+
     // Create and start the database
+    runtime_state.set_phase(runtime_state::Phase::RecoveringStorage);
     let mut db = ProximaDB::new(config).await?;
 
     // Start the database engine
+    runtime_state.set_phase(runtime_state::Phase::Binding);
     db.start().await?;
 
-    info!("ProximaDB server started successfully");
+    let serving = runtime_state::Phase::Serving;
+    runtime_state.set_phase(serving);
+    info!(
+        ready = serving.is_ready(),
+        "ProximaDB server started successfully"
+    );
 
     // Wait for a shutdown signal — SIGINT (ctrl-c) *or* SIGTERM. `docker stop`,
     // Kubernetes pod termination, and Spot-eviction drains all deliver SIGTERM;
@@ -352,10 +399,15 @@ async fn run() -> anyhow::Result<()> {
     }
 
     // Graceful shutdown
+    runtime_state.set_phase(runtime_state::Phase::Stopping);
     if let Err(e) = db.shutdown().await {
         error!("Error during shutdown: {}", e);
     }
 
+    // Clearing the record is the "no owner" signal: a supervisor that sees no
+    // file knows the data dir is free, and one that sees a stale record knows
+    // the previous owner died without cleaning up.
+    runtime_state.finish();
     info!("ProximaDB server stopped");
     Ok(())
 }

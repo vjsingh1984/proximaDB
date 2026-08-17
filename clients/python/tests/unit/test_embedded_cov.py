@@ -363,11 +363,19 @@ def test_find_binary_on_path(monkeypatch):
 
 
 class _FakeProcess:
-    def __init__(self):
+    def __init__(self, returncode=None):
         self.pid = 4321
         self.waited = False
         self.terminated = False
         self.killed = False
+        self.stderr = None
+        # Mirrors subprocess.Popen: None while the child is running, and the
+        # exit status once it has exited. Startup polls this to fail fast on a
+        # child that died instead of waiting out the ceiling.
+        self.returncode = returncode
+
+    def poll(self):
+        return self.returncode
 
     def wait(self, timeout=None):
         self.waited = True
