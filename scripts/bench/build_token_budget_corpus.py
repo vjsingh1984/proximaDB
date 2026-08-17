@@ -36,6 +36,9 @@ from proximadb_sdk.chunking_strategies import (
     TokenBudget,
     get_chunking_strategy,
 )
+from proximadb_sdk.embedding_providers.providers.local.open_weights import (
+    create_open_model_provider,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -55,6 +58,75 @@ def _python_tree_sha256(root: Path) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+def _runtime_contract(model: dict[str, Any], index: int) -> ResolvedInputContract:
+    provider_name = model.get("runtime_provider")
+    if provider_name != "open-weights":
+        raise ValueError(
+            f"models[{index}].runtime_provider must be 'open-weights', "
+            f"got {provider_name!r}"
+        )
+    model_id = str(model["model_id"])
+    revision = str(model["revision"])
+    tokenizer_id = str(model.get("tokenizer_id", model_id))
+    tokenizer_revision = str(model.get("tokenizer_revision", revision))
+    if tokenizer_id != model_id or tokenizer_revision != revision:
+        raise ValueError(
+            f"models[{index}] runtime resolution requires tokenizer_id/revision "
+            "to match model_id/revision"
+        )
+    output_dimension = model.get("output_dimension")
+    provider = create_open_model_provider(
+        model_id,
+        revision=revision,
+        dimension=int(output_dimension) if output_dimension is not None else None,
+        document_template=(
+            str(model["document_template"]) if "document_template" in model else None
+        ),
+        query_template=(
+            str(model["query_template"]) if "query_template" in model else None
+        ),
+        device=str(model.get("runtime_device", "cpu")),
+        extra={"local_files_only": bool(model.get("local_files_only", False))},
+    )
+    contract = provider.get_input_contract()
+    expected = {
+        "model_id": model_id,
+        "model_revision": revision,
+        "effective_context_limit": int(model["effective_context_limit"]),
+        "native_dimension": (
+            int(model["native_dimension"]) if "native_dimension" in model else None
+        ),
+        "output_dimension": (
+            int(output_dimension) if output_dimension is not None else None
+        ),
+    }
+    actual = {
+        "model_id": contract.model_id,
+        "model_revision": contract.model_revision,
+        "effective_context_limit": contract.effective_context_limit,
+        "native_dimension": contract.native_dimension,
+        "output_dimension": contract.output_dimension,
+    }
+    drift = {
+        key: {"declared": value, "runtime": actual[key]}
+        for key, value in expected.items()
+        if value is not None and actual[key] != value
+    }
+    dimensions = tuple(int(value) for value in model.get("output_dimensions", ()))
+    if dimensions and contract.supported_output_dimensions != dimensions:
+        drift["supported_output_dimensions"] = {
+            "declared": dimensions,
+            "runtime": contract.supported_output_dimensions,
+        }
+    if drift:
+        details = ", ".join(
+            f"{key}={values['declared']!r} (runtime {values['runtime']!r})"
+            for key, values in sorted(drift.items())
+        )
+        raise ValueError(f"models[{index}] declaration differs from runtime: {details}")
+    return contract
 
 
 def _load_contracts(path: Path) -> CompositeInputContract:
@@ -81,6 +153,9 @@ def _load_contracts(path: Path) -> CompositeInputContract:
                 f"models[{index}].tokenizer_revision must be an immutable "
                 "40-character Hugging Face commit SHA"
             )
+        if "runtime_provider" in model:
+            contracts.append(_runtime_contract(model, index))
+            continue
         counter = HuggingFaceTokenCounter.from_pretrained(
             tokenizer_id,
             revision=tokenizer_revision,

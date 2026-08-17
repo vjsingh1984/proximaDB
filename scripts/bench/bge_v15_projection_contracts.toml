@@ -11,7 +11,7 @@ document_template = "{text}"
 query_template = "Represent this sentence for searching relevant passages: {text}"
 native_dimension = 768
 output_dimension = 768
-output_dimensions = [768]
+runtime_provider = "open-weights"
 local_files_only = true
 
 [[models]]
@@ -23,5 +23,5 @@ document_template = "{text}"
 query_template = "Represent this sentence for searching relevant passages: {text}"
 native_dimension = 384
 output_dimension = 384
-output_dimensions = [384]
+runtime_provider = "open-weights"
 local_files_only = true

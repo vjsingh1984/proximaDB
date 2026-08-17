@@ -234,6 +234,29 @@ def test_nomic_provider_resolves_runtime_contract_and_matryoshka_dimension():
     assert contract.render("q", InputRole.QUERY) == "search_query: q"
 
 
+def test_runtime_contract_prefers_current_embedding_dimension_api():
+    provider = create_open_model_provider(
+        "sentence-transformers/all-MiniLM-L6-v2", device="cpu"
+    )
+
+    class FakeModel:
+        tokenizer = FakeFastTokenizer()
+        max_seq_length = 16
+
+        @staticmethod
+        def get_embedding_dimension():
+            return 384
+
+        @staticmethod
+        def get_sentence_embedding_dimension():
+            raise AssertionError("deprecated dimension API should not be called")
+
+    provider._model = FakeModel()
+    provider._initialized = True
+
+    assert provider.get_input_contract().output_dimension == 384
+
+
 def test_specialized_provider_rejects_unsupported_matryoshka_dimension():
     with pytest.raises(ValueError, match="does not support 300 dimensions"):
         get_provider("nomic", dimension=300)
