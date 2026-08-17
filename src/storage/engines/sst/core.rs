@@ -983,6 +983,13 @@ impl SstEngine {
         &self.filesystem
     }
 
+    /// Get the filesystem factory as the extracted-port view (TD-DECOMP-82):
+    /// `FilesystemFactory` impls `FilesystemPort` root-side, so callers bound
+    /// for the sst-engine crate coerce through here.
+    pub fn filesystem_port(&self) -> std::sync::Arc<dyn proximadb_storage_ports::FilesystemPort> {
+        self.filesystem.clone()
+    }
+
     /// Get unified filesystem (if initialized)
     pub fn unified_fs(&self) -> Option<&Arc<dyn FileSystem>> {
         self.unified_fs.as_ref()

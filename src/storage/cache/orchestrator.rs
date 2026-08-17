@@ -618,18 +618,10 @@ pub struct DynamicMemoryAllocator {
     usage_stats: Arc<DashMap<CacheType, UsageStats>>,
 }
 
-#[derive(Clone, Debug)]
-pub struct UsageStats {
-    pub hit_rate: f64,
-    pub avg_entry_size: usize,
-    pub access_frequency: f64,
-    pub last_rebalance: SystemTime,
-}
-
-/// Provider trait for engines/services to report usage snapshots
-pub trait CacheStatsProvider {
-    fn snapshot(&self) -> UsageStats;
-}
+// `UsageStats` + `CacheStatsProvider` hoisted to `proximadb-storage-ports`
+// (TD-DECOMP-82); re-exported so `crate::storage::cache::orchestrator::*`
+// paths resolve unchanged.
+pub use proximadb_storage_ports::{CacheStatsProvider, UsageStats};
 
 impl DynamicMemoryAllocator {
     pub fn new(total_budget: usize) -> Self {

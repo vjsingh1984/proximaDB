@@ -6826,6 +6826,7 @@ dependencies = [
  "proximadb-search-types",
  "proximadb-security",
  "proximadb-serialization",
+ "proximadb-sst-engine",
  "proximadb-storage-common",
  "proximadb-storage-encryption",
  "proximadb-storage-filesystem-types",
@@ -8671,6 +8672,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-sst-engine"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "dashmap",
+ "parking_lot",
+ "proximadb-compression",
+ "proximadb-engine-core",
+ "proximadb-filter-expression",
+ "proximadb-hardware",
+ "proximadb-proto",
+ "proximadb-records",
+ "proximadb-runtime-common",
+ "proximadb-search-types",
+ "proximadb-storage-common",
+ "proximadb-storage-filesystem-types",
+ "proximadb-storage-ports",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "proximadb-storage-common"
 version = "0.2.0"
 dependencies = [
@@ -8706,6 +8737,7 @@ dependencies = [
  "proximadb-proto",
  "proximadb-records",
  "proximadb-runtime-common",
+ "proximadb-storage-filesystem-types",
  "regex",
  "serde",
  "serde_json",

@@ -414,6 +414,11 @@ fn atomic_coordinator_staging(task: &SstCompactionTask) -> Result<StagingConfig>
 }
 
 impl Compaction {
+    /// Filesystem factory as the extracted-port view (TD-DECOMP-82).
+    fn filesystem_port(&self) -> std::sync::Arc<dyn proximadb_storage_ports::FilesystemPort> {
+        self.filesystem_factory.clone()
+    }
+
     /// Extract collection ID from file paths
     #[allow(dead_code)]
     fn extract_collection_id_from_paths(&self, paths: &[PathBuf]) -> Result<String> {
@@ -1767,7 +1772,7 @@ impl Compaction {
                     ))
                 })?;
             let bytes = staged
-                .upload_bounded_retaining_local(&self.filesystem_factory)
+                .upload_bounded_retaining_local(&self.filesystem_port())
                 .await
                 .map_err(|error| {
                     crate::core::StorageError::SstEngine(format!(
@@ -2388,7 +2393,7 @@ impl Compaction {
             // afterwards (finalize removes it; the old post-finalize local
             // metadata probe made cloud compaction fail at 100%).
             let written_bytes = staged
-                .finalize(&self.filesystem_factory)
+                .finalize(&self.filesystem_port())
                 .await
                 .map_err(|e| {
                     crate::core::StorageError::SstEngine(format!(
@@ -2824,7 +2829,7 @@ impl Compaction {
         // since false-success compaction deletes the input segments).
         if file_path.ends_with(proximadb_storage_common::pax_block::PAX_SEGMENT_EXT)
             && let Ok(bytes) = crate::storage::engines::sst::staged_write::read_object_bytes(
-                &self.filesystem_factory,
+                &self.filesystem_port(),
                 file_path,
             )
             .await

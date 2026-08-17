@@ -224,20 +224,20 @@
 use crate::core::bloom as bloom_filter;
 pub mod compaction;
 pub(crate) mod compaction_spill;
-pub mod decompression_cache;
-pub mod error;
+pub use proximadb_sst_engine::decompression_cache; // extracted TD-DECOMP-82
+pub use proximadb_sst_engine::error; // extracted TD-DECOMP-82
 pub mod extraction;
 pub mod filter_methods;
 pub mod flush_eventlog_integration;
 pub mod metrics; // TD-RDSTRAT-8: IVF coarse-probe operator metrics
-pub(crate) mod staged_write;
+pub use proximadb_sst_engine::staged_write; // extracted TD-DECOMP-82
 // Quantization now handled by unified compute module
 pub mod compactor_impl;
 pub mod indexed_reader;
 pub mod multi_stage_filter;
 pub mod object_economy_directory;
 pub mod readers;
-pub mod row_filter;
+pub use proximadb_sst_engine::row_filter; // extracted TD-DECOMP-82
 pub mod streaming_compaction;
 pub mod unified_metadata_serializer {
     pub use crate::storage::engines::core::sst_format_serializer::*;
@@ -253,7 +253,7 @@ pub mod codebook_integration;
 pub mod collections;
 pub mod core;
 #[cfg(feature = "cold-deletion-vectors")]
-pub mod deletion_vector_store; // TD-DELVEC-1 WI-3a-remaining-A: CAS'd per-segment DV store
+pub use proximadb_sst_engine::deletion_vector_store; // extracted TD-DECOMP-82; TD-DELVEC-1 WI-3a-remaining-A: CAS'd per-segment DV store
 // TD-DELVEC-1 WI-3b: cold-delete → DV-bit integration test (in-crate, to read
 // the pub(crate) DV store). The `tests/` dir isn't a compiled module, so the
 // test is wired in via #[path] under test + the feature.
