@@ -1,0 +1,72 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-CHUNK-2: Boundary-source / budget-segmenter split + the missing document-chunking port (ADR-091 D2/D3, Phase 1-2)
+
+[cols="1,3",options="header"]
+|===
+| Field | Value
+| Status | **Open — filed 2026-08-17 with ADR-091.** Gated on TD-CHUNK-1 landing red: this TD's job is to turn those failures green, and it cannot be judged without them.
+| Dim | D4 (compute-per-modality)
+| Pillar | REL — secondary OE
+| Blocks | TD-CHUNK-3 (stranded capabilities land as boundary sources behind this port), TD-CHUNK-4 (retirement needs the port as the migration target)
+| Depends on | TD-CHUNK-1 (suite/corpus/trace); TD-CG2 sets the `offset_basis` contract on the code path first, and this TD adopts the same marker for the document path
+|===
+
+== The re-factoring
+
+Today's eight "strategies" conflate two responsibilities. Separating them is what makes the invariants
+enforceable rather than repeatedly re-broken:
+
+* **`BoundarySource`** — proposes `(span, kind, meaning)` candidates. `meaning` is where the heading path,
+  the table identity or the JSON pointer lives. Composable: several sources may run over one document.
+* **`Segmenter`** — consumes candidates plus a `TokenBudget` and returns a **total** partition of exact
+  spans with declared overlap. Exactly one implementation.
+* **`ChunkTrace`** — non-optional, per TD-CHUNK-1.
+
+Mapping the existing enum onto it: `SLIDING_WINDOW`/`FIXED_SIZE` are the degenerate case (no source);
+`SENTENCE`/`PARAGRAPH`/`SEMANTIC`/`SEMANTIC_EMBEDDING` become sources; `HEADING` (which the SDK lacks
+entirely) becomes a source carrying the hierarchy path; `RECURSIVE` **disappears as a concept**, because
+cascading is what a segmenter does natively once candidates are exhausted — and note its "sentence tier"
+is provably unreachable today (a 4,000-document fuzz recorded `sentence: 0` uses), so nothing is lost.
+The enum survives as a compatibility facade so no caller breaks.
+
+**ProximaDB already has this shape and does not know it.** `preferred_boundaries()` is the proposal seam;
+`TokenBudgetStrategy` is the segmenter — and it is the *only* layer that survived audit with exact
+offsets, precisely because it slices the original text instead of rejoining pieces. This TD generalises
+what already works rather than introducing a new idea.
+
+== The port, and why its absence caused the fan-out
+
+`victor_contracts` has a live `TextChunkerProtocol` (two implementations, real consumers) and **no
+document-chunking port** — only an untyped, deprecated `register_chunker(chunker_instance: Any)`. Where a
+port existed the ecosystem converged (code chunking, ADR-029); where none existed, five codebases forked
+the same five algorithms. Define it in ProximaDB (canonical per ADR-091 D1), re-export from
+`victor_contracts` so Victor code depends on a neutral name.
+
+== Slices
+
+**S1 — fix the SDK to green against TD-CHUNK-1.** Mostly plain bug fixes needing no gate: track original
+offsets through the grouping loops instead of reconstructing them from joined text (one pattern, five
+files); rewrite `_preserve_special_blocks` as a single forward pass over `finditer` spans and hoist
+`_restore_special_blocks` out of the per-section loop (fixes the content destruction *and* one of the two
+quadratic terms together); merge sub-minimum spans instead of dropping them; make `max_chunk_size` a hard
+post-condition in the base class so no source can violate it; fix the CJK lookahead and the `|`
+character-class artefact; replace the `current += … + part` accumulators.
+
+**S1a — the one gated change.** `start_pos`/`end_pos` are persisted by `document_processor.py:437`/`:648`,
+so changing their meaning is a stored-contract change. Per the storage-migration mandate: ship the
+`offset_basis` marker **additively**, readers default to the legacy interpretation when absent, no flag
+day. Round-trip tests, not just compile.
+
+**S2 — land the port + facade.** Behind the compatibility facade, so the enum keeps working.
+
+**S3 — migrate the consumers.** anvaiops drops its `_PDB_STRATEGY` translation table and `HEADING`
+becomes a boundary source; fix its hardcoded `source_id="doc"` while the seam is open (today every
+document in every tenant emits colliding chunk ids). victor-rag consumes the port; its HTML/JSON sources
+need **reimplementation, not lifting**, because their offsets are fabricated.
+
+== Acceptance
+
+TD-CHUNK-1's eight properties green across every source set × corpus entry; the trace reports
+`bytes_covered == bytes_in` and `spans_dropped == 0` corpus-wide; anvaiops and victor-rag run the shared
+suite through the port; chunk count per document does not regress against the TD-CHUNK-1 baseline.
