@@ -13,14 +13,20 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use super::schema::{ColumnarSchemaBuilder, ColumnarSchemaConfig};
-use super::serialization::{
-    ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
+use crate::proximablocks::columnar_config_types::{
+    ColumnarConfig, ColumnarFileMetadata, QuantizationConfig,
 };
-use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::proximablocks::columnar_serialization::{
+    ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, MemoryOptimizationConfig,
+    SIMDConfig, SerializationCompressionConfig, SerializationResult,
+};
 use proximadb_compression::CompressionAlgorithm;
 use proximadb_records::ProximaRecord;
+use proximadb_storage_common::columnar_schema_full::{
+    self as schema_full, ColumnarFilterableSpec, ColumnarSchemaBuilder, ColumnarSchemaConfig,
+    CompressionMetadata, SchemaOptimization, WriterPropertiesConfig,
+};
+use proximadb_storage_ports::{FilesystemPort, StorageQuantizationEnginePort};
 
 /// Common configuration for VIPER and NOVA engines
 #[derive(Debug, Clone, Default)]
@@ -420,7 +426,7 @@ pub struct CommonColumnarOperations {
     // Distance computation removed - engines should use compute module directly
     /// Filesystem factory for I/O operations
     #[allow(dead_code)]
-    filesystem_factory: Arc<FilesystemFactory>,
+    filesystem_factory: Arc<dyn FilesystemPort>,
 
     /// Metadata cache
     metadata_cache: Arc<RwLock<MetadataCache>>,
@@ -538,7 +544,20 @@ impl CommonColumnarOperations {
     /// Create new common operations instance
     pub async fn new(
         config: CommonColumnarConfig,
-        filesystem_factory: Arc<FilesystemFactory>,
+        filesystem_factory: Arc<dyn FilesystemPort>,
+    ) -> Result<Self> {
+        Self::with_quantization_engine(config, filesystem_factory, None).await
+    }
+
+    /// Composition-root variant (TD-DECOMP-80): inject the quantization engine
+    /// (port) the serializer should use for transparent quantization. Passing
+    /// `None` mirrors the pre-extraction behavior of a `None` engine only when
+    /// no quantization is configured; root callers that configure quantization
+    /// supply the concrete engine (impl'd in the modality kernel crate).
+    pub async fn with_quantization_engine(
+        config: CommonColumnarConfig,
+        filesystem_factory: Arc<dyn FilesystemPort>,
+        quantization_engine: Option<Arc<dyn StorageQuantizationEnginePort>>,
     ) -> Result<Self> {
         info!(
             "Initializing common columnar operations with config: {:?}",
@@ -556,7 +575,12 @@ impl CommonColumnarOperations {
             memory_optimization: config.serialization_config.to_memory_optimization(),
             simd_config: config.serialization_config.to_simd_config(),
         };
-        let serializer = Arc::new(ColumnarSerializer::new(serialization_config)?);
+        let serializer = match quantization_engine {
+            Some(engine) => Arc::new(
+                ColumnarSerializer::new(serialization_config)?.with_quantization_engine(engine),
+            ),
+            None => Arc::new(ColumnarSerializer::new(serialization_config)?),
+        };
 
         // Distance computation removed - use compute module directly in engines
 
@@ -592,7 +616,7 @@ impl CommonColumnarOperations {
         collection_id: &str,
         dimension: usize,
         quantization: Option<&QuantizationConfig>,
-        filterable_columns: &[crate::proto::proximadb_v1::FilterableColumnSpec],
+        filterable_columns: &[proximadb_proto::proximadb_v1::FilterableColumnSpec],
     ) -> Result<(Arc<Schema>, CompressionMetadata)> {
         let start_time = std::time::Instant::now();
 
@@ -604,7 +628,7 @@ impl CommonColumnarOperations {
         let schema_config = ColumnarSchemaConfig {
             dimension,
             quantization: quantization.cloned(),
-            filterable_columns: crate::storage::engines::core::formats::columnar::schema::ColumnarFilterableSpec::from_proto_vec(filterable_columns),
+            filterable_columns: ColumnarFilterableSpec::from_proto_vec(filterable_columns),
             optimization: self.config.schema_config.to_schema_optimization(),
             compression_strategy: self
                 .config
@@ -840,7 +864,7 @@ impl CommonColumnarOperations {
         let compression_metadata = CompressionMetadata {
             column_compression: HashMap::new(),
             compression_ratios: HashMap::new(),
-            writer_properties: super::schema::WriterPropertiesConfig::default(),
+            writer_properties: WriterPropertiesConfig::default(),
         };
 
         Ok((metadata, schema, compression_metadata))
@@ -938,16 +962,16 @@ impl ColumnarPerformanceMonitor {
 
 // Extension trait implementations would go here to convert between different config types
 impl SerializationOptimizationConfig {
-    fn to_serialization_compression(&self) -> super::serialization::SerializationCompressionConfig {
-        super::serialization::SerializationCompressionConfig::default()
+    fn to_serialization_compression(&self) -> SerializationCompressionConfig {
+        SerializationCompressionConfig::default()
     }
 
-    fn to_memory_optimization(&self) -> super::serialization::MemoryOptimizationConfig {
-        super::serialization::MemoryOptimizationConfig::default()
+    fn to_memory_optimization(&self) -> MemoryOptimizationConfig {
+        MemoryOptimizationConfig::default()
     }
 
-    fn to_simd_config(&self) -> super::serialization::SIMDConfig {
-        super::serialization::SIMDConfig::default()
+    fn to_simd_config(&self) -> SIMDConfig {
+        SIMDConfig::default()
     }
 }
 
@@ -974,14 +998,14 @@ impl DistanceComputationConfig {
 }
 
 impl SchemaGenerationConfig {
-    fn to_schema_optimization(&self) -> super::schema::SchemaOptimization {
-        super::schema::SchemaOptimization::default()
+    fn to_schema_optimization(&self) -> SchemaOptimization {
+        SchemaOptimization::default()
     }
 }
 
 impl CompressionStrategy {
-    fn to_columnar_compression(&self) -> super::schema::CompressionStrategy {
-        super::schema::CompressionStrategy::default()
+    fn to_columnar_compression(&self) -> schema_full::CompressionStrategy {
+        schema_full::CompressionStrategy::default()
     }
 }
 

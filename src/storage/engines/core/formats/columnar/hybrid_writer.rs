@@ -153,6 +153,29 @@ pub(crate) fn root_quantization_engine()
     )))
 }
 
+/// Root-side batch/level quantization engine for the columnar serializer's port
+/// seam (TD-DECOMP-80): the `StorageQuantizationEnginePort` implemented by the
+/// modality kernel's `StorageQuantizationEngine`.
+pub(crate) fn root_storage_quantization_engine()
+-> Option<std::sync::Arc<dyn proximadb_storage_ports::StorageQuantizationEnginePort>> {
+    use crate::compute::quantization::quantization_engine::{
+        InMemoryCodebookStore, UnifiedQuantizationEngine,
+    };
+    use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
+
+    let distance_compute =
+        std::sync::Arc::new(proximadb_distance_kernel::engine::UnifiedDistanceCompute::default());
+    let unified_engine = std::sync::Arc::new(UnifiedQuantizationEngine::new(
+        distance_compute.clone(),
+        std::sync::Arc::new(InMemoryCodebookStore::new()),
+    ));
+    Some(std::sync::Arc::new(StorageQuantizationEngine::new(
+        unified_engine,
+        distance_compute,
+        crate::compute::quantization::storage_engine::StorageQuantizationConfig::default(),
+    )))
+}
+
 pub struct HybridParquetWriter {
     /// Configuration
     config: HybridWriterConfig,
