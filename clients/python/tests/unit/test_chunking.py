@@ -256,22 +256,34 @@ class TestFixedSizeChunking:
             # Most chunks should be close to the target size
             assert len(chunk.text) <= 20 or len(chunk.text) >= config.min_chunk_size
 
-    def test_fixed_size_chunking_small_chunks_skipped(self):
-        """Test that very small chunks are skipped in fixed-size chunking"""
+    def test_fixed_size_chunking_keeps_the_undersized_tail(self):
+        """The final window is emitted even when it is below min_chunk_size.
+
+        This previously asserted the tail was *skipped*. That behaviour silently
+        lost the end of every document whose length was not a multiple of
+        chunk_size, so it was a defect the test had codified: chunking is a
+        total partition of its input (ADR-091 axiom 1), and a caller can filter
+        a short chunk but cannot recover a deleted one.
+        """
         config = ChunkingConfig(
             strategy=ChunkingStrategy.FIXED_SIZE,
             chunk_size=10,
-            min_chunk_size=8,  # High minimum to test filtering
+            min_chunk_size=8,  # deliberately high: the tail is 1 char
         )
         chunker = TextChunker(config)
 
-        text = "Short text."  # Only 11 chars, should create 1 chunk of 10 chars and skip the 1 char remainder
+        text = "Short text."  # 11 chars -> a 10-char window plus a 1-char tail
 
         chunks = chunker.chunk_text(text, "small_skip_test")
 
-        # Should only have chunks that meet minimum size
+        # Nothing is lost: the spans cover every non-whitespace character.
+        assert "".join(c.text for c in chunks).replace(" ", "") == text.replace(" ", "")
+        # Only the LAST chunk may fall below the floor.
+        for chunk in chunks[:-1]:
+            assert len(chunk.text) >= config.min_chunk_size
+        # And every chunk still indexes its own span.
         for chunk in chunks:
-            assert len(chunk.text.strip()) >= config.min_chunk_size
+            assert text[chunk.start_pos : chunk.end_pos] == chunk.text
 
 
 class TestUnknownStrategy:

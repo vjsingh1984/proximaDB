@@ -77,16 +77,26 @@ def test_strategy_interface_metadata_and_normalization_helpers():
     assert strategy.normalize_text(" alpha   beta \n gamma ") == "alpha beta gamma"
 
 
-def test_fixed_size_strategy_chunks_and_skips_small_tail():
+def test_fixed_size_strategy_chunks_and_keeps_small_tail():
+    """The undersized final window is retained, not dropped.
+
+    Previously asserted ``["abcde", "fghij"]`` — i.e. that the trailing ``"xy"``
+    was discarded. Silently dropping the tail loses content; chunking is a total
+    partition of its input (ADR-091 axiom 1).
+    """
     strategy = FixedSizeStrategy(
         ChunkingConfig(chunk_size=5, min_chunk_size=3, chunk_overlap=0)
     )
-    chunks = strategy.chunk("abcdefghijxy", "doc", {"tenant": "acme"})
+    source = "abcdefghijxy"
+    chunks = strategy.chunk(source, "doc", {"tenant": "acme"})
 
-    assert [chunk.text for chunk in chunks] == ["abcde", "fghij"]
+    assert [chunk.text for chunk in chunks] == ["abcde", "fghij", "xy"]
+    assert "".join(chunk.text for chunk in chunks) == source
+    for chunk in chunks:
+        assert source[chunk.start_pos : chunk.end_pos] == chunk.text
     assert chunks[0].metadata["chunk_type"] == "fixed_size"
     assert chunks[0].metadata["tenant"] == "acme"
-    assert chunks[0].metadata["total_chunks"] == 2
+    assert chunks[0].metadata["total_chunks"] == 3
     assert strategy.chunk("   ", "doc") == []
 
 

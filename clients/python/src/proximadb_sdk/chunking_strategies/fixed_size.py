@@ -8,7 +8,8 @@ sentence or paragraph boundaries.
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from .base import ChunkingStrategyInterface, TextChunk, _coalesce_text_source
+from .base import OFFSET_CONTRACT_EXACT, ChunkingStrategyInterface, TextChunk
+from .spans import is_empty, strip_span
 
 
 class FixedSizeStrategy(ChunkingStrategyInterface):
@@ -22,6 +23,9 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
     #: Boundaries are absolute multiples of ``chunk_size`` over the concatenated
     #: input, so a bounded buffer of ``chunk_size`` chars is enough to stream.
     supports_streaming = True
+
+    #: Span-first: every chunk is a verbatim slice of the source.
+    _offset_contract = OFFSET_CONTRACT_EXACT
 
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
@@ -47,19 +51,27 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
         text_length = len(text)
 
         # Create chunks of fixed size
-        for start_pos in range(0, text_length, chunk_size):
-            end_pos = min(start_pos + chunk_size, text_length)
-            chunk_text = text[start_pos:end_pos].strip()
+        for window_start in range(0, text_length, chunk_size):
+            window_end = min(window_start + chunk_size, text_length)
+            is_final = window_end >= text_length
 
-            # Skip chunks that are too small
-            if len(chunk_text) < self.config.min_chunk_size:
+            # Narrow the SPAN rather than stripping the text: stripping the text
+            # while keeping the raw window bounds is what made a chunk stop
+            # equalling its own span.
+            start_pos, end_pos = strip_span(text, window_start, window_end)
+            if is_empty((start_pos, end_pos)):
                 continue
 
-            # Create chunk
+            # Undersized windows are skipped, but never the last one — dropping
+            # the tail silently loses content, and after the min<=chunk clamp in
+            # ChunkingConfig the tail is the only window that can be undersized.
+            if end_pos - start_pos < self.config.min_chunk_size and not is_final:
+                continue
+
             chunk_id = f"{source_id}_chunk_{len(chunks)}"
 
             chunk = TextChunk(
-                text=chunk_text,
+                text=text[start_pos:end_pos],
                 start_pos=start_pos,
                 end_pos=end_pos,
                 chunk_id=chunk_id,
@@ -112,16 +124,20 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
         buffer_origin = 0
         kept = 0
 
-        def make_chunk(start_pos: int, raw: str) -> TextChunk | None:
+        def make_chunk(window_start: int, raw: str, is_final: bool) -> TextChunk | None:
             nonlocal kept
-            end_pos = start_pos + len(raw)
-            chunk_text = raw.strip()
-            if len(chunk_text) < min_chunk_size:
+            # Narrow within the window, then slice — identical to the batch path
+            # so text, offsets and ids agree piece-size for piece-size.
+            local_start, local_end = strip_span(raw, 0, len(raw))
+            if is_empty((local_start, local_end)):
                 return None
+            if local_end - local_start < min_chunk_size and not is_final:
+                return None
+            start_pos = window_start + local_start
             chunk = TextChunk(
-                text=chunk_text,
+                text=raw[local_start:local_end],
                 start_pos=start_pos,
-                end_pos=end_pos,
+                end_pos=window_start + local_end,
                 chunk_id=f"{source_id}_chunk_{kept}",
                 metadata={
                     "source_id": source_id,
@@ -138,17 +154,19 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
             if not piece:
                 continue
             buffer += piece
-            # Emit every full window currently available in the buffer.
-            while len(buffer) >= chunk_size:
-                raw = buffer[:chunk_size]
-                chunk = make_chunk(buffer_origin, raw)
+            # STRICTLY greater, so the window we emit is provably not the last:
+            # the batch path knows which window is final and applies the
+            # last-chunk escape to it, and retaining one window's worth here is
+            # what lets the streaming path make the same call without lookahead.
+            while len(buffer) > chunk_size:
+                chunk = make_chunk(buffer_origin, buffer[:chunk_size], False)
                 if chunk is not None:
                     yield chunk
                 buffer = buffer[chunk_size:]
                 buffer_origin += chunk_size
 
-        # Flush the final partial window (batch slices the tail too).
+        # Flush the remainder — at most one window, and it IS the final one.
         if buffer:
-            chunk = make_chunk(buffer_origin, buffer)
+            chunk = make_chunk(buffer_origin, buffer, True)
             if chunk is not None:
                 yield chunk

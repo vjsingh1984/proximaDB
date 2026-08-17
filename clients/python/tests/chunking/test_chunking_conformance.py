@@ -22,8 +22,9 @@ what the code *does*, not what anyone believes it does. That distinction is the
 whole lesson of the audit that produced ADR-091: the pre-existing suite had 426
 passing tests and caught none of these defects.
 
-Baseline recorded 2026-08-17 against develop @482075bc1:
-**60 cases, 22 clean, 38 violating, 67 violations, 0 errors.**
+Baseline, most recently re-measured after the ``fixed_size`` span-first
+conversion: **60 cases, 31 clean, 29 violating, 57 violations, 0 errors.**
+(Initial recording against develop @482075bc1 was 22 clean / 67 violations.)
 
 Note on running locally
 -----------------------
@@ -85,18 +86,10 @@ def _v(*names: str) -> frozenset[Invariant]:
 
 
 #: Recorded state of today's code. Generated, not hand-written.
-#: ``sliding_window`` is absent because it is clean on all ten entries — it was
-#: the only strategy whose offsets survived the audit.
+#: Strategies absent from this mapping are clean on all ten entries:
+#: ``sliding_window`` (always was — the only one whose offsets survived the
+#: audit) and ``fixed_size`` (converted to span-first).
 BASELINE: dict[tuple[str, str], frozenset[Invariant]] = {
-    ("fixed_size", "prose"): _v("exactness"),
-    ("fixed_size", "header_dense_markdown"): _v("exactness"),
-    ("fixed_size", "cjk_emoji"): _v("exactness"),
-    ("fixed_size", "whitespace_heavy"): _v("exactness"),
-    ("fixed_size", "sub_minimum"): _v("non_empty", "totality"),
-    ("fixed_size", "table_markdown"): _v("exactness"),
-    ("fixed_size", "code_fenced_markdown"): _v("exactness"),
-    ("fixed_size", "html"): _v("exactness"),
-    ("fixed_size", "json_doc"): _v("exactness"),
     ("sentence", "prose"): _v("exactness", "totality"),
     ("sentence", "header_dense_markdown"): _v("exactness", "totality"),
     ("sentence", "cjk_emoji"): _v("cap", "stream_equivalence"),
@@ -133,8 +126,8 @@ BASELINE: dict[tuple[str, str], frozenset[Invariant]] = {
 }
 
 #: Aggregate ratchet. Clean cases may only increase; violations may only fall.
-CLEAN_FLOOR = 22
-VIOLATION_CEILING = 67
+CLEAN_FLOOR = 31
+VIOLATION_CEILING = 57
 
 
 def _adapter(strategy: ChunkingStrategy) -> ChunkerAdapter:
