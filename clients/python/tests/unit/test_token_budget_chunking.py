@@ -141,6 +141,76 @@ def test_composite_contract_uses_most_restrictive_rendered_input():
     assert all(max(chunk.metadata["token_counts"].values()) <= 7 for chunk in chunks)
 
 
+def test_composite_contract_counts_identical_runtime_inputs_once():
+    calls = []
+
+    class CountingCounter(WordCounter):
+        def count(self, text: str) -> int:
+            calls.append((self.name, text))
+            return super().count(text)
+
+    first_counter = CountingCounter("shared", advertised_limit=8)
+    second_counter = CountingCounter("shared", advertised_limit=8)
+    first = ResolvedInputContract(
+        model_id="first",
+        model_revision="one",
+        counter=first_counter,
+        effective_context_limit=8,
+        renderer=InputRenderer(document_template="passage: {text}"),
+    )
+    second = ResolvedInputContract(
+        model_id="second",
+        model_revision="two",
+        counter=second_counter,
+        effective_context_limit=7,
+        renderer=InputRenderer(document_template="passage: {text}"),
+    )
+    composite = CompositeInputContract((first, second))
+
+    assert composite.counts("one two", InputRole.DOCUMENT) == {
+        "first": 5,
+        "second": 5,
+    }
+    assert composite.fits("one two", InputRole.DOCUMENT, 7)
+    assert composite.validate("one two", InputRole.DOCUMENT) == {
+        "first": 5,
+        "second": 5,
+    }
+    assert calls == [
+        ("shared", "passage: one two"),
+        ("shared", "passage: one two"),
+        ("shared", "passage: one two"),
+    ]
+
+
+def test_composite_contract_does_not_share_different_rendered_inputs():
+    calls = []
+
+    class CountingCounter(WordCounter):
+        def count(self, text: str) -> int:
+            calls.append(text)
+            return super().count(text)
+
+    first = ResolvedInputContract(
+        model_id="first",
+        model_revision="one",
+        counter=CountingCounter("shared", advertised_limit=8),
+        effective_context_limit=8,
+        renderer=InputRenderer(document_template="passage: {text}"),
+    )
+    second = ResolvedInputContract(
+        model_id="second",
+        model_revision="two",
+        counter=CountingCounter("shared", advertised_limit=8),
+        effective_context_limit=8,
+        renderer=InputRenderer(document_template="document: {text}"),
+    )
+
+    CompositeInputContract((first, second)).counts("one", InputRole.DOCUMENT)
+
+    assert calls == ["passage: one", "document: one"]
+
+
 def test_sentence_boundaries_are_independent_of_legacy_character_size():
     strategy = get_chunking_strategy(
         ChunkingStrategy.SENTENCE,
