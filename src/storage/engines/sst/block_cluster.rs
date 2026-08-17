@@ -253,8 +253,14 @@ const MIN_ROWS_FOR_IVF: usize = 64;
 /// cell-fetch is one efficient IOP. `PROXIMADB_IVF_K` overrides to map the
 /// GETs-vs-recall curve (eval knob, not a production setting).
 fn ivf_fine_cell_count(n_usable: usize, dim: usize) -> usize {
-    let iop_target =
-        proximadb_storage_common::iops_budget::IopsBudget::CLOUD.target_block_bytes() as usize;
+    // Shared with the read-side range planner so both sides agree on what an
+    // "IOP" is (TD-IVF-4: two independent constants is the defect). `None`
+    // because the destination backend is genuinely unknown here — compaction
+    // stages the segment to a LOCAL file and publishes afterwards, so the path
+    // in hand would resolve to the LOCAL profile and be wrong. That preserves
+    // today's behaviour while making the gap explicit rather than implicit in a
+    // hard-coded constant.
+    let iop_target = proximadb_storage_common::iops_budget::write_target_block_bytes(None) as usize;
     std::env::var("PROXIMADB_IVF_K")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
