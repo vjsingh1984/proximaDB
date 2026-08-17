@@ -1015,9 +1015,10 @@ pub async fn get_collection_v2(
             // Extract collection info from response
             let collection = resp.collection.unwrap_or_default();
             let config = collection.config.unwrap_or_default();
-            // Keep the Option: an absent stats block means "unknown", and
-            // `unwrap_or_default()` would turn that into a reported 0.
-            let stats_opt = collection.stats.clone();
+            // Read the count off the Option *before* unwrapping: an absent stats
+            // block means "unknown", and `unwrap_or_default()` below would turn
+            // that into a reported 0.
+            let record_count = record_count_for_wire(collection.stats.as_ref());
             let stats = collection.stats.unwrap_or_default();
 
             let engine_str = collection_storage_engine_label(config.storage_engine);
@@ -1135,7 +1136,7 @@ pub async fn get_collection_v2(
                 ),
                 schema,
                 stats: CollectionStatsV2 {
-                    record_count: record_count_for_wire(stats_opt.as_ref()),
+                    record_count,
                     storage_size_bytes: non_negative_stat(stats.data_size_bytes),
                     indexed_fields,
                     text_field_count,
