@@ -213,6 +213,27 @@ class SentenceTransformerMixin:
             query_encode_parameters=metadata.query_encode_parameters,
         )
 
+    def get_runtime_info(self) -> dict[str, str | None]:
+        """Return the actual loaded inference runtime for artifact provenance."""
+        self.ensure_initialized()
+        backend_getter = getattr(self._model, "get_backend", None)
+        backend = backend_getter() if callable(backend_getter) else self.config.backend
+        device = getattr(self._model, "device", None)
+        dtype = getattr(self._model, "dtype", None)
+
+        def normalized(value):
+            if value is None:
+                return None
+            rendered = str(value)
+            return rendered.removeprefix("torch.")
+
+        return {
+            "backend": normalized(backend) or "torch",
+            "compute_dtype": normalized(dtype),
+            "device": normalized(device) or "unresolved",
+            "requested_device": self.config.device,
+        }
+
     def _encode_with_prompt(self, texts: list[str], prompt_name: str) -> np.ndarray:
         """Encode using a registered native ST prompt, falling back to a plain
         encode if the prompt was not configured."""

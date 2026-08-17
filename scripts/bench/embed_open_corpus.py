@@ -171,19 +171,28 @@ def prepare_shards(
     dimension: int,
     shard_size: int,
     rows: int,
+    runtime: dict[str, Any],
     input_role: str = "document",
 ) -> list[Path]:
     if input_role not in {"document", "query"}:
         raise ValueError(f"unsupported embedding input role {input_role!r}")
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "--", model_id).strip("-")
+    runtime_slug = re.sub(
+        r"[^A-Za-z0-9_.-]+",
+        "--",
+        "-".join(
+            str(runtime.get(key) or "none")
+            for key in ("backend", "device", "compute_dtype")
+        ),
+    ).strip("-")
     shard_dir = (
         output_dir
         / "shards"
-        / f"{corpus_sha256[:16]}-{slug}-{revision[:12]}-{dimension}d-{input_role}"
+        / f"{corpus_sha256[:16]}-{slug}-{revision[:12]}-{dimension}d-{input_role}-{runtime_slug}"
     )
     shard_dir.mkdir(parents=True, exist_ok=True)
     identity = {
-        "schema_version": 1,
+        "schema_version": 2,
         "transport_sha256": _sha256(Path(__file__).resolve()),
         "corpus_sha256": corpus_sha256,
         "model_id": model_id,
@@ -194,6 +203,8 @@ def prepare_shards(
         "shard_size": shard_size,
         "rows": rows,
         "input_role": input_role,
+        "runtime": runtime,
+        "artifact_dtype": "float32",
     }
     identity_path = shard_dir / "manifest.json"
     if identity_path.exists():
@@ -407,6 +418,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         revision=args.revision,
         dimension=args.dimension,
         device=args.device,
+        backend=args.backend,
         batch_size=args.batch_size,
         normalize=True,
     )
@@ -417,6 +429,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(
             "loaded runtime dimension does not match the requested dimension"
         )
+    runtime = provider.get_runtime_info()
 
     query_texts: list[str] | None = None
     query_ids: tuple[str, ...] = ()
@@ -451,6 +464,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         dimension=args.dimension,
         shard_size=args.shard_size,
         rows=len(texts),
+        runtime=runtime,
     )
     pending = pending_shards(
         shard_paths,
@@ -491,6 +505,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             shard_size=args.shard_size,
             rows=len(query_texts),
             input_role="query",
+            runtime=runtime,
         )
         query_pending = pending_shards(
             query_shard_paths,
@@ -549,6 +564,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "corpus_sha256": texts_sha256,
         "shard_size": args.shard_size,
         "normalize_embeddings": True,
+        "runtime": runtime,
+        "artifact_dtype": "float32",
         "qrels": qrels_summary,
         "query_ids": query_ids_manifest,
         **result,
@@ -587,6 +604,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-text-field", default="text")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--device")
+    parser.add_argument("--backend", choices=("torch", "onnx", "openvino"))
     return parser.parse_args()
 
 

@@ -47,6 +47,18 @@ def _load_embedder_module():
     return module
 
 
+def _load_tokenizer_validator_module():
+    repo = Path(__file__).resolve().parents[4]
+    path = repo / "scripts" / "bench" / "validate_open_embedding_tokenizers.py"
+    spec = importlib.util.spec_from_file_location(
+        "validate_open_embedding_tokenizers", path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class WordCounter:
     name = "test/word-counter"
     fingerprint = "word-counter-v1"
@@ -313,6 +325,12 @@ def test_source_export_fails_closed_on_missing_or_unreadable_sources(tmp_path: P
 
 def test_embedding_shards_are_content_and_contract_addressed(tmp_path: Path):
     embedder = _load_embedder_module()
+    runtime = {
+        "backend": "torch",
+        "compute_dtype": "float32",
+        "device": "mps",
+        "requested_device": "mps",
+    }
     paths = embedder.prepare_shards(
         output_dir=tmp_path,
         corpus_sha256="a" * 64,
@@ -322,6 +340,7 @@ def test_embedding_shards_are_content_and_contract_addressed(tmp_path: Path):
         dimension=3,
         shard_size=2,
         rows=5,
+        runtime=runtime,
     )
     assert [path.name for path in paths] == [
         "00000000.npy",
@@ -346,8 +365,72 @@ def test_embedding_shards_are_content_and_contract_addressed(tmp_path: Path):
         shard_size=2,
         rows=5,
         input_role="query",
+        runtime=runtime,
     )
     assert query_paths[0].parent != paths[0].parent
+    identity = json.loads((paths[0].parent / "manifest.json").read_text())
+    assert identity["runtime"] == runtime
+    assert "mps" in str(paths[0].parent)
+    cpu_paths = embedder.prepare_shards(
+        output_dir=tmp_path,
+        corpus_sha256="a" * 64,
+        model_id="BAAI/bge-base-en-v1.5",
+        revision="b" * 40,
+        contract_fingerprint="c" * 64,
+        dimension=3,
+        shard_size=2,
+        rows=5,
+        runtime={**runtime, "device": "cpu", "requested_device": "cpu"},
+    )
+    assert cpu_paths[0].parent != paths[0].parent
+
+
+def test_tokenizer_validator_isolates_unknown_models(monkeypatch: pytest.MonkeyPatch):
+    validator = _load_tokenizer_validator_module()
+
+    class Metadata:
+        tokenizer_name = None
+        name = "known/model"
+        revision = "revision"
+        max_length = 8
+        document_template = "{text}"
+        query_template = None
+
+    class Spec:
+        metadata = Metadata()
+        trust_remote_code = False
+
+    class Counter:
+        advertised_limit = 8
+        fingerprint = "fingerprint"
+
+        @staticmethod
+        def count(_text):
+            return 3
+
+        @staticmethod
+        def content_offsets(_text):
+            return ((0, 5),)
+
+    def get_spec(model_id):
+        if model_id == "unknown/model":
+            raise ValueError("unknown open embedding model")
+        return Spec()
+
+    monkeypatch.setattr(validator, "get_open_model_spec", get_spec)
+    monkeypatch.setattr(
+        validator.HuggingFaceTokenCounter,
+        "from_pretrained",
+        lambda *args, **kwargs: Counter(),
+    )
+
+    results = validator.validate_models(
+        ["unknown/model", "known/model"], local_files_only=True
+    )
+
+    assert [row["status"] for row in results] == ["error", "ok"]
+    assert results[0]["model_id"] == "unknown/model"
+    assert results[1]["tokenizer_fingerprint"] == "fingerprint"
 
 
 def test_embedding_finalizer_emits_query_base_headers_and_pca_spectrum(tmp_path: Path):
@@ -516,6 +599,15 @@ def test_qrels_mode_routes_passages_and_queries_through_distinct_roles(
         def get_dimension():
             return 2
 
+        @staticmethod
+        def get_runtime_info():
+            return {
+                "backend": "torch",
+                "compute_dtype": "float32",
+                "device": "mps",
+                "requested_device": "mps",
+            }
+
         @classmethod
         def embed_passages(cls, values):
             cls.passage_calls.append(list(values))
@@ -549,7 +641,8 @@ def test_qrels_mode_routes_passages_and_queries_through_distinct_roles(
             query_id_field="id",
             query_text_field="text",
             batch_size=4,
-            device=None,
+            device="mps",
+            backend="torch",
         )
     )
 
@@ -560,4 +653,6 @@ def test_qrels_mode_routes_passages_and_queries_through_distinct_roles(
     assert result["query_rows"] == 1
     assert result["qrels"]["query_count"] == 1
     assert result["transport_sha256"] == embedder._sha256(Path(embedder.__file__))
+    assert result["runtime"]["device"] == "mps"
+    assert result["artifact_dtype"] == "float32"
     assert json.loads(Path(result["query_ids"]["path"]).read_text()) == ["q1"]
