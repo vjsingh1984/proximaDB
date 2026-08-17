@@ -94,6 +94,9 @@ hard-splits by tokenizer offsets when no structural boundary fits.
 Two models can share a tokenizer and still have different effective limits, prefixes, task
 adapters or output semantics. Conversely, the BGE small/base/large v1.5 models share the same
 tokenizer and 512 cap, so a composite contract correctly permits one controlled corpus.
+Composite counting is keyed by the exact tokenizer fingerprint plus the role-rendered input, so
+such a controlled pair tokenizes an identical candidate once while still recording a count for
+each model. Different tokenizers or role renderings are never coalesced.
 
 A pool/cache identity includes the complete budget and contract manifests. A tokenizer fingerprint
 alone cannot key a chunker.

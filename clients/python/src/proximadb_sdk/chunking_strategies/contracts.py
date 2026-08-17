@@ -258,22 +258,36 @@ class CompositeInputContract:
         return min(contract.effective_context_limit for contract in self.contracts)
 
     def counts(self, text: str, role: InputRole) -> dict[str, int]:
-        return {
-            contract.model_id: contract.count(text, role) for contract in self.contracts
-        }
+        shared: dict[tuple[str, str], int] = {}
+        counts: dict[str, int] = {}
+        for contract in self.contracts:
+            rendered = contract.render(text, role)
+            key = (contract.counter.fingerprint, rendered)
+            count = shared.get(key)
+            if count is None:
+                count = contract.counter.count(rendered)
+                shared[key] = count
+            counts[contract.model_id] = count
+        return counts
 
     def fits(self, text: str, role: InputRole, target_tokens: int) -> bool:
+        counts = self.counts(text, role)
         return all(
-            contract.count(text, role)
+            counts[contract.model_id]
             <= min(target_tokens, contract.effective_context_limit)
             for contract in self.contracts
         )
 
     def validate(self, text: str, role: InputRole) -> dict[str, int]:
-        return {
-            contract.model_id: contract.validate(text, role)
-            for contract in self.contracts
-        }
+        counts = self.counts(text, role)
+        for contract in self.contracts:
+            count = counts[contract.model_id]
+            if count > contract.effective_context_limit:
+                raise ValueError(
+                    f"{contract.model_id} {role.value} input has {count} tokens, "
+                    f"exceeding the effective limit {contract.effective_context_limit}"
+                )
+        return counts
 
     def to_manifest(self) -> dict[str, Any]:
         payload = {
