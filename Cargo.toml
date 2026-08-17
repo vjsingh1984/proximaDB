@@ -142,6 +142,7 @@ members = [
     "crates/storage/proximadb-storage-filesystem-types",
     "crates/storage/proximadb-storage-strategy",
     "crates/storage/proximadb-storage-tenant",
+    "crates/storage/proximadb-sst-engine",
     "crates/storage/proximadb-storage-transaction",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
@@ -344,6 +345,8 @@ proximadb-montecarlo = { path = "crates/horizontal/proximadb-montecarlo" }
 proximadb-kafka-deserializer = { path = "crates/horizontal/proximadb-kafka-deserializer" }
 proximadb-network-middleware = { path = "crates/platform/proximadb-network-middleware" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-engine-core = { path = "crates/storage/proximadb-engine-core" }
+proximadb-sst-engine = { path = "crates/storage/proximadb-sst-engine" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
@@ -493,6 +496,7 @@ proximadb-montecarlo = { workspace = true }
 proximadb-kafka-deserializer = { workspace = true }
 proximadb-network-middleware = { workspace = true }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-sst-engine = { path = "crates/storage/proximadb-sst-engine" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }

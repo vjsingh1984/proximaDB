@@ -17,10 +17,10 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_storage_ports::FilesystemPort;
 
 /// A segment write staged for a possibly-remote target URL.
-pub(crate) struct StagedSegmentWrite {
+pub struct StagedSegmentWrite {
     /// Remote URL to upload to on finalize (`None` ⇒ local atomic rename).
     remote_url: Option<String>,
     /// Path the local-file segment writer must write to.
@@ -33,20 +33,20 @@ impl StagedSegmentWrite {
     /// Whether `target_url` is an object-store key rather than a local path.
     /// A completed multipart upload may publish such a key directly: its
     /// uncommitted blocks are invisible until the final block-list commit.
-    pub(crate) fn is_remote_target(target_url: &str) -> bool {
+    pub fn is_remote_target(target_url: &str) -> bool {
         target_url.contains("://") && !target_url.starts_with("file://")
     }
 
     /// Prepare a staged write for `target_url` (the full staging FILE url,
     /// e.g. `az://c/…/__flush/L0_x.pax` or `file:///…/__flush/L0_x.pax`).
-    pub(crate) async fn begin(target_url: &str) -> Result<Self> {
+    pub async fn begin(target_url: &str) -> Result<Self> {
         Self::begin_with_scratch(target_url, None).await
     }
 
     /// Prepare a staged write while placing remote-upload scratch below the
     /// caller's already-admitted local directory. Spill compaction must not
     /// escape its reserved filesystem by silently falling back to system tmp.
-    pub(crate) async fn begin_in(target_url: &str, scratch_root: &std::path::Path) -> Result<Self> {
+    pub async fn begin_in(target_url: &str, scratch_root: &std::path::Path) -> Result<Self> {
         Self::begin_with_scratch(target_url, Some(scratch_root)).await
     }
 
@@ -102,7 +102,7 @@ impl StagedSegmentWrite {
     }
 
     /// The local path the segment writer must write to.
-    pub(crate) fn local_path(&self) -> &str {
+    pub fn local_path(&self) -> &str {
         &self.local_path
     }
 
@@ -113,14 +113,14 @@ impl StagedSegmentWrite {
     /// of the time in review round 1 of this fix). Sidecar-aware: an Arrow
     /// segment's `{path}.idx` (required by `ArrowBlockReader::open`) is
     /// uploaded alongside as `{remote}.idx` and its scratch removed too.
-    pub(crate) async fn finalize(self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
+    pub async fn finalize(self, factory: &Arc<dyn FilesystemPort>) -> Result<u64> {
         self.finalize_with_policy(factory, false).await
     }
 
     /// Finalize only when a remote backend guarantees bounded-memory upload.
     /// The local direct-write path is already bounded and needs no backend
     /// capability check.
-    pub(crate) async fn finalize_bounded(self, factory: &Arc<FilesystemFactory>) -> Result<u64> {
+    pub async fn finalize_bounded(self, factory: &Arc<dyn FilesystemPort>) -> Result<u64> {
         self.finalize_with_policy(factory, true).await
     }
 
@@ -128,9 +128,9 @@ impl StagedSegmentWrite {
     /// this guard is dropped. Spill compaction uses the retained local PAX for
     /// post-publication cache promotion, avoiding an object-store reread and a
     /// segment-sized in-memory seed.
-    pub(crate) async fn upload_bounded_retaining_local(
+    pub async fn upload_bounded_retaining_local(
         &self,
-        factory: &Arc<FilesystemFactory>,
+        factory: &Arc<dyn FilesystemPort>,
     ) -> Result<u64> {
         if let Some(remote) = &self.remote_url {
             let fs = factory
@@ -198,7 +198,7 @@ impl StagedSegmentWrite {
 
     async fn finalize_with_policy(
         mut self,
-        factory: &Arc<FilesystemFactory>,
+        factory: &Arc<dyn FilesystemPort>,
         require_bounded_remote: bool,
     ) -> Result<u64> {
         if let Some(remote) = self.remote_url.clone() {
@@ -253,10 +253,7 @@ impl Drop for StagedSegmentWrite {
 /// Read a whole segment object, routing cloud URLs through the `FileSystem`
 /// (the defect-6 READ class: string-stripping a cloud URL and `tokio::fs::read`ing
 /// the result can never find the object).
-pub(crate) async fn read_object_bytes(
-    factory: &Arc<FilesystemFactory>,
-    url: &str,
-) -> Result<Vec<u8>> {
+pub async fn read_object_bytes(factory: &Arc<dyn FilesystemPort>, url: &str) -> Result<Vec<u8>> {
     if url.contains("://") && !url.starts_with("file://") {
         let fs = factory
             .get_filesystem(url)
@@ -275,13 +272,13 @@ pub(crate) async fn read_object_bytes(
 /// A segment made readable at a LOCAL path for path-based readers
 /// (`ArrowBlockReader::open`). Cloud objects download to a scratch file that is
 /// removed on drop; local paths pass through untouched.
-pub(crate) struct LocalizedSegment {
+pub struct LocalizedSegment {
     path: String,
     scratch: bool,
 }
 
 impl LocalizedSegment {
-    pub(crate) async fn fetch(factory: &Arc<FilesystemFactory>, url: &str) -> Result<Self> {
+    pub async fn fetch(factory: &Arc<dyn FilesystemPort>, url: &str) -> Result<Self> {
         if url.contains("://") && !url.starts_with("file://") {
             let bytes = read_object_bytes(factory, url).await?;
             let dir = std::env::temp_dir().join("proximadb-segment-scratch");
@@ -313,7 +310,7 @@ impl LocalizedSegment {
         }
     }
 
-    pub(crate) fn path(&self) -> &str {
+    pub fn path(&self) -> &str {
         &self.path
     }
 }
@@ -348,11 +345,7 @@ mod tests {
             !final_path.exists(),
             "staged bytes must not be query-visible"
         );
-        let factory = Arc::new(
-            FilesystemFactory::create(Default::default())
-                .await
-                .expect("factory"),
-        );
+        let factory = crate::test_local_port::local_port::local_port();
         staged.finalize(&factory).await.expect("finalize");
         assert_eq!(std::fs::read(&final_path).expect("read final"), b"segment");
         assert_eq!(

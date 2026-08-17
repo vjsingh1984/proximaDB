@@ -847,7 +847,7 @@ impl SstEngine {
                 // Cloud URLs download to a scratch file for the path-based reader
                 // (defect-6 read class); local paths pass through.
                 let seg = crate::storage::engines::sst::staged_write::LocalizedSegment::fetch(
-                    self.filesystem(),
+                    &self.filesystem_port(),
                     file,
                 )
                 .await?;
@@ -866,7 +866,7 @@ impl SstEngine {
                 // P3: read a PAX segment via the mixed-format primitive (magic-detected,
                 // reuses PaxSegmentScanner). Best-effort schema keys (empty) for now.
                 let bytes = crate::storage::engines::sst::staged_write::read_object_bytes(
-                    self.filesystem(),
+                    &self.filesystem_port(),
                     file,
                 )
                 .await
@@ -2401,7 +2401,7 @@ impl SstEngine {
         // Cloud URLs download to a scratch file for the path-based reader
         // (defect-6 read class); local paths pass through.
         let seg = crate::storage::engines::sst::staged_write::LocalizedSegment::fetch(
-            self.filesystem(),
+            &self.filesystem_port(),
             arrow_path,
         )
         .await?;
@@ -2494,7 +2494,7 @@ impl SstEngine {
         debug!("📦 Exact PAX scan: {}", pax_path);
 
         let bytes = crate::storage::engines::sst::staged_write::read_object_bytes(
-            self.filesystem(),
+            &self.filesystem_port(),
             pax_path,
         )
         .await

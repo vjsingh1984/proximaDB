@@ -30,6 +30,8 @@ pub mod iops_budget;
 pub mod metadata_collector;
 pub mod mmap_file;
 pub mod native_metadata;
+pub mod proto_metadata_helper;
+pub mod write_strategy;
 /// Re-export shim — the canonical `ObjectStoreBridge` contract now lives in
 /// the foundation `proximadb-catalog-schema` crate (extracted from the control
 /// catalog), so this storage crate depends downward on foundation only — no

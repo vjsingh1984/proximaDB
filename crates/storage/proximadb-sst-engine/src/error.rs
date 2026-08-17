@@ -52,7 +52,7 @@ pub enum SstError {
 
     /// Filesystem error
     #[error("Filesystem error: {0}")]
-    Filesystem(#[from] crate::storage::persistence::filesystem::FilesystemError),
+    Filesystem(#[from] proximadb_storage_filesystem_types::FilesystemError),
 }
 
 /// A specialized `Result` type for SST operations.

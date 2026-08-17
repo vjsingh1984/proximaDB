@@ -1,10 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::proto::proximadb_v1::VectorRecord;
-    use crate::storage::engines::sst::row_filter::{
-        SSTBatchFilterEvaluator, SSTRowFilterEvaluator,
-    };
+    use crate::row_filter::{SSTBatchFilterEvaluator, SSTRowFilterEvaluator};
     use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+    use proximadb_proto::proximadb_v1::VectorRecord;
     use proximadb_records::ProximaRecord;
 
     #[tokio::test]
@@ -75,34 +73,38 @@ mod tests {
             let mut metadata = Vec::new();
 
             // Add test metadata
-            metadata.push(crate::proto::proximadb_v1::MetadataItem {
+            metadata.push(proximadb_proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
                 value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(if i % 3 == 0 {
-                        "electronics".to_string()
-                    } else {
-                        "books".to_string()
-                    }),
+                    proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
+                        if i % 3 == 0 {
+                            "electronics".to_string()
+                        } else {
+                            "books".to_string()
+                        },
+                    ),
                 ),
             });
 
-            metadata.push(crate::proto::proximadb_v1::MetadataItem {
+            metadata.push(proximadb_proto::proximadb_v1::MetadataItem {
                 key: "price".to_string(),
                 value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
+                    proximadb_proto::proximadb_v1::metadata_item::Value::NumberValue(
                         (50 + (i * 10) % 200) as f64,
                     ),
                 ),
             });
 
-            metadata.push(crate::proto::proximadb_v1::MetadataItem {
+            metadata.push(proximadb_proto::proximadb_v1::MetadataItem {
                 key: "brand".to_string(),
                 value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(if i % 7 == 0 {
-                        "Apple".to_string()
-                    } else {
-                        "Samsung".to_string()
-                    }),
+                    proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(
+                        if i % 7 == 0 {
+                            "Apple".to_string()
+                        } else {
+                            "Samsung".to_string()
+                        },
+                    ),
                 ),
             });
 
@@ -111,19 +113,19 @@ mod tests {
                 if let Some(value) = item.value {
                     // Convert metadata_item::Value to sql_value::Value
                     let sql_value = match value {
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
-                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s)
+                        proximadb_proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                            proximadb_proto::proximadb_v1::sql_value::Value::StringValue(s)
                         }
-                        crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)
+                        proximadb_proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
+                            proximadb_proto::proximadb_v1::sql_value::Value::NumberValue(n)
                         }
-                        crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
-                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)
+                        proximadb_proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
+                            proximadb_proto::proximadb_v1::sql_value::Value::BoolValue(b)
                         }
                     };
                     map_metadata.insert(
                         item.key,
-                        crate::proto::proximadb_v1::SqlValue {
+                        proximadb_proto::proximadb_v1::SqlValue {
                             value: Some(sql_value),
                         },
                     );

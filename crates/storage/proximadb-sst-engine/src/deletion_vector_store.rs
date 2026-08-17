@@ -46,7 +46,7 @@ use tokio::sync::RwLock;
 
 use proximadb_storage_common::deletion_vector::VersionedDeletionVector;
 
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_storage_ports::FilesystemPort;
 
 /// Shard count — a delete on segment S contends only with other deletes on S,
 /// never with deletes on other segments (TD §10.4: "one contention point for
@@ -57,7 +57,7 @@ const DV_STORE_SHARDS: usize = 16;
 /// segment path — the single external, mutable artifact F3v needs.
 pub struct DeletionVectorStore {
     shards: Box<[RwLock<HashMap<String, DvEntry>>]>,
-    filesystem: Arc<FilesystemFactory>,
+    filesystem: Arc<dyn FilesystemPort>,
 }
 
 struct DvEntry {
@@ -69,7 +69,7 @@ struct DvEntry {
 }
 
 impl DeletionVectorStore {
-    pub fn new(filesystem: Arc<FilesystemFactory>) -> Self {
+    pub fn new(filesystem: Arc<dyn FilesystemPort>) -> Self {
         let shards = (0..DV_STORE_SHARDS)
             .map(|_| RwLock::new(HashMap::new()))
             .collect::<Vec<_>>()
@@ -125,7 +125,7 @@ impl DeletionVectorStore {
             .get_filesystem(dv_path)
             .map_err(|e| anyhow!("dv persist: filesystem for {dv_path}: {e:?}"))?;
         let strategy =
-            crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory::create_metadata_strategy(
+            proximadb_storage_common::write_strategy::WriteStrategyFactory::create_metadata_strategy(
                 &*fs, None,
             )
             .map_err(|e| anyhow!("dv persist: write strategy: {e}"))?;
@@ -258,11 +258,7 @@ mod tests {
     /// alive for the test's lifetime.
     async fn make_store() -> (DeletionVectorStore, TempDir, String) {
         let temp_dir = TempDir::new().expect("tempdir");
-        let filesystem = Arc::new(
-            FilesystemFactory::create(Default::default())
-                .await
-                .expect("filesystem"),
-        );
+        let filesystem = crate::test_local_port::local_port::local_port();
         let base = format!("file://{}", temp_dir.path().display());
         (DeletionVectorStore::new(filesystem), temp_dir, base)
     }
@@ -275,11 +271,7 @@ mod tests {
         assert!(store.is_deleted_as_of(&seg, 3, 10).await);
 
         // Simulate restart: a fresh store over the SAME dir (temp dir kept alive).
-        let filesystem = Arc::new(
-            FilesystemFactory::create(Default::default())
-                .await
-                .expect("filesystem"),
-        );
+        let filesystem = crate::test_local_port::local_port::local_port();
         let store2 = DeletionVectorStore::new(filesystem);
         // Not loaded yet → returns false (entry not resident).
         assert!(
@@ -374,11 +366,10 @@ mod tests {
         // in-memory entry gone.
         assert!(!store.is_deleted_as_of(&seg, 1, 5).await);
         // disk file gone (re-open over the same dir).
-        let checker = FilesystemFactory::create(Default::default())
-            .await
-            .expect("fs");
+        let checker = crate::test_local_port::local_port::local_port();
+        let checker_fs = checker.get_filesystem(&dv_path).expect("checker fs");
         assert!(
-            !checker.exists(&dv_path).await.expect("exists"),
+            !checker_fs.exists(&dv_path).await.expect("exists"),
             ".dv file retired from disk"
         );
         drop(tmp);
@@ -390,9 +381,7 @@ mod tests {
         let seg = format!("{base}/seg.pax");
         let dv_path = format!("{seg}.dv");
         // Plant garbage at the .dv path (bad magic — not a valid VDV2 blob).
-        let planter = FilesystemFactory::create(Default::default())
-            .await
-            .expect("fs");
+        let planter = crate::test_local_port::local_port::local_port();
         planter
             .write(&dv_path, b"not-a-valid-VDV2-blob", None)
             .await

@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+use proximadb_engine_core::proximablocks::block_structures::ProximaDataBlock;
 use proximadb_filter_expression::FilterExpression;
 use proximadb_records::ProximaRecord;
 
@@ -116,40 +116,20 @@ impl SSTRowFilterEvaluator {
     fn get_or_convert_metadata(
         &mut self,
         record_id: &str,
-        metadata: &[crate::proto::proximadb_v1::MetadataItem],
+        metadata: &[proximadb_proto::proximadb_v1::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
         if let Some(cached) = self.metadata_cache.get(record_id) {
             return Ok(cached.clone());
         }
 
         // Convert proto metadata to JSON for filtering
-        let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(metadata);
+        let metadata_map =
+            proximadb_storage_common::proto_metadata_helper::proto_metadata_to_json(metadata);
 
         // Cache if record has stable ID
         if !record_id.is_empty() && !record_id.starts_with("idx_") {
             self.metadata_cache
                 .insert(record_id.to_string(), metadata_map.clone());
-        }
-
-        Ok(metadata_map)
-    }
-
-    /// Convert VectorRecord metadata with caching
-    fn get_or_convert_vector_metadata(
-        &mut self,
-        cache_key: &str,
-        metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
-    ) -> Result<HashMap<String, serde_json::Value>> {
-        if let Some(cached) = self.metadata_cache.get(cache_key) {
-            return Ok(cached.clone());
-        }
-
-        let metadata_map = crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(metadata);
-
-        // Cache for stable IDs only
-        if !cache_key.starts_with("idx_") && cache_key.len() < 100 {
-            self.metadata_cache
-                .insert(cache_key.to_string(), metadata_map.clone());
         }
 
         Ok(metadata_map)
@@ -161,7 +141,7 @@ impl SSTRowFilterEvaluator {
         expr: &FilterExpression,
         metadata: &proximadb_records::ProximaTree,
     ) -> bool {
-        crate::core::search::sql_value_filter::evaluate_filter_proxima(expr, metadata)
+        proximadb_search_types::sql_value_filter::evaluate_filter_proxima(expr, metadata)
     }
 
     /// Clear metadata cache to prevent memory bloat
@@ -194,7 +174,7 @@ impl SSTRowFilterEvaluator {
         );
 
         for (index, record) in records.iter().enumerate() {
-            if crate::core::search::sql_value_filter::evaluate_filter_proxima(
+            if proximadb_search_types::sql_value_filter::evaluate_filter_proxima(
                 filter_expr,
                 &record.props,
             ) {
@@ -415,4 +395,5 @@ impl Default for SSTBatchFilterEvaluator {
 
 #[cfg(test)]
 #[cfg_attr(test, path = "row_filter_tests.rs")]
+#[cfg(test)]
 mod tests;

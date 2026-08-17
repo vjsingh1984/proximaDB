@@ -11,8 +11,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::storage::cache::orchestrator::{CacheStatsProvider, UsageStats};
-use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+use proximadb_engine_core::proximablocks::block_structures::ProximaDataBlock;
+use proximadb_storage_ports::{CacheStatsProvider, UsageStats};
 
 /// Backwards-compat alias for [`DecompressionBlockCacheKey`].
 pub type BlockCacheKey = DecompressionBlockCacheKey;
@@ -425,7 +425,7 @@ impl DecompressionCache {
             .records
             .iter()
             .map(|r| {
-                std::mem::size_of::<crate::proto::proximadb_v1::VectorRecord>()
+                std::mem::size_of::<proximadb_proto::proximadb_v1::VectorRecord>()
                     + r.oid.len()
                     + r.embeddings.first().map_or(0, |embedding| {
                         embedding.values.len() * std::mem::size_of::<f32>()
@@ -643,7 +643,7 @@ mod tests {
         // Test put and hit
         let block = ProximaDataBlock::new(
             vec![],
-            crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig::default(
+            proximadb_engine_core::proximablocks::block_structures::BlockCompressionConfig::default(
             ),
         );
         cache
@@ -683,16 +683,16 @@ mod tests {
             let mut records = vec![];
             for j in 0..500 {
                 records.push(
-                    crate::proto::proximadb_v1::VectorRecord {
+                    proximadb_proto::proximadb_v1::VectorRecord {
                         id: format!("id_long_name_for_testing_{}", j),
                         vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
                         metadata: {
                             let mut metadata = std::collections::HashMap::new();
                             metadata.insert(
                                 "test_key".to_string(),
-                                crate::proto::proximadb_v1::SqlValue {
+                                proximadb_proto::proximadb_v1::SqlValue {
                                     value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                        proximadb_proto::proximadb_v1::sql_value::Value::StringValue(
                                             "test_value".to_string(),
                                         ),
                                     ),
@@ -710,7 +710,7 @@ mod tests {
                 );
             }
 
-            let block = ProximaDataBlock::new(records, crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig::default());
+            let block = ProximaDataBlock::new(records, proximadb_engine_core::proximablocks::block_structures::BlockCompressionConfig::default());
             cache.put(key, block, None).await.unwrap();
         }
 
