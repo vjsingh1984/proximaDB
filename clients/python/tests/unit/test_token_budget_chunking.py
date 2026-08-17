@@ -279,6 +279,40 @@ def test_catalog_models_cover_discrete_and_range_matryoshka_policies():
     assert not qwen.supports_dimension(31)
 
 
+def test_catalog_includes_compact_long_context_granite_r2():
+    granite = OPEN_MODEL_CATALOG[
+        "ibm-granite/granite-embedding-97m-multilingual-r2"
+    ].metadata
+    assert granite.max_length == 32_768
+    assert granite.dimension == 384
+    assert granite.supported_output_dimensions == ()
+    assert granite.license_id == "apache-2.0"
+
+
+def test_sentence_transformer_runtime_info_reports_actual_accelerator():
+    provider = create_open_model_provider(
+        "sentence-transformers/all-MiniLM-L6-v2", device="mps"
+    )
+
+    class FakeModel:
+        device = "mps:0"
+        dtype = "torch.float16"
+
+        @staticmethod
+        def get_backend():
+            return "torch"
+
+    provider._model = FakeModel()
+    provider._initialized = True
+
+    assert provider.get_runtime_info() == {
+        "backend": "torch",
+        "compute_dtype": "float16",
+        "device": "mps:0",
+        "requested_device": "mps",
+    }
+
+
 def test_role_specific_adapter_parameters_reach_model_encode():
     provider = create_open_model_provider("jinaai/jina-embeddings-v3")
     calls = []

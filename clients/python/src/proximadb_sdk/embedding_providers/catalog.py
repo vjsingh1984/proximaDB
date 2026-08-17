@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from .core.config import ModelMetadata
 
-OPEN_MODEL_CATALOG_VERSION = "2026-08-11"
+OPEN_MODEL_CATALOG_VERSION = "2026-08-16"
 
 
 @dataclass(frozen=True)
@@ -265,6 +265,17 @@ OPEN_MODEL_CATALOG: dict[str, OpenModelSpec] = {
             discrete_dimensions=(768, 512, 384, 256, 128),
         ),
         "granite-embedding-r2",
+    ),
+    "ibm-granite/granite-embedding-97m-multilingual-r2": OpenModelSpec(
+        _metadata(
+            "ibm-granite/granite-embedding-97m-multilingual-r2",
+            384,
+            32768,
+            license_id="apache-2.0",
+            languages="200+",
+        ),
+        "granite-embedding-r2",
+        notes="Compact 97M ModernBERT variant; native 384-d output is not Matryoshka.",
     ),
 }
 

@@ -20,26 +20,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    model_ids = args.models or sorted(OPEN_MODEL_CATALOG)
+def validate_models(
+    model_ids: list[str], *, local_files_only: bool
+) -> list[dict[str, object]]:
+    """Validate each model independently so one bad entry cannot hide the rest."""
     results = []
-    failed = False
     for model_id in model_ids:
-        spec = get_open_model_spec(model_id)
-        metadata = spec.metadata
         try:
+            spec = get_open_model_spec(model_id)
+            metadata = spec.metadata
             counter = HuggingFaceTokenCounter.from_pretrained(
                 metadata.tokenizer_name or metadata.name,
                 revision=metadata.revision,
                 trust_remote_code=spec.trust_remote_code,
-                local_files_only=args.local_files_only,
+                local_files_only=local_files_only,
             )
             document = metadata.document_template.format(text="alpha beta gamma")
             query_template = metadata.query_template or "{text}"
             query = query_template.format(text="alpha beta gamma")
             offsets = counter.content_offsets("alpha beta gamma")
-            result = {
+            result: dict[str, object] = {
                 "model_id": model_id,
                 "status": "ok",
                 "declared_context": metadata.max_length,
@@ -55,13 +55,21 @@ def main() -> None:
             if not offsets:
                 raise ValueError("tokenizer returned no source offsets")
         except Exception as exc:
-            failed = True
             result = {
                 "model_id": model_id,
                 "status": "error",
                 "error": f"{type(exc).__name__}: {exc}",
             }
         results.append(result)
+    return results
+
+
+def main() -> None:
+    args = parse_args()
+    model_ids = args.models or sorted(OPEN_MODEL_CATALOG)
+    results = validate_models(model_ids, local_files_only=args.local_files_only)
+    failed = any(row["status"] != "ok" for row in results)
+    for result in results:
         print(json.dumps(result, sort_keys=True))
     print(
         json.dumps(

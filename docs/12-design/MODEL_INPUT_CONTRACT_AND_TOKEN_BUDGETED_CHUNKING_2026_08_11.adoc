@@ -113,7 +113,7 @@ Hub checkpoint:
 * Mixedbread mxbai;
 * Qwen3 Embedding 0.6B/4B/8B;
 * Google's gated EmbeddingGemma;
-* IBM Granite Embedding multilingual R2.
+* IBM Granite Embedding multilingual R2 (311M Matryoshka and compact 97M variants).
 
 Catalog inclusion requires an official model-card source, context and native dimension, role
 semantics, license/access classification, and a SentenceTransformers-compatible runtime path.
@@ -136,6 +136,7 @@ Model-card sources:
 * https://huggingface.co/Qwen/Qwen3-Embedding-0.6B[Qwen3 Embedding]
 * https://huggingface.co/google/embeddinggemma-300m[EmbeddingGemma]
 * https://huggingface.co/ibm-granite/granite-embedding-311m-multilingual-r2[Granite R2]
+* https://huggingface.co/ibm-granite/granite-embedding-97m-multilingual-r2[Granite R2 97M]
 
 The seed catalog records Jina v3's non-commercial license and EmbeddingGemma's gated access. A
 model being downloadable is not equivalent to unrestricted production use.
@@ -200,6 +201,13 @@ neither is a free win:
 Choose `(model, L, r, d, index)` by minimizing measured lifecycle cost subject to recall/NDCG,
 latency, citation and policy constraints. Context capacity is a ceiling, not a chunk-size target.
 
+Embedding artifact provenance also includes the actual inference backend, resolved device and
+compute dtype, plus the stored artifact dtype. These fields participate in resumable shard
+identity. A CPU, MPS, CUDA, ONNX or OpenVINO change therefore cannot silently reuse vectors from a
+different runtime. On Apple Silicon, tokenizer/packing work remains CPU-bound while the default
+SentenceTransformers inference route resolves to MPS; evidence launches should still pass
+`--device mps` explicitly.
+
 == User paths
 
 List and run catalogued models:
@@ -218,6 +226,9 @@ Validate cached or downloadable tokenizers without loading model weights:
 python scripts/bench/validate_open_embedding_tokenizers.py \
   --model BAAI/bge-base-en-v1.5 --local-files-only
 ----
+
+The validator reports every requested model independently; an unknown, gated or unavailable model
+does not hide the status of later catalog entries.
 
 Build a benchmark corpus from JSONL with one or more pinned contracts:
 
