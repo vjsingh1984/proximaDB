@@ -24,6 +24,32 @@ def _coalesce_text_source(text_source: "str | Iterable[str]") -> str:
     return "".join(text_source)
 
 
+#: Unit in which ``TextChunk.start_pos``/``end_pos`` are expressed. Text
+#: strategies use character offsets; the deprecated code path publishes UTF-8
+#: byte offsets through the same field (TD-CG2), which is why the basis must be
+#: declared rather than assumed.
+OFFSET_BASIS_CHAR = "char"
+OFFSET_BASIS_BYTE = "byte"
+
+#: Strength of the offset guarantee.
+#: ``exact``  — ``source[start_pos:end_pos] == chunk.text``, safe to slice.
+#: ``legacy`` — offsets are approximate/derived; NEVER slice the source with them.
+OFFSET_CONTRACT_EXACT = "exact"
+OFFSET_CONTRACT_LEGACY = "legacy"
+
+
+def offsets_are_exact(metadata: dict[str, Any] | None) -> bool:
+    """True only when a chunk's metadata explicitly promises sliceable offsets.
+
+    Absence means legacy. This is the whole mixed-read rule: chunks persisted
+    before the span-first migration carry no marker, and a reader that slices
+    the source with them gets shifted or unrelated text.
+    """
+    if not metadata:
+        return False
+    return metadata.get("offset_contract") == OFFSET_CONTRACT_EXACT
+
+
 class ChunkingStrategy(Enum):
     """Available chunking strategies"""
 
@@ -98,6 +124,18 @@ class ChunkingConfig:
         if self.max_chunk_size < self.chunk_size:
             self.max_chunk_size = self.chunk_size
 
+        # Ensure min_chunk_size never exceeds chunk_size. The pair is otherwise
+        # self-contradictory — every full window is already below the floor, so
+        # a correct implementation would have to either drop everything or
+        # ignore the floor. Clamping (rather than raising) keeps the public
+        # convenience helpers working: `chunk_by_sentences(text, chunk_size=30)`
+        # inherits the default min_chunk_size=100 and must not blow up.
+        # Once clamped, the only under-minimum span a strategy can produce is
+        # the final partial one, which is what makes the last-chunk escape
+        # provably sufficient rather than a special case.
+        if self.min_chunk_size > self.chunk_size:
+            self.min_chunk_size = self.chunk_size
+
     # Strategy-specific settings
     sentence_endings: list[str] = field(
         default_factory=lambda: [".", "!", "?", "。", "！", "？"]
@@ -149,6 +187,12 @@ class ChunkingStrategyInterface(ABC):
     #: leave this ``False`` and fall back to materialize-then-chunk in
     #: :meth:`chunk_stream`. Streamable strategies override it to ``True``.
     supports_streaming: bool = False
+
+    #: Whether this strategy's spans can be sliced against the source. Defaults
+    #: to ``legacy`` and is raised to ``exact`` per strategy as each is migrated
+    #: to span-first construction, so the marker never over-promises for a
+    #: strategy that has not been converted yet.
+    _offset_contract: str = OFFSET_CONTRACT_LEGACY
 
     def __init__(self, config: ChunkingConfig):
         self.config = config
@@ -225,6 +269,16 @@ class ChunkingStrategyInterface(ABC):
             raise ValueError("min_chunk_size cannot be negative")
         if self.config.max_chunk_size < self.config.chunk_size:
             raise ValueError("max_chunk_size must be >= chunk_size")
+        if self.config.min_chunk_size > self.config.chunk_size:
+            # Self-contradictory: every full window is already below the floor,
+            # so a correct implementation must either drop everything or ignore
+            # the floor. Rejecting it is also what makes the last-chunk escape
+            # provably sufficient — the only under-minimum span becomes the
+            # final partial one.
+            raise ValueError(
+                f"min_chunk_size ({self.config.min_chunk_size}) must be <= "
+                f"chunk_size ({self.config.chunk_size})"
+            )
 
     def add_chunk_metadata(
         self, chunk: TextChunk, chunk_index: int, total_chunks: int, strategy_name: str
@@ -237,6 +291,15 @@ class ChunkingStrategyInterface(ABC):
                 "chunking_strategy": strategy_name,
                 "chunk_size_config": self.config.chunk_size,
                 "chunk_overlap_config": self.config.chunk_overlap,
+                # Offset contract (ADR-091 axiom 2 / TD-CG2). `start_pos` and
+                # `end_pos` are persisted by document_processor.py, so their
+                # MEANING is a stored contract. These markers are additive and
+                # readers must treat their ABSENCE as legacy — i.e. offsets that
+                # cannot be sliced against the source. Mixed-read-safe, no flag
+                # day, no backfill: the old offsets were never usable, so there
+                # is no reader to preserve, only one to stop misleading.
+                "offset_basis": OFFSET_BASIS_CHAR,
+                "offset_contract": self._offset_contract,
             }
         )
 

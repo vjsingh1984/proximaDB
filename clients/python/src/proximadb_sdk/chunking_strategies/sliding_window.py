@@ -7,7 +7,7 @@ Simple overlapping window approach for text chunking.
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from .base import ChunkingStrategyInterface, TextChunk
+from .base import OFFSET_CONTRACT_EXACT, ChunkingStrategyInterface, TextChunk
 
 
 class SlidingWindowStrategy(ChunkingStrategyInterface):
@@ -20,6 +20,11 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
     #: Windows are boundary-local: a buffer holding the current window plus the
     #: overlap carry-over (<= chunk_size chars) is enough to stream.
     supports_streaming = True
+
+    #: Already span-first: every chunk is a verbatim slice of the source, which
+    #: is why this is the one strategy that survived the audit clean on all ten
+    #: corpus entries. It is the reference the others are migrating toward.
+    _offset_contract = OFFSET_CONTRACT_EXACT
 
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
