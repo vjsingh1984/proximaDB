@@ -236,7 +236,7 @@ type CollectionInfo struct {
 	Dimension   int       `json:"dimension"`
 	Metric      string    `json:"metric"`
 	Engine      string    `json:"engine"`
-	VectorCount int64     `json:"vector_count"`
+	VectorCount *int64    `json:"vector_count,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -436,15 +436,13 @@ func (a *Adapter) ListCollections(ctx context.Context) ([]*CollectionInfo, error
 
 	collections := make([]*CollectionInfo, 0, len(out.Collections))
 	for _, item := range out.Collections {
-		count := int64(0)
-		if item.RecordCount != nil {
-			count = *item.RecordCount
-		}
 		collections = append(collections, &CollectionInfo{
-			Name:        firstNonEmpty(item.Name, item.CollectionID),
-			Dimension:   item.Dimension,
-			Engine:      item.Engine,
-			VectorCount: count,
+			Name:      firstNonEmpty(item.Name, item.CollectionID),
+			Dimension: item.Dimension,
+			Engine:    item.Engine,
+			// Pass the pointer through. This used to coalesce nil to 0,
+			// throwing away a distinction the wire already carried.
+			VectorCount: item.RecordCount,
 		})
 	}
 	return collections, nil
@@ -465,8 +463,10 @@ func (a *Adapter) GetCollection(ctx context.Context, name string) (*CollectionIn
 		DistanceMetric string `json:"distance_metric"`
 		CreatedAt      string `json:"created_at"`
 		Stats          struct {
-			RecordCount      int64 `json:"record_count"`
-			StorageSizeBytes int64 `json:"storage_size_bytes"`
+			// Pointer, not int64: encoding/json decodes a null into an int64
+			// as a silent zero, which is exactly the wrong answer here.
+			RecordCount      *int64 `json:"record_count"`
+			StorageSizeBytes int64  `json:"storage_size_bytes"`
 		} `json:"stats"`
 	}
 	if err := a.decode(resp, &out); err != nil {

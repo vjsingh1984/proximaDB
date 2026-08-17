@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/proximadb/proximadb-go/proximadb"
@@ -150,7 +151,7 @@ func main() {
 	}
 	fmt.Printf("Found %d collection(s):\n", len(collections))
 	for _, c := range collections {
-		fmt.Printf("  - %s (dimension: %d, vectors: %d)\n", c.Name, c.Dimension, c.VectorCount)
+		fmt.Printf("  - %s (dimension: %d, vectors: %s)\n", c.Name, c.Dimension, formatVectorCount(c.VectorCount))
 	}
 	fmt.Println()
 
@@ -167,7 +168,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Get collection failed: %v", err)
 	}
-	fmt.Printf("Collection %s now has %d vectors\n\n", info.Name, info.VectorCount)
+	fmt.Printf("Collection %s now has %s vectors\n\n", info.Name, formatVectorCount(info.VectorCount))
 
 	// Cleanup: delete the collection
 	fmt.Println("Cleaning up...")
@@ -224,4 +225,15 @@ func generateRandomVector(dimension int) []float32 {
 	}
 
 	return vector
+}
+
+// formatVectorCount renders a possibly-unknown vector count. The SDK reports
+// nil when the server does not maintain the counter, which is NOT the same as
+// zero — printing it as 0 is how a populated collection gets mistaken for an
+// empty one.
+func formatVectorCount(n *int64) string {
+	if n == nil {
+		return "unknown"
+	}
+	return strconv.FormatInt(*n, 10)
 }

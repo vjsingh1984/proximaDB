@@ -116,8 +116,12 @@ type CollectionInfo struct {
 	Metric DistanceMetric `json:"metric"`
 	// Engine is the storage engine.
 	Engine StorageEngine `json:"engine"`
-	// VectorCount is the number of vectors.
-	VectorCount int64 `json:"vector_count"`
+	// VectorCount is the number of vectors, or nil when the server does not
+	// know. nil and 0 are different answers: 0 means the server knows the
+	// collection is empty, nil means the counter was never maintained.
+	// They used to be indistinguishable, and reading the fabricated 0 as
+	// "empty" produced a false data-loss report against the server.
+	VectorCount *int64 `json:"vector_count,omitempty"`
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time `json:"created_at"`
 }
