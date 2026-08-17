@@ -97,6 +97,37 @@ def test_exact_rendered_budget_splits_with_token_overlap_and_full_coverage():
     assert chunks[1].metadata["overlap_tokens"] == 1
 
 
+def test_overlap_does_not_reuse_a_boundary_without_meaningful_new_content():
+    strategy = make_strategy(
+        make_contract(limit=12),
+        target=12,
+        overlap=5,
+    )
+    text = " ".join(f"word{index}" for index in range(20))
+    offsets = WordCounter().content_offsets(text)
+    repeated_end = offsets[7][1]
+    strategy.boundary_strategy.preferred_boundaries = lambda *_args, **_kwargs: [
+        repeated_end,
+        len(text),
+    ]
+
+    chunks = strategy.chunk(text, "doc")
+
+    assert [chunk.text.split() for chunk in chunks] == [
+        [f"word{index}" for index in range(8)],
+        [f"word{index}" for index in range(3, 12)],
+        [f"word{index}" for index in range(7, 16)],
+        [f"word{index}" for index in range(11, 20)],
+    ]
+    assert [chunk.metadata["overlap_tokens"] for chunk in chunks] == [0, 5, 5, 5]
+    assert [chunk.metadata["new_content_tokens"] for chunk in chunks] == [8, 4, 4, 4]
+    previous_end = 0
+    for chunk in chunks:
+        end_token = sum(end <= chunk.end_pos for _, end in offsets)
+        assert end_token - previous_end >= 3
+        previous_end = end_token
+
+
 def test_composite_contract_uses_most_restrictive_rendered_input():
     primary = make_contract(name="primary", document_template="p: {text}", limit=8)
     secondary = make_contract(

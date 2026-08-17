@@ -142,18 +142,43 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
         )
         chunks: list[TextChunk] = []
         start_token = 0
+        previous_end_token: int | None = None
         while start_token < len(offsets):
             maximum_end = self._greatest_fitting_end(text, offsets, start_token)
             minimum_end = min(
                 len(offsets), start_token + self.budget.min_content_tokens
             )
+            if previous_end_token is not None:
+                minimum_end = min(
+                    len(offsets),
+                    max(
+                        minimum_end,
+                        previous_end_token + max(1, self.budget.min_content_tokens),
+                    ),
+                )
             candidate_boundaries = [
                 end for end in preferred if minimum_end <= end <= maximum_end
             ]
             end_token = (
                 candidate_boundaries[-1] if candidate_boundaries else maximum_end
             )
+            if previous_end_token is not None and end_token <= previous_end_token:
+                # The configured overlap consumed the usable content capacity.
+                # Drop overlap for this step rather than re-emitting an old
+                # boundary with zero new source coverage.
+                start_token = previous_end_token
+                continue
             content_tokens = end_token - start_token
+            actual_overlap_tokens = (
+                max(0, previous_end_token - start_token)
+                if previous_end_token is not None
+                else 0
+            )
+            new_content_tokens = (
+                end_token - previous_end_token
+                if previous_end_token is not None
+                else content_tokens
+            )
             is_tail = end_token == len(offsets)
             if is_tail and content_tokens < self.budget.min_content_tokens:
                 if self.budget.short_chunk_policy == ShortChunkPolicy.DROP:
@@ -185,8 +210,9 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
                 "primary_content_tokens": content_tokens,
                 "token_budget": self.budget.to_manifest(),
                 "input_role": self.role.value,
-                "has_overlap": index > 0 and self.budget.overlap_tokens > 0,
-                "overlap_tokens": self.budget.overlap_tokens if index > 0 else 0,
+                "has_overlap": actual_overlap_tokens > 0,
+                "overlap_tokens": actual_overlap_tokens,
+                "new_content_tokens": new_content_tokens,
             }
             chunk = TextChunk(
                 text=chunk_text,
@@ -200,6 +226,7 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
 
             if is_tail:
                 break
+            previous_end_token = end_token
             next_start = end_token - self.budget.overlap_tokens
             start_token = max(start_token + 1, next_start)
 
