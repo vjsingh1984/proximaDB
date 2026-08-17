@@ -41,6 +41,7 @@ points at a different worktree you will silently test that one, so run this with
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -59,10 +60,13 @@ from proximadb_sdk.chunking_strategies.conformance import (
     check_exactness,
     check_non_empty,
     compute_trace,
+    diff_digests,
     evaluate,
     evaluate_all,
     format_baseline,
+    load_golden,
     standard_corpus,
+    sweep_digests,
 )
 from proximadb_sdk.chunking_strategies.conformance.invariants import (
     _wall_clock_budget,
@@ -294,6 +298,54 @@ class TestTrace:
         trace = compute_trace("", [])
         assert trace.is_total
         assert trace.coverage_ratio == 1.0
+
+
+class TestGoldenOutput:
+    """Behaviour-preservation oracle for refactors.
+
+    The invariants prove chunking is CORRECT; they cannot prove a refactor was
+    NEUTRAL. A change that moves a boundary while keeping every invariant
+    satisfied is invisible to them — which is exactly the risk when a mechanical
+    change is spread across dozens of call sites.
+
+    Recorded at the completion of the correctness slice (0 violations, 70/70
+    clean). A deliberate behaviour change regenerates this file in the same
+    commit, exactly like BASELINE; it is generated, never hand-edited.
+    """
+
+    GOLDEN_PATH = Path(__file__).parent / "golden_chunk_output.json"
+
+    def _actual(self) -> dict[str, str]:
+        adapters = [_adapter(strategy) for strategy in SWEPT_STRATEGIES]
+        return sweep_digests(adapters, standard_corpus())
+
+    def test_output_is_unchanged(self):
+        expected = load_golden(self.GOLDEN_PATH.read_text())
+        actual = self._actual()
+        changed, missing, added = diff_digests(expected, actual)
+
+        if changed or missing or added:
+            raise AssertionError(
+                "chunk output changed against the recorded golden snapshot\n"
+                f"  changed: {changed or 'none'}\n"
+                f"  missing (case no longer produced): {missing or 'none'}\n"
+                f"  added (new case): {added or 'none'}\n\n"
+                "If this change was INTENTIONAL, regenerate the golden file in "
+                "the same commit and say in the message what moved and why. If "
+                "it was not, a refactor altered behaviour it was meant to "
+                "preserve — that is the whole reason this oracle exists."
+            )
+
+    def test_golden_covers_the_whole_sweep(self):
+        """The snapshot must not silently shrink."""
+        expected = load_golden(self.GOLDEN_PATH.read_text())
+        assert len(expected) == len(SWEPT_STRATEGIES) * len(standard_corpus())
+
+    def test_no_case_records_an_error(self):
+        """Every swept strategy produces output on every corpus entry."""
+        expected = load_golden(self.GOLDEN_PATH.read_text())
+        errored = sorted(k for k, v in expected.items() if v.startswith("ERROR"))
+        assert not errored, f"golden records failures: {errored}"
 
 
 class TestRunner:

@@ -26,6 +26,15 @@ Tracked by TD-CHUNK-1; the defects it measures are ADR-091's evidence base.
 """
 
 from .corpus import CorpusEntry, by_name, scale_corpus, standard_corpus
+from .golden import (
+    DIGEST_RECIPE_VERSION,
+    case_digest,
+    case_key,
+    diff_digests,
+    load_golden,
+    render_golden,
+    sweep_digests,
+)
 from .invariants import (
     ALL_INVARIANTS,
     Invariant,
@@ -66,6 +75,14 @@ __all__ = [
     "check_stream_equivalence",
     "check_config_safety",
     "check_idempotence",
+    # Golden output oracle
+    "case_digest",
+    "case_key",
+    "sweep_digests",
+    "render_golden",
+    "load_golden",
+    "diff_digests",
+    "DIGEST_RECIPE_VERSION",
     # Runner
     "ChunkerAdapter",
     "Evaluation",
