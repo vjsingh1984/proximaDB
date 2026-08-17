@@ -438,6 +438,18 @@ class DocumentProcessor(ABC):
             "end_pos": chunk.end_pos,
             "text_length": len(chunk.text),
         }
+        # start_pos/end_pos are persisted from here, so their MEANING must be
+        # persisted alongside them. Strategies stamp this via add_chunk_metadata;
+        # a chunk that bypassed it (the deprecated byte-offset code path) is
+        # recorded as legacy rather than left ambiguous — an unmarked offset is
+        # indistinguishable from an exact one to a later reader.
+        from .chunking_strategies.base import (
+            OFFSET_BASIS_CHAR,
+            OFFSET_CONTRACT_LEGACY,
+        )
+
+        metadata.setdefault("offset_basis", OFFSET_BASIS_CHAR)
+        metadata.setdefault("offset_contract", OFFSET_CONTRACT_LEGACY)
 
         if source_metadata:
             metadata["source"] = source_metadata
@@ -739,17 +751,35 @@ class TextDocumentProcessor(DocumentProcessor):
         return True  # Default fallback
 
     def _get_chunker(self):
-        """Lazy initialization of text chunker"""
+        """Lazy initialization of text chunker.
+
+        Uses RECURSIVE rather than SEMANTIC. SEMANTIC was measured losing
+        between 4% and 100% of a document depending on its shape — on ordinary
+        header-dense Markdown it returned ZERO chunks — and this is the only
+        production caller in the SDK, so that loss reached every `.txt`, `.md`,
+        `.rst` and `.adoc` ingest, including anvaiops connector ingest, which
+        delegates here. RECURSIVE is clean across the whole conformance corpus
+        and is the only strategy with a cap-enforcing terminal fallback.
+
+        Revisit for `.md` specifically once SEMANTIC is rewritten and has
+        soaked — as a separate, measured decision rather than a default nobody
+        chose.
+        """
         if self._chunker is None:
             from .chunking_strategies.base import ChunkingConfig, ChunkingStrategy
-            from .chunking_strategies.semantic import SemanticStrategy
+            from .chunking_strategies.recursive import RecursiveStrategy
 
             config = ChunkingConfig(
-                strategy=ChunkingStrategy.SEMANTIC,
+                strategy=ChunkingStrategy.RECURSIVE,
                 chunk_size=self.config.chunk_size,
                 chunk_overlap=self.config.chunk_overlap,
+                # Previously dropped on the floor, so the chunker silently ran
+                # on ChunkingConfig's defaults (100/2048) instead of the
+                # processor's configured 50/4096.
+                min_chunk_size=self.config.min_chunk_size,
+                max_chunk_size=self.config.max_chunk_size,
             )
-            self._chunker = SemanticStrategy(config)
+            self._chunker = RecursiveStrategy(config)
 
         return self._chunker
 
