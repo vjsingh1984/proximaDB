@@ -575,10 +575,20 @@ components:
           minimum: 0
           type: integer
         record_count:
-          description: Total number of records
+          description: |-
+            Total number of records, or `null` when the server does not know.
+
+            `null` is a real answer here, not a gap. The counter is maintained by
+            `MetadataStore::update_stats`, which the record write path does not call,
+            so a collection that has never had stats written carries none. Reporting
+            `0` in that case is a *confident wrong answer* — indistinguishable from a
+            genuinely empty collection, and it cost one downstream project a false
+            durability bug report before the cause was found (#1527).
           format: int64
           minimum: 0
-          type: integer
+          type:
+          - integer
+          - 'null'
         storage_size_bytes:
           description: Total storage size in bytes
           format: int64
@@ -590,7 +600,6 @@ components:
           minimum: 0
           type: integer
       required:
-      - record_count
       - storage_size_bytes
       - indexed_fields
       - text_field_count

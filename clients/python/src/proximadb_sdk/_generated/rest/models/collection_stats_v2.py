@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -22,36 +22,48 @@ class CollectionStatsV2:
 
     Attributes:
         indexed_fields (int): Number of indexed fields
-        record_count (int): Total number of records
         storage_size_bytes (int): Total storage size in bytes
         text_field_count (int): Number of TEXT fields with dedicated storage
+        record_count (int | None | Unset): Total number of records, or `null` when the server does not know.
+
+            `null` is a real answer here, not a gap. The counter is maintained by
+            `MetadataStore::update_stats`, which the record write path does not call,
+            so a collection that has never had stats written carries none. Reporting
+            `0` in that case is a *confident wrong answer* — indistinguishable from a
+            genuinely empty collection, and it cost one downstream project a false
+            durability bug report before the cause was found (#1527).
     """
 
     indexed_fields: int
-    record_count: int
     storage_size_bytes: int
     text_field_count: int
+    record_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         indexed_fields = self.indexed_fields
 
-        record_count = self.record_count
-
         storage_size_bytes = self.storage_size_bytes
 
         text_field_count = self.text_field_count
+
+        record_count: int | None | Unset
+        if isinstance(self.record_count, Unset):
+            record_count = UNSET
+        else:
+            record_count = self.record_count
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "indexed_fields": indexed_fields,
-                "record_count": record_count,
                 "storage_size_bytes": storage_size_bytes,
                 "text_field_count": text_field_count,
             }
         )
+        if record_count is not UNSET:
+            field_dict["record_count"] = record_count
 
         return field_dict
 
@@ -60,17 +72,24 @@ class CollectionStatsV2:
         d = dict(src_dict)
         indexed_fields = d.pop("indexed_fields")
 
-        record_count = d.pop("record_count")
-
         storage_size_bytes = d.pop("storage_size_bytes")
 
         text_field_count = d.pop("text_field_count")
 
+        def _parse_record_count(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        record_count = _parse_record_count(d.pop("record_count", UNSET))
+
         collection_stats_v2 = cls(
             indexed_fields=indexed_fields,
-            record_count=record_count,
             storage_size_bytes=storage_size_bytes,
             text_field_count=text_field_count,
+            record_count=record_count,
         )
 
         collection_stats_v2.additional_properties = d

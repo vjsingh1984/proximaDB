@@ -1135,9 +1135,16 @@ export interface components {
             indexed_fields: number;
             /**
              * Format: int64
-             * @description Total number of records
+             * @description Total number of records, or `null` when the server does not know.
+             *
+             *     `null` is a real answer here, not a gap. The counter is maintained by
+             *     `MetadataStore::update_stats`, which the record write path does not call,
+             *     so a collection that has never had stats written carries none. Reporting
+             *     `0` in that case is a *confident wrong answer* — indistinguishable from a
+             *     genuinely empty collection, and it cost one downstream project a false
+             *     durability bug report before the cause was found (#1527).
              */
-            record_count: number;
+            record_count?: number | null;
             /**
              * Format: int64
              * @description Total storage size in bytes

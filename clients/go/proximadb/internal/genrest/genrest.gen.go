@@ -492,8 +492,15 @@ type CollectionStatsV2 struct {
 	// IndexedFields Number of indexed fields
 	IndexedFields int32 `json:"indexed_fields"`
 
-	// RecordCount Total number of records
-	RecordCount int64 `json:"record_count"`
+	// RecordCount Total number of records, or `null` when the server does not know.
+	//
+	// `null` is a real answer here, not a gap. The counter is maintained by
+	// `MetadataStore::update_stats`, which the record write path does not call,
+	// so a collection that has never had stats written carries none. Reporting
+	// `0` in that case is a *confident wrong answer* — indistinguishable from a
+	// genuinely empty collection, and it cost one downstream project a false
+	// durability bug report before the cause was found (#1527).
+	RecordCount *int64 `json:"record_count,omitempty"`
 
 	// StorageSizeBytes Total storage size in bytes
 	StorageSizeBytes int64 `json:"storage_size_bytes"`
