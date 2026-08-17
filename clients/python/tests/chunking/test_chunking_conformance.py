@@ -22,9 +22,13 @@ what the code *does*, not what anyone believes it does. That distinction is the
 whole lesson of the audit that produced ADR-091: the pre-existing suite had 426
 passing tests and caught none of these defects.
 
-Baseline, most recently re-measured after the ``sentence`` conversion:
-**60 cases, 51 clean, 9 violating, 19 violations, 0 errors.** ``semantic`` is the
-only strategy still carrying violations.
+Baseline after the ``semantic`` rewrite: **60 cases, 60 clean, 0 violations,
+0 errors** — every swept strategy now satisfies every invariant, so BASELINE is
+empty and ``VIOLATION_CEILING = 0`` makes the aggregate ratchet an ABSOLUTE
+assertion rather than a shrinking allowance. A single new violation anywhere
+fails the build.
+
+(Initial recording against develop @482075bc1 was 22 clean / 67 violations.)
 (Initial recording against develop @482075bc1 was 22 clean / 67 violations.)
 
 Note on running locally
@@ -86,29 +90,19 @@ def _v(*names: str) -> frozenset[Invariant]:
     return frozenset(Invariant(n) for n in names)
 
 
-#: Recorded state of today's code. Generated, not hand-written.
+#: Recorded state of today's code. Generated, not hand-written. Now EMPTY: no
+#: swept strategy violates any invariant. Keep the mapping (rather than deleting
+#: it) so a regression is recorded here as data when it appears.
 #: Strategies absent from this mapping are clean on all ten entries:
 #: ``sliding_window`` (always was — the only one whose offsets survived the
-#: audit), ``fixed_size``, ``paragraph``, ``sentence``, and ``recursive`` — the
-#: last of which needed no edit of its own: it composes paragraph's spans, so it
-#: became correct the moment its parent's text was a verbatim slice.
-BASELINE: dict[tuple[str, str], frozenset[Invariant]] = {
-    ("semantic", "prose"): _v("cap", "exactness", "no_containment", "totality"),
-    # The defect that decided ADR-091: ZERO chunks on header-dense Markdown,
-    # reached independently by victor-rag's unrelated implementation.
-    ("semantic", "header_dense_markdown"): _v("non_empty", "totality"),
-    ("semantic", "cjk_emoji"): _v("cap"),
-    ("semantic", "boundary_free"): _v("cap"),
-    ("semantic", "whitespace_heavy"): _v("exactness", "totality"),
-    ("semantic", "sub_minimum"): _v("non_empty", "totality"),
-    ("semantic", "table_markdown"): _v("exactness", "no_containment", "totality"),
-    ("semantic", "code_fenced_markdown"): _v("exactness", "no_containment", "totality"),
-    ("semantic", "json_doc"): _v("cap"),
-}
+#: audit) and now every other swept strategy. ``recursive`` needed no edit of its
+#: own: it composes paragraph's spans, so it became correct the moment its
+#: parent's text was a verbatim slice.
+BASELINE: dict[tuple[str, str], frozenset[Invariant]] = {}
 
 #: Aggregate ratchet. Clean cases may only increase; violations may only fall.
-CLEAN_FLOOR = 51
-VIOLATION_CEILING = 19
+CLEAN_FLOOR = 60
+VIOLATION_CEILING = 0
 
 
 def _adapter(strategy: ChunkingStrategy) -> ChunkerAdapter:

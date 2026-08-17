@@ -112,8 +112,12 @@ def _setup_modules():
         chunking_strategies = sys.modules["proximadb.chunking_strategies"]
 
     # Load modules in dependency order
-    # 1. Base module (no dependencies)
+    # 1. Leaf modules (no intra-package dependencies)
     _load_module("proximadb.chunking_strategies.base", "base.py", chunking_strategies)
+    # spans.py is the span-first primitive layer every strategy imports; it must
+    # be present before them or their `from .spans import ...` fails and the
+    # whole synthetic package silently fails to build.
+    _load_module("proximadb.chunking_strategies.spans", "spans.py", chunking_strategies)
 
     # 2. Strategy modules (depend on base)
     _load_module(
