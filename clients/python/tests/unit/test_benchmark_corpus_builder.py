@@ -139,6 +139,8 @@ def test_builder_caps_deterministically_only_when_partial_scope_is_explicit(
     assert manifest["builder_sha256"] == builder._sha256(Path(builder.__file__))
     assert manifest["token_histogram"]["test/model"]["max"] <= 7
     assert manifest["token_histogram"]["test/model"]["over_target"] == 0
+    assert manifest["packing_histogram"]["new_content_tokens"]["min"] > 0
+    assert manifest["packing_histogram"]["actual_overlap_tokens"]["max"] <= 1
     assert manifest["token_budget"]["overflow_policy"] == "split"
     assert manifest["deduplication_policy"] == "exact"
 

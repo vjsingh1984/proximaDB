@@ -35,6 +35,11 @@ The replacement invariant is:
 for every emitted chunk c and every controlled model m:
   tokens_m(render_m(c, DOCUMENT), add_special_tokens=true)
     <= min(target_tokens, effective_context_m)
+
+for every chunk c_i after the first chunk from one source:
+  end_token(c_i) > end_token(c_(i-1))
+  and, when the fitted capacity permits,
+  end_token(c_i) - end_token(c_(i-1)) >= min_content_tokens
 ----
 
 The builder fails rather than publishing a corpus when the invariant is false. Split, drop and
@@ -224,8 +229,10 @@ python scripts/bench/build_token_budget_corpus.py \
 ----
 
 The output includes shared `texts.json`, per-chunk provenance in `chunks.jsonl`, and
-`corpus.manifest.json` with hashes, policies, contract fingerprints, histograms, corpus scope and a
-zero-truncation assertion. Every stage records the SHA-256 of its tracked producer script, and
+`corpus.manifest.json` with hashes, policies, contract fingerprints, token and packing histograms,
+corpus scope and a zero-truncation assertion. Packing histograms record actual overlap and new
+source-token coverage per stored chunk, making redundant-boundary amplification observable. Every
+stage records the SHA-256 of its tracked producer script, and
 embedding shard identity includes that transport digest. `--max-chunks` is a prefix-sampling
 diagnostic: if it would truncate the
 source, the builder fails unless `--allow-partial-corpus` is explicit and records

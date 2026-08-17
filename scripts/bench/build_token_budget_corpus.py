@@ -182,6 +182,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
 
     texts_tmp, chunks_tmp, texts_path, chunks_path = _atomic_paths(args.output_dir)
     token_lengths: dict[str, list[int]] = defaultdict(list)
+    new_content_token_lengths: list[int] = []
+    actual_overlap_token_lengths: list[int] = []
     source_count = 0
     chunk_count = 0
     split_sources = 0
@@ -250,6 +252,21 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                             duplicate_chunk_count += 1
                             continue
                         seen_chunk_digests.add(digest)
+                    new_content_tokens = chunk.metadata.get("new_content_tokens")
+                    actual_overlap_tokens = chunk.metadata.get("overlap_tokens")
+                    if not isinstance(new_content_tokens, int) or new_content_tokens <= 0:
+                        raise AssertionError(
+                            f"chunk {chunk_count} adds no new source-token coverage"
+                        )
+                    if (
+                        not isinstance(actual_overlap_tokens, int)
+                        or actual_overlap_tokens < 0
+                    ):
+                        raise AssertionError(
+                            f"chunk {chunk_count} has invalid actual overlap metadata"
+                        )
+                    new_content_token_lengths.append(new_content_tokens)
+                    actual_overlap_token_lengths.append(actual_overlap_tokens)
                     if not first_text:
                         texts.write(",")
                     json.dump(chunk.text, texts, ensure_ascii=False)
@@ -332,6 +349,10 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "token_budget": budget.to_manifest(),
         "input_contract": contracts.to_manifest(),
         "token_histogram": histogram,
+        "packing_histogram": {
+            "new_content_tokens": _histogram(new_content_token_lengths),
+            "actual_overlap_tokens": _histogram(actual_overlap_token_lengths),
+        },
         "zero_truncation_asserted": all(
             values["over_effective_context"] == 0 and values["over_target"] == 0
             for values in histogram.values()
