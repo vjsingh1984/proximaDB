@@ -1414,11 +1414,17 @@ prefetch_budget = 4
             return 0
 
         deleted = 0
+        from urllib.parse import quote
+
         async with self._http_client() as client:
             for record_id in ids:
+                # Record ids are caller-defined and may contain characters
+                # illegal or ambiguous in a URL path (newlines from
+                # signature-derived ids, '/', '%', spaces). Encode the path
+                # component; axum percent-decodes it back to the exact id.
                 response = await client.delete(
                     f"{self.rest_url}/api/v2/collections/{collection_name}"
-                    f"/records/{record_id}",
+                    f"/records/{quote(record_id, safe='')}",
                     timeout=30.0,
                 )
                 if response.status_code in (200, 204):
