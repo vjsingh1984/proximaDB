@@ -92,7 +92,12 @@ class SentenceStrategy(ChunkingStrategyInterface):
         )
 
     def _sentence_spans(
-        self, text: str, origin: int = 0, *, only_closed: bool = False
+        self,
+        text: str,
+        origin: int = 0,
+        *,
+        only_closed: bool = False,
+        scan_from: int = 0,
     ) -> list[Span]:
         """Sentence spans over ``text``, offset by ``origin``.
 
@@ -108,10 +113,16 @@ class SentenceStrategy(ChunkingStrategyInterface):
         complete sentence because its content ends at 5 while the buffer ends at
         6. Decidedness comes from having consumed a boundary, never from an
         offset comparison.
+
+        ``scan_from`` restricts the scan to a suffix without slicing the string,
+        so lookbehind assertions can still see the character before it. Streaming
+        needs this: re-scanning the whole retained buffer on every piece is
+        O(n^2) in the number of pieces, which on a document with no boundaries to
+        release (nothing emitted, nothing trimmed) is quadratic in the document.
         """
         spans: list[Span] = []
         pending: list[Span] = []
-        cursor = 0
+        cursor = scan_from
 
         def flush() -> None:
             nonlocal pending
@@ -120,7 +131,7 @@ class SentenceStrategy(ChunkingStrategyInterface):
                 spans.append((merged[0] + origin, merged[1] + origin))
                 pending = []
 
-        for match in self.sentence_pattern.finditer(text):
+        for match in self.sentence_pattern.finditer(text, scan_from):
             unit = strip_span(text, cursor, match.start())
             cursor = match.end()
             if not is_empty(unit):
@@ -312,12 +323,24 @@ class SentenceStrategy(ChunkingStrategyInterface):
             pieces = text_source
 
         emitted_to = 0
+        # Scanning costs O(retained buffer), so scanning on EVERY piece is
+        # quadratic in the number of pieces when there is no boundary to release
+        # (nothing emitted => nothing trimmed => the buffer only grows). Coalesce
+        # scans instead. Output is unaffected: the final drain is unconditional,
+        # so a boundary is never lost, only noticed slightly later.
+        scan_stride = max(64, self.config.chunk_size // 4)
+        scanned_len = 0
 
         def drain(final: bool) -> Iterator[Span]:
             nonlocal emitted_to
             text = buffer.buffer
             origin = buffer.origin
-            for span in self._sentence_spans(text, origin, only_closed=not final):
+            # Everything before `emitted_to` is already decided; re-scanning it
+            # on every piece is what makes naive streaming quadratic.
+            scan_from = max(0, emitted_to - origin)
+            for span in self._sentence_spans(
+                text, origin, only_closed=not final, scan_from=scan_from
+            ):
                 if span[0] >= emitted_to:
                     emitted_to = span[1]
                     yield span
@@ -326,6 +349,9 @@ class SentenceStrategy(ChunkingStrategyInterface):
             if not piece:
                 continue
             buffer.append(piece)
+            if len(buffer.buffer) - scanned_len < scan_stride:
+                continue
+            scanned_len = len(buffer.buffer)
             yield from drain(final=False)
 
         yield from drain(final=True)

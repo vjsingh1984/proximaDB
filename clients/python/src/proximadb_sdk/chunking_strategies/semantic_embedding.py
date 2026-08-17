@@ -38,8 +38,14 @@ from typing import Any
 
 import numpy as np
 
-from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
+from .base import (
+    OFFSET_CONTRACT_EXACT,
+    ChunkingConfig,
+    ChunkingStrategyInterface,
+    TextChunk,
+)
 from .sentence import SentenceStrategy
+from .spans import Span, hard_split, merge_spans
 
 # An injected provider may be a BaseEmbeddingProvider-style object (with an
 # ``embed``/``encode`` batch method) OR a plain batch callable. We deliberately
@@ -55,6 +61,9 @@ class SemanticEmbeddingStrategy(ChunkingStrategyInterface):
     (``ChunkingConfig.embedding_provider``). See the module docstring for the
     accepted provider shapes and the algorithm.
     """
+
+    #: Span-first: every chunk is a verbatim slice of the source.
+    _offset_contract = OFFSET_CONTRACT_EXACT
 
     def __init__(self, config: ChunkingConfig):
         super().__init__(config)
@@ -87,15 +96,22 @@ class SemanticEmbeddingStrategy(ChunkingStrategyInterface):
             )
 
         # BATCHED: one call for all sentences, never per-sentence.
-        if callable(provider) and not hasattr(provider, "embed"):
-            # Plain Callable[[list[str]], list[list[float]]]
-            raw = provider(sentences)
-        elif hasattr(provider, "embed"):
+        #
+        # Order matters and used to be wrong. The callable branch came FIRST, and
+        # a SentenceTransformer is an nn.Module — therefore callable, and without
+        # an `.embed` — so the advertised sentence-transformers provider was
+        # invoked as `provider(sentences)`, i.e. forward() on a list of strings.
+        # Named methods are checked before callability precisely because a model
+        # object is usually both.
+        if hasattr(provider, "embed"):
             # BaseEmbeddingProvider-style (.embed -> np.ndarray | list[list])
             raw = provider.embed(sentences)
         elif hasattr(provider, "encode"):
             # sentence-transformers-style (.encode batch)
             raw = provider.encode(sentences)
+        elif callable(provider):
+            # Plain Callable[[list[str]], list[list[float]]]
+            raw = provider(sentences)
         else:
             raise TypeError(
                 "embedding_provider must be a Callable[[list[str]], "
@@ -164,26 +180,43 @@ class SemanticEmbeddingStrategy(ChunkingStrategyInterface):
     # ------------------------------------------------------------------ #
     def _emit_chunk(
         self,
-        group: list[str],
-        start_pos: int,
+        source: str,
+        spans: list[Span],
         source_id: str,
         chunk_index: int,
         base_metadata: dict[str, Any],
+        forced: bool = False,
     ) -> TextChunk:
-        chunk_text = " ".join(group)
+        start, end = merge_spans(spans)
         chunk = TextChunk(
-            text=chunk_text,
-            start_pos=start_pos,
-            end_pos=start_pos + len(chunk_text),
+            text=source[start:end],
+            start_pos=start,
+            end_pos=end,
             chunk_id=f"{source_id}_chunk_{chunk_index}",
             metadata={
                 **base_metadata,
                 "chunk_type": "semantic_embedding",
-                "sentence_count": len(group),
+                "sentence_count": len(spans),
+                "forced_split": forced,
             },
         )
         self.add_chunk_metadata(chunk, chunk_index, -1, "semantic_embedding")
         return chunk
+
+    def _sentence_units(self, text: str) -> list[Span]:
+        """Sentence spans with the size cap already enforced.
+
+        The old guard flushed the ACCUMULATED group and then appended the
+        incoming sentence unconditionally, so a single oversized sentence always
+        shipped over the cap. Capping each unit up front makes that unreachable.
+        """
+        units: list[Span] = []
+        for span in self._sentence_splitter._sentence_spans(text):
+            if span[1] - span[0] <= self.config.max_chunk_size:
+                units.append(span)
+                continue
+            units.extend(hard_split(text, span[0], span[1], self.config.max_chunk_size))
+        return units
 
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
@@ -196,48 +229,43 @@ class SemanticEmbeddingStrategy(ChunkingStrategyInterface):
 
         base_metadata = base_metadata or {}
 
-        sentences = self._sentence_splitter._split_into_sentences(text)
-        if not sentences:
+        units = self._sentence_units(text)
+        if not units:
             return []
 
         # Trivial case: a single sentence is its own chunk; no embedding needed.
-        if len(sentences) == 1:
-            return [self._emit_chunk(sentences, 0, source_id, 0, base_metadata)]
+        if len(units) == 1:
+            return [self._emit_chunk(text, units, source_id, 0, base_metadata)]
 
+        sentences = [text[a:b] for a, b in units]
         embeddings = self._embed_sentences(sentences)
         distances = self._grouped_distances(embeddings)
         breakpoints = self._breakpoint_indices(distances)
 
         chunks: list[TextChunk] = []
-        current: list[str] = []
-        current_start = 0
-        chunk_index = 0
+        current: list[Span] = []
 
         def flush() -> None:
-            nonlocal current, current_start, chunk_index
+            nonlocal current
             if not current:
                 return
-            chunk = self._emit_chunk(
-                current, current_start, source_id, chunk_index, base_metadata
+            chunks.append(
+                self._emit_chunk(text, current, source_id, len(chunks), base_metadata)
             )
-            chunks.append(chunk)
-            chunk_index += 1
-            current_start = chunk.end_pos + 1
             current = []
 
-        for i, sentence in enumerate(sentences):
-            prospective = (" ".join(current + [sentence])) if current else sentence
-            # max_chunk_size guardrail: force a break before we overflow.
-            if current and len(prospective) > self.config.max_chunk_size:
+        for index, span in enumerate(units):
+            # Force a break before the group would exceed the cap.
+            if current and span[1] - current[0][0] > self.config.max_chunk_size:
                 flush()
 
-            current.append(sentence)
+            current.append(span)
 
-            # Semantic breakpoint after sentence i — but respect min_chunk_size
-            # so a breakpoint doesn't emit a sub-minimum chunk; in that case we
-            # keep accreting until the guardrail is met.
-            if i in breakpoints:
-                if len(" ".join(current)) >= self.config.min_chunk_size:
+            # Semantic breakpoint after this sentence — but respect
+            # min_chunk_size, so a breakpoint never emits a sub-minimum chunk;
+            # keep accreting instead (merge, never drop).
+            if index in breakpoints:
+                if current[-1][1] - current[0][0] >= self.config.min_chunk_size:
                     flush()
 
         flush()

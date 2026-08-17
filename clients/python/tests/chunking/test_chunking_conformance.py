@@ -22,8 +22,8 @@ what the code *does*, not what anyone believes it does. That distinction is the
 whole lesson of the audit that produced ADR-091: the pre-existing suite had 426
 passing tests and caught none of these defects.
 
-Baseline after the ``semantic`` rewrite: **60 cases, 60 clean, 0 violations,
-0 errors** — every swept strategy now satisfies every invariant, so BASELINE is
+Baseline after the correctness slice: **70 cases, 70 clean, 0 violations,
+0 errors** — seven strategies x ten corpus entries — every swept strategy now satisfies every invariant, so BASELINE is
 empty and ``VIOLATION_CEILING = 0`` makes the aggregate ratchet an ABSOLUTE
 assertion rather than a shrinking allowance. A single new violation anywhere
 fails the build.
@@ -39,6 +39,8 @@ points at a different worktree you will silently test that one, so run this with
 """
 
 from __future__ import annotations
+
+import hashlib
 
 import pytest
 
@@ -81,9 +83,27 @@ SWEPT_STRATEGIES = (
     ChunkingStrategy.PARAGRAPH,
     ChunkingStrategy.SEMANTIC,
     ChunkingStrategy.RECURSIVE,
+    ChunkingStrategy.SEMANTIC_EMBEDDING,
 )
-# SEMANTIC_EMBEDDING needs an injected provider and CODE needs tree-sitter; both
-# are swept separately once TD-CG2 settles the code path's offset basis.
+# CODE is excluded deliberately, not by oversight: it publishes UTF-8 BYTE offsets
+# through the same field the text strategies fill with CHARACTER offsets, so it
+# cannot be held to this suite's exactness check until TD-CG2 settles the code
+# path's offset basis. It is the last unswept strategy.
+
+
+def _deterministic_provider(texts: list[str]) -> list[list[float]]:
+    """A pure, seed-free stand-in for an embedding model.
+
+    SEMANTIC_EMBEDDING needs a provider to reach its real code path. Hashing the
+    text keeps the corpus determinism rule intact (same input -> same vectors ->
+    same breakpoints) without downloading a model or touching the network, and
+    ``md5`` is used only because it is stable across processes, unlike ``hash()``.
+    """
+    vectors: list[list[float]] = []
+    for text in texts:
+        digest = hashlib.md5(text[:64].encode("utf-8")).digest()
+        vectors.append([byte / 255.0 for byte in digest[:8]])
+    return vectors
 
 
 def _v(*names: str) -> frozenset[Invariant]:
@@ -101,12 +121,15 @@ def _v(*names: str) -> frozenset[Invariant]:
 BASELINE: dict[tuple[str, str], frozenset[Invariant]] = {}
 
 #: Aggregate ratchet. Clean cases may only increase; violations may only fall.
-CLEAN_FLOOR = 60
+#: At 70/0 both are pinned: the sweep is exhaustive over every swept strategy.
+CLEAN_FLOOR = 70
 VIOLATION_CEILING = 0
 
 
 def _adapter(strategy: ChunkingStrategy) -> ChunkerAdapter:
-    config = ChunkingConfig(strategy=strategy, **DEFAULTS)
+    config = ChunkingConfig(
+        strategy=strategy, embedding_provider=_deterministic_provider, **DEFAULTS
+    )
     strat = ChunkingStrategyFactory.create_strategy(strategy, config)
 
     stream = None
@@ -123,18 +146,29 @@ def _adapter(strategy: ChunkingStrategy) -> ChunkerAdapter:
             chunk_overlap=90,
             min_chunk_size=10,
             max_chunk_size=200,
+            embedding_provider=_deterministic_provider,
         )
         hostile_strategy = ChunkingStrategyFactory.create_strategy(
             strategy, hostile_config
         )
         return hostile_strategy.chunk("word " * 4000, "doc")
 
+    # IDEMPOTENCE does not apply to a distribution-relative criterion.
+    # SEMANTIC_EMBEDDING breaks where a gap exceeds the Nth PERCENTILE of the
+    # document's own distance distribution, so re-chunking one chunk recomputes
+    # that percentile over a smaller distribution and can legitimately find a
+    # boundary that was not in the whole document's top 5%. Demanding a fixed
+    # point would be demanding the strategy stop being percentile-based. It is
+    # SKIPPED rather than baselined, so the result is recorded as unmeasured
+    # instead of as a passing check.
+    absolute_criterion = strategy is not ChunkingStrategy.SEMANTIC_EMBEDDING
+
     return ChunkerAdapter(
         name=strategy.value,
         chunk=lambda text: strat.chunk(text, "doc"),
         budget=BUDGET,
         chunk_stream=stream,
-        rechunk=lambda text: strat.chunk(text, "doc"),
+        rechunk=(lambda text: strat.chunk(text, "doc")) if absolute_criterion else None,
         hostile=hostile,
     )
 
