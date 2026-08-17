@@ -67,11 +67,34 @@ def merge_spans(spans: list[Span]) -> Span:
     return spans[0][0], spans[-1][1]
 
 
+#: Measures a half-open span of ``text``. Char measurement is ``end - start``;
+#: a non-character measure supplies its own, which is the single seam this whole
+#: refactor exists to create.
+SizeOf = Callable[[str, int, int], int]
+
+
+def char_size_of(_text: str, start: int, end: int) -> int:
+    """The character measure: span extent IS the size."""
+    return end - start
+
+
 def span_length(span: Span) -> int:
+    """Character length of a span.
+
+    Was dead code, which is precisely why 41 sites inlined ``span[1] - span[0]``
+    instead — there was no chokepoint to route through, so there was nothing to
+    inject a measure into.
+    """
     return span[1] - span[0]
 
 
-def hard_split(text: str, start: int, end: int, cap: int) -> Iterator[Span]:
+def hard_split(
+    text: str,
+    start: int,
+    end: int,
+    cap: int,
+    size_of: SizeOf = char_size_of,
+) -> Iterator[Span]:
     """Split ``[start, end)`` into spans of at most ``cap`` characters.
 
     The cap enforcement of last resort, for when no boundary source found a
@@ -89,9 +112,13 @@ def hard_split(text: str, start: int, end: int, cap: int) -> Iterator[Span]:
         raise ValueError("cap must be positive")
     start, end = strip_span(text, start, end)
     while start < end:
-        if end - start <= cap:
+        if size_of(text, start, end) <= cap:
             yield start, end
             return
+        # `start + cap` is the CHARACTER position `cap` units on, which is only
+        # right for an additive character measure. A non-character measure
+        # overrides the whole backstop rather than this arithmetic (see the
+        # measure seam), so the char assumption stays local and visible here.
         limit = start + cap
         cut = text.rfind(" ", start, limit)
         if cut <= start:

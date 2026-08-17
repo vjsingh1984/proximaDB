@@ -65,7 +65,10 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
             # Undersized windows are skipped, but never the last one — dropping
             # the tail silently loses content, and after the min<=chunk clamp in
             # ChunkingConfig the tail is the only window that can be undersized.
-            if end_pos - start_pos < self.config.min_chunk_size and not is_final:
+            if (
+                self._size(text, start_pos, end_pos) < self.config.min_chunk_size
+                and not is_final
+            ):
                 continue
 
             chunk_id = f"{source_id}_chunk_{len(chunks)}"
@@ -131,7 +134,10 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
             local_start, local_end = strip_span(raw, 0, len(raw))
             if is_empty((local_start, local_end)):
                 return None
-            if local_end - local_start < min_chunk_size and not is_final:
+            if (
+                self._size(raw, local_start, local_end) < min_chunk_size
+                and not is_final
+            ):
                 return None
             start_pos = window_start + local_start
             chunk = TextChunk(

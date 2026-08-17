@@ -54,7 +54,9 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
             chunk_text = text[start_pos:end_pos]
 
             # Skip if chunk is too small (unless it's the last chunk)
-            if len(chunk_text) < self.config.min_chunk_size and end_pos < len(text):
+            if self._size(
+                text, start_pos, end_pos
+            ) < self.config.min_chunk_size and end_pos < len(text):
                 position += step_size
                 continue
 
@@ -182,7 +184,7 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
                 # At EOF the buffer end is the true input end. A window is final
                 # when its (clamped) end reaches the input end.
                 is_final = at_eof and (position + chunk_size >= total_so_far)
-                if len(raw) < min_chunk_size and not is_final:
+                if self._size(raw, 0, len(raw)) < min_chunk_size and not is_final:
                     position += step_size
                     trim_to(position)
                     continue

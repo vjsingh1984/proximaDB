@@ -286,19 +286,19 @@ class SemanticStrategy(ChunkingStrategyInterface):
                     pending = (start, end, meta)
                 continue
 
-            if span[1] - span[0] >= floor:
+            if self._size_of_span(text, span) >= floor:
                 out.append((start, end, meta))
                 continue
 
             if meta.get("has_header"):
                 pending = (start, end, meta)  # merge forward, into its body
-            elif out and (end - out[-1][0]) <= cap:
+            elif out and self._size(text, out[-1][0], end) <= cap:
                 out[-1] = (out[-1][0], end, out[-1][2])  # merge backward
             else:
                 pending = (start, end, meta)
 
         if pending is not None:
-            if out and (pending[1] - out[-1][0]) <= cap:
+            if out and self._size(text, out[-1][0], pending[1]) <= cap:
                 out[-1] = (out[-1][0], pending[1], out[-1][2])
             else:
                 out.append(pending)  # emit short rather than drop
@@ -331,7 +331,7 @@ class SemanticStrategy(ChunkingStrategyInterface):
         span = strip_span(text, start, end)
         if is_empty(span):
             return []
-        if span[1] - span[0] <= self.config.chunk_size:
+        if self._size_of_span(text, span) <= self.config.chunk_size:
             return [(span, False)]
 
         units = self._section_units(text, span[0], span[1], barriers)
@@ -343,9 +343,12 @@ class SemanticStrategy(ChunkingStrategyInterface):
         for unit in units:
             if group:
                 group_start = group[0][0]
-                if unit[1] - group_start > self.config.chunk_size:
-                    current = group[-1][1] - group_start
-                    fits_cap = (unit[1] - group_start) <= self.config.max_chunk_size
+                if self._size(text, group_start, unit[1]) > self.config.chunk_size:
+                    current = self._size(text, group_start, group[-1][1])
+                    fits_cap = (
+                        self._size(text, group_start, unit[1])
+                        <= self.config.max_chunk_size
+                    )
                     if current >= self.config.min_chunk_size or not fits_cap:
                         out.append((merge_spans(group), False))
                         group = []
@@ -358,7 +361,7 @@ class SemanticStrategy(ChunkingStrategyInterface):
         # cut: the provider truncates silently or rejects the call.
         capped: list[tuple[Span, bool]] = []
         for (piece_start, piece_end), _forced in out:
-            if piece_end - piece_start <= self.config.max_chunk_size:
+            if self._size(text, piece_start, piece_end) <= self.config.max_chunk_size:
                 capped.append(((piece_start, piece_end), False))
                 continue
             for cut in hard_split(

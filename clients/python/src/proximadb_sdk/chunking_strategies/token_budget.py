@@ -6,7 +6,7 @@ import bisect
 from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
-from .base import ChunkingStrategyInterface, TextChunk
+from .base import OFFSET_CONTRACT_EXACT, ChunkingStrategyInterface, TextChunk
 from .contracts import (
     CompositeInputContract,
     InputRole,
@@ -29,6 +29,10 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
     """
 
     supports_streaming = False
+
+    #: It slices the ORIGINAL text (`text[start_char:end_char]`), so its offsets
+    #: are exact; it was inheriting the ``legacy`` default and under-promising.
+    _offset_contract = OFFSET_CONTRACT_EXACT
 
     def __init__(
         self,
@@ -113,6 +117,8 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
     ) -> list[TextChunk]:
+        self.validate_config()
+
         if not text or not text.strip():
             return []
 

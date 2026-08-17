@@ -257,6 +257,27 @@ class ChunkingStrategyInterface(ABC):
         text = _coalesce_text_source(text_source)
         yield from self.chunk(text, source_id, base_metadata)
 
+    def _size(self, source: Any, start: int, end: int) -> int:
+        """Size of the span ``[start, end)`` in this strategy's measure.
+
+        THE chokepoint. Every size decision in every strategy routes through
+        here, so a measure is injected in exactly one place per strategy rather
+        than at the ~41 sites that used to inline ``span[1] - span[0]``.
+
+        ``source`` is the document text, or a ``Slicer`` for it — the grouping
+        loops are shared between the batch and streaming paths, and streaming
+        has only a bounded buffer, never the whole document. The character
+        measure ignores it entirely (span extent IS the size), which keeps the
+        default path allocation-free; a non-character measure materialises the
+        span through it to count. That identity holds ONLY for characters: under
+        a token measure a span's extent and its count are unrelated numbers.
+        """
+        return end - start
+
+    def _size_of_span(self, source: Any, span: tuple[int, int]) -> int:
+        """Convenience for the common ``self._size(source, *span)`` shape."""
+        return self._size(source, span[0], span[1])
+
     def validate_config(self) -> None:
         """Validate configuration for this strategy"""
         if self.config.chunk_size <= 0:

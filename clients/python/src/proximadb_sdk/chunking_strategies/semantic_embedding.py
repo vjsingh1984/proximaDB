@@ -212,7 +212,7 @@ class SemanticEmbeddingStrategy(ChunkingStrategyInterface):
         """
         units: list[Span] = []
         for span in self._sentence_splitter._sentence_spans(text):
-            if span[1] - span[0] <= self.config.max_chunk_size:
+            if self._size_of_span(text, span) <= self.config.max_chunk_size:
                 units.append(span)
                 continue
             units.extend(hard_split(text, span[0], span[1], self.config.max_chunk_size))
@@ -256,7 +256,11 @@ class SemanticEmbeddingStrategy(ChunkingStrategyInterface):
 
         for index, span in enumerate(units):
             # Force a break before the group would exceed the cap.
-            if current and span[1] - current[0][0] > self.config.max_chunk_size:
+            if (
+                current
+                and self._size(text, current[0][0], span[1])
+                > self.config.max_chunk_size
+            ):
                 flush()
 
             current.append(span)
@@ -265,7 +269,10 @@ class SemanticEmbeddingStrategy(ChunkingStrategyInterface):
             # min_chunk_size, so a breakpoint never emits a sub-minimum chunk;
             # keep accreting instead (merge, never drop).
             if index in breakpoints:
-                if current[-1][1] - current[0][0] >= self.config.min_chunk_size:
+                if (
+                    self._size(text, current[0][0], current[-1][1])
+                    >= self.config.min_chunk_size
+                ):
                     flush()
 
         flush()

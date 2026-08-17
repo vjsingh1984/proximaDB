@@ -217,22 +217,25 @@ class SentenceStrategy(ChunkingStrategyInterface):
             # at the backstop first. The old guard consulted only the ACCUMULATED
             # group and then appended the incoming sentence unconditionally, so
             # one oversized sentence always shipped over the cap.
-            if span[1] - span[0] > self.config.max_chunk_size:
+            if self._size_of_span(slicer, span) > self.config.max_chunk_size:
                 if group:
                     yield emit(group)
                     group = []
-                text = slicer(span[0], span[1])
+                unit_text = slicer(span[0], span[1])
                 for piece_start, piece_end in hard_split(
-                    text, 0, len(text), self.config.max_chunk_size
+                    unit_text, 0, len(unit_text), self.config.max_chunk_size
                 ):
                     yield emit([(span[0] + piece_start, span[0] + piece_end)], True)
                 continue
 
             if group:
                 group_start = group[0][0]
-                if span[1] - group_start > self.config.chunk_size:
-                    current_length = group[-1][1] - group_start
-                    fits_cap = (span[1] - group_start) <= self.config.max_chunk_size
+                if self._size(slicer, group_start, span[1]) > self.config.chunk_size:
+                    current_length = self._size(slicer, group_start, group[-1][1])
+                    fits_cap = (
+                        self._size(slicer, group_start, span[1])
+                        <= self.config.max_chunk_size
+                    )
                     # Merge forward rather than drop: previously only the FINAL
                     # group had an escape hatch, so an undersized interior group
                     # was deleted outright.

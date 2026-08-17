@@ -111,7 +111,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         rejoined length — the single worst offset site in this file.
         """
         text = slicer(start, end)
-        if len(text) <= max_size:
+        if self._size(slicer, start, end) <= max_size:
             return [((start, end), False)]
 
         endings = "".join(re.escape(e) for e in self.config.sentence_endings)
@@ -133,7 +133,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         out: list[Span] = []
         group: list[Span] = []
         for unit in units:
-            if group and unit[1] - group[0][0] > max_size:
+            if group and self._size(text, group[0][0], unit[1]) > max_size:
                 out.append(merge_spans(group))
                 group = []
             group.append(unit)
@@ -145,7 +145,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         # boundary histogram shows how often the backstop actually fires.
         capped: list[tuple[Span, bool]] = []
         for local_start, local_end in out:
-            if local_end - local_start <= max_size:
+            if self._size(text, local_start, local_end) <= max_size:
                 capped.append(((start + local_start, start + local_end), False))
                 continue
             for piece_start, piece_end in hard_split(
@@ -201,7 +201,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
 
         for span in paragraphs:
             para_start, para_end = span
-            para_length = para_end - para_start
+            para_length = self._size(slicer, para_start, para_end)
 
             # A paragraph larger than the cap cannot join a group at all.
             if para_length > self.config.max_chunk_size:
@@ -222,9 +222,12 @@ class ParagraphStrategy(ChunkingStrategyInterface):
             # outright (only the final group had an escape hatch).
             if group:
                 group_start = group[0][0]
-                if para_end - group_start > self.config.chunk_size:
-                    current_length = group[-1][1] - group_start
-                    fits_cap = (para_end - group_start) <= self.config.max_chunk_size
+                if self._size(slicer, group_start, para_end) > self.config.chunk_size:
+                    current_length = self._size(slicer, group_start, group[-1][1])
+                    fits_cap = (
+                        self._size(slicer, group_start, para_end)
+                        <= self.config.max_chunk_size
+                    )
                     if current_length >= self.config.min_chunk_size or not fits_cap:
                         yield emit(group)
                         group = []
