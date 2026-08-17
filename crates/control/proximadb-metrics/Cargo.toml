@@ -28,6 +28,7 @@ chrono.workspace = true
 # Foundation + control deps. Metrics types are keyed by collection (catalog) and
 # read hardware caps; the rest is foundation.
 proximadb-catalog.workspace = true
+proximadb-compression.workspace = true
 proximadb-hardware.workspace = true
 proximadb-kernel.workspace = true
 proximadb-proto.workspace = true

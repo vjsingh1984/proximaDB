@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use crate::metrics::compression::CompressionData;
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_compression::CompressionData;
 use proximadb_hardware_caps::HardwareCapabilities;
 
 /// Universal compression configuration
@@ -1699,7 +1699,7 @@ impl Default for ContextAwareCompressionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            data_type: crate::metrics::compression::CompressionData::Mixed,
+            data_type: CompressionData::Mixed,
             context_types: vec![
                 CompressionContext::VectorData {
                     dimension: 768,

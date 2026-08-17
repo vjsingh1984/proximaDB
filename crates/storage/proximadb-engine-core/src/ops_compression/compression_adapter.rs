@@ -1,14 +1,14 @@
 // Compression Adapter - Bridges Universal Compression Config with Unified Compression Implementation
 // This demonstrates the synergy between universal abstractions and unified implementation
 
-use crate::storage::engines::core::ops::compression_common::CompressionStrategy;
+use crate::ops_compression::compression_common::CompressionStrategy;
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::metrics::compression::CompressionData;
-use crate::storage::engines::core::ops::compression_common::{
+use crate::ops_compression::compression_common::{
     AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig,
 };
+use proximadb_compression::CompressionData;
 use proximadb_compression::{
     CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
@@ -28,9 +28,8 @@ pub struct UniversalCompressionAdapter {
 impl UniversalCompressionAdapter {
     /// Create new adapter with hardware detection
     pub fn new() -> Result<Self> {
-        let hardware = HardwareCapabilities::detect_with_config(
-            crate::core::config::HardwareConfig::default(),
-        )?;
+        let hardware =
+            HardwareCapabilities::detect_with_config(proximadb_config::HardwareConfig::default())?;
 
         Ok(Self {
             provider: StandardCompression,
@@ -535,7 +534,7 @@ impl CompressionPerformanceStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::core::ops::compression_common::{
+    use crate::ops_compression::compression_common::{
         AdaptationCriteria, AdaptiveCompressionSettings, ContextAwareCompressionConfig,
         UniversalCompressionConfig,
     };
@@ -553,18 +552,18 @@ mod tests {
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: false,
                 criteria: AdaptationCriteria {
-                    data_characteristics: crate::storage::engines::core::ops::compression_common::DataCharacteristics {
-                        entropy_thresholds: crate::storage::engines::core::ops::compression_common::EntropyThresholds {
+                    data_characteristics: crate::ops_compression::compression_common::DataCharacteristics {
+                        entropy_thresholds: crate::ops_compression::compression_common::EntropyThresholds {
                             low_entropy: 0.5,
                             high_entropy: 8.0,
-                            calculation_method: crate::storage::engines::core::ops::compression_common::EntropyCalculationMethod::Shannon,
+                            calculation_method: crate::ops_compression::compression_common::EntropyCalculationMethod::Shannon,
                         },
-                        size_thresholds: crate::storage::engines::core::ops::compression_common::SizeThresholds {
+                        size_thresholds: crate::ops_compression::compression_common::SizeThresholds {
                             small_data_threshold: 1024,
                             large_data_threshold: 1024 * 1024,
                             block_size_optimization: true,
                         },
-                        pattern_recognition: crate::storage::engines::core::ops::compression_common::PatternRecognitionConfig {
+                        pattern_recognition: crate::ops_compression::compression_common::PatternRecognitionConfig {
                             enabled: false,
                             pattern_types: vec![],
                             accuracy_threshold: 0.8,
@@ -572,39 +571,39 @@ mod tests {
                         },
                         data_type_hints: vec![],
                     },
-                    performance_thresholds: crate::storage::engines::core::ops::compression_common::PerformanceThresholds {
+                    performance_thresholds: crate::ops_compression::compression_common::PerformanceThresholds {
                         max_compression_latency_ms: 1000.0,
                         max_decompression_latency_ms: 500.0,
                         min_throughput_mbps: 10.0,
                         max_cpu_usage_percent: 80.0,
                         max_memory_usage_mb: 512,
                     },
-                    resource_constraints: crate::storage::engines::core::ops::compression_common::ResourceConstraints {
-                        memory_constraints: crate::storage::engines::core::ops::compression_common::MemoryConstraints {
+                    resource_constraints: crate::ops_compression::compression_common::ResourceConstraints {
+                        memory_constraints: crate::ops_compression::compression_common::MemoryConstraints {
                             max_working_memory: 512 * 1024 * 1024,
                             max_buffer_size: 64 * 1024 * 1024,
                             memory_pressure_threshold: 0.8,
                             enable_memory_mapping: true,
                         },
-                        cpu_constraints: crate::storage::engines::core::ops::compression_common::CPUConstraints {
+                        cpu_constraints: crate::ops_compression::compression_common::CPUConstraints {
                             max_cpu_cores: None,
                             max_cpu_usage_percent: 80.0,
                             enable_hardware_acceleration: true,
-                            thread_priority: crate::storage::engines::core::ops::compression_common::ThreadPriority::Normal,
+                            thread_priority: crate::ops_compression::compression_common::ThreadPriority::Normal,
                         },
-                        io_constraints: crate::storage::engines::core::ops::compression_common::IOConstraints {
+                        io_constraints: crate::ops_compression::compression_common::IOConstraints {
                             max_io_bandwidth_mbps: 1000.0,
-                            io_priority: crate::storage::engines::core::ops::compression_common::IOPriority::Normal,
+                            io_priority: crate::ops_compression::compression_common::IOPriority::Normal,
                             buffer_io: true,
                             use_direct_io: false,
                         },
                         network_constraints: None,
                     },
-                    quality_requirements: crate::storage::engines::core::ops::compression_common::QualityRequirements {
+                    quality_requirements: crate::ops_compression::compression_common::QualityRequirements {
                         min_compression_ratio: 1.1,
                         max_quality_loss_percent: 5.0,
                         require_lossless: true,
-                        error_tolerance: crate::storage::engines::core::ops::compression_common::ErrorTolerance::Low,
+                        error_tolerance: crate::ops_compression::compression_common::ErrorTolerance::Low,
                     },
                 },
                 max_adaptation_overhead_percent: 10.0,
@@ -613,43 +612,43 @@ mod tests {
             },
             context_aware: ContextAwareCompressionConfig {
                 enabled: true,
-                data_type: crate::metrics::compression::CompressionData::Mixed,
+                data_type: CompressionData::Mixed,
                 context_types: vec![],
-                switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Automatic {
+                switching_strategy: crate::ops_compression::compression_common::ContextSwitchingStrategy::Automatic {
                     detection_threshold: 0.8,
                     min_switch_interval_ms: 5000,
                 },
-                learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                learning_config: crate::ops_compression::compression_common::ContextLearningConfig {
                     enabled: false,
                     algorithms: vec![],
-                    training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                    training_requirements: crate::ops_compression::compression_common::TrainingRequirements {
                         min_training_samples: 1000,
-                        diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                        diversity_requirements: crate::ops_compression::compression_common::DiversityRequirements {
                             data_types: vec!["vector".to_string(), "metadata_info".to_string()],
                             size_ranges: vec![(1024, 1024 * 1024)],
                             pattern_types: vec!["structured".to_string(), "unstructured".to_string()],
                             context_types: vec!["vector".to_string(), "metadata_info".to_string()],
                         },
-                        training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::Periodic {
+                        training_frequency: crate::ops_compression::compression_common::TrainingFrequency::Periodic {
                             interval_ms: 3600000,
                         },
-                        validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                        validation_requirements: crate::ops_compression::compression_common::ValidationRequirements {
                             validation_split: 0.2,
                             cross_validation_folds: 5,
                             performance_metrics: vec!["accuracy".to_string(), "compression_ratio".to_string()],
                             min_performance_threshold: 0.85,
                         },
                     },
-                    model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                    model_persistence: crate::ops_compression::compression_common::ModelPersistenceConfig {
                         enabled: true,
                         storage_path: Some("/tmp/compression_models".to_string()),
-                        versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                        versioning: crate::ops_compression::compression_common::ModelVersioningConfig {
                             enabled: true,
                             max_versions: 10,
-                            naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                            naming_strategy: crate::ops_compression::compression_common::VersionNamingStrategy::Timestamp,
                         },
                         model_compression: true,
-                        checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                        checkpoint_config: crate::ops_compression::compression_common::CheckpointConfig {
                             enabled: true,
                             checkpoint_interval_ms: 300000,
                             max_checkpoints: 5,
@@ -697,18 +696,18 @@ mod tests {
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: true,
                 criteria: AdaptationCriteria {
-                    data_characteristics: crate::storage::engines::core::ops::compression_common::DataCharacteristics {
-                        entropy_thresholds: crate::storage::engines::core::ops::compression_common::EntropyThresholds {
+                    data_characteristics: crate::ops_compression::compression_common::DataCharacteristics {
+                        entropy_thresholds: crate::ops_compression::compression_common::EntropyThresholds {
                             low_entropy: 0.5,
                             high_entropy: 8.0,
-                            calculation_method: crate::storage::engines::core::ops::compression_common::EntropyCalculationMethod::Shannon,
+                            calculation_method: crate::ops_compression::compression_common::EntropyCalculationMethod::Shannon,
                         },
-                        size_thresholds: crate::storage::engines::core::ops::compression_common::SizeThresholds {
+                        size_thresholds: crate::ops_compression::compression_common::SizeThresholds {
                             small_data_threshold: 1024,
                             large_data_threshold: 1024 * 1024,
                             block_size_optimization: true,
                         },
-                        pattern_recognition: crate::storage::engines::core::ops::compression_common::PatternRecognitionConfig {
+                        pattern_recognition: crate::ops_compression::compression_common::PatternRecognitionConfig {
                             enabled: false,
                             pattern_types: vec![],
                             accuracy_threshold: 0.8,
@@ -716,39 +715,39 @@ mod tests {
                         },
                         data_type_hints: vec![],
                     },
-                    performance_thresholds: crate::storage::engines::core::ops::compression_common::PerformanceThresholds {
+                    performance_thresholds: crate::ops_compression::compression_common::PerformanceThresholds {
                         max_compression_latency_ms: 1000.0,
                         max_decompression_latency_ms: 500.0,
                         min_throughput_mbps: 10.0,
                         max_cpu_usage_percent: 80.0,
                         max_memory_usage_mb: 512,
                     },
-                    resource_constraints: crate::storage::engines::core::ops::compression_common::ResourceConstraints {
-                        memory_constraints: crate::storage::engines::core::ops::compression_common::MemoryConstraints {
+                    resource_constraints: crate::ops_compression::compression_common::ResourceConstraints {
+                        memory_constraints: crate::ops_compression::compression_common::MemoryConstraints {
                             max_working_memory: 512 * 1024 * 1024,
                             max_buffer_size: 64 * 1024 * 1024,
                             memory_pressure_threshold: 0.8,
                             enable_memory_mapping: true,
                         },
-                        cpu_constraints: crate::storage::engines::core::ops::compression_common::CPUConstraints {
+                        cpu_constraints: crate::ops_compression::compression_common::CPUConstraints {
                             max_cpu_cores: None,
                             max_cpu_usage_percent: 80.0,
                             enable_hardware_acceleration: true,
-                            thread_priority: crate::storage::engines::core::ops::compression_common::ThreadPriority::Normal,
+                            thread_priority: crate::ops_compression::compression_common::ThreadPriority::Normal,
                         },
-                        io_constraints: crate::storage::engines::core::ops::compression_common::IOConstraints {
+                        io_constraints: crate::ops_compression::compression_common::IOConstraints {
                             max_io_bandwidth_mbps: 1000.0,
-                            io_priority: crate::storage::engines::core::ops::compression_common::IOPriority::Normal,
+                            io_priority: crate::ops_compression::compression_common::IOPriority::Normal,
                             buffer_io: true,
                             use_direct_io: false,
                         },
                         network_constraints: None,
                     },
-                    quality_requirements: crate::storage::engines::core::ops::compression_common::QualityRequirements {
+                    quality_requirements: crate::ops_compression::compression_common::QualityRequirements {
                         min_compression_ratio: 1.1,
                         max_quality_loss_percent: 5.0,
                         require_lossless: true,
-                        error_tolerance: crate::storage::engines::core::ops::compression_common::ErrorTolerance::Low,
+                        error_tolerance: crate::ops_compression::compression_common::ErrorTolerance::Low,
                     },
                 },
                 max_adaptation_overhead_percent: 10.0,
@@ -757,43 +756,43 @@ mod tests {
             },
             context_aware: ContextAwareCompressionConfig {
                 enabled: true,
-                data_type: crate::metrics::compression::CompressionData::Mixed,
+                data_type: CompressionData::Mixed,
                 context_types: vec![],
-                switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Automatic {
+                switching_strategy: crate::ops_compression::compression_common::ContextSwitchingStrategy::Automatic {
                     detection_threshold: 0.8,
                     min_switch_interval_ms: 5000,
                 },
-                learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                learning_config: crate::ops_compression::compression_common::ContextLearningConfig {
                     enabled: false,
                     algorithms: vec![],
-                    training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                    training_requirements: crate::ops_compression::compression_common::TrainingRequirements {
                         min_training_samples: 1000,
-                        diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                        diversity_requirements: crate::ops_compression::compression_common::DiversityRequirements {
                             data_types: vec!["vector".to_string(), "metadata_info".to_string()],
                             size_ranges: vec![(1024, 1024 * 1024)],
                             pattern_types: vec!["structured".to_string(), "unstructured".to_string()],
                             context_types: vec!["vector".to_string(), "metadata_info".to_string()],
                         },
-                        training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::Periodic {
+                        training_frequency: crate::ops_compression::compression_common::TrainingFrequency::Periodic {
                             interval_ms: 3600000,
                         },
-                        validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                        validation_requirements: crate::ops_compression::compression_common::ValidationRequirements {
                             validation_split: 0.2,
                             cross_validation_folds: 5,
                             performance_metrics: vec!["accuracy".to_string(), "compression_ratio".to_string()],
                             min_performance_threshold: 0.85,
                         },
                     },
-                    model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                    model_persistence: crate::ops_compression::compression_common::ModelPersistenceConfig {
                         enabled: true,
                         storage_path: Some("/tmp/compression_models".to_string()),
-                        versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                        versioning: crate::ops_compression::compression_common::ModelVersioningConfig {
                             enabled: true,
                             max_versions: 10,
-                            naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                            naming_strategy: crate::ops_compression::compression_common::VersionNamingStrategy::Timestamp,
                         },
                         model_compression: true,
-                        checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                        checkpoint_config: crate::ops_compression::compression_common::CheckpointConfig {
                             enabled: true,
                             checkpoint_interval_ms: 300000,
                             max_checkpoints: 5,
@@ -831,38 +830,38 @@ mod tests {
         // Test SST block context
         let sst_context = ContextAwareCompressionConfig {
             enabled: true,
-            data_type: crate::metrics::compression::CompressionData::Index,
+            data_type: CompressionData::Index,
             context_types: vec![],
-            switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Manual,
-            learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+            switching_strategy: crate::ops_compression::compression_common::ContextSwitchingStrategy::Manual,
+            learning_config: crate::ops_compression::compression_common::ContextLearningConfig {
                 enabled: false,
                 algorithms: vec![],
-                training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                training_requirements: crate::ops_compression::compression_common::TrainingRequirements {
                     min_training_samples: 1000,
-                    diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                    diversity_requirements: crate::ops_compression::compression_common::DiversityRequirements {
                         data_types: vec!["index".to_string()],
                         size_ranges: vec![(1024, 1024 * 1024)],
                         pattern_types: vec!["structured".to_string()],
                         context_types: vec!["index".to_string()],
                     },
-                    training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::OnDemand,
-                    validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                    training_frequency: crate::ops_compression::compression_common::TrainingFrequency::OnDemand,
+                    validation_requirements: crate::ops_compression::compression_common::ValidationRequirements {
                         validation_split: 0.2,
                         cross_validation_folds: 5,
                         performance_metrics: vec!["compression_ratio".to_string()],
                         min_performance_threshold: 0.85,
                     },
                 },
-                model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                model_persistence: crate::ops_compression::compression_common::ModelPersistenceConfig {
                     enabled: false,
                     storage_path: Some("/tmp/compression_models".to_string()),
-                    versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                    versioning: crate::ops_compression::compression_common::ModelVersioningConfig {
                         enabled: false,
                         max_versions: 1,
-                        naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                        naming_strategy: crate::ops_compression::compression_common::VersionNamingStrategy::Timestamp,
                     },
                     model_compression: false,
-                    checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                    checkpoint_config: crate::ops_compression::compression_common::CheckpointConfig {
                         enabled: false,
                         checkpoint_interval_ms: 300000,
                         max_checkpoints: 1,
@@ -878,38 +877,38 @@ mod tests {
         // Test vector data context
         let vector_context = ContextAwareCompressionConfig {
             enabled: true,
-            data_type: crate::metrics::compression::CompressionData::Vector,
+            data_type: CompressionData::Vector,
             context_types: vec![],
-            switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Manual,
-            learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+            switching_strategy: crate::ops_compression::compression_common::ContextSwitchingStrategy::Manual,
+            learning_config: crate::ops_compression::compression_common::ContextLearningConfig {
                 enabled: false,
                 algorithms: vec![],
-                training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                training_requirements: crate::ops_compression::compression_common::TrainingRequirements {
                     min_training_samples: 1000,
-                    diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                    diversity_requirements: crate::ops_compression::compression_common::DiversityRequirements {
                         data_types: vec!["vector".to_string()],
                         size_ranges: vec![(1024, 1024 * 1024)],
                         pattern_types: vec!["structured".to_string()],
                         context_types: vec!["vector".to_string()],
                     },
-                    training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::OnDemand,
-                    validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                    training_frequency: crate::ops_compression::compression_common::TrainingFrequency::OnDemand,
+                    validation_requirements: crate::ops_compression::compression_common::ValidationRequirements {
                         validation_split: 0.2,
                         cross_validation_folds: 5,
                         performance_metrics: vec!["compression_ratio".to_string()],
                         min_performance_threshold: 0.85,
                     },
                 },
-                model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                model_persistence: crate::ops_compression::compression_common::ModelPersistenceConfig {
                     enabled: false,
                     storage_path: Some("/tmp/compression_models".to_string()),
-                    versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                    versioning: crate::ops_compression::compression_common::ModelVersioningConfig {
                         enabled: false,
                         max_versions: 1,
-                        naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                        naming_strategy: crate::ops_compression::compression_common::VersionNamingStrategy::Timestamp,
                     },
                     model_compression: false,
-                    checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                    checkpoint_config: crate::ops_compression::compression_common::CheckpointConfig {
                         enabled: false,
                         checkpoint_interval_ms: 300000,
                         max_checkpoints: 1,
@@ -925,38 +924,38 @@ mod tests {
         // Test Parquet context
         let parquet_context = ContextAwareCompressionConfig {
             enabled: true,
-            data_type: crate::metrics::compression::CompressionData::Mixed,
+            data_type: CompressionData::Mixed,
             context_types: vec![],
-            switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Manual,
-            learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+            switching_strategy: crate::ops_compression::compression_common::ContextSwitchingStrategy::Manual,
+            learning_config: crate::ops_compression::compression_common::ContextLearningConfig {
                 enabled: false,
                 algorithms: vec![],
-                training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                training_requirements: crate::ops_compression::compression_common::TrainingRequirements {
                     min_training_samples: 1000,
-                    diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                    diversity_requirements: crate::ops_compression::compression_common::DiversityRequirements {
                         data_types: vec!["mixed".to_string()],
                         size_ranges: vec![(1024, 1024 * 1024)],
                         pattern_types: vec!["structured".to_string()],
                         context_types: vec!["mixed".to_string()],
                     },
-                    training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::OnDemand,
-                    validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                    training_frequency: crate::ops_compression::compression_common::TrainingFrequency::OnDemand,
+                    validation_requirements: crate::ops_compression::compression_common::ValidationRequirements {
                         validation_split: 0.2,
                         cross_validation_folds: 5,
                         performance_metrics: vec!["compression_ratio".to_string()],
                         min_performance_threshold: 0.85,
                     },
                 },
-                model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                model_persistence: crate::ops_compression::compression_common::ModelPersistenceConfig {
                     enabled: false,
                     storage_path: Some("/tmp/compression_models".to_string()),
-                    versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                    versioning: crate::ops_compression::compression_common::ModelVersioningConfig {
                         enabled: false,
                         max_versions: 1,
-                        naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                        naming_strategy: crate::ops_compression::compression_common::VersionNamingStrategy::Timestamp,
                     },
                     model_compression: false,
-                    checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                    checkpoint_config: crate::ops_compression::compression_common::CheckpointConfig {
                         enabled: false,
                         checkpoint_interval_ms: 300000,
                         max_checkpoints: 1,
@@ -983,18 +982,18 @@ mod tests {
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: false,
                 criteria: AdaptationCriteria {
-                    data_characteristics: crate::storage::engines::core::ops::compression_common::DataCharacteristics {
-                        entropy_thresholds: crate::storage::engines::core::ops::compression_common::EntropyThresholds {
+                    data_characteristics: crate::ops_compression::compression_common::DataCharacteristics {
+                        entropy_thresholds: crate::ops_compression::compression_common::EntropyThresholds {
                             low_entropy: 0.5,
                             high_entropy: 8.0,
-                            calculation_method: crate::storage::engines::core::ops::compression_common::EntropyCalculationMethod::Shannon,
+                            calculation_method: crate::ops_compression::compression_common::EntropyCalculationMethod::Shannon,
                         },
-                        size_thresholds: crate::storage::engines::core::ops::compression_common::SizeThresholds {
+                        size_thresholds: crate::ops_compression::compression_common::SizeThresholds {
                             small_data_threshold: 1024,
                             large_data_threshold: 1024 * 1024,
                             block_size_optimization: true,
                         },
-                        pattern_recognition: crate::storage::engines::core::ops::compression_common::PatternRecognitionConfig {
+                        pattern_recognition: crate::ops_compression::compression_common::PatternRecognitionConfig {
                             enabled: false,
                             pattern_types: vec![],
                             accuracy_threshold: 0.8,
@@ -1002,39 +1001,39 @@ mod tests {
                         },
                         data_type_hints: vec![],
                     },
-                    performance_thresholds: crate::storage::engines::core::ops::compression_common::PerformanceThresholds {
+                    performance_thresholds: crate::ops_compression::compression_common::PerformanceThresholds {
                         max_compression_latency_ms: 1000.0,
                         max_decompression_latency_ms: 500.0,
                         min_throughput_mbps: 10.0,
                         max_cpu_usage_percent: 80.0,
                         max_memory_usage_mb: 512,
                     },
-                    resource_constraints: crate::storage::engines::core::ops::compression_common::ResourceConstraints {
-                        memory_constraints: crate::storage::engines::core::ops::compression_common::MemoryConstraints {
+                    resource_constraints: crate::ops_compression::compression_common::ResourceConstraints {
+                        memory_constraints: crate::ops_compression::compression_common::MemoryConstraints {
                             max_working_memory: 512 * 1024 * 1024,
                             max_buffer_size: 64 * 1024 * 1024,
                             memory_pressure_threshold: 0.8,
                             enable_memory_mapping: true,
                         },
-                        cpu_constraints: crate::storage::engines::core::ops::compression_common::CPUConstraints {
+                        cpu_constraints: crate::ops_compression::compression_common::CPUConstraints {
                             max_cpu_cores: None,
                             max_cpu_usage_percent: 80.0,
                             enable_hardware_acceleration: true,
-                            thread_priority: crate::storage::engines::core::ops::compression_common::ThreadPriority::Normal,
+                            thread_priority: crate::ops_compression::compression_common::ThreadPriority::Normal,
                         },
-                        io_constraints: crate::storage::engines::core::ops::compression_common::IOConstraints {
+                        io_constraints: crate::ops_compression::compression_common::IOConstraints {
                             max_io_bandwidth_mbps: 1000.0,
-                            io_priority: crate::storage::engines::core::ops::compression_common::IOPriority::Normal,
+                            io_priority: crate::ops_compression::compression_common::IOPriority::Normal,
                             buffer_io: true,
                             use_direct_io: false,
                         },
                         network_constraints: None,
                     },
-                    quality_requirements: crate::storage::engines::core::ops::compression_common::QualityRequirements {
+                    quality_requirements: crate::ops_compression::compression_common::QualityRequirements {
                         min_compression_ratio: 1.1,
                         max_quality_loss_percent: 5.0,
                         require_lossless: true,
-                        error_tolerance: crate::storage::engines::core::ops::compression_common::ErrorTolerance::Low,
+                        error_tolerance: crate::ops_compression::compression_common::ErrorTolerance::Low,
                     },
                 },
                 max_adaptation_overhead_percent: 5.0,
@@ -1043,43 +1042,43 @@ mod tests {
             },
             context_aware: ContextAwareCompressionConfig {
                 enabled: true,
-                data_type: crate::metrics::compression::CompressionData::Mixed,
+                data_type: CompressionData::Mixed,
                 context_types: vec![],
-                switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Automatic {
+                switching_strategy: crate::ops_compression::compression_common::ContextSwitchingStrategy::Automatic {
                     detection_threshold: 0.8,
                     min_switch_interval_ms: 5000,
                 },
-                learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                learning_config: crate::ops_compression::compression_common::ContextLearningConfig {
                     enabled: false,
                     algorithms: vec![],
-                    training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                    training_requirements: crate::ops_compression::compression_common::TrainingRequirements {
                         min_training_samples: 1000,
-                        diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                        diversity_requirements: crate::ops_compression::compression_common::DiversityRequirements {
                             data_types: vec!["vector".to_string(), "metadata_info".to_string()],
                             size_ranges: vec![(1024, 1024 * 1024)],
                             pattern_types: vec!["structured".to_string(), "unstructured".to_string()],
                             context_types: vec!["vector".to_string(), "metadata_info".to_string()],
                         },
-                        training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::Periodic {
+                        training_frequency: crate::ops_compression::compression_common::TrainingFrequency::Periodic {
                             interval_ms: 3600000,
                         },
-                        validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                        validation_requirements: crate::ops_compression::compression_common::ValidationRequirements {
                             validation_split: 0.2,
                             cross_validation_folds: 5,
                             performance_metrics: vec!["accuracy".to_string(), "compression_ratio".to_string()],
                             min_performance_threshold: 0.85,
                         },
                     },
-                    model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                    model_persistence: crate::ops_compression::compression_common::ModelPersistenceConfig {
                         enabled: true,
                         storage_path: Some("/tmp/compression_models".to_string()),
-                        versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                        versioning: crate::ops_compression::compression_common::ModelVersioningConfig {
                             enabled: true,
                             max_versions: 10,
-                            naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                            naming_strategy: crate::ops_compression::compression_common::VersionNamingStrategy::Timestamp,
                         },
                         model_compression: true,
-                        checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                        checkpoint_config: crate::ops_compression::compression_common::CheckpointConfig {
                             enabled: true,
                             checkpoint_interval_ms: 300000,
                             max_checkpoints: 5,

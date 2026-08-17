@@ -38,6 +38,9 @@ proximadb-hardware.workspace = true
 proximadb-runtime-common.workspace = true
 moka.workspace = true
 proximadb-codec.workspace = true
+proximadb-config.workspace = true
+num_cpus = "1.16"
+toml.workspace = true
 proximadb-search-types.workspace = true
 proximadb-data-model.workspace = true
 # block_structures runtime deps: bincode serialization, rayon parallel encode, tokio spawn
