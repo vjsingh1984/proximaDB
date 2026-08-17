@@ -19,10 +19,15 @@ re-deriving the same off-by-one arithmetic.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 #: A half-open ``[start, end)`` range of character offsets into a source string.
 Span = tuple[int, int]
+
+#: Resolves an absolute span to its text. Batch passes a closure over the whole
+#: document; streaming passes :meth:`SpanBuffer.slice`, so one grouping engine
+#: serves both paths and they cannot drift.
+Slicer = Callable[[int, int], str]
 
 
 def strip_span(text: str, start: int, end: int) -> Span:

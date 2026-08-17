@@ -464,19 +464,29 @@ def test_recursive_split_wrong_level_returns_empty():
     assert s._recursive_split("x", 0, "doc", 0, {}, "p", level=3) == []
 
 
-def test_recursive_descends_to_sliding_window_via_chunk():
-    # A long single paragraph with NO sentence endings can't be split by the
-    # paragraph or sentence strategies, so chunk() falls through to the
-    # sliding-window level with forced_split metadata.
+def test_recursive_force_splits_a_paragraph_with_no_sentence_boundary():
+    """An unsplittable paragraph is still cut to the cap and marked as forced.
+
+    Previously asserted ``strategy_used == "sliding_window"``: the paragraph
+    tier could not honour max_chunk_size, so recursive had to fall through to
+    the sliding-window tier to get a bounded chunk. The paragraph strategy now
+    enforces the cap itself via the hard-split backstop, so the descent no
+    longer happens — the tier that produced the chunk is an implementation
+    detail, whereas the cap and the forced-split signal are the contract.
+    """
     cfg = ChunkingConfig(
         chunk_size=30, chunk_overlap=5, min_chunk_size=1, max_chunk_size=30
     )
     s = RecursiveStrategy(cfg)
     text = ("word " * 30).strip()
     chunks = s.chunk(text, "doc")
+
     assert chunks
-    assert any(c.metadata.get("strategy_used") == "sliding_window" for c in chunks)
+    assert all(len(c.text) <= cfg.max_chunk_size for c in chunks)
     assert any(c.metadata.get("forced_split") for c in chunks)
+    # And the properties the cap must not have cost us:
+    assert all(text[c.start_pos : c.end_pos] == c.text for c in chunks)
+    assert "".join(c.text for c in chunks).replace(" ", "") == text.replace(" ", "")
 
 
 def test_recursive_repr():
