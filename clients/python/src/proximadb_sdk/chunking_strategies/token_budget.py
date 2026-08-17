@@ -153,8 +153,7 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
                     len(offsets),
                     max(
                         minimum_end,
-                        previous_end_token
-                        + max(1, self.budget.min_content_tokens),
+                        previous_end_token + max(1, self.budget.min_content_tokens),
                     ),
                 )
             candidate_boundaries = [

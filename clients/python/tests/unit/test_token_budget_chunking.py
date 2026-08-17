@@ -106,9 +106,10 @@ def test_overlap_does_not_reuse_a_boundary_without_meaningful_new_content():
     text = " ".join(f"word{index}" for index in range(20))
     offsets = WordCounter().content_offsets(text)
     repeated_end = offsets[7][1]
-    strategy.boundary_strategy.preferred_boundaries = (
-        lambda *_args, **_kwargs: [repeated_end, len(text)]
-    )
+    strategy.boundary_strategy.preferred_boundaries = lambda *_args, **_kwargs: [
+        repeated_end,
+        len(text),
+    ]
 
     chunks = strategy.chunk(text, "doc")
 

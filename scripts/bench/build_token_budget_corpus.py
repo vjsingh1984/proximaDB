@@ -17,6 +17,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import proximadb_sdk.chunking_strategies as chunking_package
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10 — tomllib is stdlib only in 3.11+
@@ -41,6 +43,17 @@ def _sha256(path: Path) -> str:
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
+    return digest.hexdigest()
+
+
+def _python_tree_sha256(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\n")
     return digest.hexdigest()
 
 
@@ -254,7 +267,10 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                         seen_chunk_digests.add(digest)
                     new_content_tokens = chunk.metadata.get("new_content_tokens")
                     actual_overlap_tokens = chunk.metadata.get("overlap_tokens")
-                    if not isinstance(new_content_tokens, int) or new_content_tokens <= 0:
+                    if (
+                        not isinstance(new_content_tokens, int)
+                        or new_content_tokens <= 0
+                    ):
                         raise AssertionError(
                             f"chunk {chunk_count} adds no new source-token coverage"
                         )
@@ -330,6 +346,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     manifest = {
         "schema_version": 1,
         "builder_sha256": _sha256(Path(__file__).resolve()),
+        "sdk_chunking_package_sha256": _python_tree_sha256(
+            Path(chunking_package.__file__).resolve().parent
+        ),
         "input": str(args.input.resolve()),
         "input_sha256": input_sha256,
         "texts_sha256": _sha256(texts_path),

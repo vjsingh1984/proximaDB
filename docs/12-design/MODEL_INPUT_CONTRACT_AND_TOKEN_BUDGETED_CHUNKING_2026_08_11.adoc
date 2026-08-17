@@ -231,8 +231,9 @@ python scripts/bench/build_token_budget_corpus.py \
 The output includes shared `texts.json`, per-chunk provenance in `chunks.jsonl`, and
 `corpus.manifest.json` with hashes, policies, contract fingerprints, token and packing histograms,
 corpus scope and a zero-truncation assertion. Packing histograms record actual overlap and new
-source-token coverage per stored chunk, making redundant-boundary amplification observable. Every
-stage records the SHA-256 of its tracked producer script, and
+source-token coverage per stored chunk, making redundant-boundary amplification observable. The
+corpus records both its transport-script SHA-256 and a deterministic digest of the complete loaded
+SDK chunking-strategy source tree; every later stage records its tracked producer SHA-256, and
 embedding shard identity includes that transport digest. `--max-chunks` is a prefix-sampling
 diagnostic: if it would truncate the
 source, the builder fails unless `--allow-partial-corpus` is explicit and records
