@@ -45,6 +45,7 @@ use proximadb_query::graph_lowering::parse_supported_graph_query;
 use proximadb_query::graph_runtime::{
     execute_supported_graph_query_with_start_nodes, graph_query_row_id,
 };
+use proximadb_vector_query::{VectorSearchExpr, VectorSearchParams};
 
 // TD-XMODAL-4 S2: only the test mocks' (v1) `search()` impls reference these proto
 // types now — the production UDTF scan uses the v2 `unified_search_native` kernel.
@@ -104,27 +105,21 @@ pub fn vector_matches_to_batch(
 /// `SessionContext` and the query planner can scan/join/order it like any table.
 pub struct VectorSearchTableProvider {
     vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
-    collection_id: String,
-    query_vector: Vec<f32>,
-    top_k: u32,
-    tenant_id: Option<String>,
+    search: VectorSearchExpr,
+    identity: proximadb_runtime::OwnedPortIdentity,
 }
 
 impl VectorSearchTableProvider {
     /// Build a provider for one parameterized similarity search.
     pub fn new(
         vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
-        collection_id: impl Into<String>,
-        query_vector: Vec<f32>,
-        top_k: u32,
-        tenant_id: Option<String>,
+        search: VectorSearchExpr,
+        identity: proximadb_runtime::OwnedPortIdentity,
     ) -> Self {
         Self {
             vector_ops,
-            collection_id: collection_id.into(),
-            query_vector,
-            top_k,
-            tenant_id,
+            search,
+            identity,
         }
     }
 }
@@ -134,9 +129,10 @@ impl VectorSearchTableProvider {
 impl std::fmt::Debug for VectorSearchTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VectorSearchTableProvider")
-            .field("collection_id", &self.collection_id)
-            .field("top_k", &self.top_k)
-            .field("tenant_id", &self.tenant_id)
+            .field("collection_id", &self.search.collection)
+            .field("vector_column", &self.search.vector_column)
+            .field("top_k", &self.search.top_k)
+            .field("tenant_id", &self.identity.tenant_id)
             .finish_non_exhaustive()
     }
 }
@@ -166,11 +162,12 @@ impl TableProvider for VectorSearchTableProvider {
         let results = self
             .vector_ops
             .unified_search_native(
-                &self.collection_id,
-                self.query_vector.clone(),
-                self.top_k as usize,
-                None,
-                self.tenant_id.as_deref(),
+                &self.search.collection,
+                self.search.query_vector.clone(),
+                self.search.top_k as usize,
+                self.search.filter.clone(),
+                Some(self.search.metric),
+                self.identity.as_borrowed(),
             )
             .await
             .map_err(|e| DataFusionError::Execution(format!("vector search: {e}")))?;
@@ -190,9 +187,9 @@ impl TableProvider for VectorSearchTableProvider {
 /// `ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::new(ops)))`.
 pub struct VectorSearchTableFunction {
     vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
-    /// The connection tenant, forwarded to `VectorOpsPort::search` so the search runs under the
-    /// same `TenantContext` the REST write used. `None` ⇒ unscoped (reads only tenant-less data).
-    tenant: Option<String>,
+    /// The complete connection identity forwarded to the canonical vector-search
+    /// port. ABAC must not be reduced to a tenant-only approximation here.
+    identity: proximadb_runtime::OwnedPortIdentity,
 }
 
 impl VectorSearchTableFunction {
@@ -200,18 +197,19 @@ impl VectorSearchTableFunction {
     pub fn new(vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>) -> Self {
         Self {
             vector_ops,
-            tenant: None,
+            identity: proximadb_runtime::OwnedPortIdentity::default(),
         }
     }
 
-    /// Capture the vector service AND the connection tenant — so the search reads the same
-    /// tenant partition a REST insert wrote. Without this the search runs `tenant_id=None` and
-    /// returns 0 rows for tenant-scoped data (TD-XMODAL-6).
-    pub fn with_tenant(
+    /// Capture the vector service and the complete request identity.
+    pub fn with_identity(
         vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
-        tenant: Option<String>,
+        identity: proximadb_runtime::OwnedPortIdentity,
     ) -> Self {
-        Self { vector_ops, tenant }
+        Self {
+            vector_ops,
+            identity,
+        }
     }
 }
 
@@ -258,12 +256,22 @@ impl TableFunctionImpl for VectorSearchTableFunction {
                 "vector_search: top_k must be greater than zero".into(),
             ));
         }
+        let top_k = u32::try_from(top_k).map_err(|_| {
+            DataFusionError::Plan("vector_search: top_k exceeds the supported u32 range".into())
+        })?;
         Ok(Arc::new(VectorSearchTableProvider::new(
             self.vector_ops.clone(),
-            collection,
-            query_vector,
-            top_k as u32,
-            self.tenant.clone(),
+            VectorSearchExpr {
+                collection,
+                vector_column: None,
+                query_vector,
+                top_k,
+                threshold: None,
+                metric: proximadb_distance_types::DistanceMetric::L2,
+                filter: None,
+                params: VectorSearchParams::default(),
+            },
+            self.identity.clone(),
         )))
     }
 }
@@ -282,7 +290,7 @@ fn arg_i64(args: &[Expr], i: usize) -> Option<i64> {
     match args.get(i)? {
         Expr::Literal(ScalarValue::Int64(Some(n)), _) => Some(*n),
         Expr::Literal(ScalarValue::Int32(Some(n)), _) => Some(*n as i64),
-        Expr::Literal(ScalarValue::UInt64(Some(n)), _) => Some(*n as i64),
+        Expr::Literal(ScalarValue::UInt64(Some(n)), _) => i64::try_from(*n).ok(),
         _ => None,
     }
 }
@@ -293,10 +301,14 @@ fn parse_vector_literal(text: &str) -> Option<Vec<f32>> {
     if inner.trim().is_empty() {
         return Some(Vec::new());
     }
-    inner
-        .split(',')
-        .map(|p| p.trim().parse::<f32>().ok())
-        .collect()
+    inner.split(',').try_fold(Vec::new(), |mut values, part| {
+        let value = part.trim().parse::<f32>().ok()?;
+        if !value.is_finite() {
+            return None;
+        }
+        values.push(value);
+        Some(values)
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1167,7 +1179,8 @@ mod tests {
             _query_vector: Vec<f32>,
             _k: usize,
             _filter: Option<proximadb_filter_expression::FilterExpression>,
-            _tenant_id: Option<&str>,
+            _requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+            _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(self
                 .matches
@@ -1214,8 +1227,20 @@ mod tests {
         let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(FixedVectorOps {
             matches: vec![("a".into(), 0.95), ("b".into(), 0.80), ("c".into(), 0.70)],
         });
-        let provider =
-            VectorSearchTableProvider::new(ops, "docs_vec", vec![0.1, 0.2, 0.3], 10, None);
+        let provider = VectorSearchTableProvider::new(
+            ops,
+            VectorSearchExpr {
+                collection: "docs_vec".to_string(),
+                vector_column: None,
+                query_vector: vec![0.1, 0.2, 0.3],
+                top_k: 10,
+                threshold: None,
+                metric: proximadb_distance_types::DistanceMetric::L2,
+                filter: None,
+                params: VectorSearchParams::default(),
+            },
+            proximadb_runtime::OwnedPortIdentity::default(),
+        );
 
         let ctx = SessionContext::new();
         ctx.register_table("vsearch", Arc::new(provider)).unwrap();
@@ -1348,6 +1373,14 @@ mod tests {
             (
                 "SELECT * FROM vector_search('docs_vec', '[0.1,0.2]', 0)",
                 "top_k must be greater than zero",
+            ),
+            (
+                "SELECT * FROM vector_search('docs_vec', '[NaN,0.2]', 10)",
+                "cannot parse query vector",
+            ),
+            (
+                "SELECT * FROM vector_search('docs_vec', '[0.1,0.2]', 4294967296)",
+                "top_k exceeds the supported u32 range",
             ),
         ] {
             let error = ctx.sql(sql).await.expect_err("invalid vector_search");
@@ -1734,10 +1767,10 @@ mod tests {
         }
     }
 
-    /// A `VectorOpsPort` that records the `tenant_id` its `search` was called with — proves
-    /// `vector_search` forwards the connection tenant (TD-XMODAL-6).
+    /// A `VectorOpsPort` that records the complete identity at its search seam.
     struct RecordingVectorOps {
-        seen: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+        seen: Arc<std::sync::Mutex<Vec<proximadb_runtime::OwnedPortIdentity>>>,
+        seen_metrics: Arc<std::sync::Mutex<Vec<Option<proximadb_distance_types::DistanceMetric>>>>,
     }
 
     #[async_trait]
@@ -1747,10 +1780,7 @@ mod tests {
             _request: VectorSearchRequest,
             identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<VectorOperationResponse> {
-            self.seen
-                .lock()
-                .unwrap()
-                .push(identity.tenant_id.map(str::to_string));
+            self.seen.lock().unwrap().push(identity.into_owned());
             Ok(VectorOperationResponse {
                 results: Some(SearchResult {
                     results: vec![],
@@ -1759,20 +1789,18 @@ mod tests {
                 ..Default::default()
             })
         }
-        // TD-XMODAL-4 S2: the UDTF now forwards the tenant through THIS kernel —
-        // record it here (proves tenant forwarding on the unified path, TD-XMODAL-6).
+        // TD-XMODAL-4 S2: the UDTF forwards identity through THIS kernel.
         async fn unified_search_native(
             &self,
             _collection_id: &str,
             _query_vector: Vec<f32>,
             _k: usize,
             _filter: Option<proximadb_filter_expression::FilterExpression>,
-            tenant_id: Option<&str>,
+            requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+            identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-            self.seen
-                .lock()
-                .unwrap()
-                .push(tenant_id.map(str::to_string));
+            self.seen.lock().unwrap().push(identity.into_owned());
+            self.seen_metrics.lock().unwrap().push(requested_metric);
             Ok(vec![])
         }
         async fn batch_upsert(
@@ -1800,21 +1828,27 @@ mod tests {
         }
     }
 
-    /// TD-XMODAL-6: a tenant-scoped `vector_search` forwards the connection tenant to the search
-    /// (vectors are `TenantContext`-partitioned, not name-folded), so it reads the tenant's data
-    /// instead of the unscoped partition.
+    /// TD-XMODAL-6 / ADR-087: `vector_search` forwards one complete identity;
+    /// tenant scoping and ABAC subject resolution must not diverge by SQL syntax.
     #[tokio::test]
     async fn vector_search_udtf_forwards_tenant_to_search() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_metrics = Arc::new(std::sync::Mutex::new(Vec::new()));
         let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(RecordingVectorOps {
             seen: Arc::clone(&seen),
+            seen_metrics: Arc::clone(&seen_metrics),
         });
         let ctx = SessionContext::new();
         ctx.register_udtf(
             "vector_search",
-            Arc::new(VectorSearchTableFunction::with_tenant(
+            Arc::new(VectorSearchTableFunction::with_identity(
                 ops,
-                Some("acme".to_string()),
+                proximadb_runtime::OwnedPortIdentity {
+                    tenant_id: Some("acme".to_string()),
+                    subject: Some("alice".to_string()),
+                    tenant_stable_id: Some(7),
+                    auth_class: proximadb_tenant::AuthClass::Authenticated,
+                },
             )),
         );
         let _ = ctx
@@ -1824,7 +1858,20 @@ mod tests {
             .collect()
             .await
             .unwrap();
-        assert_eq!(seen.lock().unwrap().as_slice(), &[Some("acme".to_string())]);
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &[proximadb_runtime::OwnedPortIdentity {
+                tenant_id: Some("acme".to_string()),
+                subject: Some("alice".to_string()),
+                tenant_stable_id: Some(7),
+                auth_class: proximadb_tenant::AuthClass::Authenticated,
+            }]
+        );
+        assert_eq!(
+            seen_metrics.lock().unwrap().as_slice(),
+            &[Some(proximadb_distance_types::DistanceMetric::L2)],
+            "the UDTF must not discard the metric carried by its canonical vector intent"
+        );
     }
 
     // ── graph slice ───────────────────────────────────────────────────────────────

@@ -534,10 +534,12 @@ mod tests {
         let query = MultiModelQuery::new()
             .with_vector_search(VectorSearchExpr {
                 collection: "embeddings".to_string(),
+                vector_column: None,
                 query_vector: vec![0.1, 0.2, 0.3],
                 top_k: 10,
                 threshold: Some(0.8),
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             })
             .with_limit(10);
@@ -564,10 +566,12 @@ mod tests {
             })
             .with_vector_search(VectorSearchExpr {
                 collection: "products".to_string(),
+                vector_column: None,
                 query_vector: vec![0.1; 128],
                 top_k: 50,
                 threshold: Some(0.7),
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             })
             .with_fusion(FusionStrategy::Intersection);
@@ -590,10 +594,12 @@ mod tests {
         let query = MultiModelQuery::new()
             .with_vector_search(VectorSearchExpr {
                 collection: "docs".to_string(),
+                vector_column: None,
                 query_vector: vec![0.1],
                 top_k: 1,
                 threshold: None,
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             })
             .with_limit(0);
@@ -642,10 +648,12 @@ mod tests {
             model: DataModel::Vector,
             operation: ModelOperation::VectorSearch(VectorSearchExpr {
                 collection: "test".to_string(),
+                vector_column: None,
                 query_vector: vec![0.1],
                 top_k: 10,
                 threshold: None,
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             }),
             filters: vec![],
@@ -685,10 +693,12 @@ mod tests {
             "Find semantically relevant documents",
             MultiModelQuery::new().with_vector_search(VectorSearchExpr {
                 collection: "docs".to_string(),
+                vector_column: None,
                 query_vector: vec![0.1, 0.2],
                 top_k: 20,
                 threshold: None,
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             }),
         );
@@ -731,10 +741,12 @@ mod tests {
             "Invalid dependency",
             MultiModelQuery::new().with_vector_search(VectorSearchExpr {
                 collection: "docs".to_string(),
+                vector_column: None,
                 query_vector: vec![0.1],
                 top_k: 1,
                 threshold: None,
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             }),
         )
@@ -754,10 +766,12 @@ mod tests {
             "Find semantically relevant documents",
             MultiModelQuery::new().with_vector_search(VectorSearchExpr {
                 collection: "docs".to_string(),
+                vector_column: None,
                 query_vector: vec![0.1],
                 top_k: 1,
                 threshold: None,
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             }),
         )

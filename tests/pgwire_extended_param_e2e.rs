@@ -59,6 +59,7 @@ impl PgwireTestServer {
             url: format!("file://{}", tmp_data.path().display()),
             ..Default::default()
         }];
+        config.storage.metadata_url = format!("file://{}/metadata", tmp_data.path().display());
         config.storage.wal_config.write_buffer_directory =
             format!("file://{}/wal", tmp_data.path().display());
 
@@ -158,11 +159,19 @@ async fn pgwire_extended_protocol_vector_search_with_bound_params() {
     // Parse/Bind/Describe/Execute and reads typed columns back.
     let limit: i64 = 5;
     let sql = format!("SELECT id FROM {table} ORDER BY embedding <-> $1 LIMIT $2");
-    let result = client.query(&sql, &[&vec_text, &limit]).await;
-
+    let rows = client
+        .query(&sql, &[&vec_text, &limit])
+        .await
+        .expect("extended-protocol vector search with bound params");
+    assert_eq!(rows.len(), 3, "Strong search must see all three WAL rows");
     assert!(
-        result.is_ok(),
-        "extended-protocol vector search with bound params must not error; got {:?}",
-        result.err()
+        rows.iter().all(|row| row.len() == 1),
+        "Describe and Execute must both honor SELECT id projection"
+    );
+    let ids: std::collections::HashSet<String> =
+        rows.iter().map(|row| row.get::<_, String>(0)).collect();
+    assert_eq!(
+        ids,
+        ["m1", "m2", "m3"].into_iter().map(str::to_string).collect()
     );
 }

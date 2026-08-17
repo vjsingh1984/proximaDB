@@ -285,10 +285,12 @@ fn test_build_multimodel_query() {
     let query = MultiModelQuery::new()
         .with_vector_search(VectorSearchExpr {
             collection: "embeddings".to_string(),
+            vector_column: None,
             query_vector: vec![0.1, 0.2, 0.3, 0.4],
             top_k: 10,
             threshold: Some(0.8),
             metric: DistanceMetric::Cosine,
+            filter: None,
             params: VectorSearchParams::default(),
         })
         .with_document_query(DocumentQueryExpr {
@@ -376,10 +378,12 @@ fn test_component_parallelizable() {
     let query = MultiModelQuery::new()
         .with_vector_search(VectorSearchExpr {
             collection: "test".to_string(),
+            vector_column: None,
             query_vector: vec![0.1, 0.2],
             top_k: 10,
             threshold: None,
             metric: DistanceMetric::Cosine,
+            filter: None,
             params: VectorSearchParams::default(),
         })
         .with_document_query(DocumentQueryExpr {

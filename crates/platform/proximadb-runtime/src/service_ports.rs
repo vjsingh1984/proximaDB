@@ -200,7 +200,7 @@ pub trait VectorOpsPort: Send + Sync {
     /// UDTF, returning [`OptimizedSearchRecord`]s for internal (Rust) callers.
     /// Tenant-scoped + **fail-closed** when `tenant_id` is provided (the impl
     /// validates collection access for the tenant before searching). The default
-    /// impl returns empty (test doubles need not override).
+    /// fails closed so a missing implementation cannot masquerade as an empty result.
     ///
     /// (This is the one port method that exposes the v2 search-result type rather
     /// than a proto type — a deliberate exception so both SQL surfaces share one
@@ -212,9 +212,12 @@ pub trait VectorOpsPort: Send + Sync {
         _query_vector: Vec<f32>,
         _k: usize,
         _filter: Option<proximadb_filter_expression::FilterExpression>,
-        _tenant_id: Option<&str>,
+        _requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+        _identity: PortIdentity<'_>,
     ) -> Result<Vec<proximadb_search_types::results::OptimizedSearchRecord>> {
-        Ok(Vec::new())
+        Err(anyhow::anyhow!(
+            "native vector search is not implemented by this runtime port"
+        ))
     }
 
     /// Execute a batch upsert/delete, tenant-scoped when `tenant_id` is provided.
