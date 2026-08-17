@@ -52,12 +52,11 @@ Usage:
 """
 
 import asyncio
-import base64
 import atexit
+import base64
 import json
 import logging
 import os
-import weakref
 import signal
 import subprocess
 import sys
@@ -65,6 +64,7 @@ import tempfile
 import threading
 import time
 import uuid
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
