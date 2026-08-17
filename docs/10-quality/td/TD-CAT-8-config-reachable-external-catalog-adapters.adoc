@@ -1,0 +1,63 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-CAT-8: decide the fate of the config-reachable external catalog adapters
+:status: Open
+:dim: D5
+:pillar: OE
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open
+| Severity | Medium — build cost + an undecided public/wire surface, not a correctness bug
+| Component | `crates/control/proximadb-catalog/src/{hive,iceberg,glue}.rs`, `manager.rs`
+| Relates to | [[TD-CAT-7]] (the trait split that would reclassify these), ADR-039
+|===
+
+== 🔴 Correcting an earlier claim
+
+An earlier catalog survey (recorded during the ADR-090 work) asserted these adapters had **"zero
+non-test callers"** and could simply be gated or deleted. **That is wrong**, and the correction is
+the point of this TD — acting on the original claim would have broken the build and silently
+removed a configuration surface.
+
+== Verified reachability map
+
+[cols="2,3"]
+|===
+| Fact | Evidence
+
+| The adapters ARE referenced by production code | `manager.rs:296` `use crate::iceberg::IcebergCatalogConfig`; `manager.rs:333` `use crate::glue::GlueCatalogConfig`; both construct the adapter and return `Arc<dyn Catalog>`
+| They are re-exported as public API | `src/catalog/mod.rs:111` `pub use proximadb_catalog::glue::GlueCatalog`
+| They have **wire** config variants | `proximadb.v1.rs`: `IcebergCatalogConfig`, `HiveCatalogConfig`, `GlueCatalogConfig` as `CatalogConfig` enum arms
+| The manager entry points have ONLY test callers | `create_iceberg_catalog` / `create_glue_catalog` are called solely from `src/catalog/mod.rs` `#[cfg(test)]` (lines 371/432/438/461/619)
+| `HiveCatalog` is used by a WAL test helper | `src/storage/persistence/write_ahead_log/mod.rs:4002`
+| None are feature-gated | `proximadb-catalog/src/lib.rs:73-75` declares `pub mod glue; pub mod hive; pub mod iceberg;` unconditionally — they compile into EVERY build
+|===
+
+So the accurate statement is: **unreachable from the running server, but reachable by
+configuration and part of the crate's public + proto surface.** That is a different category from
+dead code, and it makes this a design decision rather than housekeeping.
+
+== The decision to make
+
+. **Gate** behind a cargo feature (e.g. `external-catalogs`, default-off). Requires gating
+  `manager.rs`'s `create_*` fns and the affected tests together, and answering what happens when a
+  deployment sets a proto `CatalogConfig` arm the binary no longer supports — it must fail
+  explicitly, never silently fall back.
+. **Deprecate** the proto arms first (they are wire surface; per the pre-GA rules a clean break is
+  allowed, but it must be *stated*), then gate or delete.
+. **Keep and finish** — if federated metastore support is on the roadmap, these become
+  `FederatedCatalog` implementations under [[TD-CAT-7]], where the narrower trait actually fits
+  what an external metastore can honour.
+
+Option 3 is the likely answer if federation is wanted, because the trait split reclassifies these
+adapters from "impls that fake identity" to "impls with no identity obligation" — which is what
+they honestly are.
+
+== Do not
+
+Do not gate or delete these on a "dead code" rationale without doing the reachability check above
+first. The `test_create_glue_catalog_without_feature` test name suggests feature-gating was
+considered once already; whatever was learned then is not recorded, which is part of why this
+needs a decision rather than a sweep.

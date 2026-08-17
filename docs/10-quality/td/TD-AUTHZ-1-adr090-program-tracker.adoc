@@ -1,9 +1,9 @@
 = TD-AUTHZ-1: ADR-090 program tracker — identity, grants, BYOB (layered burn-down)
-:status: Open
+:status: In Progress
 :dim: D5
 :pillar: SEC
 
-== CURRENT STATE (2026-08-12) — read this before the dated sections below
+== CURRENT STATE (2026-08-17) — read this before the dated sections below
 
 The dated sections that follow are a CHRONOLOGICAL INVESTIGATION LOG. Several of them were
 overturned by later work, and a reader going top-down would absorb superseded claims as
@@ -25,6 +25,9 @@ a status report.
 | — | Escalation-safe `cross_tenant_open_decision` (a Read grant can never admit a Write open) | #1562
 | — | Owner-keyed grant lookup; non-truncating `Target`; dead fail-open surface deleted | #1575
 | — | Resolver failures DENY instead of degrading to an unfiltered read | #1582
+| — | `object_id` minted on the LIVE catalog (`SystemCatalog`), durable across restart | #1607
+| — | `Target::try_from_typed_triple` — ADR-0083-canonical, fail-closed on overflow | #1630
+| L1/L2 | **Typed identity re-landed ⇒ relational ABAC ENFORCES live** across pgwire/gRPC/REST-SQL/Flight; the 3 `#[ignore]`s lifted (suite 7 passed, 0 ignored) | #1636
 |===
 
 === Open, in dependency order
@@ -32,9 +35,15 @@ a status report.
 . **Cross-tenant sharing is authorized but NOT observable.** The catalog seam must resolve
   grant-admitted foreign collections before the per-row predicate change (TD-TENANT-2 step 2)
   has any visible effect. Blocked on nothing but the work itself.
-. **TD-AUTHZ-2** — `xcatalog.tables` renders an empty `object_id` for SQL-created relational
-  tables. `NativeCatalog` is EXONERATED (round-trip test, #1559); the defect is in the wiring
-  between it and the introspection projection. Three tests remain `#[ignore]`d on it.
+. ~~**TD-AUTHZ-2**~~ — **RESOLVED** (#1607 + #1636). Correcting this entry's own diagnosis: it
+  said the defect lay "in the wiring between `NativeCatalog` and the introspection projection."
+  It did not. The live catalog (`SystemCatalog`) simply **never minted the ids** — neither
+  `object_id` nor `stable_namespace_id` — so `dml/mod.rs:1466`'s two-field gate could not be
+  satisfied and `introspection/lib.rs:424` rendered `None` as an empty string via
+  `unwrap_or_default()`. Both halves were needed and neither subsumed the other, proven by the
+  e2e failure MOVING (`:285` parse → `:786/:904/:1023` enforcement). Still latent and filed
+  separately: that `unwrap_or_default()` rendering turns a missing identity into a value
+  indistinguishable from an empty column.
 . **L2** — `$subject.attr` substitution, the remaining `System` bypasses, predicate-store
   tenant partitioning.
 . **L3** — BYOB storage bindings.

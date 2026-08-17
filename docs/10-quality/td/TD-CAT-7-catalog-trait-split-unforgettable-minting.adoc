@@ -1,0 +1,80 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-CAT-7: split the `Catalog` trait and make identity minting unforgettable
+:status: Open
+:dim: D5
+:pillar: SEC
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open
+| Severity | High — this is the STRUCTURAL fix for a defect class that has now cost three PRs
+| Component | `crates/control/proximadb-catalog/src/lib.rs` (the `Catalog` trait), all impls
+| Relates to | [[TD-AUTHZ-2]] (the instance), [[TD-RECALL-2]] (the re-land), ADR-0083, ADR-077
+|===
+
+== Problem
+
+The `Catalog` trait has **40 methods, 18 with default bodies**, and the defaults are *not neutral*:
+
+* `max_object_id` → `Ok(None)`
+* `mint_collection_typed_identity` → `Ok(None)`
+* `get_table_by_object_id` → `Ok(None)`
+
+An implementation that implements **nothing** still compiles and answers successfully. That is
+how "a catalog which does not mint identity" became a *representable state* — and identity is not
+bookkeeping: **authorization depends on it.** `dml/mod.rs:1466` gates relational ABAC on
+`stable_namespace_id` AND `object_id`.
+
+=== Evidence this is structural, not incidental
+
+The same gap has now been fixed by hand three times, and each fix left the next instance alive:
+
+. **#1607** minted `object_id` on `SystemCatalog` → the introspection view stopped rendering empty.
+. **#1636** minted `stable_namespace_id` → ABAC finally *enforced*. Only found because the e2e
+  failure **moved** rather than disappearing.
+. Three further live defects existed simultaneously, all from the same silent-`None` defaults —
+  the ADR-031 anti-collision floor raise was a no-op (`shared_services.rs:1049`), vector
+  collections silently stayed on the legacy data path (`collection/manager.rs:2039`), and
+  `SystemCatalog` never called `normalize_identity` (ADR-077 violation). All three were closed
+  *incidentally* by #1636, which is precisely the problem: nothing structural prevented them, and
+  nothing structural prevents the next one.
+
+Fixing instances is demonstrably not converging. The trait itself must stop making the broken
+state expressible.
+
+== Why the trait is currently unenforceable
+
+`Catalog` demands identity minting from HTTP shims (Unity, Polaris) and external metastores
+(Hive, Iceberg, Glue) that **structurally cannot provide it** — they do not own an allocator. That
+is *why* every identity invariant was made optional. A contract two implementations cannot meet
+gets weakened until it constrains nobody.
+
+== Proposed change
+
+. **Split by what is honourable.**
+  * `CatalogAuthority` — internal, owns identity: minting, allocator floors, tenancy. Every
+    identity method **required**; no silent-`None` defaults.
+  * `FederatedCatalog` — narrow, read-mostly, for external metastores. No identity obligations,
+    so none to fake.
+. **Make minting unforgettable, not merely implemented.** Mint in ONE place the manager applies (a
+  wrapper, or a sealed default), plus a **post-condition that rejects** any schema leaving
+  `create_table` with `object_id: None`. A non-minting authority must fail loudly, not answer.
+. **Teeth-proven tests** (revert only the impl line; the test must fail): no-reissue-across-restart,
+  adopt-don't-overwrite, and a post-condition test asserting a non-minting impl is **rejected**
+  rather than silently accepted.
+
+== Related but deliberately separate
+
+* The `unwrap_or_default()` rendering at `crates/binding/proximadb-catalog-introspection/src/lib.rs:424`
+  turns a missing `object_id` into an empty string — indistinguishable from a legitimately empty
+  column. Hardening it belongs with this TD's post-condition work, not with an identity PR.
+* The configuration-reachable external adapters are [[TD-CAT-8]].
+
+== Sequencing note
+
+Do NOT bundle this with an authorization change. #1406 was an ABAC PR that carried identity
+minting and caused a silent cross-tier recall collapse (`mean=0.000`) that took a bisect and a
+revert to unwind (see [[TD-RECALL-2]]). Identity changes ship on their own, gated on
+`vector_ann_recall_e2e`.
