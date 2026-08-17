@@ -118,6 +118,110 @@ def _contract() -> CompositeInputContract:
     )
 
 
+def test_builder_resolves_sentence_transformer_runtime_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    builder = _load_builder_module()
+    revision = "a" * 40
+    contracts_path = tmp_path / "contracts.toml"
+    contracts_path.write_text(
+        f"""\
+[[models]]
+model_id = "test/model"
+revision = "{revision}"
+effective_context_limit = 8
+document_template = "passage: {{text}}"
+query_template = "query: {{text}}"
+native_dimension = 8
+output_dimension = 8
+runtime_provider = "open-weights"
+local_files_only = true
+""",
+        encoding="utf-8",
+    )
+    runtime_contract = ResolvedInputContract(
+        model_id="test/model",
+        model_revision=revision,
+        counter=WordCounter(),
+        effective_context_limit=8,
+        renderer=InputRenderer(
+            document_template="passage: {text}", query_template="query: {text}"
+        ),
+        native_dimension=8,
+        output_dimension=8,
+    )
+    calls = []
+
+    class RuntimeProvider:
+        @staticmethod
+        def get_input_contract():
+            return runtime_contract
+
+    def create_provider(model_id, **kwargs):
+        calls.append((model_id, kwargs))
+        return RuntimeProvider()
+
+    monkeypatch.setattr(builder, "create_open_model_provider", create_provider)
+
+    loaded = builder._load_contracts(contracts_path)
+
+    assert loaded.contracts == (runtime_contract,)
+    assert calls == [
+        (
+            "test/model",
+            {
+                "revision": revision,
+                "dimension": 8,
+                "document_template": "passage: {text}",
+                "query_template": "query: {text}",
+                "device": "cpu",
+                "extra": {"local_files_only": True},
+            },
+        )
+    ]
+
+
+def test_builder_rejects_runtime_contract_declaration_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    builder = _load_builder_module()
+    revision = "b" * 40
+    contracts_path = tmp_path / "contracts.toml"
+    contracts_path.write_text(
+        f"""\
+[[models]]
+model_id = "test/model"
+revision = "{revision}"
+effective_context_limit = 512
+native_dimension = 8
+output_dimension = 8
+runtime_provider = "open-weights"
+""",
+        encoding="utf-8",
+    )
+
+    class RuntimeProvider:
+        @staticmethod
+        def get_input_contract():
+            return ResolvedInputContract(
+                model_id="test/model",
+                model_revision=revision,
+                counter=WordCounter(),
+                effective_context_limit=8,
+                native_dimension=8,
+                output_dimension=8,
+            )
+
+    monkeypatch.setattr(
+        builder,
+        "create_open_model_provider",
+        lambda *_args, **_kwargs: RuntimeProvider(),
+    )
+
+    with pytest.raises(ValueError, match="effective_context_limit"):
+        builder._load_contracts(contracts_path)
+
+
 def test_builder_rejects_an_accidentally_partial_corpus(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
