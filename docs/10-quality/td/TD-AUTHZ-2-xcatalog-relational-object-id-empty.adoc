@@ -1,5 +1,5 @@
 = TD-AUTHZ-2: xcatalog.tables returns an empty object_id for SQL-created relational tables
-:status: Partial
+:status: Resolved
 :dim: D4
 :pillar: SEC
 
