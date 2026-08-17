@@ -58,6 +58,17 @@ def test_disk_population_queries_measurement_before_disjoint_warmup():
     assert SWEEP.disk_population_order() == ("measured", "warmup")
 
 
+def test_each_retry_uses_an_isolated_persistent_cache_directory(tmp_path):
+    assert SWEEP.disk_path_for_attempt(tmp_path, 0) == (
+        tmp_path / "local-disk-cache-attempt-0"
+    )
+    assert SWEEP.disk_path_for_attempt(tmp_path, 3) == (
+        tmp_path / "local-disk-cache-attempt-3"
+    )
+    with pytest.raises(RuntimeError, match="non-negative"):
+        SWEEP.disk_path_for_attempt(tmp_path, -1)
+
+
 @pytest.mark.parametrize(
     ("hits", "misses", "expected"),
     [(0, 0, None), (1, 0, 1.0), (0, 2, 0.0), (3, 1, 0.75)],

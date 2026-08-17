@@ -66,6 +66,12 @@ def disk_population_order() -> tuple[str, str]:
     return ("measured", "warmup")
 
 
+def disk_path_for_attempt(run_root: Path, attempt: int) -> Path:
+    if attempt < 0:
+        raise RuntimeError("attempt must be non-negative")
+    return run_root / f"local-disk-cache-attempt-{attempt}"
+
+
 def hit_ratio(hits: float, misses: float) -> float | None:
     total = hits + misses
     return hits / total if total else None
@@ -206,6 +212,9 @@ def main() -> int:
     parser.add_argument("--target-recall", type=float, default=0.98)
     parser.add_argument("--min-disk-get-reduction", type=float, default=0.20)
     parser.add_argument("--max-cache-latency-ratio", type=float, default=1.10)
+    parser.add_argument("--host-quiet-window-secs", type=float, default=0)
+    parser.add_argument("--host-quiet-timeout-secs", type=float, default=3600)
+    parser.add_argument("--max-contention-retries", type=int, default=0)
     args = parser.parse_args()
 
     repository = Path(__file__).resolve().parents[2]
@@ -221,6 +230,8 @@ def main() -> int:
         raise RuntimeError("range cap and nprobe must be positive")
     if args.coalesce_gap_mib < 0:
         raise RuntimeError("coalescing gap must be non-negative")
+    if args.max_contention_retries < 0:
+        raise RuntimeError("contention retries must be non-negative")
     if args.groundtruth_scope_rows != args.rows:
         raise RuntimeError("ground-truth scope must equal measured corpus rows")
     NPROBE.require_config_port(config, args.port)
@@ -315,16 +326,18 @@ def main() -> int:
             # knob that the shared launcher cannot honor.
             "local_disk_max_gb": 10,
             "azure_hot_read_usd_per_10k": AZURE_HOT_READ_USD_PER_10K,
+            "host_quiet_window_seconds": args.host_quiet_window_secs,
+            "host_quiet_timeout_seconds": args.host_quiet_timeout_secs,
+            "max_contention_retries": args.max_contention_retries,
         },
         "phases": {},
         "comparisons": {},
         "gate_failures": [],
+        "rejected_attempts": [],
     }
     write_result(output, result)
 
     server_url = f"http://127.0.0.1:{args.port}"
-    local_disk = run_root / "local-disk-cache"
-
     def new_server(label: str, disk_path: Path | None):
         return ACCEPTANCE.OwnedServer(
             binary=binary,
@@ -356,38 +369,90 @@ def main() -> int:
 
     active = None
     try:
-        active = new_server("object-cold", None)
-        active.start()
-        result["phases"]["object_cold"] = query(
-            "object_cold", active, slices["measured"]
-        )
-        active.stop()
-        active = None
-        write_result(output, result)
+        attempt = 0
+        while True:
+            attempt_phases = {}
+            local_disk = disk_path_for_attempt(run_root, attempt)
+            try:
+                RANGE.wait_for_host_quiet(
+                    args.host_quiet_window_secs,
+                    args.host_quiet_timeout_secs,
+                )
+                active = new_server(f"object-cold-attempt-{attempt}", None)
+                active.start()
+                attempt_phases["object_cold"] = query(
+                    "object_cold", active, slices["measured"]
+                )
+                active.stop()
+                active = None
 
-        active = new_server("dram-warm", None)
-        active.start()
-        result["phases"]["dram_warmup"] = query("dram_warmup", active, slices["warmup"])
-        result["phases"]["dram_warm"] = query("dram_warm", active, slices["measured"])
-        active.stop()
-        active = None
-        write_result(output, result)
+                RANGE.wait_for_host_quiet(
+                    args.host_quiet_window_secs,
+                    args.host_quiet_timeout_secs,
+                )
+                active = new_server(f"dram-warm-attempt-{attempt}", None)
+                active.start()
+                attempt_phases["dram_warmup"] = query(
+                    "dram_warmup", active, slices["warmup"]
+                )
+                attempt_phases["dram_warm"] = query(
+                    "dram_warm", active, slices["measured"]
+                )
+                active.stop()
+                active = None
 
-        active = new_server("disk-populate", local_disk)
-        active.start()
-        for slice_name in disk_population_order():
-            result["phases"][f"disk_population_{slice_name}"] = query(
-                f"disk_population_{slice_name}", active, slices[slice_name]
-            )
-        active.stop()
-        active = None
-        write_result(output, result)
+                RANGE.wait_for_host_quiet(
+                    args.host_quiet_window_secs,
+                    args.host_quiet_timeout_secs,
+                )
+                active = new_server(
+                    f"disk-populate-attempt-{attempt}", local_disk
+                )
+                active.start()
+                for slice_name in disk_population_order():
+                    attempt_phases[f"disk_population_{slice_name}"] = query(
+                        f"disk_population_{slice_name}",
+                        active,
+                        slices[slice_name],
+                    )
+                active.stop()
+                active = None
 
-        active = new_server("disk-warm", local_disk)
-        active.start()
-        result["phases"]["disk_warm"] = query("disk_warm", active, slices["measured"])
-        active.stop()
-        active = None
+                RANGE.wait_for_host_quiet(
+                    args.host_quiet_window_secs,
+                    args.host_quiet_timeout_secs,
+                )
+                active = new_server(f"disk-warm-attempt-{attempt}", local_disk)
+                active.start()
+                attempt_phases["disk_warm"] = query(
+                    "disk_warm", active, slices["measured"]
+                )
+                active.stop()
+                active = None
+            except (Exception, KeyboardInterrupt) as error:
+                if active is not None:
+                    active.stop()
+                    active = None
+                if RANGE.is_host_contention_error(error) and (
+                    attempt < args.max_contention_retries
+                ):
+                    result["rejected_attempts"].append(
+                        {
+                            "attempt": attempt,
+                            "reason": f"{type(error).__name__}: {error}",
+                            "discarded_phases": sorted(attempt_phases),
+                            "discarded_local_disk_path": str(local_disk),
+                        }
+                    )
+                    write_result(output, result)
+                    attempt += 1
+                    continue
+                raise
+            result["phases"] = attempt_phases
+            result["experiment"]["accepted_attempt"] = attempt
+            result["experiment"]["accepted_local_disk_path"] = str(local_disk)
+            write_result(output, result)
+            break
 
         baseline = result["phases"]["object_cold"]
         for phase in ("dram_warm", "disk_warm"):
