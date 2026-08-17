@@ -218,7 +218,7 @@ def main() -> int:
     args = parser.parse_args()
 
     repository = Path(__file__).resolve().parents[2]
-    binary = args.binary.resolve()
+    binary_source = args.binary.resolve()
     config = args.config.resolve()
     run_root = args.run_root.resolve()
     output = args.output.resolve()
@@ -236,8 +236,9 @@ def main() -> int:
         raise RuntimeError("ground-truth scope must equal measured corpus rows")
     NPROBE.require_config_port(config, args.port)
     current_revision, profile = NPROBE.require_release_provenance(
-        repository, binary, args.binary_source_revision
+        repository, binary_source, args.binary_source_revision
     )
+    binary = RANGE.snapshot_binary(binary_source, run_root)
 
     base_path = args.base_path.resolve()
     query_path = args.query_path.resolve()

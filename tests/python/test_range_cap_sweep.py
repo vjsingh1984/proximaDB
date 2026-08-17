@@ -124,6 +124,21 @@ def test_only_typed_host_contention_errors_are_retryable():
     assert not SWEEP.is_host_contention_error(KeyboardInterrupt())
 
 
+def test_binary_snapshot_is_immutable_and_detects_a_rebuilt_source(tmp_path):
+    source = tmp_path / "target" / "proximadb-server"
+    source.parent.mkdir()
+    source.write_bytes(b"release-one")
+
+    snapshot = SWEEP.snapshot_binary(source, tmp_path / "run")
+    assert snapshot.read_bytes() == b"release-one"
+    assert snapshot != source
+
+    source.write_bytes(b"release-two")
+    assert snapshot.read_bytes() == b"release-one"
+    with pytest.raises(RuntimeError, match="differs"):
+        SWEEP.snapshot_binary(source, tmp_path / "run")
+
+
 def checkpoint_result() -> dict:
     return {
         "protocol": "pax_azure_range_cap_sweep",

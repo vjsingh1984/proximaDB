@@ -18,6 +18,7 @@ import argparse
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -53,6 +54,31 @@ COMPILER_COMMANDS = {"cargo", "cargo-clippy", "cargo-nextest", "rustc"}
 def cap_mib_values(raw: str) -> list[int]:
     values = NPROBE.comma_separated_ints(raw, "--range-caps-mib")
     return values
+
+
+def snapshot_binary(source: Path, run_root: Path) -> Path:
+    """Pin all point launches to one immutable release artifact.
+
+    Cargo replaces the profile binary atomically after a rebuild. A long sweep
+    that launches one process per point must not follow that mutable path or it
+    can silently mix revisions while reporting the hash captured at startup.
+    """
+    source = source.resolve()
+    snapshot_dir = run_root / "binary-snapshot"
+    snapshot = snapshot_dir / source.name
+    source_hash = ACCEPTANCE.sha256(source)
+    if snapshot.exists():
+        if ACCEPTANCE.sha256(snapshot) != source_hash:
+            raise RuntimeError("existing binary snapshot differs from source binary")
+        return snapshot
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    temporary = snapshot.with_name(f".{snapshot.name}.tmp")
+    shutil.copy2(source, temporary)
+    if ACCEPTANCE.sha256(temporary) != source_hash:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError("binary snapshot hash changed during copy")
+    temporary.replace(snapshot)
+    return snapshot
 
 
 def azure_storage_scope(storage_url: str) -> tuple[str, str]:
@@ -512,7 +538,7 @@ def main() -> int:
     args = parser.parse_args()
 
     repository = Path(__file__).resolve().parents[2]
-    binary = args.binary.resolve()
+    binary_source = args.binary.resolve()
     config = args.config.resolve()
     run_root = args.run_root.resolve()
     output = args.output.resolve()
@@ -533,7 +559,7 @@ def main() -> int:
         raise RuntimeError("--collection-id must be a decimal catalog object id")
     NPROBE.require_config_port(config, args.port)
     current_revision, profile = NPROBE.require_release_provenance(
-        repository, binary, args.binary_source_revision
+        repository, binary_source, args.binary_source_revision
     )
     container, prefix = azure_storage_scope(args.storage_url)
     wire_log = AzuriteWireLog(args.azurite_debug_log.resolve(), container, prefix)
@@ -567,6 +593,7 @@ def main() -> int:
         raise RuntimeError("top-k exceeds ground-truth width")
 
     run_root.mkdir(parents=True, exist_ok=True)
+    binary = snapshot_binary(binary_source, run_root)
     geometry_reader = ACCEPTANCE.AzureCliPaxGeometry(
         args.storage_url, run_root / "pax-snapshot"
     )
