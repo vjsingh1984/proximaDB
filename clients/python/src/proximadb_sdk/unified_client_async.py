@@ -245,7 +245,17 @@ class ProximaDBAsyncUnified:
             raise CollectionNotFoundError(f"Collection '{collection_id}' not found")
         stats_src = data.get("stats") or {}
         # The generated CollectionStatsV2 uses record_count / storage_size_bytes.
-        vector_count = stats_src.get("record_count", stats_src.get("vector_count", 0))
+        #
+        # `record_count` is nullable: null means the server does not know, which
+        # is NOT the same as zero. Carry the None through rather than coalescing
+        # it — reporting a fabricated 0 here is the exact bug this field was made
+        # nullable to fix. Note `.get(key, default)` cannot express this on its
+        # own: a present-but-null key returns None, not the default, so the older
+        # `vector_count` fallback has to be selected on key presence.
+        if "record_count" in stats_src:
+            vector_count = stats_src["record_count"]
+        else:
+            vector_count = stats_src.get("vector_count")
         return Collection(
             id=data.get("collection_id", collection_id),
             config=CollectionConfig(
@@ -292,7 +302,9 @@ class ProximaDBAsyncUnified:
                         storage_engine=coll.get("engine") or "sst",
                     ),
                     stats=CollectionStats(
-                        vector_count=coll.get("record_count", 0) or 0,
+                        # `or 0` would turn both a null (unknown) and an absent
+                        # field into a confident zero. Keep unknown as None.
+                        vector_count=coll.get("record_count"),
                     ),
                 )
             )
