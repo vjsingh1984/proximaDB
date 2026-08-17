@@ -5,10 +5,24 @@ Chunks text at sentence boundaries while respecting size constraints.
 """
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
+from .base import (
+    OFFSET_CONTRACT_EXACT,
+    ChunkingConfig,
+    ChunkingStrategyInterface,
+    TextChunk,
+)
+from .spans import (
+    Slicer,
+    Span,
+    SpanBuffer,
+    hard_split,
+    is_empty,
+    merge_spans,
+    strip_span,
+)
 
 
 class SentenceStrategy(ChunkingStrategyInterface):
@@ -22,22 +36,54 @@ class SentenceStrategy(ChunkingStrategyInterface):
     #: sentence plus the current group is enough to stream.
     supports_streaming = True
 
+    #: Span-first: every chunk is a verbatim slice of the source.
+    _offset_contract = OFFSET_CONTRACT_EXACT
+
     def __init__(self, config: ChunkingConfig):
         super().__init__(config)
         self._compile_patterns()
 
     def _compile_patterns(self):
-        """Compile regex patterns for sentence detection"""
-        # Basic sentence ending pattern
-        endings = "|".join(re.escape(e) for e in self.config.sentence_endings)
+        """Compile the sentence-boundary pattern.
 
-        # Pattern for sentence boundaries
-        # Handles abbreviations, decimals, etc.
-        self.sentence_pattern = re.compile(
-            rf"(?<=[{endings}])\s+(?=[A-Z])|"  # Standard sentence end
-            rf"(?<=[{endings}])\s*\n+|"  # Sentence end with newline
-            rf"\n\n+"  # Paragraph breaks
-        )
+        Two bugs lived in the old one-liner, both from interpolating
+        ``"|".join(endings)`` into a CHARACTER CLASS:
+
+        * ``|`` itself became a sentence terminator, and any multi-character
+          ending the caller configured decomposed into its individual
+          characters.
+        * The ASCII branch required ``(?=[A-Z])`` after the terminator, so the
+          ``。！？`` endings that ship in ``ChunkingConfig.sentence_endings``
+          could never fire — 41 KB of Chinese came back as one chunk — and
+          lowercase-initial sentences were missed in every script.
+
+        Built instead as an alternation of per-ending lookbehinds (Python allows
+        differing widths *across* alternatives, just not within one), split by
+        script because the two need different right-hand context:
+
+        * ASCII terminators must be followed by whitespace. That is what keeps
+          ``1.5`` and ``0.90`` intact, and it is what ``(?=[A-Z])`` was actually
+          buying — abbreviations are handled by :meth:`_is_sentence_end`.
+        * Non-ASCII terminators are self-delimiting: CJK is not space-separated,
+          so requiring whitespace would mean never splitting at all.
+        """
+        ascii_endings = [e for e in self.config.sentence_endings if e.isascii()]
+        wide_endings = [e for e in self.config.sentence_endings if not e.isascii()]
+        # Closing punctuation may sit between the terminator and the space.
+        closers = r"[\"'\u201d\u2019)\]]*"
+
+        alternatives: list[str] = []
+        if ascii_endings:
+            lookbehind = "|".join(f"(?<={re.escape(e)})" for e in ascii_endings)
+            alternatives.append(rf"(?:{lookbehind}){closers}\s+")
+        if wide_endings:
+            lookbehind = "|".join(f"(?<={re.escape(e)})" for e in wide_endings)
+            alternatives.append(rf"(?:{lookbehind}){closers}\s*")
+        # A blank line ends a sentence whatever its punctuation — named so the
+        # splitter can finalise on it even when _is_sentence_end says no.
+        alternatives.append(r"(?P<para>\n\s*\n+)")
+
+        self.sentence_pattern = re.compile("|".join(alternatives))
 
         # Pattern for abbreviations to avoid false splits
         self.abbrev_pattern = re.compile(
@@ -45,72 +91,59 @@ class SentenceStrategy(ChunkingStrategyInterface):
             re.IGNORECASE,
         )
 
-    def _split_into_sentences(self, text: str) -> list[str]:
-        """Split text into sentences"""
-        # Initial split
-        parts = self.sentence_pattern.split(text)
+    def _sentence_spans(
+        self, text: str, origin: int = 0, *, only_closed: bool = False
+    ) -> list[Span]:
+        """Sentence spans over ``text``, offset by ``origin``.
 
-        # Clean up and merge incorrectly split sentences
-        sentences = []
-        current = ""
+        The span-first replacement for the old string accumulation
+        (``current += (" " if current else "") + part``), which both destroyed
+        positions — the root of every offset failure in this strategy — and was
+        quadratic in the number of parts.
 
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-
-            current += (" " if current else "") + part
-
-            # Check if this is a complete sentence
-            if self._is_sentence_end(current):
-                sentences.append(current)
-                current = ""
-
-        # Add any remaining text
-        if current:
-            sentences.append(current)
-
-        return sentences
-
-    def _split_with_carry(self, buffer: str) -> tuple[list[str], int]:
-        """Split a raw buffer into finalized sentences + the raw-carry offset.
-
-        Returns ``(finalized_sentences, carry_start)`` where ``carry_start`` is
-        the index in ``buffer`` at which the still-open (unfinalized) sentence
-        group begins — i.e. the RAW text ``buffer[carry_start:]`` must be carried
-        forward unprocessed so inter-piece whitespace is preserved exactly. If
-        the buffer ends on a finalized sentence boundary, ``carry_start`` is
-        ``len(buffer)``.
-
-        The finalization logic mirrors :meth:`_split_into_sentences` exactly; we
-        additionally track the raw span of each regex part so the carry is a
-        verbatim slice of ``buffer`` (not a normalized rejoin).
+        ``only_closed`` drops a trailing group that no separator match closed.
+        Streaming needs this: a span's stripped end sits BEFORE any trailing
+        whitespace, so position alone cannot tell "sentence finished" from
+        "sentence still accumulating" — ``"Alpha "`` would otherwise look like a
+        complete sentence because its content ends at 5 while the buffer ends at
+        6. Decidedness comes from having consumed a boundary, never from an
+        offset comparison.
         """
-        # Raw part spans: text between successive sentence-boundary matches.
-        spans: list[tuple[int, int]] = []
-        prev = 0
-        for m in self.sentence_pattern.finditer(buffer):
-            spans.append((prev, m.start()))
-            prev = m.end()
-        spans.append((prev, len(buffer)))
+        spans: list[Span] = []
+        pending: list[Span] = []
+        cursor = 0
 
-        sentences: list[str] = []
-        current = ""
-        group_start: int | None = None  # raw start of the open group
-        for start, end in spans:
-            part = buffer[start:end].strip()
-            if not part:
+        def flush() -> None:
+            nonlocal pending
+            if pending:
+                merged = merge_spans(pending)
+                spans.append((merged[0] + origin, merged[1] + origin))
+                pending = []
+
+        for match in self.sentence_pattern.finditer(text):
+            unit = strip_span(text, cursor, match.start())
+            cursor = match.end()
+            if not is_empty(unit):
+                pending.append(unit)
+            if not pending:
                 continue
-            if group_start is None:
-                group_start = start
-            current += (" " if current else "") + part
-            if self._is_sentence_end(current):
-                sentences.append(current)
-                current = ""
-                group_start = None
+            # Slice ONCE per candidate, not once per part.
+            candidate = text[pending[0][0] : pending[-1][1]]
+            if match.group("para") is not None or self._is_sentence_end(candidate):
+                flush()
 
-        carry_start = group_start if group_start is not None else len(buffer)
-        return sentences, carry_start
+        tail = strip_span(text, cursor, len(text))
+        if not is_empty(tail):
+            pending.append(tail)
+        if only_closed:
+            # No boundary closed this group; it may still grow.
+            pending = []
+        flush()
+        return spans
+
+    def _split_into_sentences(self, text: str) -> list[str]:
+        """Text view over :meth:`_sentence_spans` (compat surface)."""
+        return [text[start:end] for start, end in self._sentence_spans(text)]
 
     def _is_sentence_end(self, text: str) -> bool:
         """Check if text ends with a sentence ending"""
@@ -129,63 +162,77 @@ class SentenceStrategy(ChunkingStrategyInterface):
 
     def _group_sentences(
         self,
-        sentences: Iterable[str],
+        sentences: Iterable[Span],
+        slicer: Slicer,
         source_id: str,
         base_metadata: dict[str, Any],
+        release: Callable[[int], None] = lambda _pos: None,
     ) -> Iterator[TextChunk]:
-        """Group a stream of sentences into chunks (shared by batch + stream).
+        """Group sentence spans into chunks (shared by batch + stream).
 
         Yields chunks with ``total_chunks`` left as ``-1`` — the batch path
         back-fills the real count, the streaming path cannot know it.
         """
-        current_chunk: list[str] = []
-        current_length = 0
-        current_start = 0
         chunk_index = 0
+        group: list[Span] = []
 
-        def build(
-            chunk_text: str, start: int, index: int, sentences_in_chunk: list[str]
-        ) -> TextChunk:
-            first = sentences_in_chunk[0]
-            chunk_metadata = {
-                **base_metadata,
-                "chunk_type": "sentence",
-                "sentence_count": len(sentences_in_chunk),
-                "first_sentence": (first[:50] + "..." if len(first) > 50 else first),
-            }
+        def emit(spans: list[Span], forced: bool = False) -> TextChunk:
+            nonlocal chunk_index
+            start, end = merge_spans(spans)
+            text = slicer(start, end)
+            first = slicer(*spans[0])
             chunk = TextChunk(
-                text=chunk_text,
+                text=text,
                 start_pos=start,
-                end_pos=start + len(chunk_text),
-                chunk_id=f"{source_id}_chunk_{index}",
-                metadata=chunk_metadata,
+                end_pos=end,
+                chunk_id=f"{source_id}_chunk_{chunk_index}",
+                metadata={
+                    **base_metadata,
+                    "chunk_type": "sentence",
+                    "sentence_count": len(spans),
+                    "forced_split": forced,
+                    "first_sentence": (
+                        first[:50] + "..." if len(first) > 50 else first
+                    ),
+                },
             )
-            self.add_chunk_metadata(chunk, index, -1, "sentence")
+            self.add_chunk_metadata(chunk, chunk_index, -1, "sentence")
+            chunk_index += 1
+            release(end)
             return chunk
 
-        for sentence in sentences:
-            sentence_length = len(sentence)
+        for span in sentences:
+            # A single sentence over the cap cannot join a group at all; split it
+            # at the backstop first. The old guard consulted only the ACCUMULATED
+            # group and then appended the incoming sentence unconditionally, so
+            # one oversized sentence always shipped over the cap.
+            if span[1] - span[0] > self.config.max_chunk_size:
+                if group:
+                    yield emit(group)
+                    group = []
+                text = slicer(span[0], span[1])
+                for piece_start, piece_end in hard_split(
+                    text, 0, len(text), self.config.max_chunk_size
+                ):
+                    yield emit([(span[0] + piece_start, span[0] + piece_end)], True)
+                continue
 
-            if (
-                current_chunk
-                and current_length + sentence_length + 1 > self.config.chunk_size
-            ):
-                chunk_text = " ".join(current_chunk)
-                if len(chunk_text) >= self.config.min_chunk_size:
-                    yield build(chunk_text, current_start, chunk_index, current_chunk)
-                    chunk_index += 1
+            if group:
+                group_start = group[0][0]
+                if span[1] - group_start > self.config.chunk_size:
+                    current_length = group[-1][1] - group_start
+                    fits_cap = (span[1] - group_start) <= self.config.max_chunk_size
+                    # Merge forward rather than drop: previously only the FINAL
+                    # group had an escape hatch, so an undersized interior group
+                    # was deleted outright.
+                    if current_length >= self.config.min_chunk_size or not fits_cap:
+                        yield emit(group)
+                        group = []
 
-                current_chunk = []
-                current_length = 0
-                current_start += len(chunk_text) + 1
+            group.append(span)
 
-            current_chunk.append(sentence)
-            current_length += sentence_length + (1 if current_chunk else 0)
-
-        if current_chunk:
-            chunk_text = " ".join(current_chunk)
-            if len(chunk_text) >= self.config.min_chunk_size or chunk_index == 0:
-                yield build(chunk_text, current_start, chunk_index, current_chunk)
+        if group:
+            yield emit(group)
 
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
@@ -198,11 +245,15 @@ class SentenceStrategy(ChunkingStrategyInterface):
 
         base_metadata = base_metadata or {}
 
-        sentences = self._split_into_sentences(text)
-        if not sentences:
+        spans = self._sentence_spans(text)
+        if not spans:
             return []
 
-        chunks = list(self._group_sentences(sentences, source_id, base_metadata))
+        chunks = list(
+            self._group_sentences(
+                spans, lambda a, b: text[a:b], source_id, base_metadata
+            )
+        )
 
         # Update total chunks count
         for chunk in chunks:
@@ -217,20 +268,7 @@ class SentenceStrategy(ChunkingStrategyInterface):
         base_metadata: dict[str, Any] | None = None,
     ) -> list[int]:
         """Expose every real sentence boundary without character grouping."""
-        boundaries: list[int] = []
-        current = ""
-        previous = 0
-        for match in self.sentence_pattern.finditer(text):
-            part = text[previous : match.start()].strip()
-            previous = match.end()
-            if not part:
-                continue
-            current += (" " if current else "") + part
-            if self._is_sentence_end(current):
-                boundaries.append(match.start())
-                current = ""
-        boundaries.append(len(text))
-        return boundaries
+        return [end for _start, end in self._sentence_spans(text)] + [len(text)]
 
     def chunk_stream(
         self,
@@ -242,39 +280,55 @@ class SentenceStrategy(ChunkingStrategyInterface):
 
         Equivalent to :meth:`chunk` for every chunk's text/offsets/id, except
         ``total_chunks`` is left as ``-1`` (an inherently global count).
-
-        The raw input buffer is split into sentences as text arrives; every
-        sentence except the last (which may still grow) is committed to the
-        grouping engine, and the trailing partial sentence is carried over to
-        the next ``text_source`` piece. Memory is bounded by the current group
-        plus the in-progress sentence.
         """
         self.validate_config()
 
         base_metadata = base_metadata or {}
+        buffer = SpanBuffer()
+        yield from self._group_sentences(
+            self._sentence_span_stream(text_source, buffer),
+            buffer.slice,
+            source_id,
+            base_metadata,
+            buffer.trim_to,
+        )
 
+    def _sentence_span_stream(
+        self, text_source: "str | Iterable[str]", buffer: SpanBuffer
+    ) -> Iterator[Span]:
+        r"""Yield absolute sentence spans as boundaries become decided.
+
+        The old ``_split_with_carry`` treated the END OF THE BUFFER as a decided
+        sentence boundary, so chunk content depended on read granularity — it
+        injected a space inside ``1.5`` and could emit ``end_pos`` past the end
+        of the input. A separator that ends exactly at the buffer end may still
+        grow with the next piece (``\s+`` is greedy, and the ASCII branch needs a
+        character after the terminator to exist at all), so it is held back.
+        """
         pieces: Iterable[str]
         if isinstance(text_source, str):
             pieces = (text_source,) if text_source else ()
         else:
             pieces = text_source
 
-        def sentence_stream() -> Iterator[str]:
-            buffer = ""
-            for piece in pieces:
-                if not piece:
-                    continue
-                buffer += piece
-                finalized, carry_start = self._split_with_carry(buffer)
-                yield from finalized
-                # Carry the RAW remainder verbatim so inter-piece whitespace is
-                # preserved exactly (matches feeding the whole text at once).
-                buffer = buffer[carry_start:]
-            # Flush the final carried fragment(s) at EOF (matches batch's
-            # trailing-`current` append for text that never closed a sentence).
-            yield from self._split_into_sentences(buffer)
+        emitted_to = 0
 
-        yield from self._group_sentences(sentence_stream(), source_id, base_metadata)
+        def drain(final: bool) -> Iterator[Span]:
+            nonlocal emitted_to
+            text = buffer.buffer
+            origin = buffer.origin
+            for span in self._sentence_spans(text, origin, only_closed=not final):
+                if span[0] >= emitted_to:
+                    emitted_to = span[1]
+                    yield span
+
+        for piece in pieces:
+            if not piece:
+                continue
+            buffer.append(piece)
+            yield from drain(final=False)
+
+        yield from drain(final=True)
 
     def __repr__(self) -> str:
         return f"SentenceStrategy(chunk_size={self.config.chunk_size})"

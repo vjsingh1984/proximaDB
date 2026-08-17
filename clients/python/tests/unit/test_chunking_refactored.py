@@ -241,8 +241,22 @@ class Calculator:
         return self.result
 """
 
+        # SEMANTIC_EMBEDDING genuinely requires a provider. It used to sail
+        # through this loop without one only because the sentence splitter
+        # collapsed this sample to a single "sentence" (nothing here ends in
+        # .!?), hitting the no-embedding-needed short circuit. A blank line now
+        # ends a sentence unit, so the strategy reaches its real code path --
+        # give it a deterministic provider rather than depending on an accident.
+        def fake_provider(texts):
+            return [
+                [float((hash(t) >> shift) & 0xFF) / 255.0 for shift in range(8)]
+                for t in texts
+            ]
+
         for strategy in ChunkingStrategy:
-            config = ChunkingConfig(strategy=strategy, chunk_size=200)
+            config = ChunkingConfig(
+                strategy=strategy, chunk_size=200, embedding_provider=fake_provider
+            )
             chunker = TextChunker(config)
 
             chunks = chunker.chunk_text(text, f"test_{strategy.value}.py")

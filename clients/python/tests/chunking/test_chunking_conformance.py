@@ -22,8 +22,9 @@ what the code *does*, not what anyone believes it does. That distinction is the
 whole lesson of the audit that produced ADR-091: the pre-existing suite had 426
 passing tests and caught none of these defects.
 
-Baseline, most recently re-measured after the ``paragraph`` span-first
-conversion: **60 cases, 42 clean, 18 violating, 38 violations, 0 errors.**
+Baseline, most recently re-measured after the ``sentence`` conversion:
+**60 cases, 51 clean, 9 violating, 19 violations, 0 errors.** ``semantic`` is the
+only strategy still carrying violations.
 (Initial recording against develop @482075bc1 was 22 clean / 67 violations.)
 
 Note on running locally
@@ -88,21 +89,10 @@ def _v(*names: str) -> frozenset[Invariant]:
 #: Recorded state of today's code. Generated, not hand-written.
 #: Strategies absent from this mapping are clean on all ten entries:
 #: ``sliding_window`` (always was — the only one whose offsets survived the
-#: audit), ``fixed_size``, ``paragraph``, and ``recursive`` — the last of which
-#: needed no edit of its own: it composes paragraph's spans, so it became
-#: correct the moment its parent's text was a verbatim slice.
+#: audit), ``fixed_size``, ``paragraph``, ``sentence``, and ``recursive`` — the
+#: last of which needed no edit of its own: it composes paragraph's spans, so it
+#: became correct the moment its parent's text was a verbatim slice.
 BASELINE: dict[tuple[str, str], frozenset[Invariant]] = {
-    ("sentence", "prose"): _v("exactness", "totality"),
-    ("sentence", "header_dense_markdown"): _v("exactness", "totality"),
-    ("sentence", "cjk_emoji"): _v("cap", "stream_equivalence"),
-    ("sentence", "boundary_free"): _v("cap"),
-    ("sentence", "whitespace_heavy"): _v("cap", "exactness", "totality"),
-    ("sentence", "table_markdown"): _v("exactness", "stream_equivalence", "totality"),
-    ("sentence", "code_fenced_markdown"): _v(
-        "exactness", "stream_equivalence", "totality"
-    ),
-    ("sentence", "html"): _v("stream_equivalence"),
-    ("sentence", "json_doc"): _v("cap", "stream_equivalence"),
     ("semantic", "prose"): _v("cap", "exactness", "no_containment", "totality"),
     # The defect that decided ADR-091: ZERO chunks on header-dense Markdown,
     # reached independently by victor-rag's unrelated implementation.
@@ -117,8 +107,8 @@ BASELINE: dict[tuple[str, str], frozenset[Invariant]] = {
 }
 
 #: Aggregate ratchet. Clean cases may only increase; violations may only fall.
-CLEAN_FLOOR = 42
-VIOLATION_CEILING = 38
+CLEAN_FLOOR = 51
+VIOLATION_CEILING = 19
 
 
 def _adapter(strategy: ChunkingStrategy) -> ChunkerAdapter:
