@@ -841,3 +841,39 @@ def test_server_records_explicit_query_range_policy(tmp_path: Path) -> None:
     assert environment["PROXIMADB_PAX_COALESCE_GAP"] == "1048576"
     assert environment["PROXIMADB_PAX_VECTOR_COALESCE_RANGE"] == "16777216"
     assert environment["PROXIMADB_PAX_COALESCE_RANGE"] == "16777216"
+
+
+def test_server_adaptive_range_policy_removes_inherited_overrides(tmp_path: Path) -> None:
+    process = SimpleNamespace(poll=lambda: None)
+    server = HARNESS.OwnedServer(
+        tmp_path / "proximadb-server",
+        tmp_path / "benchmark.toml",
+        "http://127.0.0.1:5790",
+        tmp_path / "server.log",
+        None,
+        adaptive_read_strategy=True,
+    )
+
+    inherited = {
+        "PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER": "0",
+        "PROXIMADB_PAX_VECTOR_COALESCE_GAP": "7",
+        "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": "8",
+        "PROXIMADB_PAX_COALESCE_GAP": "9",
+        "PROXIMADB_PAX_COALESCE_RANGE": "10",
+    }
+    with (
+        patch.dict(HARNESS.os.environ, inherited),
+        patch.object(HARNESS.subprocess, "Popen", return_value=process) as popen,
+        patch.object(HARNESS, "request_json", return_value={}),
+    ):
+        server.start()
+
+    environment = popen.call_args.kwargs["env"]
+    assert environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] == "1"
+    for name in (
+        "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+        "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+        "PROXIMADB_PAX_COALESCE_GAP",
+        "PROXIMADB_PAX_COALESCE_RANGE",
+    ):
+        assert name not in environment

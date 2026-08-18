@@ -454,23 +454,47 @@ def checkpoint_identity(result: dict) -> dict:
                 "target_recall",
                 "decision_thresholds",
             )
-        },
+        }
+        | {"include_adaptive": experiment.get("include_adaptive", False)},
     }
 
 
-def validate_resume(existing: dict, expected: dict) -> set[tuple[int, int]]:
+def point_identity(point: dict) -> tuple[str, int | None, int]:
+    policy = point.get("range_policy", "fixed")
+    cap = point.get("range_cap_mib")
+    if policy not in {"fixed", "adaptive"}:
+        raise RuntimeError(f"invalid range policy: {policy}")
+    if policy == "fixed":
+        cap = int(cap)
+    elif cap is not None:
+        raise RuntimeError("adaptive range point must not claim one fixed cap")
+    return policy, cap, int(point["top_k"])
+
+
+def expected_point_identities(experiment: dict) -> set[tuple[str, int | None, int]]:
+    identities = {
+        ("fixed", cap, top_k)
+        for cap in experiment["range_caps_mib"]
+        for top_k in experiment["top_k_values"]
+    }
+    if experiment.get("include_adaptive", False):
+        identities.update(
+            ("adaptive", None, top_k) for top_k in experiment["top_k_values"]
+        )
+    return identities
+
+
+def validate_resume(
+    existing: dict, expected: dict
+) -> set[tuple[str, int | None, int]]:
     if existing.get("status") not in {"running", "incomplete"}:
         raise RuntimeError("range-cap checkpoint is terminal; refusing resume")
     if checkpoint_identity(existing) != checkpoint_identity(expected):
         raise RuntimeError("range-cap checkpoint provenance/configuration differs")
-    expected_pairs = {
-        (cap, top_k)
-        for cap in expected["experiment"]["range_caps_mib"]
-        for top_k in expected["experiment"]["top_k_values"]
-    }
+    expected_pairs = expected_point_identities(expected["experiment"])
     completed = set()
     for point in existing["experiment"]["points"]:
-        identity = (int(point["range_cap_mib"]), int(point["top_k"]))
+        identity = point_identity(point)
         if identity not in expected_pairs or identity in completed:
             raise RuntimeError(f"invalid range-cap checkpoint point: {identity}")
         completed.add(identity)
@@ -480,9 +504,7 @@ def validate_resume(existing: dict, expected: dict) -> set[tuple[int, int]]:
 def write_checkpoint(
     output: Path, result: dict, state: str, reason: str | None = None
 ) -> None:
-    expected_points = len(result["experiment"]["range_caps_mib"]) * len(
-        result["experiment"]["top_k_values"]
-    )
+    expected_points = len(expected_point_identities(result["experiment"]))
     result["status"] = state
     result["checkpoint"] = {
         "state": state,
@@ -519,6 +541,14 @@ def main() -> int:
     parser.add_argument("--rows", type=int, required=True)
     parser.add_argument("--nprobe", type=int, default=12)
     parser.add_argument("--range-caps-mib", default="4,8,16,32")
+    parser.add_argument(
+        "--include-adaptive",
+        action="store_true",
+        help=(
+            "append one default-OFF chooser point per top-k; fixed range/gap "
+            "overrides are removed for those fresh server processes"
+        ),
+    )
     parser.add_argument("--coalesce-gap-mib", type=int, default=1)
     parser.add_argument("--top-k-values", default="10,20")
     parser.add_argument("--queries", type=int, default=1_000)
@@ -654,6 +684,7 @@ def main() -> int:
             "fixed_nprobe": args.nprobe,
             "fixed_coalesce_gap_bytes": args.coalesce_gap_mib * MIB,
             "range_caps_mib": caps,
+            "include_adaptive": args.include_adaptive,
             "top_k_values": top_k_values,
             "fresh_process_per_point": True,
             "target_recall": args.target_recall,
@@ -681,11 +712,20 @@ def main() -> int:
         write_checkpoint(output, result, "running")
 
     server_url = f"http://127.0.0.1:{args.port}"
-    for cap_mib in caps:
+    policies: list[tuple[str, int | None]] = [("fixed", cap) for cap in caps]
+    if args.include_adaptive:
+        policies.append(("adaptive", None))
+    for range_policy, cap_mib in policies:
         for top_k in top_k_values:
-            if (cap_mib, top_k) in completed:
+            identity = (range_policy, cap_mib, top_k)
+            if identity in completed:
                 continue
-            label = f"range-{cap_mib}mib-top-{top_k}"
+            policy_label = (
+                f"range-{cap_mib}mib"
+                if range_policy == "fixed"
+                else "range-adaptive"
+            )
+            label = f"{policy_label}-top-{top_k}"
             attempt = 0
             while True:
                 server = ACCEPTANCE.OwnedServer(
@@ -697,7 +737,8 @@ def main() -> int:
                     nprobe=args.nprobe,
                     azure_emulator=True,
                     coalesce_gap_bytes=args.coalesce_gap_mib * MIB,
-                    coalesce_range_bytes=cap_mib * MIB,
+                    coalesce_range_bytes=(cap_mib or 4) * MIB,
+                    adaptive_read_strategy=range_policy == "adaptive",
                 )
                 sampler = None
                 contention = HostContentionMonitor()
@@ -751,8 +792,11 @@ def main() -> int:
                     contention.stop()
                     server.stop()
                 break
+            point["range_policy"] = range_policy
             point["range_cap_mib"] = cap_mib
-            point["coalesce_gap_mib"] = args.coalesce_gap_mib
+            point["coalesce_gap_mib"] = (
+                args.coalesce_gap_mib if range_policy == "fixed" else None
+            )
             point["nprobe"] = args.nprobe
             point["wire_gets_per_query"] = (
                 point["wire_http"]["get_requests"] / args.queries
@@ -772,20 +816,29 @@ def main() -> int:
             ):
                 result["measurement_failures"].append(attribution_failure)
             result["experiment"]["points"].append(point)
-            completed.add((cap_mib, top_k))
+            completed.add(identity)
             write_checkpoint(output, result, "running")
 
     for top_k in top_k_values:
         baseline = next(
             point
             for point in result["experiment"]["points"]
-            if point["range_cap_mib"] == 4 and point["top_k"] == top_k
+            if point.get("range_policy", "fixed") == "fixed"
+            and point["range_cap_mib"] == 4
+            and point["top_k"] == top_k
         )
         for candidate in result["experiment"]["points"]:
-            if candidate["top_k"] == top_k and candidate["range_cap_mib"] != 4:
+            if candidate["top_k"] == top_k and point_identity(candidate) != (
+                "fixed",
+                4,
+                top_k,
+            ):
                 result["decisions"].append(
                     {
                         "top_k": top_k,
+                        "candidate_range_policy": candidate.get(
+                            "range_policy", "fixed"
+                        ),
                         "candidate_cap_mib": candidate["range_cap_mib"],
                         **decision_for(candidate, baseline, args),
                     }

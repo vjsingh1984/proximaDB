@@ -1481,6 +1481,7 @@ class OwnedServer:
         azure_emulator: bool = False,
         coalesce_gap_bytes: int = AZURE_COALESCE_GAP_BYTES,
         coalesce_range_bytes: int = AZURE_COALESCE_RANGE_BYTES,
+        adaptive_read_strategy: bool = False,
     ):
         self.binary = binary
         self.config = config
@@ -1496,6 +1497,7 @@ class OwnedServer:
             raise RuntimeError("coalescing gap must be non-negative and range positive")
         self.coalesce_gap_bytes = coalesce_gap_bytes
         self.coalesce_range_bytes = coalesce_range_bytes
+        self.adaptive_read_strategy = adaptive_read_strategy
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -1507,12 +1509,6 @@ class OwnedServer:
                 "PROXIMADB_CACHE_PREFILL": "0",
                 "PROXIMADB_CACHE_ON_WRITE": "all",
                 "PROXIMADB_L0_COMPACTION_ENABLED": "1",
-                # Keep the planner fixed across local and Azure profiles so
-                # backend choice does not silently change the read geometry.
-                "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(self.coalesce_gap_bytes),
-                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(self.coalesce_range_bytes),
-                "PROXIMADB_PAX_COALESCE_GAP": str(self.coalesce_gap_bytes),
-                "PROXIMADB_PAX_COALESCE_RANGE": str(self.coalesce_range_bytes),
             }
         )
         # The diagnostic object-cold phase must remain cold even when the
@@ -1526,8 +1522,30 @@ class OwnedServer:
             "PROXIMADB_IVF_NCOMP",
             "PROXIMADB_PAX_READ_COARSE_NPROBE",
             "PROXIMADB_TRAINING_COMPACTION_MIN_MB",
+            "PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER",
+            "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+            "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+            "PROXIMADB_PAX_COALESCE_GAP",
+            "PROXIMADB_PAX_COALESCE_RANGE",
         ):
             environment.pop(inherited_gate, None)
+        if self.adaptive_read_strategy:
+            environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] = "1"
+        else:
+            # Keep the planner fixed across local and Azure profiles so
+            # backend choice does not silently change controlled sweeps.
+            environment.update(
+                {
+                    "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(
+                        self.coalesce_gap_bytes
+                    ),
+                    "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(
+                        self.coalesce_range_bytes
+                    ),
+                    "PROXIMADB_PAX_COALESCE_GAP": str(self.coalesce_gap_bytes),
+                    "PROXIMADB_PAX_COALESCE_RANGE": str(self.coalesce_range_bytes),
+                }
+            )
         if self.ivf_k is not None:
             environment["PROXIMADB_IVF_K"] = str(self.ivf_k)
         if self.n_comp is not None:

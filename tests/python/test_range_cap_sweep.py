@@ -177,7 +177,7 @@ def test_checkpoint_resume_ignores_materialized_mtime_and_rejects_cap_change():
     expected["experiment"]["points"] = []
     expected["settled_geometry"]["segments"][0]["mtime_ns"] = 2
 
-    assert SWEEP.validate_resume(existing, expected) == {(4, 10)}
+    assert SWEEP.validate_resume(existing, expected) == {("fixed", 4, 10)}
 
     changed = copy.deepcopy(expected)
     changed["experiment"]["range_caps_mib"] = [4, 16]
@@ -200,6 +200,27 @@ def test_checkpoint_write_is_atomic_and_records_progress(tmp_path: Path):
         "incomplete_reason": None,
     }
     assert not (tmp_path / ".range-cap.json.tmp").exists()
+
+
+def test_adaptive_checkpoint_identity_and_expected_point_count(tmp_path: Path):
+    result = checkpoint_result()
+    result["experiment"]["include_adaptive"] = True
+    result["experiment"]["points"] = [
+        {
+            "range_policy": "adaptive",
+            "range_cap_mib": None,
+            "top_k": 10,
+        }
+    ]
+
+    expected = copy.deepcopy(result)
+    expected["experiment"]["points"] = []
+    assert SWEEP.validate_resume(result, expected) == {("adaptive", None, 10)}
+
+    output = tmp_path / "adaptive-range.json"
+    SWEEP.write_checkpoint(output, result, "running")
+    persisted = SWEEP.json.loads(output.read_text())
+    assert persisted["checkpoint"]["expected_points"] == 6
 
 
 def test_wire_validation_rejects_dead_observer_when_application_read_storage():

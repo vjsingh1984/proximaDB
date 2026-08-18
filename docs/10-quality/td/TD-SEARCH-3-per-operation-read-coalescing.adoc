@@ -306,6 +306,101 @@ billing quantum nor an SDK request quantum, and the `k_c=90` GET minimum
 measured under the 4 MiB cap is not yet a provider-independent geometry result.
 Repeat the eligible cap on `k_c=90` at iso-cap before choosing cell count.
 
+=== S3c: exact-current scale points and adaptive estimator contract
+
+The exact-current release binary from source revision
+`758fec2df1c995e8d909e4d9f45acf07b8d66394` (SHA-256
+`2feac49987aff4bda157b2473387cb5e78c185bdf4d710f2ef0a56b236609f5a`)
+closed the two immediate measurement gates through the production Azure backend
+against Azurite. Each point used one immutable PAX v3 segment, 1,000 diverse
+queries, a fresh process/cache, and one wire range request per application
+range.
+
+The 491,655-row, 768-dimensional, `k_c=90`, `nprobe=30` point measured 4 MiB
+versus 24 MiB as follows:
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| top-k / cap | Recall | Wire GET/q | MiB/q | p50 / p95 ms | Peak RSS GiB
+
+| 10 / 4 MiB | 0.9884 | 47.514 | 132.386 | 426.63 / 489.41 | 4.345
+| 10 / 24 MiB | 0.9883 | 26.790 | 137.653 | 215.37 / 268.10 | 4.787
+| 20 / 4 MiB | 0.9864 | 48.015 | 133.848 | 439.91 / 513.39 | 4.359
+| 20 / 24 MiB | 0.9864 | 26.929 | 140.304 | 223.76 / 279.81 | 4.710
+|===
+
+At top-10, 24 MiB reduced GETs by 43.6% and halved p50 while adding 4.0%
+bytes. Peak RSS was 10.176% above the baseline, missing the predeclared 10%
+bound by 0.176 percentage points; this remains an honest gate failure rather
+than being relabelled after the fact. Top-20 passed all declared gates.
+
+The separate BIGANN 1M, 128-dimensional, `k_c=30` bed ran at its measured
+top-10 quality knee, `nprobe=6`, and produced the cap curve below:
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| Cap | Recall@10 | Wire GET/q | MiB/q | p50 / p95 ms
+
+| 4 MiB | 0.9800 | 10.077 | 28.56 | 106.78 / 144.62
+| 8 MiB | 0.9800 | 8.177 | 33.11 | 76.30 / 104.03
+| 12 MiB | 0.9800 | 7.796 | 33.69 | 75.06 / 103.63
+| 16 MiB | 0.9800 | 7.657 | 33.71 | 74.64 / 103.67
+| 24 MiB | 0.9800 | 7.647 | 33.71 | 75.79 / 104.16
+|===
+
+The result disproves a universal range cap. At 1M, 8 MiB is the latency knee,
+16 MiB is the GET knee, and 24 MiB adds no material benefit. The 24 MiB point's
+18.0% byte amplification is not an Azure Hot retrieval charge, but it is 5.15
+MiB/query of additional NIC, cache, and memory traffic. At one million queries
+that is about 5 TiB of extra same-region traffic. A single-query latency win
+therefore needs a concurrency/RSS guard rather than an arbitrary requirement
+that bytes be identical.
+
+The implementation successor is a deterministic estimator at the shared
+engine-core read-planning seam:
+
+. Preserve explicit range/gap env overrides as the highest-precedence
+  diagnostic contract.
+. Under the existing default-OFF
+  `PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER`, enumerate provider-bounded caps:
+  Azure 4/8/12/16/24 MiB, S3/GCS 8/16 MiB, and local
+  1/2/3/4/6/8 MiB. This is read-only policy; writer block/cell geometry remains
+  unchanged.
+. Run the real Region-A/B/D coalescing state machine for each candidate. The
+  resulting `(cold-miss planned GETs, planned bytes)` are exact for the selected
+  cells/rows, so vector count and dimension need not match a benchmark lookup
+  table. Subsequent DRAM/disk hits can only remove canonical-store requests;
+  cache residency is measured separately rather than guessed by this planner.
+. Score `20*GETs + 5*MiB` for active Hot/standard cloud objects, matching the
+  neutral ADR-052 route-cost ordering. Reject candidates above 1.25x baseline
+  bytes. For retrieval-billed Cool/Cold/Archive objects, raise the byte weight
+  and tighten the guard to 1.10x. Local storage prices requests at zero and
+  admits no byte amplification.
+. Treat scores within 0.5% as the same knee and choose the smaller cap.
+  This selects 16 rather than 24 MiB for the measured 1M curve.
+. Emit baseline/chosen GETs, bytes, cap, gap, cost class, and candidate count.
+  Unset gate or an invalid/empty decision fails closed to the existing fixed
+  policy.
+
+The benchmark beds calibrate the latency/RSS weights and validate the policy;
+they are not a brittle table keyed by exact `(N, dimension, k_c)`. Once A0 has
+selected cells, their actual byte extents make the cold-miss plan exact.
+Regression/telemetry remains useful for concurrency latency and for choosing
+the recall-safe `nprobe`, which is a separate quality problem.
+
+This first estimator slice intentionally keeps the backend-derived gap fixed.
+Enumerating larger gaps would be mechanically easy but would optimize an
+unmeasured second variable that can add bystander bytes discontinuously. A
+paired gap sweep and concurrency/RSS evidence are required before admitting
+gap candidates.
+
+The engine-core contract accepts a canonical `ObjectAccessTier`, but the PAX
+search caller does not yet receive per-object tier metadata. This slice passes
+`None`, which deliberately resolves active object-store segments as
+Hot/standard. Plumbing actual Cool/Cold/Archive placement to this leaf is a
+prerequisite before enabling adaptive reads on retrieval-billed tiers; path
+aliases alone must never guess a billing tier.
+
 === S4: remove the redundant PAX-as-SST1 magic probe
 
 The first passing release run after the persistent-tier implementation reported

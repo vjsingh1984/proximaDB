@@ -831,17 +831,32 @@ pub(crate) async fn pax_filtered_row_allow(
     //    the DECODE via stats; pruning the FETCH needs footer-resident stats —
     //    TD-FPRUNE-1 P2.) Coalesced D blocks carry no vector stripes (ADR-065),
     //    so these bytes are scalar/metadata only.
+    let all_blocks: Vec<usize> = (0..footer.blocks.len()).collect();
     let iop_target =
         proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
-    let policy =
+    let defaults =
         crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
-            max_gap_bytes: env_u64_or(
-                "PROXIMADB_PAX_COALESCE_GAP",
-                (iop_target / 4).max(64 * 1024),
-            ),
-            max_range_bytes: env_u64_or("PROXIMADB_PAX_COALESCE_RANGE", iop_target),
+            max_gap_bytes: (iop_target / 4).max(64 * 1024),
+            max_range_bytes: iop_target,
         };
-    let all_blocks: Vec<usize> = (0..footer.blocks.len()).collect();
+    let policy = resolve_adaptive_range_policy(
+        path,
+        "region_d_filter",
+        "PROXIMADB_PAX_COALESCE_GAP",
+        "PROXIMADB_PAX_COALESCE_RANGE",
+        defaults,
+        |candidate| {
+            estimate_coalesced_byte_ranges(
+                all_blocks.iter().filter_map(|&index| {
+                    footer
+                        .blocks
+                        .get(index)
+                        .map(|block| (block.offset, block.offset + block.size as u64))
+                }),
+                candidate,
+            )
+        },
+    );
     let fetches = plan_coalesced_block_ranges(&footer, &all_blocks, &policy);
     for fetch in &fetches {
         let buf = fs
@@ -944,6 +959,161 @@ fn default_probe_range_policy(
     }
 }
 
+/// Resolve a physical range cap from exact, query-local GET/byte plans.
+///
+/// This is deliberately a physical-I/O decision made after logical cells/rows
+/// have been selected. It cannot change nprobe, survivors, ranking, or recall.
+/// Explicit diagnostic overrides retain precedence; the default-OFF chooser
+/// gate preserves the fixed policy byte-for-byte when unset.
+fn resolve_adaptive_range_policy<F>(
+    path: &str,
+    region: &str,
+    gap_env: &str,
+    range_env: &str,
+    defaults: crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy,
+    estimate: F,
+) -> crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy
+where
+    F: Fn(
+        &crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy,
+    ) -> crate::storage::engines::core::coalesce_strategy::RangePlanEstimate,
+{
+    use crate::storage::engines::core::coalesce_strategy::{
+        RangePlanCandidate, ReadPlanCostProfile, choose_range_plan, read_strategy_chooser_enabled,
+    };
+
+    // Presence, including a malformed value, is treated as an explicit
+    // diagnostic request. A malformed value fails closed to the corresponding
+    // default rather than silently engaging a different adaptive policy.
+    if std::env::var_os(gap_env).is_some() || std::env::var_os(range_env).is_some() {
+        return crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+            max_gap_bytes: env_u64_or(gap_env, defaults.max_gap_bytes),
+            max_range_bytes: env_u64_or(range_env, defaults.max_range_bytes),
+        };
+    }
+    if !read_strategy_chooser_enabled() {
+        return defaults;
+    }
+
+    // Keep the measured gap fixed in this slice. Cap candidates are exact and
+    // independently auditable; adaptive gap selection needs its own evidence
+    // because it can introduce substantially more bystander bytes.
+    let mut policies = vec![defaults];
+    for max_range_bytes in proximadb_storage_common::iops_budget::read_range_cap_candidates(path) {
+        if max_range_bytes != defaults.max_range_bytes {
+            policies.push(
+                crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+                    max_gap_bytes: defaults.max_gap_bytes,
+                    max_range_bytes,
+                },
+            );
+        }
+    }
+    let candidates: Vec<RangePlanCandidate> = policies
+        .iter()
+        .map(|policy| RangePlanCandidate {
+            max_gap_bytes: policy.max_gap_bytes,
+            max_range_bytes: policy.max_range_bytes,
+            estimate: estimate(policy),
+        })
+        .collect();
+    let profile = ReadPlanCostProfile::for_path(path, None);
+    let Some(decision) = choose_range_plan(&candidates, 0, profile) else {
+        tracing::warn!(
+            target: "pax.range_estimator",
+            path,
+            region,
+            "adaptive range estimator failed closed to fixed policy"
+        );
+        return defaults;
+    };
+    let Some(chosen) = policies.get(decision.chosen_index).copied() else {
+        return defaults;
+    };
+    tracing::debug!(
+        target: "pax.range_estimator",
+        path,
+        region,
+        cost_class = ?profile.class,
+        candidates = candidates.len(),
+        admissible = decision.admissible_candidates,
+        baseline_gets = decision.baseline.estimate.get_requests,
+        baseline_bytes = decision.baseline.estimate.physical_bytes,
+        baseline_cap = decision.baseline.max_range_bytes,
+        chosen_gets = decision.chosen.estimate.get_requests,
+        chosen_bytes = decision.chosen.estimate.physical_bytes,
+        chosen_cap = decision.chosen.max_range_bytes,
+        chosen_gap = decision.chosen.max_gap_bytes,
+        baseline_score = decision.baseline_score,
+        chosen_score = decision.chosen_score,
+        "selected exact cold-miss GET/byte range-plan knee"
+    );
+    chosen
+}
+
+/// Estimate a coalesced plan without allocating its payload-bearing fetch
+/// structures. `ranges` must be ordered by start offset and contain the exact
+/// logical byte extents that the executable planner will receive.
+fn estimate_coalesced_byte_ranges<I>(
+    ranges: I,
+    policy: &crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy,
+) -> crate::storage::engines::core::coalesce_strategy::RangePlanEstimate
+where
+    I: IntoIterator<Item = (u64, u64)>,
+{
+    let mut get_requests = 0_u64;
+    let mut physical_bytes = 0_u64;
+    let mut current: Option<(u64, u64)> = None;
+    for (start, end) in ranges {
+        if end <= start {
+            continue;
+        }
+        match current {
+            Some((current_start, current_end)) => {
+                let gap = start.saturating_sub(current_end);
+                let merged_end = current_end.max(end);
+                let merged_len = merged_end.saturating_sub(current_start);
+                if gap <= policy.max_gap_bytes
+                    && (policy.max_range_bytes == 0 || merged_len <= policy.max_range_bytes)
+                {
+                    current = Some((current_start, merged_end));
+                } else {
+                    get_requests = get_requests.saturating_add(1);
+                    physical_bytes =
+                        physical_bytes.saturating_add(current_end.saturating_sub(current_start));
+                    current = Some((start, end));
+                }
+            }
+            None => current = Some((start, end)),
+        }
+    }
+    if let Some((start, end)) = current {
+        get_requests = get_requests.saturating_add(1);
+        physical_bytes = physical_bytes.saturating_add(end.saturating_sub(start));
+    }
+    crate::storage::engines::core::coalesce_strategy::RangePlanEstimate {
+        get_requests,
+        physical_bytes,
+    }
+}
+
+/// Mirror Region B's executable whole-region fallback in candidate scoring.
+/// Once scattered survivor ranges would move at least the complete SQ8 region,
+/// one canonical GET is both fewer requests and no more bytes.
+fn estimate_with_whole_region_fallback(
+    estimate: crate::storage::engines::core::coalesce_strategy::RangePlanEstimate,
+    region_bytes: u64,
+) -> crate::storage::engines::core::coalesce_strategy::RangePlanEstimate {
+    if estimate.physical_bytes >= region_bytes {
+        crate::storage::engines::core::coalesce_strategy::RangePlanEstimate {
+            get_requests: 1,
+            physical_bytes: region_bytes,
+        }
+    } else {
+        estimate
+    }
+}
+
 /// A coalesced ranged GET over one or more survivor data blocks.
 struct CoalescedFetch {
     start: u64,
@@ -1006,22 +1176,21 @@ struct RowFetch {
     rows: Vec<usize>,
 }
 
-/// Plan coalesced ranged GETs over the survivors' SQ8 byte-runs in Region B
-/// (ADR-065). Each survivor `g` maps to `[codes_base + g·dim, +dim]`; adjacent
-/// runs within `policy` merge into one GET (survivors are cluster-contiguous →
-/// few ranges). Mirrors `plan_coalesced_block_ranges` over row byte-offsets.
+/// Plan coalesced ranged GETs over sorted, deduplicated survivor SQ8 row runs
+/// in Region B (ADR-065). Each survivor `g` maps to
+/// `[codes_base + g·dim, +dim]`; adjacent runs within `policy` merge into one
+/// GET. The caller normalizes once so adaptive candidates and the executable
+/// plan share one ordering pass.
 fn plan_coalesced_row_ranges(
     survivors: &[usize],
     dim: usize,
     codes_base: u64,
     policy: &crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy,
 ) -> Vec<RowFetch> {
-    let mut sorted: Vec<usize> = survivors.to_vec();
-    sorted.sort_unstable();
-    sorted.dedup();
+    debug_assert!(survivors.windows(2).all(|pair| pair[0] < pair[1]));
     let dim64 = dim as u64;
     let mut out: Vec<RowFetch> = Vec::new();
-    for g in sorted {
+    for &g in survivors {
         let start = codes_base + (g as u64) * dim64;
         let end = start + dim64;
         let merge = match out.last_mut() {
@@ -2404,14 +2573,19 @@ async fn coarse_probe_survivors(
         })
         .collect();
     let defaults = default_probe_range_policy(path);
-    let policy =
-        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
-            max_gap_bytes: env_u64_or("PROXIMADB_PAX_VECTOR_COALESCE_GAP", defaults.max_gap_bytes),
-            max_range_bytes: env_u64_or(
-                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
-                defaults.max_range_bytes,
-            ),
-        };
+    let policy = resolve_adaptive_range_policy(
+        path,
+        "region_a",
+        "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+        "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+        defaults,
+        |candidate| {
+            estimate_coalesced_byte_ranges(
+                selected.iter().map(|cell| (cell.start, cell.end)),
+                candidate,
+            )
+        },
+    );
     let fetches = plan_probe_cell_ranges(&selected, &policy);
     let mut fetched = Vec::with_capacity(fetches.len());
     let probed_rows: u64 = selected
@@ -2824,15 +2998,32 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     // range count with Azurite/Azure wire requests before changing it.
     let iop_target =
         proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
-    let policy =
+    let defaults =
         crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
-            max_gap_bytes: env_u64_or(
-                "PROXIMADB_PAX_COALESCE_GAP",
-                (iop_target / 4).max(64 * 1024),
-            ),
-            max_range_bytes: env_u64_or("PROXIMADB_PAX_COALESCE_RANGE", iop_target),
+            max_gap_bytes: (iop_target / 4).max(64 * 1024),
+            max_range_bytes: iop_target,
         };
-    let sq8_fetches = plan_coalesced_row_ranges(&survivors, dim, codes_base, &policy);
+    let mut sorted_survivors = survivors.clone();
+    sorted_survivors.sort_unstable();
+    sorted_survivors.dedup();
+    let policy = resolve_adaptive_range_policy(
+        path,
+        "region_b",
+        "PROXIMADB_PAX_COALESCE_GAP",
+        "PROXIMADB_PAX_COALESCE_RANGE",
+        defaults,
+        |candidate| {
+            let estimate = estimate_coalesced_byte_ranges(
+                sorted_survivors.iter().map(|&row| {
+                    let start = codes_base + (row as u64) * dim as u64;
+                    (start, start + dim as u64)
+                }),
+                candidate,
+            );
+            estimate_with_whole_region_fallback(estimate, header.sq8_len)
+        },
+    );
+    let sq8_fetches = plan_coalesced_row_ranges(&sorted_survivors, dim, codes_base, &policy);
     let mut scored: Vec<(usize, f32)> = Vec::with_capacity(survivors.len());
     let ranges_bytes: u64 = sq8_fetches.iter().map(|f| f.end - f.start).sum();
     if ranges_bytes >= header.sq8_len {
@@ -2971,7 +3162,25 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         block_rows.entry(bi).or_default().push(local as usize);
     }
     let topk_blocks: Vec<usize> = block_rows.keys().copied().collect();
-    let oid_fetches = plan_coalesced_block_ranges(&footer, &topk_blocks, &policy);
+    let oid_policy = resolve_adaptive_range_policy(
+        path,
+        "region_d_topk",
+        "PROXIMADB_PAX_COALESCE_GAP",
+        "PROXIMADB_PAX_COALESCE_RANGE",
+        defaults,
+        |candidate| {
+            estimate_coalesced_byte_ranges(
+                topk_blocks.iter().filter_map(|&index| {
+                    footer
+                        .blocks
+                        .get(index)
+                        .map(|block| (block.offset, block.offset + block.size as u64))
+                }),
+                candidate,
+            )
+        },
+    );
+    let oid_fetches = plan_coalesced_block_ranges(&footer, &topk_blocks, &oid_policy);
     let mut oid_of: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
     for fetch in &oid_fetches {
         let start = fetch.start;
@@ -3498,6 +3707,90 @@ mod tests {
             .sum();
         assert_eq!(useful, 300);
         assert_eq!(fetched - useful, 50, "only the merged gap is over-read");
+
+        let estimate = estimate_coalesced_byte_ranges(
+            selected.iter().map(|cell| (cell.start, cell.end)),
+            &policy,
+        );
+        assert_eq!(estimate.get_requests, planned.len() as u64);
+        assert_eq!(estimate.physical_bytes, fetched);
+
+        let fallback = estimate_with_whole_region_fallback(estimate, 200);
+        assert_eq!(fallback.get_requests, 1);
+        assert_eq!(fallback.physical_bytes, 200);
+        assert_eq!(estimate_with_whole_region_fallback(estimate, 400), estimate);
+    }
+
+    #[test]
+    fn adaptive_range_policy_obeys_gate_knee_and_explicit_override_precedence() {
+        use crate::storage::engines::core::coalesce_strategy::RangePlanEstimate;
+
+        let mib = 1024 * 1024;
+        let defaults =
+            crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+                max_gap_bytes: mib,
+                max_range_bytes: 4 * mib,
+            };
+        let measured_1m = |policy: &crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy| {
+            let (gets, bytes_mib) = match policy.max_range_bytes / mib {
+                4 => (10_077, 28_561),
+                8 => (8_177, 33_111),
+                12 => (7_796, 33_691),
+                16 => (7_657, 33_713),
+                24 => (7_647, 33_713),
+                _ => (10_077, 28_561),
+            };
+            RangePlanEstimate {
+                get_requests: gets,
+                physical_bytes: bytes_mib * mib,
+            }
+        };
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
+        }
+        let gated_off = resolve_adaptive_range_policy(
+            "az://container/segment.pax",
+            "region_a",
+            "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+            "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+            defaults,
+            measured_1m,
+        );
+        assert_eq!(gated_off, defaults, "unset gate preserves behavior");
+
+        unsafe { std::env::set_var("PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER", "1") };
+        let adaptive = resolve_adaptive_range_policy(
+            "az://container/segment.pax",
+            "region_a",
+            "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+            "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+            defaults,
+            measured_1m,
+        );
+        assert_eq!(adaptive.max_range_bytes, 16 * mib, "measured GET knee");
+
+        unsafe {
+            std::env::set_var(
+                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+                (24 * mib).to_string(),
+            )
+        };
+        let overridden = resolve_adaptive_range_policy(
+            "az://container/segment.pax",
+            "region_a",
+            "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+            "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+            defaults,
+            measured_1m,
+        );
+        assert_eq!(overridden.max_range_bytes, 24 * mib);
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
+        }
     }
     use crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig;
     use proximadb_records::{EmbeddingCell, EmbeddingValues};
