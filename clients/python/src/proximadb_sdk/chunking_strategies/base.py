@@ -299,6 +299,58 @@ class ChunkingStrategyInterface(ABC):
             return start + units
         return measure.advance(source, start, units)
 
+    def _fit_end(self, source: Any, start: int, units: int, limit: int) -> int:
+        """Greatest end at or before ``limit`` whose span really fits ``units``.
+
+        This is the one place a non-additive measure is made safe. :meth:`_advance`
+        answers "where would ``units`` units land", which for an additive measure
+        *is* the answer and for a non-additive one is only a candidate — the
+        rendered size of the resulting span can exceed the budget because of
+        overhead no span owns (role prefixes, tokenizer special tokens).
+
+        Verifying unconditionally would tax the default path for a problem it
+        does not have, so the check is gated on the measure's own declaration.
+        The verified branch bisects, which requires that size be non-decreasing
+        in ``end`` — true of any measure that counts units in a span, and the
+        weakest assumption under which the search is meaningful at all.
+        """
+        end = min(self._advance(source, start, units), limit)
+        measure = getattr(self.config, "measure", None)
+        if measure is None or getattr(measure, "is_additive", True):
+            return end
+        if end <= start or measure.size(source, start, end) <= units:
+            return end
+        # Overshoot: the largest end in (start, end) that fits.
+        low, high, best = start + 1, end, start
+        while low <= high:
+            middle = (low + high) // 2
+            if measure.size(source, start, middle) <= units:
+                best = middle
+                low = middle + 1
+            else:
+                high = middle - 1
+        return best
+
+    def _require_streamable_measure(self) -> None:
+        """Refuse to stream under a measure that needs the whole document.
+
+        Streaming holds a bounded buffer by construction, so a whole-document
+        measure has nothing correct to say about it. The failure mode without
+        this guard is the dangerous kind: the buffer gets measured *as if* it
+        were the document, every number looks reasonable, and chunks silently
+        overflow the model budget. Refusing is the only honest answer, and it
+        is the same answer ``TokenBudgetStrategy`` already gives by declaring
+        ``supports_streaming = False``.
+        """
+        measure = getattr(self.config, "measure", None)
+        if measure is not None and getattr(measure, "needs_document", False):
+            raise ValueError(
+                f"measure {getattr(measure, 'name', measure)!r} needs the whole "
+                "document and cannot be used on the streaming path, which holds "
+                "only a bounded buffer. Use chunk() instead, or configure the "
+                "character measure for streaming."
+            )
+
     def _measure_name(self) -> str:
         """Identity of the active measure, for metadata and pool keys."""
         measure = getattr(self.config, "measure", None)

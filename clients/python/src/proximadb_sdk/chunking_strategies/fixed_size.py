@@ -50,9 +50,17 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
         chunk_size = self.config.chunk_size
         text_length = len(text)
 
-        # Create chunks of fixed size
-        for window_start in range(0, text_length, chunk_size):
-            window_end = min(window_start + chunk_size, text_length)
+        # Create chunks of fixed size. The window advances through the measure
+        # rather than by character arithmetic, so "size 512" means 512 of
+        # whatever the configured measure counts. Under the default character
+        # measure `_advance` is `start + n`, reproducing the original
+        # `range(0, text_length, chunk_size)` exactly.
+        window_start = 0
+        while window_start < text_length:
+            window_end = self._fit_end(text, window_start, chunk_size, text_length)
+            if window_end <= window_start:
+                # A measure that cannot fit even one unit must not spin.
+                window_end = min(window_start + 1, text_length)
             is_final = window_end >= text_length
 
             # Narrow the SPAN rather than stripping the text: stripping the text
@@ -60,6 +68,7 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
             # equalling its own span.
             start_pos, end_pos = strip_span(text, window_start, window_end)
             if is_empty((start_pos, end_pos)):
+                window_start = window_end
                 continue
 
             # Undersized windows are skipped, but never the last one — dropping
@@ -69,6 +78,7 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
                 self._size(text, start_pos, end_pos) < self.config.min_chunk_size
                 and not is_final
             ):
+                window_start = window_end
                 continue
 
             chunk_id = f"{source_id}_chunk_{len(chunks)}"
@@ -87,6 +97,7 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
             )
 
             chunks.append(chunk)
+            window_start = window_end
 
         # Add standard metadata
         for i, chunk in enumerate(chunks):
@@ -111,6 +122,7 @@ class FixedSizeStrategy(ChunkingStrategyInterface):
         whatever a single ``text_source`` piece carries.
         """
         self.validate_config()
+        self._require_streamable_measure()
 
         chunk_size = self.config.chunk_size
         min_chunk_size = self.config.min_chunk_size

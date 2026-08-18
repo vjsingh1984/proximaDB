@@ -30,6 +30,33 @@ Span = tuple[int, int]
 Slicer = Callable[[int, int], str]
 
 
+class TextSlicer:
+    """A slicer over a whole in-memory document, which it also exposes.
+
+    Callable exactly like the closure it replaces, but additionally carrying the
+    document under ``.document``. That extra attribute is what makes a
+    *whole-document* measure possible from inside the shared grouping loops.
+
+    A character measure only ever needs two offsets, so a bare closure was
+    enough. A token measure is different in kind: tokenization is a property of
+    the whole text, not of a window — the same characters tokenize differently
+    depending on what precedes them — so it must be able to reach the document.
+    The batch path can always provide it; the streaming path genuinely cannot,
+    because it holds only a bounded buffer. Making the capability an *attribute*
+    keeps that distinction honest: batch supplies a ``TextSlicer``, streaming
+    supplies :meth:`SpanBuffer.slice`, and a measure that needs the document
+    fails loudly on the latter rather than silently measuring a fragment.
+    """
+
+    __slots__ = ("document",)
+
+    def __init__(self, document: str) -> None:
+        self.document = document
+
+    def __call__(self, start: int, end: int) -> str:
+        return self.document[start:end]
+
+
 def strip_span(text: str, start: int, end: int) -> Span:
     """Narrow ``[start, end)`` past leading/trailing whitespace.
 

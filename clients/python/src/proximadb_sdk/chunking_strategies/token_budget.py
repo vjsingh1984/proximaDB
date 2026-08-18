@@ -16,6 +16,7 @@ from .contracts import (
     TokenBudget,
     as_composite_contract,
 )
+from .measures import TokenMeasure
 
 
 class TokenBudgetStrategy(ChunkingStrategyInterface):
@@ -123,12 +124,15 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
             return []
 
         primary_counter = self.input_contract.primary.counter
-        offsets = primary_counter.content_offsets(text)
-        if offsets is None:
-            raise ValueError(
-                f"token counter {primary_counter.name} cannot provide source offsets"
-            )
-        offsets = tuple(offsets)
+        # The content-token grid comes from TokenMeasure rather than being
+        # rebuilt here. Two copies of "turn content_offsets into a usable grid"
+        # is exactly the duplication ADR-091 exists to remove, and the shared
+        # one additionally rejects non-monotone offsets -- which bisect would
+        # otherwise consume silently, mis-cutting with no error. What stays
+        # local is the part that is genuinely different: the RENDERED budget
+        # search below, which is non-additive and must ask the composite
+        # contract, not a measure.
+        offsets = TokenMeasure(primary_counter).unit_spans(text)
         if not offsets:
             return []
 

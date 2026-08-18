@@ -41,6 +41,7 @@ points at a different worktree you will silently test that one, so run this with
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 import pytest
@@ -57,10 +58,12 @@ from proximadb_sdk.chunking_strategies.conformance import (
     ChunkerAdapter,
     Invariant,
     Measure,
+    TokenMeasure,
     by_name,
     check_config_safety,
     check_exactness,
     check_non_empty,
+    check_totality,
     compute_trace,
     diff_digests,
     evaluate,
@@ -73,6 +76,7 @@ from proximadb_sdk.chunking_strategies.conformance import (
 from proximadb_sdk.chunking_strategies.conformance.invariants import (
     _wall_clock_budget,
 )
+from proximadb_sdk.chunking_strategies.spans import TextSlicer
 
 BUDGET = 2048
 DEFAULTS = {
@@ -353,6 +357,314 @@ class TestMeasureEquivalence:
 
         assert CHAR_MEASURE.size(exploding_slicer, 2, 7) == 5
         assert CHAR_MEASURE.advance(exploding_slicer, 2, 5) == 7
+
+
+class WordTokenCounter:
+    """Fast-tokenizer-shaped double: words, plus two special tokens on render.
+
+    Mirrors ``tests/unit/test_token_budget_chunking.py``'s counter deliberately.
+    The ``+ 2`` is the whole point: ``count(text) != len(content_offsets(text))``
+    is the real, by-design shape of every rendered tokenizer, and a measure
+    design that quietly assumes they are equal is wrong on real models.
+    """
+
+    name = "words"
+    fingerprint = "fingerprint:words"
+    advertised_limit = 512
+
+    def count(self, text: str) -> int:
+        return len(re.findall(r"\S+", text)) + 2
+
+    def content_offsets(self, text: str):
+        return tuple(m.span() for m in re.finditer(r"\S+", text))
+
+
+class BlindCounter:
+    """Counts, but cannot say where its units are (``content_offsets -> None``).
+
+    A real case: some tokenizer APIs expose a count and no offset mapping.
+    """
+
+    name = "blind"
+    fingerprint = "fingerprint:blind"
+    advertised_limit = 512
+
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+    def content_offsets(self, text: str):
+        return None
+
+
+class NonMonotoneCounter:
+    """Returns offsets out of order — the silent-corruption case."""
+
+    name = "non-monotone"
+    fingerprint = "fingerprint:non-monotone"
+    advertised_limit = 512
+
+    def count(self, text: str) -> int:
+        return 3
+
+    def content_offsets(self, text: str):
+        return ((0, 5), (12, 18), (6, 11))
+
+
+class OverCountingMeasure:
+    """A deliberately NON-additive measure: every span costs 3 extra units.
+
+    Stands in for rendered-token overhead that no span owns (role prefix,
+    ``[CLS]``/``[SEP]``). ``advance`` reports the additive answer, so it
+    systematically overshoots the real budget — exactly the trap ``_fit_end``
+    exists to catch.
+    """
+
+    name = "overcounting"
+    is_additive = False
+    needs_document = False
+
+    def size(self, source, start, end):
+        if end <= start:
+            return 0
+        return (end - start) + 3
+
+    def advance(self, source, start, units):
+        return start + units
+
+    def unit_spans(self, text):
+        return None
+
+
+class TestTokenMeasure:
+    """The token measure's own contract, and how it fails."""
+
+    def test_satisfies_the_protocol(self):
+        measure = TokenMeasure(WordTokenCounter())
+        assert isinstance(measure, Measure)
+        assert measure.name == "token:words"
+        assert measure.needs_document is True
+
+    def test_counts_only_wholly_contained_tokens(self):
+        text = "alpha beta gamma delta"
+        measure = TokenMeasure(WordTokenCounter())
+        assert measure.size(text, 0, len(text)) == 4
+        # "alpha" spans [0,5) and "beta" [6,10); a cut at 8 splits "beta", which
+        # is then inside neither half. Crediting it to both would let overlap
+        # inflate the billable chunk count.
+        assert measure.size(text, 0, 8) == 1
+        assert measure.size(text, 8, len(text)) == 2
+
+    def test_advance_and_size_agree(self):
+        text = "alpha beta gamma delta epsilon zeta"
+        measure = TokenMeasure(WordTokenCounter())
+        for units in (1, 2, 3):
+            end = measure.advance(text, 0, units)
+            assert measure.size(text, 0, end) == units
+
+    def test_advance_runs_to_the_end_when_fewer_units_remain(self):
+        # Otherwise the tail (trailing punctuation, whitespace) is dropped from
+        # coverage and TOTALITY fails on every document.
+        text = "alpha beta.  "
+        measure = TokenMeasure(WordTokenCounter())
+        assert measure.advance(text, 0, 99) == len(text)
+
+    def test_grid_is_the_tokenizer_grid(self):
+        measure = TokenMeasure(WordTokenCounter())
+        assert measure.unit_spans("ab cd") == ((0, 2), (3, 5))
+
+    def test_a_counter_without_offsets_fails_loudly(self):
+        # It can count but cannot say where its units begin, so it cannot cut
+        # text. Degrading to "no grid" would silently mis-cut instead.
+        measure = TokenMeasure(BlindCounter())
+        with pytest.raises(ValueError, match="cannot provide source offsets"):
+            measure.size("alpha beta", 0, 10)
+
+    def test_non_monotone_offsets_fail_loudly(self):
+        # bisect does not raise on unordered input — it returns a wrong index,
+        # so without this check the chunks come out mis-cut with no error.
+        measure = TokenMeasure(NonMonotoneCounter())
+        with pytest.raises(ValueError, match="non-monotone"):
+            measure.size("alpha  gamma  beta", 0, 18)
+
+    def test_a_windowed_source_fails_loudly(self):
+        measure = TokenMeasure(WordTokenCounter())
+        with pytest.raises(TypeError, match="needs the whole document"):
+            measure.size(lambda a, b: "fragment"[a:b], 0, 8)
+
+    def test_a_text_slicer_yields_its_document(self):
+        # The batch grouping loops pass a slicer, so a token measure is only
+        # usable there because TextSlicer carries the document with it.
+        text = "alpha beta gamma"
+        measure = TokenMeasure(WordTokenCounter())
+        assert measure.size(TextSlicer(text), 0, len(text)) == 3
+
+    def test_cache_does_not_leak_between_documents(self):
+        measure = TokenMeasure(WordTokenCounter())
+        first, second = "a b c d e", "x y"
+        assert measure.size(first, 0, len(first)) == 5
+        assert measure.size(second, 0, len(second)) == 2
+        assert measure.size(first, 0, len(first)) == 5
+
+    def test_tokenizes_each_document_once(self):
+        calls: list[int] = []
+
+        class CountingCounter(WordTokenCounter):
+            def content_offsets(self, text: str):
+                calls.append(len(text))
+                return super().content_offsets(text)
+
+        text = "alpha beta gamma delta"
+        measure = TokenMeasure(CountingCounter())
+        for _ in range(20):
+            measure.size(text, 0, len(text))
+        assert calls == [len(text)], "the per-document grid must be cached"
+
+
+#: Module scope, not class scope: a comprehension inside a class body cannot
+#: see names bound in that body (only the outermost iterable is evaluated there).
+TOKEN_MEASURED_STRATEGIES = [
+    ChunkingStrategy.FIXED_SIZE,
+    ChunkingStrategy.SLIDING_WINDOW,
+    ChunkingStrategy.SENTENCE,
+    ChunkingStrategy.PARAGRAPH,
+]
+#: "cjk_emoji" is the pathological case for a whitespace tokenizer and is here
+#: on purpose: CJK has no spaces, so the whole document counts as a handful of
+#: units and every window asks for more than remain. That is the tail path.
+TOKEN_MEASURED_ENTRIES = ["prose", "header_dense_markdown", "cjk_emoji"]
+
+
+class TestChunkingUnderATokenMeasure:
+    """The invariants must hold when the measure is not characters.
+
+    A representative subset rather than the full cross-product: the sweep is
+    already the slow part of this file, and the point here is that the seam
+    works in a second measure, not to re-derive per-corpus behaviour.
+    """
+
+    @staticmethod
+    def _adapter(strategy, budget=40):
+        counter = WordTokenCounter()
+        config = ChunkingConfig(
+            strategy=strategy,
+            chunk_size=budget,
+            chunk_overlap=5,
+            min_chunk_size=1,
+            max_chunk_size=budget * 2,
+            measure=TokenMeasure(counter),
+        )
+        strat = ChunkingStrategyFactory.create_strategy(strategy, config)
+        return ChunkerAdapter(
+            name=f"{strategy.value}+token",
+            chunk=lambda text: strat.chunk(text, "doc"),
+            budget=budget * 2,
+            rechunk=lambda text: strat.chunk(text, "doc"),
+            token_counter=lambda text: len(re.findall(r"\S+", text)),
+        )
+
+    @pytest.mark.parametrize(
+        "strategy,entry_name",
+        [
+            pytest.param(s, e, id=f"{s.value}-{e}")
+            for s in TOKEN_MEASURED_STRATEGIES
+            for e in TOKEN_MEASURED_ENTRIES
+        ],
+    )
+    def test_invariants_hold_under_a_token_measure(self, strategy, entry_name):
+        entry = by_name(entry_name)
+        result = evaluate(self._adapter(strategy), entry)
+        assert result.error is None, result.render()
+        assert not result.violations, result.render()
+
+    def test_the_budget_is_actually_counted_in_tokens(self):
+        # The real check that the measure is load-bearing: a token budget of 8
+        # must produce chunks of ~8 WORDS, not 8 characters. If the measure were
+        # ignored, every chunk would be a fragment of a single word.
+        text = " ".join(f"w{i}" for i in range(200))
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=8,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=16,
+            measure=TokenMeasure(WordTokenCounter()),
+        )
+        strat = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        chunks = strat.chunk(text, "doc")
+        assert len(chunks) == 25, [c.text for c in chunks[:3]]
+        for chunk in chunks:
+            words = len(re.findall(r"\S+", chunk.text))
+            assert words <= 8, f"{words} words in {chunk.text!r} exceeds the budget"
+
+    def test_streaming_refuses_a_whole_document_measure(self):
+        # Streaming holds a bounded buffer, so a token measure would silently
+        # measure a FRAGMENT as if it were the document. Refusing is the only
+        # honest answer.
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=8,
+            min_chunk_size=1,
+            measure=TokenMeasure(WordTokenCounter()),
+        )
+        strat = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        with pytest.raises(ValueError, match="needs the whole document"):
+            list(strat.chunk_stream(["alpha beta gamma"], "doc"))
+
+
+class TestNonAdditiveMeasure:
+    """The crux: a measure whose size exceeds the sum of its parts.
+
+    ``advance`` gives the additive answer and is therefore WRONG for such a
+    measure — it overshoots by exactly the per-span overhead. Nothing else in
+    the pipeline would notice: the chunks look fine, the offsets are exact, and
+    every structural invariant passes. Only a size check catches it, which is
+    why ``_fit_end`` verifies rather than trusts.
+    """
+
+    @staticmethod
+    def _strategy(strategy, budget):
+        config = ChunkingConfig(
+            strategy=strategy,
+            chunk_size=budget,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=budget * 4,
+            measure=OverCountingMeasure(),
+        )
+        return ChunkingStrategyFactory.create_strategy(strategy, config)
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [ChunkingStrategy.FIXED_SIZE, ChunkingStrategy.SLIDING_WINDOW],
+    )
+    def test_emitted_chunks_respect_the_declared_budget(self, strategy):
+        budget = 20
+        measure = OverCountingMeasure()
+        text = "abcdefghij " * 60
+        chunks = self._strategy(strategy, budget).chunk(text, "doc")
+        assert chunks
+        for chunk in chunks:
+            size = measure.size(text, chunk.start_pos, chunk.end_pos)
+            assert size <= budget, (
+                f"chunk of {size} units exceeds budget {budget}: _fit_end did "
+                "not verify the candidate advance() proposed"
+            )
+
+    def test_the_naive_advance_really_would_overflow(self):
+        # A positive control. Without this, the assertion above could pass
+        # because the measure is harmless rather than because _fit_end works.
+        measure = OverCountingMeasure()
+        assert measure.size("x" * 100, 0, measure.advance("x" * 100, 0, 20)) == 23
+
+    def test_coverage_is_still_total(self):
+        text = "abcdefghij " * 60
+        chunks = self._strategy(ChunkingStrategy.FIXED_SIZE, 20).chunk(text, "doc")
+        violation = check_totality(text, chunks)
+        assert violation is None, violation
 
 
 class TestGoldenOutput:

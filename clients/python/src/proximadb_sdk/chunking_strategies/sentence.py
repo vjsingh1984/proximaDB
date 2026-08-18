@@ -18,6 +18,7 @@ from .spans import (
     Slicer,
     Span,
     SpanBuffer,
+    TextSlicer,
     hard_split,
     is_empty,
     merge_spans,
@@ -264,9 +265,7 @@ class SentenceStrategy(ChunkingStrategyInterface):
             return []
 
         chunks = list(
-            self._group_sentences(
-                spans, lambda a, b: text[a:b], source_id, base_metadata
-            )
+            self._group_sentences(spans, TextSlicer(text), source_id, base_metadata)
         )
 
         # Update total chunks count
@@ -296,6 +295,7 @@ class SentenceStrategy(ChunkingStrategyInterface):
         ``total_chunks`` is left as ``-1`` (an inherently global count).
         """
         self.validate_config()
+        self._require_streamable_measure()
 
         base_metadata = base_metadata or {}
         buffer = SpanBuffer()

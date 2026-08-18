@@ -18,6 +18,7 @@ from .spans import (
     Slicer,
     Span,
     SpanBuffer,
+    TextSlicer,
     hard_split,
     is_empty,
     merge_spans,
@@ -159,7 +160,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         return [
             text[span[0] : span[1]]
             for span, _forced in self._split_large_paragraph_spans(
-                lambda a, b: text[a:b], 0, len(text), max_size
+                TextSlicer(text), 0, len(text), max_size
             )
         ]
 
@@ -255,9 +256,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
             return []
 
         chunks = list(
-            self._group_paragraphs(
-                spans, lambda a, b: text[a:b], source_id, base_metadata
-            )
+            self._group_paragraphs(spans, TextSlicer(text), source_id, base_metadata)
         )
 
         # Update total chunks count
@@ -296,6 +295,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         current paragraph group plus the in-progress paragraph.
         """
         self.validate_config()
+        self._require_streamable_measure()
 
         base_metadata = base_metadata or {}
         buffer = SpanBuffer()
