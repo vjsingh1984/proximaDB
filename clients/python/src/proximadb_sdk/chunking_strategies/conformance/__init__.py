@@ -25,6 +25,7 @@ the checks are structural and operate on anything exposing ``text``,
 Tracked by TD-CHUNK-1; the defects it measures are ADR-091's evidence base.
 """
 
+from ..measures import CHAR_MEASURE, CharMeasure, Measure
 from .corpus import CorpusEntry, by_name, scale_corpus, standard_corpus
 from .golden import (
     DIGEST_RECIPE_VERSION,
@@ -58,6 +59,10 @@ from .runner import (
 from .trace import BASIS_BYTE, BASIS_CHAR, ChunkTrace, Gap, compute_trace
 
 __all__ = [
+    # Measures (re-exported so a consumer needs one import)
+    "Measure",
+    "CharMeasure",
+    "CHAR_MEASURE",
     # Corpus
     "CorpusEntry",
     "standard_corpus",

@@ -169,6 +169,12 @@ class ChunkingConfig:
     # preferred structural boundaries and TokenBudgetStrategy owns final token
     # segmentation. These are typed as Any so importing the base module remains
     # dependency-light and existing character-based configurations are unchanged.
+    # How sizes are COUNTED. ``None`` means the character measure, which is
+    # both the default and the fast path (no prefix array, no materialisation),
+    # so existing behaviour is byte-for-byte unchanged. Typed ``Any`` for the
+    # same reason as the fields below: the base module must pull no heavy deps.
+    measure: Any | None = None
+
     token_budget: Any | None = None
     input_contract: Any | None = None
     input_role: Any | None = None
@@ -272,7 +278,31 @@ class ChunkingStrategyInterface(ABC):
         span through it to count. That identity holds ONLY for characters: under
         a token measure a span's extent and its count are unrelated numbers.
         """
-        return end - start
+        measure = getattr(self.config, "measure", None)
+        if measure is None:
+            # Default: the character measure, inlined. Deliberately NOT a
+            # delegation to CharMeasure — this runs once per size comparison in
+            # every grouping loop, and the decoupling must not make the default
+            # path pay for an abstraction it does not use.
+            return end - start
+        return measure.size(source, start, end)
+
+    def _advance(self, source: Any, start: int, units: int) -> int:
+        """Offset ``units`` units after ``start``, in this strategy's measure.
+
+        The companion to :meth:`_size`: sizing compares, windowing advances. For
+        a non-additive measure the result is a candidate to be verified, not a
+        guarantee.
+        """
+        measure = getattr(self.config, "measure", None)
+        if measure is None:
+            return start + units
+        return measure.advance(source, start, units)
+
+    def _measure_name(self) -> str:
+        """Identity of the active measure, for metadata and pool keys."""
+        measure = getattr(self.config, "measure", None)
+        return "char" if measure is None else str(getattr(measure, "name", "custom"))
 
     def _size_of_span(self, source: Any, span: tuple[int, int]) -> int:
         """Convenience for the common ``self._size(source, *span)`` shape."""

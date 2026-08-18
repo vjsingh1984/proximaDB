@@ -53,8 +53,10 @@ from proximadb_sdk.chunking_strategies import (
 from proximadb_sdk.chunking_strategies.conformance import (
     BASIS_BYTE,
     BASIS_CHAR,
+    CHAR_MEASURE,
     ChunkerAdapter,
     Invariant,
+    Measure,
     by_name,
     check_config_safety,
     check_exactness,
@@ -298,6 +300,59 @@ class TestTrace:
         trace = compute_trace("", [])
         assert trace.is_total
         assert trace.coverage_ratio == 1.0
+
+
+class TestMeasureEquivalence:
+    """Injecting the character measure explicitly must change nothing.
+
+    A LIVE oracle, not a snapshot: both constructions exist at once, so this
+    stays true forever rather than going stale. It is the property that makes
+    the whole decoupling safe to build on — if the default path and an
+    explicitly-injected CharMeasure can disagree, then the measure seam is not
+    actually neutral and every later phase is built on sand.
+    """
+
+    @staticmethod
+    def _chunks(strategy, entry, **config_extra):
+        config = ChunkingConfig(
+            strategy=strategy,
+            embedding_provider=_deterministic_provider,
+            **DEFAULTS,
+            **config_extra,
+        )
+        strat = ChunkingStrategyFactory.create_strategy(strategy, config)
+        return [
+            (c.text, c.start_pos, c.end_pos) for c in strat.chunk(entry.text, "doc")
+        ]
+
+    @pytest.mark.parametrize("strategy,entry", CASES)
+    def test_explicit_char_measure_matches_the_default(self, strategy, entry):
+        default = self._chunks(strategy, entry)
+        explicit = self._chunks(strategy, entry, measure=CHAR_MEASURE)
+        assert explicit == default, (
+            f"{strategy.value} x {entry.name}: injecting CharMeasure changed output, "
+            "so the measure seam is not neutral"
+        )
+
+    def test_char_measure_satisfies_the_protocol(self):
+        assert isinstance(CHAR_MEASURE, Measure)
+        assert CHAR_MEASURE.is_additive is True
+        # No grid: a character measure permits a cut at any position. This is
+        # distinct from "cannot decompose", which must raise instead.
+        assert CHAR_MEASURE.unit_spans("abc") is None
+
+    def test_char_measure_is_exact_arithmetic(self):
+        text = "hello world"
+        assert CHAR_MEASURE.size(text, 2, 7) == 5
+        assert CHAR_MEASURE.advance(text, 2, 5) == 7
+
+        # It must never materialise the source — that is what keeps the default
+        # path allocation-free. A slicer that explodes proves it is not called.
+        def exploding_slicer(_a, _b):
+            raise AssertionError("CharMeasure must not materialise the source")
+
+        assert CHAR_MEASURE.size(exploding_slicer, 2, 7) == 5
+        assert CHAR_MEASURE.advance(exploding_slicer, 2, 5) == 7
 
 
 class TestGoldenOutput:
