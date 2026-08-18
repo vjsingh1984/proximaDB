@@ -9,7 +9,7 @@
 |Deciders|Vijaykumar Singh
 |Relates to|ADR-029 (shared code→CPG chunker; this ADR is the document-half it explicitly deferred), Victor `ADR-014` (Accepted 2026-07-02, defers the same half in the same words), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (cost spine), `MODEL_INPUT_CONTRACT_AND_TOKEN_BUDGETED_CHUNKING_2026_08_11.adoc` (the token-budget substrate this ADR promotes to the spine), `OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`, TD-043 (SDP pipeline)
 |Cross-repo|Authored in ProximaDB because this ADR names ProximaDB as the owner. Companion stubs to land: a Victor ADR (victor-rag consumes, does not re-implement) and an anvaiops ADR (ratify the delegation it already performs).
-|Tracked under|TD-CG2 (code-half deletion, prerequisite for the offset contract); new: TD-CHUNK-1 (invariant suite + corpus + trace), TD-CHUNK-2 (boundary/budget split + port), TD-CHUNK-3 (capability inventory: pull down what is built, build what is absent), TD-CHUNK-4 (retire duplicates)
+|Tracked under|TD-CG2 (code-half deletion, prerequisite for the offset contract); new: TD-CHUNK-1 (invariant suite + corpus + trace), TD-CHUNK-2 (boundary/budget split + port), TD-CHUNK-3 (capability inventory: pull down what is built, build what is absent), TD-CHUNK-4 (retire duplicates), TD-CHUNK-5 (reconcile the wire/Rust/SDK chunk policy)
 |===
 
 == Context
