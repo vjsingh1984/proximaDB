@@ -52,6 +52,8 @@ from proximadb_sdk.chunking_strategies import (
     ChunkingConfig,
     ChunkingStrategy,
     ChunkingStrategyFactory,
+    ResolvedSizing,
+    SizingPolicy,
     config_kwargs,
 )
 from proximadb_sdk.chunking_strategies.conformance import (
@@ -79,6 +81,7 @@ from proximadb_sdk.chunking_strategies.conformance import (
 from proximadb_sdk.chunking_strategies.conformance.invariants import (
     _wall_clock_budget,
 )
+from proximadb_sdk.chunking_strategies.sizing import Absolute, Fraction
 from proximadb_sdk.chunking_strategies.spans import TextSlicer
 
 BUDGET = 2048
@@ -784,6 +787,128 @@ class TestConfigPropagation:
             for provider in (provider_a, provider_b)
         }
         assert len(keys) == 2
+
+
+class TestSizingPolicy:
+    """A declarative budget must reduce to exactly the absolute one it names.
+
+    The equivalence is the whole safety argument: if `Fraction(0.10)` of 512 is
+    not `Absolute(51)`, then the two dialects are two behaviours and the
+    declarative front door has forked the system instead of unifying it.
+    """
+
+    @staticmethod
+    def _absolute(window, overlap, minimum, maximum):
+        return ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=window,
+            chunk_overlap=overlap,
+            min_chunk_size=minimum,
+            max_chunk_size=maximum,
+        )
+
+    @staticmethod
+    def _sized(config):
+        return (
+            config.chunk_size,
+            config.chunk_overlap,
+            config.min_chunk_size,
+            config.max_chunk_size,
+        )
+
+    def test_a_fraction_resolves_to_the_absolute_it_names(self):
+        declarative = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            sizing=SizingPolicy(
+                window=Absolute(512),
+                overlap=Fraction(0.10),
+                minimum=Absolute(100),
+                maximum=Absolute(2048),
+            ),
+        )
+        assert self._sized(declarative) == self._sized(
+            self._absolute(512, 51, 100, 2048)
+        )
+
+    def test_both_dialects_chunk_identically(self):
+        # Equivalence at the config level is necessary but not sufficient; the
+        # claim that matters is that the OUTPUT is the same.
+        text = "word " * 500
+        declarative = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            sizing=SizingPolicy(
+                window=Absolute(512),
+                overlap=Fraction(0.10),
+                minimum=Fraction(0.20),
+                maximum=Absolute(2048),
+            ),
+        )
+        absolute = self._absolute(512, 51, 102, 2048)
+        made = [
+            [
+                (c.text, c.start_pos, c.end_pos)
+                for c in ChunkingStrategyFactory.create_strategy(
+                    ChunkingStrategy.FIXED_SIZE, config
+                ).chunk(text, "doc")
+            ]
+            for config in (declarative, absolute)
+        ]
+        assert made[0] == made[1]
+
+    def test_fraction_boundaries(self):
+        policy = SizingPolicy(window=Absolute(100), overlap=Fraction(0.0))
+        assert policy.resolve().overlap == 0
+        # Just under 1.0 must still leave forward progress, or the loop hangs.
+        resolved = SizingPolicy(window=Absolute(100), overlap=Fraction(0.999)).resolve()
+        assert resolved.overlap < resolved.window
+        assert resolved.step >= 1
+
+    def test_a_fraction_at_or_above_one_is_rejected(self):
+        # A step of zero is non-termination, not a slow chunker.
+        with pytest.raises(ValueError, match=r"\[0.0, 1.0\)"):
+            Fraction(1.0)
+        with pytest.raises(ValueError, match=r"\[0.0, 1.0\)"):
+            Fraction(-0.1)
+
+    def test_window_must_be_absolute(self):
+        # It is the referent every Fraction resolves against.
+        with pytest.raises(TypeError, match="window must be Absolute"):
+            SizingPolicy(window=Fraction(0.5)).resolve()
+
+    def test_resolved_sizing_owns_the_invariants(self):
+        with pytest.raises(ValueError, match="window must be positive"):
+            ResolvedSizing(window=0, overlap=0, minimum=0, maximum=10)
+        with pytest.raises(ValueError, match="less than window"):
+            ResolvedSizing(window=10, overlap=10, minimum=0, maximum=10)
+        with pytest.raises(ValueError, match="exceeds window"):
+            ResolvedSizing(window=10, overlap=0, minimum=11, maximum=10)
+        with pytest.raises(ValueError, match="below window"):
+            ResolvedSizing(window=10, overlap=0, minimum=0, maximum=9)
+
+    def test_sizing_and_token_budget_together_are_rejected(self):
+        # Two spellings of one budget with no correct precedence between them,
+        # so ambiguity fails closed rather than resolving arbitrarily.
+        with pytest.raises(ValueError, match="not\\s+both"):
+            ChunkingConfig(
+                sizing=SizingPolicy(window=Absolute(100)),
+                token_budget=object(),
+            )
+
+    def test_a_policy_carries_its_measure(self):
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            sizing=SizingPolicy(
+                window=Absolute(8),
+                measure=TokenMeasure(WordTokenCounter()),
+            ),
+        )
+        assert config.measure is not None
+        assert config.measure.name == "token:words"
+
+    def test_omitting_sizing_changes_nothing(self):
+        # The legacy path must stay byte-identical, which is what makes the new
+        # dialect additive rather than a migration.
+        assert self._sized(ChunkingConfig()) == (512, 50, 100, 2048)
 
 
 class TestGoldenOutput:

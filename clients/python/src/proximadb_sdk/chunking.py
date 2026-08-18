@@ -24,11 +24,13 @@ Usage:
     records = chunk_and_embed_text(text, source_id, embedding_provider, config)
 """
 
+import dataclasses
 import hashlib
 import json
 import threading
 from collections import defaultdict
 from collections.abc import Callable
+from enum import Enum
 from typing import Any
 
 # Import from chunking strategies for clean separation
@@ -120,6 +122,18 @@ class ChunkerPool:
             return value
         if isinstance(value, (list, tuple)):
             return [ChunkerPool._identify(item) for item in value]
+        if isinstance(value, Enum):
+            return f"{type(value).__name__}:{value.value}"
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            # Value objects (SizingPolicy, Absolute, Fraction) identify by their
+            # CONTENTS. Falling through to the id() case would give two equal
+            # policies different keys and re-split the pool on every
+            # construction -- the opposite failure from collision, and just as
+            # wrong.
+            return {
+                f.name: ChunkerPool._identify(getattr(value, f.name))
+                for f in dataclasses.fields(value)
+            }
         name = getattr(value, "name", None)
         if isinstance(name, str):
             return f"{type(value).__name__}:{name}"

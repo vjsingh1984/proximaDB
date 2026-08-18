@@ -131,6 +131,13 @@ from .recursive import RecursiveStrategy
 from .semantic import SemanticStrategy
 from .semantic_embedding import SemanticEmbeddingStrategy
 from .sentence import SentenceStrategy
+from .sizing import (
+    Absolute,
+    Fraction,
+    Of,
+    ResolvedSizing,
+    SizingPolicy,
+)
 from .sliding_window import SlidingWindowStrategy
 from .token_budget import TokenBudgetStrategy
 from .tokenizers import HuggingFaceTokenCounter
@@ -154,6 +161,12 @@ __all__ = [
     # Text chunking strategies
     "SlidingWindowStrategy",
     "SentenceStrategy",
+    # Sizing (declarative budget)
+    "SizingPolicy",
+    "ResolvedSizing",
+    "Absolute",
+    "Fraction",
+    "Of",
     "ParagraphStrategy",
     "SemanticStrategy",
     "SemanticEmbeddingStrategy",

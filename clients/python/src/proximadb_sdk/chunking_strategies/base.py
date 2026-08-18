@@ -111,6 +111,27 @@ class ChunkingConfig:
 
     def __post_init__(self):
         """Validate and adjust configuration values"""
+        # A declarative `sizing` policy is resolved to absolutes FIRST, so that
+        # everything below it -- the clamps, validate_config, and every strategy
+        # reading self.config.chunk_size -- keeps seeing plain integers and does
+        # not learn that fractions exist. The clamps then still apply as a
+        # backstop, so a policy cannot smuggle in a state a literal config
+        # could not reach.
+        if self.sizing is not None:
+            if self.token_budget is not None:
+                raise ValueError(
+                    "supply either `sizing` or the legacy `token_budget`, not "
+                    "both: they are two spellings of one budget and there is no "
+                    "correct precedence between them"
+                )
+            resolved = self.sizing.resolve()
+            self.chunk_size = resolved.window
+            self.chunk_overlap = resolved.overlap
+            self.min_chunk_size = resolved.minimum
+            self.max_chunk_size = resolved.maximum
+            if self.measure is None:
+                self.measure = resolved.measure
+
         # Auto-adjust chunk_overlap if it's too large for chunk_size
         if self.chunk_overlap >= self.chunk_size:
             # Set overlap to 20% of chunk_size as a reasonable default
@@ -174,6 +195,12 @@ class ChunkingConfig:
     # so existing behaviour is byte-for-byte unchanged. Typed ``Any`` for the
     # same reason as the fields below: the base module must pull no heavy deps.
     measure: Any | None = None
+
+    # Declarative budget (sizing.SizingPolicy). When present it is resolved to
+    # the absolute fields above at construction; when absent those fields ARE
+    # the budget, so there is exactly one internal path and legacy callers are
+    # byte-for-byte unchanged.
+    sizing: Any | None = None
 
     token_budget: Any | None = None
     input_contract: Any | None = None
