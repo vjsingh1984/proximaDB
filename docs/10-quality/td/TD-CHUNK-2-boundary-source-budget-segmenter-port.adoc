@@ -8,7 +8,7 @@
 | Status | **Open — filed 2026-08-17 with ADR-091.** Gated on TD-CHUNK-1 landing red: this TD's job is to turn those failures green, and it cannot be judged without them.
 | Dim | D4 (compute-per-modality)
 | Pillar | REL — secondary OE
-| Blocks | TD-CHUNK-3 (stranded capabilities land as boundary sources behind this port), TD-CHUNK-4 (retirement needs the port as the migration target)
+| Blocks | TD-CHUNK-3 (capabilities land as boundary sources behind this port), TD-CHUNK-4 (retirement needs the port as the migration target)
 | Depends on | TD-CHUNK-1 (suite/corpus/trace); TD-CG2 sets the `offset_basis` contract on the code path first, and this TD adopts the same marker for the document path
 |===
 

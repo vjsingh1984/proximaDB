@@ -1,0 +1,102 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-CHUNK-3: Chunking capability inventory — pull down what is built, build what is absent (ADR-091 D5, Phase 3)
+
+[cols="1,3",options="header"]
+|===
+| Field | Value
+| Status | **Open — filed 2026-08-17 with ADR-091; inventory corrected 2026-08-18 (the SDP stages are placeholders, not implementations — see the correction below).** Gated on TD-CHUNK-2's port existing; each capability lands as a `BoundarySource` or a post-segmentation pass, never as a new "strategy".
+| Dim | D4 (compute-per-modality) — secondary D1 (KSU: dedup), D3 (recall via boundary quality)
+| Pillar | PERF — secondary COST
+| Blocks | Nothing. This is the value-delivery TD; the three before it are the enabling work.
+| Depends on | TD-CHUNK-1, TD-CHUNK-2
+|===
+
+== Two capabilities are stranded; the SDP ones are placeholders
+
+CORRECTION (2026-08-18): this TD was filed claiming three of four capabilities already existed in
+the Rust SDP pipeline and merely needed pulling down. **That claim was wrong, and reading the code
+is what disproved it.** SDP's four stages are named for the capabilities but implement none of
+them:
+
+[cols="2,3",options="header"]
+|===
+| SDP stage | What the code actually does
+| 1 — "structure-aware splitting" | `text.split("\n\n")`. Its own comment says a real one "would use a Markdown/HTML parser". No structure is parsed and no heading path is produced.
+| 2 — "context-conditioned enrichment" | Prefixes every chunk with the **first chunk's first line**. Contextual retrieval means per-chunk, document-conditioned context; a static document-title prefix is a different and much weaker thing.
+| 3 — "semantic boundary refinement" | Writes a metadata flag recording whether the chunk ends in `.!?`. Refines no boundary.
+| 4 — "topic-aware deduplication" | Merges neighbours under a hardcoded 100-character threshold. There is no topic signal anywhere in it, and merging small neighbours is not deduplication.
+|===
+
+`use_sdp` defaults to `false` and nothing in the tree sets it to `true`, so none of this has ever
+run in product. The honest inventory is therefore:
+
+[cols="2,3,2",options="header"]
+|===
+| Capability | Where it exists | State
+| Heading-aware splitting **with hierarchy path** | anvaiops connector-sdk (used by Confluence/SharePoint/Google Drive) | **Genuinely implemented**, in the wrong layer. ProximaDB's `semantic.py` detects headings then **discards them**.
+| Abbreviation-aware sentence splitting | Victor `rust/…/chunking.rs`, compiled + shipped as `victor_native` 0.1.0 | **Genuinely implemented, never called** — its only Python front end has zero callers, while five Python regexes do the job worse.
+| Context-conditioned enrichment | — | **ABSENT.** SDP stage 2 is a title prefix, not contextual retrieval.
+| Topic-aware deduplication | — | **ABSENT.** SDP stage 4 is a 100-char merge with no topic signal.
+| Semantic boundary refinement | — | **ABSENT.** SDP stage 3 sets a flag.
+|===
+
+Why the correction is worth the words: "stranded" and "absent" imply opposite plans. Stranded means
+wire it up; absent means design, build, and evaluate it. Had this TD been executed as filed, the
+work would have been to port stubs — inheriting four placeholder implementations under names that
+promise real capabilities, which is worse than starting from nothing because the names would have
+suppressed the design work. **A named stage is not an implementation**, and this is the second time
+in this program that reading the code contradicted a confident claim about it (the first: Rust does
+read `size_tokens`/`overlap_pct`, which I had said had zero readers).
+
+Consequence for scope: this is now **two** consolidations (heading paths, the Rust splitter) plus
+**three** genuinely new capabilities, not "three of four already built". The sequencing below is
+unchanged — it already put the cheap consolidations first — but the effort estimate for items 2, 4
+and 5 must be read as new design work, and each needs the eval rubric below before it is written,
+not after.
+
+Genuinely new work, and the reason this TD is not pure plumbing:
+
+* **Parent-document / small-to-big retrieval** — index small precise child chunks, return the larger
+  parent for generation. The biggest retrieval-quality lever in the list and entirely absent; no
+  parent/child linkage exists on `TextChunk`. **ProximaDB is uniquely placed**: the parent edge is an
+  ORION graph edge, not a duplicated metadata copy — which is a differentiator no pure vector store can
+  offer, and the clearest case in this program for building rather than borrowing.
+
+== Co-design framing
+
+Each item names the cost term it moves, per the mandate — no item lands on "it would be nice":
+
+* **Topic dedup → KEU and KSU directly.** A duplicated chunk is paid for once in embedding and forever in
+  storage. This is the only item that *reduces* cost rather than trading it — and, per the correction
+  above, it must be **built**, not wired up.
+* **Heading paths → recall at constant cost.** Metadata on an existing chunk; no extra vectors, so no KSU
+  or KEU delta. Strictly free quality.
+* **Context enrichment → KEU up, recall up.** Prefixing lengthens the embedded text, so it must be
+  measured, not assumed: gate on recall@k per KEU spent, not on recall alone.
+* **Small-to-big → KSU up (two granularities), read cost *down*.** Fewer, more precise probes at query
+  time. The trade must be measured on the ADR-091 corpus before it is defaulted on.
+* **Rust splitter → compute down, quality up.** Replaces ProximaDB's two Python regexes, one of which is
+  the quadratic path (518 KB → 17.5 s). Evaluate behind the TD-CHUNK-2 port, which is exactly the seam
+  ADR-091 chose so a native segmenter is a backend swap and not a rewrite.
+
+== Sequencing
+
+Cheapest-and-free first, so value lands before the expensive measurement work:
+
+. **Heading paths** — constant cost, immediate filtered-retrieval win, and half-built already in
+  `semantic.py`'s detection.
+. **Topic dedup** — the only cost *reduction*; gate on a recall ratchet so dedup can never silently drop
+  a distinct chunk.
+. **Rust splitter behind the port** — evaluate against the Python sentence source on the shared corpus.
+. **Context enrichment** — requires the KEU-per-recall measurement to justify.
+. **Small-to-big on ORION edges** — the largest piece of new design; sequence last so it lands on a port
+  and an invariant suite that are already proven.
+
+== Evals, not just tests
+
+Boundary quality is a ranked surface, so per the evals mandate it needs a rubric rather than an
+assertion. Gate on **output** (does retrieval return the span that answers the question) and
+**trajectory** (was the boundary source appropriate to the document's shape), measured as recall@k
+against the f32 baseline on the ADR-091 corpus, threshold-gated in CI, with suites versioned in the PR
+that changes behaviour. Every item above ships default-OFF until its eval clears.

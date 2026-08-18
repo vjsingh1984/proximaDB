@@ -9,7 +9,7 @@
 |Deciders|Vijaykumar Singh
 |Relates to|ADR-029 (shared code→CPG chunker; this ADR is the document-half it explicitly deferred), Victor `ADR-014` (Accepted 2026-07-02, defers the same half in the same words), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (cost spine), `MODEL_INPUT_CONTRACT_AND_TOKEN_BUDGETED_CHUNKING_2026_08_11.adoc` (the token-budget substrate this ADR promotes to the spine), `OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`, TD-043 (SDP pipeline)
 |Cross-repo|Authored in ProximaDB because this ADR names ProximaDB as the owner. Companion stubs to land: a Victor ADR (victor-rag consumes, does not re-implement) and an anvaiops ADR (ratify the delegation it already performs).
-|Tracked under|TD-CG2 (code-half deletion, prerequisite for the offset contract); new: TD-CHUNK-1 (invariant suite + corpus + trace), TD-CHUNK-2 (boundary/budget split + port), TD-CHUNK-3 (pull down stranded capabilities), TD-CHUNK-4 (retire duplicates)
+|Tracked under|TD-CG2 (code-half deletion, prerequisite for the offset contract); new: TD-CHUNK-1 (invariant suite + corpus + trace), TD-CHUNK-2 (boundary/budget split + port), TD-CHUNK-3 (capability inventory: pull down what is built, build what is absent), TD-CHUNK-4 (retire duplicates)
 |===
 
 == Context
@@ -184,18 +184,37 @@ that is not jointly tested is a suggestion. This is the direct remedy for two in
 produced the same bug, and for the audit finding that each suite chose inputs flattering to its own
 implementation.
 
-=== D5 — Pull the stranded capabilities down; do not rebuild them
+=== D5 — Pull down what is genuinely built; build the rest, and do not mistake one for the other
 
-Three of the four capabilities this subsystem is missing already exist elsewhere, unconsumed:
+[NOTE]
+====
+**Corrected 2026-08-18.** As accepted, this decision claimed three of four missing capabilities
+already existed in the Rust SDP pipeline and needed only wiring. Reading `sdp.rs` disproves it: the
+four stages are *named* for those capabilities and implement none of them. Stage 1 is
+`text.split("\n\n")` (its own comment says a real one "would use a Markdown/HTML parser"); stage 2
+prefixes every chunk with the first chunk's first line, which is a document title, not per-chunk
+contextual retrieval; stage 3 writes a metadata flag; stage 4 merges neighbours under a hardcoded
+100-character threshold with no topic signal. `use_sdp` defaults false and nothing sets it true.
 
-* heading-aware splitting with a hierarchy path — anvaiops (implemented), Rust SDP stage 1
-* context-conditioned enrichment, i.e. contextual retrieval — Rust SDP stage 2
-* topic-aware deduplication — Rust SDP stage 4
-* the abbreviation-aware sentence splitter — Victor's shipped Rust `victor_native`
+The distinction changes the plan, not just the wording: *stranded* means wire it up, *absent* means
+design, build and evaluate. Executing D5 as originally written would have ported stubs under names
+that promise real capabilities — worse than starting fresh, because the names would have suppressed
+the design work. Detail in TD-CHUNK-3.
+====
 
-These become boundary sources or post-segmentation passes behind the D2 port. Genuinely absent, and
-therefore new work: **parent-document / small-to-big**, which ProximaDB is uniquely placed to do because
-the parent edge is an ORION graph edge rather than a duplicated metadata copy.
+Genuinely built and merely in the wrong layer — these become boundary sources or post-segmentation
+passes behind the D2 port:
+
+* heading-aware splitting with a hierarchy path — **anvaiops connector-sdk**, in production use
+* the abbreviation-aware sentence splitter — Victor's shipped Rust `victor_native`, never called
+
+Genuinely absent, and therefore new work requiring an eval rubric before implementation:
+
+* context-conditioned enrichment (contextual retrieval)
+* topic-aware deduplication
+* semantic boundary refinement
+* **parent-document / small-to-big**, which ProximaDB is uniquely placed to do because the parent
+  edge is an ORION graph edge rather than a duplicated metadata copy
 
 === D6 — Retire the duplicates, dead code first
 
@@ -318,7 +337,8 @@ splitter and the native segmenter behind the port. Build parent-document/small-t
 == Consequences
 
 * **Positive:** one specification, one segmenter, one test bed; the defects stop reaching tenant ingest;
-  three stranded capabilities become available without being rebuilt; chunk-count cost becomes observable
+  two genuinely-built capabilities become available without being rebuilt (see the D5 correction — three
+  more turned out to be absent rather than stranded); chunk-count cost becomes observable
   and predictable per tenant; ~3,900 dead lines deleted; the native-segmenter option stays open behind a
   seam.
 * **Negative:** ProximaDB takes on ownership it could have exported, which sits in tension with
