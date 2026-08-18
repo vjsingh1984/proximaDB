@@ -991,6 +991,54 @@ class TestTraceHonesty:
         assert not any("chars" in w for w in via_config.warnings), via_config.warnings
 
 
+class TestDocumentedNonInvariants:
+    """Things that are deliberately NOT guaranteed, recorded so they survive.
+
+    An unwritten non-invariant is indistinguishable from a bug, and the next
+    reader "fixes" it. These record the reasoning instead.
+    """
+
+    def test_token_measured_chunks_are_not_char_contiguous(self):
+        # A token grid excludes inter-token whitespace, so consecutive chunks
+        # can leave a gap in CHARACTER space. That is correct, not a leak: the
+        # gaps are whitespace, no content is lost, and forcing contiguity would
+        # mean assigning whitespace arbitrarily to one side of every cut.
+        #
+        # This is precisely why the suite measures TOTALITY over non-whitespace
+        # units. Asserting char-contiguity instead would fail every token-
+        # measured chunking for a reason that is not a defect.
+        text = "alpha beta   gamma delta   epsilon zeta eta theta"
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=3,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=6,
+            measure=TokenMeasure(WordTokenCounter()),
+        )
+        chunks = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        ).chunk(text, "doc")
+        assert len(chunks) > 1
+
+        gaps = [text[a.end_pos : b.start_pos] for a, b in zip(chunks, chunks[1:])]
+        assert any(gaps), "the premise of this test has changed: no gaps at all"
+        assert all(
+            not gap.strip() for gap in gaps
+        ), f"a gap carried CONTENT, which IS a bug: {gaps!r}"
+        assert check_totality(text, chunks) is None
+
+    def test_measure_count_need_not_equal_its_own_unit_count(self):
+        # count() measures RENDERED text (special tokens); content_offsets()
+        # excludes them. They disagree BY DESIGN, and code that assumes
+        # otherwise breaks on every real tokenizer -- it is the reason
+        # TokenBudgetStrategy binary-searches instead of computing start+target.
+        counter = WordTokenCounter()
+        text = "alpha beta gamma"
+        assert counter.count(text) != len(counter.content_offsets(text))
+        assert counter.count(text) == len(counter.content_offsets(text)) + 2
+
+
 class TestGoldenOutput:
     """Behaviour-preservation oracle for refactors.
 
