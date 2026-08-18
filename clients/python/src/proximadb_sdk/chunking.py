@@ -36,6 +36,7 @@ from .chunking_strategies import (
     ChunkingConfig,
     ChunkingStrategy,
     TextChunk,
+    config_kwargs,
     get_chunking_strategy,
 )
 from .models import VectorRecord
@@ -103,6 +104,30 @@ class ChunkerPool:
                     cls._instance = cls()
         return cls._instance
 
+    @staticmethod
+    def _identify(value: Any) -> Any:
+        """A stable, JSON-safe identity for one config value.
+
+        Config fields are not all JSON: a measure is an object, an embedding
+        provider is a callable. Both still have to participate in the key --
+        two chunkers differing only by injected provider are not
+        interchangeable. Falling back to the type name would make all measures
+        of one class look identical, so a self-declared `name` is preferred and
+        the fallback is deliberately conservative (identity), which over-splits
+        the pool rather than merging configurations that differ.
+        """
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, (list, tuple)):
+            return [ChunkerPool._identify(item) for item in value]
+        name = getattr(value, "name", None)
+        if isinstance(name, str):
+            return f"{type(value).__name__}:{name}"
+        fingerprint = getattr(value, "fingerprint", None)
+        if isinstance(fingerprint, str):
+            return f"{type(value).__name__}:{fingerprint}"
+        return f"{type(value).__name__}:{id(value):x}"
+
     def _get_pool_key(self, config: ChunkingConfig) -> str:
         """Generate pool key for chunker configuration"""
         token_budget = getattr(config, "token_budget", None)
@@ -121,13 +146,22 @@ class ChunkerPool:
                 "contract": input_contract.to_manifest(),
                 "role": str(role_value),
             }
+        # Every field, derived -- not a hand-picked few. A field missing from
+        # this key means two DIFFERENT configurations collide on one pooled
+        # chunker and the second caller silently gets the first one's behaviour.
+        # `measure` makes that concrete: char-sized and token-sized chunkers
+        # would have shared a pool entry, so which one you got depended on
+        # arrival order. Erring toward too many pool entries costs memory;
+        # erring toward too few returns wrong chunks.
         payload = {
             "strategy": config.strategy.value,
-            "chunk_size": config.chunk_size,
-            "chunk_overlap": config.chunk_overlap,
-            "min_chunk_size": config.min_chunk_size,
-            "max_chunk_size": config.max_chunk_size,
             "token_identity": token_identity,
+            "fields": {
+                name: self._identify(value)
+                for name, value in sorted(config_kwargs(config).items())
+                # Carried by token_identity above, in richer form.
+                if name not in ("token_budget", "input_contract", "input_role")
+            },
         }
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -231,30 +265,17 @@ class TextChunker:
         self._initialize_strategy()
 
     def _initialize_strategy(self):
-        """Initialize the chunking strategy"""
+        """Initialize the chunking strategy.
+
+        Forwarding is DERIVED from ChunkingConfig's fields rather than written
+        out by hand. The hand-written list this replaces dropped every field
+        added after it was written -- silently, since a missing field just means
+        the default. `measure` would have been the next casualty: a caller
+        configuring a token measure would have been chunked in characters with
+        no error anywhere.
+        """
         self._strategy = get_chunking_strategy(
-            self.config.strategy,
-            chunk_size=self.config.chunk_size,
-            chunk_overlap=self.config.chunk_overlap,
-            min_chunk_size=self.config.min_chunk_size,
-            max_chunk_size=self.config.max_chunk_size,
-            preserve_sentences=self.config.preserve_sentences,
-            preserve_paragraphs=self.config.preserve_paragraphs,
-            preserve_code_blocks=getattr(self.config, "preserve_code_blocks", False),
-            preserve_tables=getattr(self.config, "preserve_tables", False),
-            add_context=self.config.add_context,
-            context_size=self.config.context_size,
-            # Embedding-based semantic chunking (SEMANTIC_EMBEDDING). Forward the
-            # injected provider + breakpoint knobs so they survive the config
-            # rebuild; getattr keeps older ChunkingConfig instances compatible.
-            embedding_provider=getattr(self.config, "embedding_provider", None),
-            buffer_size=getattr(self.config, "buffer_size", 1),
-            breakpoint_percentile_threshold=getattr(
-                self.config, "breakpoint_percentile_threshold", 95.0
-            ),
-            token_budget=getattr(self.config, "token_budget", None),
-            input_contract=getattr(self.config, "input_contract", None),
-            input_role=getattr(self.config, "input_role", None),
+            self.config.strategy, **config_kwargs(self.config)
         )
 
     def chunk_text(

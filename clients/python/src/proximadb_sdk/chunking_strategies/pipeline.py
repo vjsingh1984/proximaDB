@@ -32,7 +32,7 @@ from typing import (
     TypeVar,
 )
 
-from .base import ChunkingConfig, ChunkingStrategy, TextChunk
+from .base import ChunkingConfig, ChunkingStrategy, TextChunk, config_kwargs
 from .code import CodeChunkingConfig
 from .factory import ChunkingStrategyFactory
 from .parser_utils import (
@@ -529,34 +529,15 @@ class ChunkingPipeline:
             if isinstance(self.config.chunking_config, CodeChunkingConfig):
                 config = self.config.chunking_config
             else:
-                # Create CodeChunkingConfig from ChunkingConfig values
-                config = CodeChunkingConfig(
-                    chunk_size=(
-                        self.config.chunking_config.chunk_size
-                        if self.config.chunking_config
-                        else 512
-                    ),
-                    chunk_overlap=(
-                        self.config.chunking_config.chunk_overlap
-                        if self.config.chunking_config
-                        else 50
-                    ),
-                    token_budget=(
-                        self.config.chunking_config.token_budget
-                        if self.config.chunking_config
-                        else None
-                    ),
-                    input_contract=(
-                        self.config.chunking_config.input_contract
-                        if self.config.chunking_config
-                        else None
-                    ),
-                    input_role=(
-                        self.config.chunking_config.input_role
-                        if self.config.chunking_config
-                        else None
-                    ),
-                )
+                # Widen a ChunkingConfig into a CodeChunkingConfig (a subclass,
+                # so every base field is valid here). Derived rather than
+                # hand-listed: the list this replaces carried five of the base
+                # fields and dropped the rest, so min_chunk_size, max_chunk_size
+                # and the semantic knobs were reset to defaults on the way in --
+                # silently, because a dropped field is indistinguishable from an
+                # unset one.
+                source = self.config.chunking_config
+                config = CodeChunkingConfig(**(config_kwargs(source) if source else {}))
             self.chunker = ChunkingStrategyFactory.create_strategy(
                 self.config.chunking_strategy, config
             )

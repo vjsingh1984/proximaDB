@@ -16,7 +16,13 @@ For code-aware chunking, use the CodeChunkingStrategy which provides:
 - Robust error handling with fallback strategies
 """
 
-from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface, TextChunk
+from .base import (
+    ChunkingConfig,
+    ChunkingStrategy,
+    ChunkingStrategyInterface,
+    TextChunk,
+    config_kwargs,
+)
 
 # Code-aware chunking
 from .code import (  # Parser classes - Primary languages; Parser classes - Additional languages; Registry functions; Constants

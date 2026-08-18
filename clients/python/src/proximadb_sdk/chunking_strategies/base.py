@@ -6,7 +6,7 @@ Defines the core abstractions for text chunking without any embedding concerns.
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any
 
@@ -178,6 +178,27 @@ class ChunkingConfig:
     token_budget: Any | None = None
     input_contract: Any | None = None
     input_role: Any | None = None
+
+
+def config_kwargs(config: Any) -> dict[str, Any]:
+    """Every ``ChunkingConfig`` field carried by ``config``, minus ``strategy``.
+
+    Exists to replace hand-written forwarding lists. Rebuilding a config by
+    naming its fields one at a time means every field added later is silently
+    dropped by every list that was not updated -- and "silently" is the whole
+    problem: a dropped ``measure`` does not raise, it just chunks in characters
+    while the caller believes it asked for tokens. The same shape already cost
+    this codebase the ``embedding_provider`` and ``min/max_chunk_size`` fields
+    (``document_processor.py`` carries a comment recording that bug shipping).
+
+    Deriving from :func:`dataclasses.fields` makes the forwarding total by
+    construction, so a new field is propagated the moment it is declared.
+    """
+    return {
+        f.name: getattr(config, f.name)
+        for f in fields(ChunkingConfig)
+        if f.name != "strategy" and hasattr(config, f.name)
+    }
 
 
 class ChunkingStrategyInterface(ABC):

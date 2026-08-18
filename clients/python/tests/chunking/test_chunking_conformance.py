@@ -40,16 +40,19 @@ points at a different worktree you will silently test that one, so run this with
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import re
 from pathlib import Path
 
 import pytest
 
+from proximadb_sdk.chunking import ChunkerPool, TextChunker
 from proximadb_sdk.chunking_strategies import (
     ChunkingConfig,
     ChunkingStrategy,
     ChunkingStrategyFactory,
+    config_kwargs,
 )
 from proximadb_sdk.chunking_strategies.conformance import (
     BASIS_BYTE,
@@ -665,6 +668,122 @@ class TestNonAdditiveMeasure:
         chunks = self._strategy(ChunkingStrategy.FIXED_SIZE, 20).chunk(text, "doc")
         violation = check_totality(text, chunks)
         assert violation is None, violation
+
+
+class TestConfigPropagation:
+    """A configured field must survive every rebuild, and split the pool.
+
+    Two hand-written forwarding lists used to decide which fields survived, and
+    both dropped anything added after they were written. That failure is
+    silent by construction -- a dropped field is indistinguishable from an unset
+    one -- so it is only catchable by asserting the field's *effect* downstream,
+    which is what these do.
+    """
+
+    @staticmethod
+    def _token_config(strategy=ChunkingStrategy.FIXED_SIZE, **extra):
+        return ChunkingConfig(
+            strategy=strategy,
+            chunk_size=8,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=16,
+            measure=TokenMeasure(WordTokenCounter()),
+            **extra,
+        )
+
+    def test_config_kwargs_covers_every_field_but_strategy(self):
+        # The whole point of deriving instead of listing: this cannot rot.
+        expected = {f.name for f in dataclasses.fields(ChunkingConfig)} - {"strategy"}
+        assert set(config_kwargs(ChunkingConfig())) == expected
+
+    def test_text_chunker_honours_a_configured_measure(self):
+        # The end-to-end statement of the bug: TextChunker rebuilds its strategy
+        # from the config, and the rebuild used to drop unknown fields. If the
+        # measure is lost, a budget of 8 silently means 8 CHARACTERS.
+        text = " ".join(f"word{i}" for i in range(60))
+        chunks = TextChunker(self._token_config()).chunk_text(text, "doc")
+        assert chunks
+        counts = [len(re.findall(r"\S+", chunk.text)) for chunk in chunks]
+
+        # The upper bound alone is NOT sufficient, and asserting only it is how
+        # this test first passed while the measure was being dropped: 8-CHARACTER
+        # chunks also hold at most 8 words, vacuously. The load-bearing claim is
+        # that the chunks are token-sized, i.e. FEW and FULL -- 60 words at 8
+        # words each is ~8 chunks, where character sizing yields ~50.
+        assert len(chunks) <= 10, (
+            f"{len(chunks)} chunks for 60 words at a budget of 8: these are "
+            "character-sized, so the measure was dropped during the rebuild"
+        )
+        assert max(counts) > 1, f"chunks hold {max(counts)} word(s), not ~8"
+        assert max(counts) <= 8, f"{max(counts)} words exceeds the budget of 8"
+
+    def test_pool_key_separates_configs_that_differ_only_by_measure(self):
+        # Sharing a pool entry here means the second caller silently receives a
+        # chunker built for the first caller's measure.
+        pool = ChunkerPool()
+        char_only = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=8,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=16,
+        )
+        assert pool._get_pool_key(char_only) != pool._get_pool_key(self._token_config())
+
+    def test_pool_key_is_stable_for_equivalent_configs(self):
+        # The other direction: over-splitting on every construction would make
+        # the pool useless, so identity must come from VALUES, not object ids.
+        pool = ChunkerPool()
+        assert pool._get_pool_key(ChunkingConfig()) == pool._get_pool_key(
+            ChunkingConfig()
+        )
+        assert pool._get_pool_key(self._token_config()) == pool._get_pool_key(
+            self._token_config()
+        )
+
+    def test_pool_key_separates_every_sizing_field(self):
+        pool = ChunkerPool()
+        base = ChunkingConfig(strategy=ChunkingStrategy.FIXED_SIZE)
+        baseline = pool._get_pool_key(base)
+        for field_name, value in (
+            ("chunk_size", 999),
+            ("chunk_overlap", 7),
+            ("min_chunk_size", 3),
+            ("max_chunk_size", 4096),
+            ("buffer_size", 9),
+            ("breakpoint_percentile_threshold", 50.0),
+            ("add_context", True),
+            ("preserve_sentences", False),
+        ):
+            other = ChunkingConfig(
+                strategy=ChunkingStrategy.FIXED_SIZE, **{field_name: value}
+            )
+            assert pool._get_pool_key(other) != baseline, (
+                f"{field_name} does not participate in the pool key, so two "
+                "configurations differing only by it would share a chunker"
+            )
+
+    def test_pool_key_separates_distinct_injected_providers(self):
+        # A provider is a callable, not JSON, and must still split the pool.
+        pool = ChunkerPool()
+
+        def provider_a(texts):
+            return _deterministic_provider(texts)
+
+        def provider_b(texts):
+            return _deterministic_provider(texts)
+
+        keys = {
+            pool._get_pool_key(
+                ChunkingConfig(
+                    strategy=ChunkingStrategy.SEMANTIC_EMBEDDING,
+                    embedding_provider=provider,
+                )
+            )
+            for provider in (provider_a, provider_b)
+        }
+        assert len(keys) == 2
 
 
 class TestGoldenOutput:
