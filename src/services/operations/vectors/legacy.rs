@@ -6668,13 +6668,28 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     /// NOT weaken isolation. `None`/empty tenant ⇒ single-tenant, no scoping change.
     async fn unified_search_native(
         &self,
-        collection_id: &str,
-        query_vector: Vec<f32>,
-        k: usize,
-        filter: Option<proximadb_filter_expression::FilterExpression>,
-        requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+        search: &proximadb_vector_query::VectorSearchExpr,
         identity: proximadb_runtime::PortIdentity<'_>,
     ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        search.validate().map_err(anyhow::Error::msg)?;
+        let route = crate::query::compute_scheduler::ComputeScheduler::new().route_vector_search(
+            crate::query::compute_scheduler::VectorQueryShape {
+                dimensions: search.query_vector.len(),
+                top_k: search.top_k,
+                has_filter: search.filter.is_some(),
+                requested_mode: search.params.search_mode.clone(),
+            },
+        );
+        tracing::debug!(
+            target: "proximadb::vector_route",
+            backend = ?route.backend,
+            workload = ?route.workload_profile,
+            strategy = route.strategy_label(),
+            source = route.source.as_str(),
+            reason = %route.reason,
+            "{}",
+            route.explain_line()
+        );
         let tenant_ctx = identity
             .tenant_id
             .filter(|t| !t.is_empty())
@@ -6686,25 +6701,28 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
                 identity.subject,
                 identity.tenant_stable_id,
                 identity.auth_class,
-                collection_id,
+                &search.collection,
             )
             .await
             .ok_or_else(|| anyhow::anyhow!("vector search denied by row policy"))?;
-        self.unified_search_native_with_tenant_context(
-            collection_id,
-            query_vector,
-            k,
-            filter,
-            requested_metric.map(|distance_metric| UnifiedSearchConfig {
-                distance_metric: Some(distance_metric),
-                search_mode: crate::core::search::SearchMode::Exact,
-                ..Default::default()
-            }),
-            tenant_ctx.as_ref(),
-            #[cfg(feature = "abac-policy")]
-            &read_context,
-        )
-        .await
+        let mut results = self
+            .unified_search_native_with_tenant_context(
+                &search.collection,
+                search.query_vector.clone(),
+                search.top_k as usize,
+                search.filter.clone(),
+                Some(UnifiedSearchConfig {
+                    distance_metric: Some(search.metric),
+                    search_mode: route.search_mode,
+                    ..Default::default()
+                }),
+                tenant_ctx.as_ref(),
+                #[cfg(feature = "abac-policy")]
+                &read_context,
+            )
+            .await?;
+        results.retain(|record| search.matches_similarity_threshold(record.score));
+        Ok(results)
     }
 
     async fn batch_upsert(

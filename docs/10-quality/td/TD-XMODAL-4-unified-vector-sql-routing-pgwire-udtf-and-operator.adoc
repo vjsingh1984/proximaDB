@@ -5,9 +5,9 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress**. Both SQL syntaxes now lower to the existing canonical `proximadb_vector_query::VectorSearchExpr` (named vector column, query vector, metric, typed filter, threshold, top-k, and search parameters) and execute through the shared native vector-search port. Cost-router integration and cross-surface parity gates remain open.
+| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` now exposes a distinct vector *access-path* decision (exact/approximate/adaptive) without conflating it with the containing SQL plan's compute backend. Measured cost-cell selection and cross-surface parity gates remain open.
 | Severity | Medium-High (surface consistency + moat: one internal vector-search intent behind every SQL surface; removes the hardcoded pgwire `<->` bypass and the pgwire/UDTF reachability gap)
-| Component | pgwire (`src/network/postgres/relational_pipeline.rs`, `pgvector_params.rs`) ; router (`src/query/compute_scheduler.rs` `QueryShape`/`route_select_inner`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
+| Component | pgwire (`src/network/postgres/relational_pipeline.rs`, `pgvector_params.rs`) ; router (`src/query/compute_scheduler.rs` `VectorQueryShape`/`route_vector_search`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
 | Governs / derives from | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — "no new DSL; reuse SQL + table functions") ; the reserved TD-XMODAL-4 forward-reference therein.
 | Relates | link:TD-RDSTRAT-4-centroid-block-clustering-and-segment-directory.adoc[TD-RDSTRAT-4] / link:TD-RDSTRAT-5-cache-first-voe-directory-activation-codesign.adoc[TD-RDSTRAT-5] (the vector-execution knobs — striped read, centroid prune — become router-tunable properties of the VectorSearch node) ; TD-EXEC (shape_class / geometry routing key) ; TD-076 (pgwire SQL parity) ; ADR-052/ADR-034 (cost model + io_trace the router costs from).
 |===
@@ -18,9 +18,9 @@ A pgwire/UDTF audit found the building blocks already present but **disconnected
 
 * **The `vector_search(collection, query, k)` UDTF is live-backed and pgwire-reachable** — `VectorSearchTableFunction` → `VectorSearchTableProvider` carries a `VectorSearchExpr` and complete request identity to `VectorOpsPort::unified_search_native`; the pgwire DataFusion context registers the same function.
 * **Before the 2026-08-15 slice, pgvector `<->`/`<=>`/`<#>` worked over pgwire via a hardcoded bypass**: regex-extract the vector literal + `LIMIT`, then call `unified_search_native()`. It skipped the relational pipeline and router — no typed plan, cost, or shape. That bypass is now deleted; router integration remains open.
-* **The router has no vector signal** — `QueryShape` (`compute_scheduler.rs:121-144`) is `(engages_relational × parquet_backed × cardinality × fanout)`; `route_select_inner` (`:323-348`) has no vector-search branch.
+* **Before the 2026-08-17 slice, the router had no vector access-path decision** — `QueryShape` described only the containing relational plan and `route_select_inner` selected only its `ComputeBackend`. The first draft proposed adding a vector boolean to that shape; implementation review rejected it because a `vector_search(...)` source can be nested inside a DataFusion join. Operator access-method selection and whole-plan engine selection are orthogonal axes.
 
-The two SQL spellings now share one typed intent and runtime port. The remaining gap is policy: the cost router is still blind to that intent, so exact/ANN/striped/pruned route selection is not yet one observable decision.
+The two SQL spellings now share one typed intent and runtime port. The scheduler observes the explicit exact/approximate/adaptive access intent, but it does not yet have comparable access-path cost cells; geometry-driven exact/ANN/striped/pruned selection therefore remains open.
 
 == Design: one canonical `VectorSearch` node
 
@@ -35,7 +35,7 @@ VectorSearchExpr { collection, vector_column?, query_vector, top_k, threshold?,
 * **UDTF** `SELECT * FROM vector_search('col', $q, 10)` → this node (reuse `VectorSearchTableFunction`).
 * **pgvector operator** `SELECT id, … FROM col ORDER BY embedding <-> $q LIMIT 10` → the relational lowering pattern-matches `ORDER BY <distance> LIMIT k` (`<->`→L2, `<=>`→Cosine, `<#>`→neg-dot) → the **same** node (replacing the hardcoded bypass).
 * **Result shape (decided):** ordinary SQL projection governs the output. `SELECT id` returns `id`; `SELECT id, payload` returns those two columns; a projected distance expression returns its alias; `SELECT *` expands to `id + distance + metadata`. `distance` is the operator value (L2, cosine distance, or negative inner product), never the normalized similarity score. `include_vectors` stays an opt-in arg.
-* **Router:** `QueryShape` gains a vector signal; `route_select_inner` dispatches the node to `search_vectors_unified` and **cost-chooses within** vector execution (exact brute-force vs RaBitQ ANN cascade; whole-vs-striped; centroid-prune `nprobe`) from the same measured trace/geometry model as everything else — this is where the RDSTRAT-4/5 knobs plug in.
+* **Router:** the existing `ComputeScheduler` owns a sibling `VectorQueryShape` / `VectorRouteDecision` access-path method. The containing SQL plan still routes through `QueryShape` → one `ComputeBackend`; each vector source independently selects exact/approximate/adaptive inside the specialized native vector backend. This preserves cross-modal joins while keeping one policy owner. The decision will **cost-choose within** vector execution (exact brute-force vs RaBitQ ANN cascade; whole-vs-striped; centroid-prune `nprobe`) from comparable measured trace/geometry cells — this is where the RDSTRAT-4/5 knobs plug in.
 * **REST SQL/UQL convergence:** the REST `/api/v2/query` SQL/UQL path routes through the **same** parse→lower→route seam (no parallel code path), so all surfaces share one definition of "what a vector search means" (`vertical inside, standard outside`).
 
 == Slices (atomic; each router-integrated; parity-gated across surfaces)
@@ -49,7 +49,7 @@ VectorSearchExpr { collection, vector_column?, query_vector, top_k, threshold?,
 | pgwire integration test: `vector_search(...)` AND `ORDER BY <-> LIMIT k` return the **same** top-k as the REST/gRPC vector search (cross-surface parity) for L2 + Cosine; recall unchanged (same engine).
 
 | **S2 — router shape + cost integration**
-| Extend `QueryShape` with a vector-search signal; add the `route_select_inner` branch dispatching the node to `search_vectors_unified`; cost-choose exact-vs-ANN and thread the RDSTRAT knobs (striped/prune/nprobe) from the trace/geometry model.
+| Add a vector access-path decision to the existing `ComputeScheduler` without changing whole-plan `QueryShape`; dispatch the canonical node through the one native port; cost-choose exact-vs-ANN and thread the RDSTRAT knobs (striped/prune/nprobe) from comparable trace/geometry cells.
 | Router emits a well-formed decision for a vector query (observe-logged); no regression on relational routing; the node's knobs are cost-selected, not hardcoded.
 
 | **S3 — REST SQL/UQL onto the shared seam**
@@ -82,7 +82,19 @@ The current implementation establishes one trustworthy boundary before adding ro
 * preserved JSON/JSONB container paths (`payload.type`) through AST lowering and filter evaluation instead of flattening them into an ambiguous global metadata namespace;
 * hardened the pgwire integration fixtures: metadata/catalog state is temp-directory scoped, setup errors are fatal, and both filtered and unfiltered searches assert exact non-empty ID sets. These gates exposed the previously false-green split-store behavior.
 
-This does **not** close TD-XMODAL-4. The UDTF and operator now converge on the explicit `VectorSearchExpr` node and one native port, but they do not yet pass through one cost-router decision. Exact ranking is bounded; the underlying authoritative record scan is not yet streaming. Cross-surface parity, full route-level I/O traces, projection freshness/rebuild tests, and geometry-driven exact/ANN selection remain the acceptance gate for S2/S3.
+That S1 snapshot did **not** close TD-XMODAL-4: the UDTF and operator converged on the explicit `VectorSearchExpr` node and one native port, but had no vector access-path decision. Exact ranking was bounded; the underlying authoritative record scan was not streaming. The next section records the subsequent router-contract increment; cross-surface parity, full route-level I/O traces, projection freshness/rebuild tests, and measured geometry-driven exact/ANN selection remain acceptance gates for S2/S3.
+
+== Implemented router-contract slice (2026-08-17)
+
+The first S2 increment closes the policy-loss boundary without claiming an unmeasured route flip:
+
+* added `ComputeScheduler::route_vector_search(VectorQueryShape)` returning an observable, typed `VectorRouteDecision` for exact/approximate/adaptive access inside `ComputeBackend::Native`; the relational `QueryShape` and its backend decisions are unchanged by construction;
+* kept absent intent on the existing exact correctness floor. Approximate/adaptive access requires explicit typed intent until exact-vs-ANN cost observations are comparable and the recall ratchet admits a default change;
+* replaced `VectorSearchParams { mode: String, ef_search, n_probes }` with the canonical typed `SearchMode`. The former shape accepted index-family-specific knobs before choosing an index family, and the runtime port dropped all three. `Approximate { nprobe }` is now one value that reaches storage unchanged; invalid zero ANN effort/adaptive cutoffs are rejected at shared validation;
+* changed `VectorOpsPort::unified_search_native` to accept the complete `VectorSearchExpr` rather than six independently threaded arguments. Both pgvector lowering and the DataFusion UDTF now cross the same intent boundary, making field omission reviewable at one seam; shared validation and similarity-threshold semantics live on that expression;
+* routed the production port and multimodel executor through the same scheduler decision and removed the hard-coded `SearchMode::Exact` overwrite for explicit caller intent.
+
+This is deliberately **observe/static**, not a claimed completion of cost selection. The current route cost model ranks whole-plan `ComputeBackend` candidates and its one trace route slot cannot honestly compare nested vector access methods. The next S2 increment must add a distinct access-path trace dimension and warm comparable `(vector shape, exact|ANN)` cells before any default or live override can flip. Reusing the backend label for ANN would poison the existing engine cells; adding arbitrary dimension/top-k buckets before trace-density evidence would repeat ADR-058's warned failure mode.
 
 == Constraints
 

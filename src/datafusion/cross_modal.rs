@@ -161,14 +161,7 @@ impl TableProvider for VectorSearchTableProvider {
         // pushdown from the SQL `filters` is a follow-up (S3); pass `None` for now.
         let results = self
             .vector_ops
-            .unified_search_native(
-                &self.search.collection,
-                self.search.query_vector.clone(),
-                self.search.top_k as usize,
-                self.search.filter.clone(),
-                Some(self.search.metric),
-                self.identity.as_borrowed(),
-            )
+            .unified_search_native(&self.search, self.identity.as_borrowed())
             .await
             .map_err(|e| DataFusionError::Execution(format!("vector search: {e}")))?;
         let batch = vector_matches_to_batch(&results).map_err(DataFusionError::from)?;
@@ -1175,11 +1168,7 @@ mod tests {
         // matches as v2 OptimizedSearchRecords.
         async fn unified_search_native(
             &self,
-            _collection_id: &str,
-            _query_vector: Vec<f32>,
-            _k: usize,
-            _filter: Option<proximadb_filter_expression::FilterExpression>,
-            _requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+            _search: &proximadb_vector_query::VectorSearchExpr,
             _identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(self
@@ -1770,6 +1759,7 @@ mod tests {
     /// A `VectorOpsPort` that records the complete identity at its search seam.
     struct RecordingVectorOps {
         seen: Arc<std::sync::Mutex<Vec<proximadb_runtime::OwnedPortIdentity>>>,
+        seen_intents: Arc<std::sync::Mutex<Vec<proximadb_vector_query::VectorSearchExpr>>>,
         seen_metrics: Arc<std::sync::Mutex<Vec<Option<proximadb_distance_types::DistanceMetric>>>>,
     }
 
@@ -1792,15 +1782,12 @@ mod tests {
         // TD-XMODAL-4 S2: the UDTF forwards identity through THIS kernel.
         async fn unified_search_native(
             &self,
-            _collection_id: &str,
-            _query_vector: Vec<f32>,
-            _k: usize,
-            _filter: Option<proximadb_filter_expression::FilterExpression>,
-            requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+            search: &proximadb_vector_query::VectorSearchExpr,
             identity: proximadb_runtime::PortIdentity<'_>,
         ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             self.seen.lock().unwrap().push(identity.into_owned());
-            self.seen_metrics.lock().unwrap().push(requested_metric);
+            self.seen_intents.lock().unwrap().push(search.clone());
+            self.seen_metrics.lock().unwrap().push(Some(search.metric));
             Ok(vec![])
         }
         async fn batch_upsert(
@@ -1833,9 +1820,11 @@ mod tests {
     #[tokio::test]
     async fn vector_search_udtf_forwards_tenant_to_search() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_intents = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen_metrics = Arc::new(std::sync::Mutex::new(Vec::new()));
         let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(RecordingVectorOps {
             seen: Arc::clone(&seen),
+            seen_intents: Arc::clone(&seen_intents),
             seen_metrics: Arc::clone(&seen_metrics),
         });
         let ctx = SessionContext::new();
@@ -1872,6 +1861,15 @@ mod tests {
             &[Some(proximadb_distance_types::DistanceMetric::L2)],
             "the UDTF must not discard the metric carried by its canonical vector intent"
         );
+        let intents = seen_intents.lock().unwrap();
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].collection, "docs_vec");
+        assert_eq!(intents[0].query_vector, vec![0.1, 0.2]);
+        assert_eq!(intents[0].top_k, 5);
+        assert_eq!(intents[0].threshold, None);
+        assert_eq!(intents[0].vector_column, None);
+        assert_eq!(intents[0].filter, None);
+        assert_eq!(intents[0].params, VectorSearchParams::default());
     }
 
     // ── graph slice ───────────────────────────────────────────────────────────────
