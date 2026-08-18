@@ -566,6 +566,7 @@ class TestChunkingUnderATokenMeasure:
             budget=budget * 2,
             rechunk=lambda text: strat.chunk(text, "doc"),
             token_counter=lambda text: len(re.findall(r"\S+", text)),
+            measure=config.measure,
         )
 
     @pytest.mark.parametrize(
@@ -909,6 +910,85 @@ class TestSizingPolicy:
         # The legacy path must stay byte-identical, which is what makes the new
         # dialect additive rather than a migration.
         assert self._sized(ChunkingConfig()) == (512, 50, 100, 2048)
+
+
+class TestTraceHonesty:
+    """A trace must report sizes in the unit it was actually measured in.
+
+    `min/max_chunk_units` were hardcoded `len()` while documented as the cap
+    check. Under a token measure that makes the comparison a reader would
+    naturally make -- "max 512 against my 512 budget" -- meaningless, and
+    nothing fails, because a plausible number is still a number. This is the
+    quiet half of the measure work: the code got a second unit, and every
+    readout that assumed one had to be told.
+    """
+
+    def test_the_default_trace_reports_characters(self):
+        trace = compute_trace("alpha beta gamma", [])
+        assert trace.size_unit == "char"
+
+    def test_a_measured_trace_reports_the_measure_unit(self):
+        text = " ".join(f"word{i}" for i in range(40))
+        measure = TokenMeasure(WordTokenCounter())
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=8,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=16,
+            measure=measure,
+        )
+        strat = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        chunks = strat.chunk(text, "doc")
+        trace = compute_trace(text, chunks, measure=measure)
+
+        assert trace.size_unit == "token:words"
+        # The load-bearing assertion: the reported max must be comparable to the
+        # budget of 8. Measured in characters it would be ~50 and would read as
+        # a gross overflow of a budget it in fact respects.
+        assert trace.max_chunk_units <= 8, trace.summary()
+        assert "token:words" in trace.summary()
+
+        untold = compute_trace(text, chunks)
+        assert untold.max_chunk_units > 8, (
+            "positive control: without the measure the same chunks report a "
+            "character size, which is exactly the misreading being fixed"
+        )
+
+    def test_size_warnings_are_scoped_to_the_measure_they_fit(self):
+        # 100 and 10 000 are character intuitions. A 100-token chunk is
+        # ordinary; a 10 000-token one exceeds most model contexts. Emitting
+        # character advice about a token budget trains readers to ignore
+        # warnings, which is worse than silence.
+        from proximadb_sdk.chunking_strategies.parser_utils import ConfigValidator
+
+        chars = ConfigValidator.validate_chunk_size(50)
+        assert chars.warnings and "chars" in chars.warnings[0]
+
+        tokens = ConfigValidator.validate_chunk_size(50, measure_name="token:words")
+        assert not tokens.warnings
+
+        # Ordering errors are measure-independent and must still fire.
+        bad = ConfigValidator.validate_chunk_size(
+            5, min_chunk_size=10, measure_name="token:words"
+        )
+        assert not bad.valid
+
+        # And the whole-config entry point must FORWARD the measure, or the
+        # scoping is dead code everywhere it actually runs.
+        via_config = ConfigValidator.validate_config(
+            ChunkingConfig(
+                strategy=ChunkingStrategy.FIXED_SIZE,
+                chunk_size=8,
+                chunk_overlap=0,
+                min_chunk_size=1,
+                max_chunk_size=16,
+                measure=TokenMeasure(WordTokenCounter()),
+            )
+        )
+        assert not any("chars" in w for w in via_config.warnings), via_config.warnings
 
 
 class TestGoldenOutput:

@@ -51,6 +51,9 @@ class ChunkerAdapter:
     hostile: Callable[[], Sequence[Any]] | None = None
     #: Optional token counter; when absent CAP is measured in characters.
     token_counter: Callable[[str], int] | None = None
+    #: The measure this chunker sizes itself in. Supplied so the trace reports
+    #: sizes in the chunker's own units rather than silently in characters.
+    measure: Any | None = None
 
 
 @dataclass
@@ -103,6 +106,7 @@ def evaluate(adapter: ChunkerAdapter, entry: CorpusEntry) -> Evaluation:
         chunks,
         offset_basis=adapter.basis,
         token_counter=adapter.token_counter,
+        measure=adapter.measure,
     )
 
     violations: list[Violation] = []

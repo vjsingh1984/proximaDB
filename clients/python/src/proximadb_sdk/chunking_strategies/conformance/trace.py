@@ -65,6 +65,11 @@ class ChunkTrace:
     min_chunk_units: int
     max_chunk_units: int
     offset_basis: str = BASIS_CHAR
+    #: What ``*_chunk_units`` are counted in. A trace that reports a size
+    #: without naming its unit is unreadable the moment a second measure
+    #: exists: "max 512" is fine against a 512-CHARACTER budget and a serious
+    #: overflow against a 512-TOKEN one, and nothing in the number says which.
+    size_unit: str = "char"
     tokens_out: int | None = None
     boundary_sources: dict[str, int] = field(default_factory=dict)
     gaps: tuple[Gap, ...] = ()
@@ -99,6 +104,7 @@ class ChunkTrace:
             f"lost={lost} dup={self.units_duplicated} "
             f"dropped_spans={self.spans_dropped} "
             f"size[min/max]={self.min_chunk_units}/{self.max_chunk_units}"
+            f" ({self.size_unit})"
         )
 
 
@@ -132,6 +138,7 @@ def compute_trace(
     *,
     offset_basis: str = BASIS_CHAR,
     token_counter: Callable[[str], int] | None = None,
+    measure: Any | None = None,
     source_label: str = "chunking_strategy",
     max_gaps: int = 16,
 ) -> ChunkTrace:
@@ -177,7 +184,23 @@ def compute_trace(
                 gaps.append(Gap(cursor, run_end, fragment[:60]))
         cursor = run_end
 
-    sizes = [len(getattr(c, "text", "")) for c in chunks]
+    # Sizes are reported in the MEASURE's units, not characters. Hardcoding
+    # len() while advertising these as the cap check means that under a token
+    # measure the comparison a reader would naturally make is nonsense -- and
+    # nothing fails, because a plausible number is still a number. Measuring
+    # the span in the source is also the more faithful question than measuring
+    # the rebuilt text.
+    if measure is None:
+        sizes = [len(getattr(c, "text", "")) for c in chunks]
+        size_unit = BASIS_CHAR
+    else:
+        sizes = [
+            measure.size(
+                source, int(getattr(c, "start_pos", 0)), int(getattr(c, "end_pos", 0))
+            )
+            for c in chunks
+        ]
+        size_unit = str(getattr(measure, "name", "custom"))
     histogram: dict[str, int] = {}
     for chunk in chunks:
         metadata = getattr(chunk, "metadata", None)
@@ -198,6 +221,7 @@ def compute_trace(
         min_chunk_units=min(sizes) if sizes else 0,
         max_chunk_units=max(sizes) if sizes else 0,
         offset_basis=offset_basis,
+        size_unit=size_unit,
         tokens_out=tokens_out,
         boundary_sources=histogram,
         gaps=tuple(gaps),
