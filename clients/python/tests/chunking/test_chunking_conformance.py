@@ -1652,6 +1652,69 @@ class TestHeadingSourceAndAnnotation:
         assert strategy.markdown_header_pattern is MARKDOWN_HEADING
 
 
+class TestIngestCarriesHeadingPaths:
+    """The capability must reach the product, not merely exist.
+
+    The ADR-091 census's central finding was capabilities built and never
+    called -- the Rust chunker with zero callers, the SDP pipeline behind a flag
+    nothing sets. Shipping a heading annotator that no ingest path invokes would
+    have reproduced that exactly, so this pins the wiring, not just the feature.
+
+    `TextDocumentProcessor` is the only production text-ingest caller in the
+    SDK: every .txt/.md/.rst/.adoc goes through it, and anvaiops's connector SDK
+    delegates here.
+    """
+
+    DOC = (
+        "# Install\n\nSome intro prose long enough to matter.\n\n"
+        "## Docker\n\nDocker instructions continue for a while here.\n\n"
+        "### Compose\n\nCompose details, nested two levels deep.\n\n"
+        "# Usage\n\nUsage text back at the top level.\n"
+    )
+
+    @staticmethod
+    def _processor(**overrides):
+        from proximadb_sdk.document_processor import (
+            ProcessorConfig,
+            TextDocumentProcessor,
+        )
+
+        settings = {
+            "chunk_size": 60,
+            "chunk_overlap": 0,
+            "min_chunk_size": 1,
+            "max_chunk_size": 200,
+        }
+        settings.update(overrides)
+        return TextDocumentProcessor(ProcessorConfig(**settings))
+
+    def test_every_chunk_reaches_ingest_with_its_path(self):
+        chunks = self._processor().chunk(self.DOC, "readme.md")
+        paths = [c.metadata.get("heading_path") for c in chunks]
+        assert all(paths), paths
+        assert ["Install", "Docker", "Compose"] in paths
+        assert ["Usage"] in paths
+
+    def test_preserve_structure_false_disables_it(self):
+        chunks = self._processor(preserve_structure=False).chunk(self.DOC, "readme.md")
+        assert not any(c.metadata.get("heading_path") for c in chunks)
+
+    def test_annotation_changes_no_chunk(self):
+        # The co-design claim at the product boundary: additive metadata only,
+        # so no KEU (embedding) and no KSU (storage) delta.
+        on = self._processor().chunk(self.DOC, "readme.md")
+        off = self._processor(preserve_structure=False).chunk(self.DOC, "readme.md")
+        assert [(c.text, c.start_pos, c.end_pos) for c in on] == [
+            (c.text, c.start_pos, c.end_pos) for c in off
+        ]
+
+    def test_a_document_without_headings_is_untouched(self):
+        plain = "Just prose with no structure whatsoever. " * 20
+        chunks = self._processor().chunk(plain, "notes.txt")
+        assert chunks
+        assert not any(c.metadata.get("heading_path") for c in chunks)
+
+
 class TestGoldenOutput:
     """Behaviour-preservation oracle for refactors.
 

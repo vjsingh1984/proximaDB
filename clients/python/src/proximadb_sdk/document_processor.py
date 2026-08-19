@@ -189,6 +189,14 @@ class ProcessorConfig:
     # Processing settings
     strategy: ProcessingStrategy = ProcessingStrategy.BALANCED
     include_metadata: bool = True
+    #: Label each text chunk with the heading path it lives under
+    #: (`heading_path`, `heading_title`, `heading_level`).
+    #:
+    #: This flag existed but was READ BY NOTHING, so it is being given the
+    #: meaning its name already implied rather than adding a third
+    #: structure-ish flag beside a dead one. Nothing depended on the old
+    #: (absent) behaviour, so no caller can break: `False` simply skips
+    #: annotation, which is what happens today.
     preserve_structure: bool = True
 
     # Code-specific settings
@@ -790,6 +798,24 @@ class TextDocumentProcessor(DocumentProcessor):
         chunker = self._get_chunker()
 
         text_chunks = chunker.chunk(content, source_id, metadata)
+
+        # Imported here, alongside the chunker it complements, to keep
+        # `import proximadb_sdk` free of the chunking modules.
+        from .chunking_strategies.boundaries import annotate_heading_paths
+
+        # Label each chunk with the heading path it lives under. Done here
+        # because this is the only production text-ingest caller in the SDK --
+        # every .txt/.md/.rst/.adoc goes through it, and anvaiops's connector
+        # SDK delegates here too. A capability with no product caller is the
+        # exact defect the ADR-091 census documented (the Rust chunker and the
+        # SDP pipeline both sit unreachable), so the annotator is wired on the
+        # way in rather than left available-but-unused.
+        #
+        # Purely additive: it adds metadata keys, and never changes a chunk's
+        # text, offsets or count -- so no KEU or KSU delta, and it is a total
+        # no-op on documents without headings.
+        if self.config.preserve_structure:
+            annotate_heading_paths(content, text_chunks)
 
         processed = []
         for chunk in text_chunks:
