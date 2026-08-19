@@ -94,6 +94,10 @@ from proximadb_sdk.chunking_strategies.conformance import (
     standard_corpus,
     sweep_digests,
 )
+from proximadb_sdk.chunking_strategies.conformance.evals import (
+    STANDARD_CASES,
+    run_eval,
+)
 from proximadb_sdk.chunking_strategies.conformance.invariants import (
     _wall_clock_budget,
 )
@@ -1713,6 +1717,189 @@ class TestIngestCarriesHeadingPaths:
         chunks = self._processor().chunk(plain, "notes.txt")
         assert chunks
         assert not any(c.metadata.get("heading_path") for c in chunks)
+
+
+EVAL_BUDGET = {
+    "chunk_size": 200,
+    "chunk_overlap": 20,
+    "min_chunk_size": 1,
+    "max_chunk_size": 400,
+}
+
+#: Recorded floors, GENERATED from a real sweep, never hand-picked. Each is the
+#: measured score at the commit that introduced it, so the gate is a ratchet:
+#: a drop fails, and an improvement must be recorded deliberately (which is what
+#: keeps a raised bar from silently rotting back down).
+#:
+#: Scored at a TIGHT budget on purpose. At the default 512 every answer in the
+#: corpus fits comfortably and every chunker scores 1.00 containment -- a
+#: saturated metric measures nothing. The regime where chunking decides anything
+#: is the one where answers are comparable in size to the budget.
+#: Written as EXACT fractions of the 8 cases, not as the rounded values the
+#: report prints. Transcribing a displayed "0.38" into a threshold sets the bar
+#: at 0.38 when the measurement is 3/8 = 0.375, so the gate fails against the
+#: very run that produced it. Fractions cannot drift that way.
+EVAL_BASELINE: dict[str, dict[str, float]] = {
+    "sliding_window": {"containment": 3 / 4, "structure": 3 / 4, "attributable": 0},
+    "fixed_size": {"containment": 3 / 4, "structure": 3 / 4, "attributable": 3 / 8},
+    "sentence": {"containment": 7 / 8, "structure": 7 / 8, "attributable": 3 / 8},
+    "paragraph": {"containment": 3 / 4, "structure": 7 / 8, "attributable": 3 / 8},
+    "semantic": {"containment": 1, "structure": 1, "attributable": 5 / 8},
+    "recursive": {"containment": 3 / 4, "structure": 7 / 8, "attributable": 3 / 8},
+}
+
+
+def _eval_chunker(strategy):
+    config = ChunkingConfig(
+        strategy=strategy,
+        embedding_provider=_deterministic_provider,
+        **EVAL_BUDGET,
+    )
+    built = ChunkingStrategyFactory.create_strategy(strategy, config)
+
+    def chunk(text):
+        chunks = built.chunk(text, "doc")
+        annotate_heading_paths(text, chunks)
+        return chunks
+
+    return chunk
+
+
+class TestChunkingEvals:
+    """The non-deterministic half: boundary QUALITY, scored against a rubric.
+
+    Tests cover what has a right answer. Whether a cut lands in a *good* place
+    does not, so it is gated on thresholds rather than asserted -- the
+    tests-vs-evals split the repo mandates for any ranked or generated surface.
+    """
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [
+            pytest.param(s, id=s.value)
+            for s in SWEPT_STRATEGIES
+            if s.value in EVAL_BASELINE
+        ],
+    )
+    def test_quality_does_not_regress(self, strategy):
+        report = run_eval(strategy.value, _eval_chunker(strategy))
+        floor = EVAL_BASELINE[strategy.value]
+        assert report.containment >= floor["containment"] - 1e-9, report.render()
+        assert report.structural_integrity >= floor["structure"] - 1e-9, report.render()
+        assert report.attributability >= floor["attributable"] - 1e-9, report.render()
+
+    def test_the_rubric_discriminates(self):
+        """A rubric where everything scores the same is not measuring anything.
+
+        This is the guard on the eval itself. The first version of this suite
+        scored 1.00 containment for every strategy, because the corpus answers
+        were all far smaller than the budget -- it looked like a clean pass and
+        told us nothing. If a future change flattens the scores again, that is a
+        problem with the eval, not a triumph of the chunkers.
+        """
+        scores = {
+            s.value: run_eval(s.value, _eval_chunker(s)).containment
+            for s in SWEPT_STRATEGIES
+            if s.value in EVAL_BASELINE
+        }
+        assert len(set(scores.values())) > 1, f"rubric is saturated: {scores}"
+
+    def test_output_cannot_be_gamed_by_one_huge_chunk(self):
+        """Containment alone is gameable: emit the whole document as one chunk.
+
+        That scores a perfect 1.00 and is useless -- the embedding is about the
+        entire document, so nothing is retrievable. Density is what catches it,
+        which is why the rubric scores both.
+        """
+
+        class WholeDocument(ChunkingStrategyInterface):
+            _offset_contract = OFFSET_CONTRACT_EXACT
+
+            def chunk(self, text, source_id, base_metadata=None):
+                return [
+                    TextChunk(
+                        text=text,
+                        start_pos=0,
+                        end_pos=len(text),
+                        chunk_id=f"{source_id}_chunk_0",
+                        metadata={},
+                    )
+                ]
+
+        cheat = WholeDocument(
+            ChunkingConfig(
+                strategy=ChunkingStrategy.FIXED_SIZE,
+                chunk_size=10**9,
+                min_chunk_size=1,
+                max_chunk_size=10**9,
+            )
+        )
+        report = run_eval("whole_document", lambda t: cheat.chunk(t, "doc"))
+        assert report.containment == 1.0, "precondition: the cheat does contain all"
+        best = max(
+            run_eval(s.value, _eval_chunker(s)).mean_density
+            for s in SWEPT_STRATEGIES
+            if s.value in EVAL_BASELINE
+        )
+        assert report.mean_density < best, (
+            "density must punish the degenerate chunker that wins containment "
+            "by emitting the whole document"
+        )
+
+    def test_the_gate_rejects_a_structurally_blind_chunker(self):
+        """Teeth: a chunker that ignores structure must fail the recorded floor.
+
+        Written as a permanent test rather than a one-off sabotage, because the
+        thing worth pinning is that the FLOOR mechanism fires -- a rubric whose
+        thresholds cannot fail is a dashboard, not a gate.
+
+        Cuts blindly every 50 characters, which slices fences and table rows
+        apart. It respects the offset contract, so this is a quality failure and
+        not a correctness one: the invariant suite would pass it.
+        """
+
+        class BlindCutter(ChunkingStrategyInterface):
+            _offset_contract = OFFSET_CONTRACT_EXACT
+
+            def chunk(self, text, source_id, base_metadata=None):
+                return [
+                    TextChunk(
+                        text=text[i : i + 50],
+                        start_pos=i,
+                        end_pos=min(i + 50, len(text)),
+                        chunk_id=f"{source_id}_chunk_{i // 50}",
+                        metadata={},
+                    )
+                    for i in range(0, len(text), 50)
+                ]
+
+        blind = BlindCutter(
+            ChunkingConfig(
+                strategy=ChunkingStrategy.FIXED_SIZE,
+                chunk_size=50,
+                chunk_overlap=0,
+                min_chunk_size=1,
+                max_chunk_size=50,
+            )
+        )
+        report = run_eval("blind", lambda t: blind.chunk(t, "doc"))
+        best = EVAL_BASELINE["semantic"]
+        assert report.structural_integrity < best["structure"]
+        assert report.containment < best["containment"]
+
+    def test_every_case_locates_its_answer(self):
+        # A needle that no longer matches would silently score 0 forever. Fail
+        # loudly instead, naming the case.
+        for case in STANDARD_CASES:
+            start, end = case.span()
+            assert end > start
+            assert by_name(case.corpus).text[start:end] == case.needle
+
+    def test_cases_state_what_they_test(self):
+        # An eval nobody can read is an eval nobody trusts.
+        for case in STANDARD_CASES:
+            assert case.question.strip()
+            assert case.tests.strip(), f"{case.name} does not say what it tests"
 
 
 class TestGoldenOutput:
