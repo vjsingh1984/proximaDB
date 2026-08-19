@@ -29,7 +29,7 @@ use super::UnifiedRecord;
 use super::ast::{
     ComponentDependency, DataModel, DocumentQueryExpr, GraphQueryExpr, GraphTraversalExpr,
     LogQueryExpr, MetricQueryExpr, ModelOperation, MultiModelQuery, QueryComponent,
-    VectorSearchExpr, VectorSearchParams,
+    VectorSearchExpr,
 };
 use super::fusion::SubQueryResult;
 use crate::observability::{LogQueryParams, MetricAggParams, ObservabilityService};
@@ -424,11 +424,6 @@ async fn execute_vector_search(
     vector_ops: Option<Arc<VectorOperationsService>>,
 ) -> Result<SubQueryResult> {
     expr.validate().map_err(anyhow::Error::msg)?;
-    if expr.params != VectorSearchParams::default() {
-        return Err(anyhow::anyhow!(
-            "per-query vector search tuning is not supported by the unified runtime"
-        ));
-    }
     let vector_ops = vector_ops.ok_or_else(|| {
         anyhow::anyhow!(
             "vector search on collection '{}' requires a wired VectorOperationsService",
@@ -441,6 +436,22 @@ async fn execute_vector_search(
         expr.collection, expr.top_k
     );
 
+    let route = crate::query::compute_scheduler::ComputeScheduler::new().route_vector_search(
+        crate::query::compute_scheduler::VectorQueryShape {
+            dimensions: expr.query_vector.len(),
+            top_k: expr.top_k,
+            has_filter: expr.filter.is_some(),
+            requested_mode: expr.params.search_mode.clone(),
+        },
+    );
+    trace!(
+        target: "proximadb::vector_route",
+        strategy = route.strategy_label(),
+        reason = %route.reason,
+        "{}",
+        route.explain_line()
+    );
+
     // Perform actual vector search using the operations service
     let search_result = vector_ops
         .unified_search_native(
@@ -450,7 +461,7 @@ async fn execute_vector_search(
             expr.filter.clone(),
             Some(crate::services::operations::vectors::UnifiedSearchConfig {
                 distance_metric: Some(expr.metric),
-                search_mode: crate::core::search::SearchMode::Exact,
+                search_mode: route.search_mode,
                 ..Default::default()
             }),
             #[cfg(feature = "abac-policy")]
@@ -465,7 +476,7 @@ async fn execute_vector_search(
         Ok(results) => {
             let records: Vec<UnifiedRecord> = results
                 .into_iter()
-                .filter(|record| meets_similarity_threshold(record.score, expr.threshold))
+                .filter(|record| expr.matches_similarity_threshold(record.score))
                 .map(|record| {
                     let metadata = build_vector_metadata(&record.metadata);
                     build_vector_search_record(&record.id, record.score, metadata)
@@ -490,10 +501,6 @@ async fn execute_vector_search(
             error
         )),
     }
-}
-
-fn meets_similarity_threshold(score: f32, threshold: Option<f32>) -> bool {
-    threshold.is_none_or(|minimum| score >= minimum)
 }
 
 /// Execute a document query
@@ -1090,14 +1097,6 @@ mod tests {
 
         assert_eq!(expr.collection, "test");
         assert_eq!(expr.top_k, 10);
-    }
-
-    #[test]
-    fn vector_similarity_threshold_is_inclusive_and_optional() {
-        assert!(meets_similarity_threshold(0.5, None));
-        assert!(meets_similarity_threshold(0.8, Some(0.8)));
-        assert!(meets_similarity_threshold(0.9, Some(0.8)));
-        assert!(!meets_similarity_threshold(0.79, Some(0.8)));
     }
 
     #[tokio::test]

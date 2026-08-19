@@ -8526,7 +8526,6 @@ dependencies = [
  "proximadb-config",
  "proximadb-data-model",
  "proximadb-distance-types",
- "proximadb-filter-expression",
  "proximadb-graph-query",
  "proximadb-hardware",
  "proximadb-kernel",
@@ -8534,6 +8533,7 @@ dependencies = [
  "proximadb-records",
  "proximadb-search-types",
  "proximadb-tenant",
+ "proximadb-vector-query",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -9042,6 +9042,7 @@ dependencies = [
  "proximadb-filter-expression",
  "proximadb-kernel",
  "proximadb-records",
+ "proximadb-search-types",
 ]
 
 [[package]]

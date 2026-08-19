@@ -208,11 +208,7 @@ pub trait VectorOpsPort: Send + Sync {
     /// `proximadb-runtime` stays monolith-independent.)
     async fn unified_search_native(
         &self,
-        _collection_id: &str,
-        _query_vector: Vec<f32>,
-        _k: usize,
-        _filter: Option<proximadb_filter_expression::FilterExpression>,
-        _requested_metric: Option<proximadb_distance_types::DistanceMetric>,
+        _search: &proximadb_vector_query::VectorSearchExpr,
         _identity: PortIdentity<'_>,
     ) -> Result<Vec<proximadb_search_types::results::OptimizedSearchRecord>> {
         Err(anyhow::anyhow!(

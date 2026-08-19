@@ -564,27 +564,13 @@ async fn execute_pgvector_plan(
         {
             Some(results) => results,
             None => vector_ops
-                .unified_search_native(
-                    &plan.search.collection,
-                    plan.search.query_vector.clone(),
-                    plan.search.top_k as usize,
-                    plan.search.filter.clone(),
-                    Some(plan.search.metric),
-                    identity,
-                )
+                .unified_search_native(&plan.search, identity)
                 .await
                 .map_err(|error| format!("native collection vector search failed: {error}"))?,
         }
     } else {
         vector_ops
-            .unified_search_native(
-                &plan.search.collection,
-                plan.search.query_vector.clone(),
-                plan.search.top_k as usize,
-                plan.search.filter.clone(),
-                Some(plan.search.metric),
-                identity,
-            )
+            .unified_search_native(&plan.search, identity)
             .await
             .map_err(|error| format!("native collection vector search failed: {error}"))?
     };
