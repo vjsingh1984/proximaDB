@@ -97,6 +97,7 @@ from proximadb_sdk.chunking_strategies.conformance import (
 from proximadb_sdk.chunking_strategies.conformance.evals import (
     STANDARD_CASES,
     run_eval,
+    score_case,
 )
 from proximadb_sdk.chunking_strategies.conformance.invariants import (
     _wall_clock_budget,
@@ -105,6 +106,7 @@ from proximadb_sdk.chunking_strategies.contracts import (
     ResolvedInputContract,
     TokenBudget,
 )
+from proximadb_sdk.chunking_strategies.dedup import deduplicate
 from proximadb_sdk.chunking_strategies.sizing import Absolute, Fraction
 from proximadb_sdk.chunking_strategies.spans import TextSlicer
 from proximadb_sdk.chunking_strategies.structure import (
@@ -1900,6 +1902,188 @@ class TestChunkingEvals:
         for case in STANDARD_CASES:
             assert case.question.strip()
             assert case.tests.strip(), f"{case.name} does not say what it tests"
+
+
+class TestDeduplication:
+    """The only item in TD-CHUNK-3 that REDUCES cost (KEU once, KSU forever).
+
+    Every safety property here exists because the asymmetry is severe: keeping a
+    duplicate costs a little money, while dropping a distinct chunk removes
+    content that no downstream layer can detect is missing.
+    """
+
+    @staticmethod
+    def _chunk(text, index, start=0):
+        return TextChunk(
+            text=text,
+            start_pos=start,
+            end_pos=start + len(text),
+            chunk_id=f"doc_chunk_{index}",
+            metadata={},
+        )
+
+    def test_exact_duplicates_collapse_to_one(self):
+        boiler = "Copyright 2026 Example Corp. All rights reserved worldwide."
+        chunks = [
+            self._chunk(boiler, 0, 0),
+            self._chunk("Genuinely distinct content about vector indexes.", 1, 100),
+            self._chunk(boiler, 2, 200),
+            self._chunk(boiler, 3, 300),
+        ]
+        result = deduplicate(chunks)
+        assert len(result.kept) == 2
+        assert result.removed_count == 2
+        assert result.reduction == 0.5
+
+    def test_distinct_content_is_never_removed(self):
+        # The property that matters most. Dropping distinct content is
+        # unrecoverable and invisible.
+        chunks = [
+            self._chunk(
+                f"Section {i} discusses a completely different topic "
+                f"with its own vocabulary and specifics {i}.",
+                i,
+                i * 100,
+            )
+            for i in range(12)
+        ]
+        result = deduplicate(chunks)
+        assert result.removed_count == 0
+        assert len(result.kept) == 12
+
+    def test_first_occurrence_is_the_representative(self):
+        boiler = "Shared boilerplate footer text repeated across the document."
+        chunks = [self._chunk(boiler, i, i * 100) for i in range(3)]
+        result = deduplicate(chunks)
+        assert [c.chunk_id for c in result.kept] == ["doc_chunk_0"]
+
+    def test_removal_is_recorded_never_silent(self):
+        # A removal that leaves no trace is indistinguishable from data loss.
+        boiler = "Shared boilerplate footer text repeated across the document."
+        chunks = [self._chunk(boiler, i, i * 100) for i in range(3)]
+        result = deduplicate(chunks)
+        keeper = result.kept[0]
+        assert keeper.metadata["duplicates_absorbed"] == 2
+        assert keeper.metadata["duplicate_spans"] == [(100, 160), (200, 260)]
+
+    def test_similarity_does_not_chain_transitively(self):
+        """A~B and B~C must not collapse A, B and C together.
+
+        Chaining is how a dedup pass quietly eats a document: each step looks
+        like a small merge, and the composition chews through content that is
+        not similar at all. Only comparisons against a surviving representative
+        may remove anything.
+        """
+        base = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
+        drifted = "beta gamma delta epsilon zeta eta theta iota kappa lambda"
+        far = "lambda mu nu xi omicron pi rho sigma tau upsilon phi chi"
+        chunks = [
+            self._chunk(base, 0, 0),
+            self._chunk(drifted, 1, 100),
+            self._chunk(far, 2, 200),
+        ]
+        result = deduplicate(chunks, threshold=0.3)
+        kept = {c.text for c in result.kept}
+        assert far in kept, "a dissimilar chunk was chained away"
+
+    def test_the_result_is_deterministic(self):
+        """Same input, same decision -- across processes.
+
+        Python salts `hash()` for str per process, so a dedup built on it would
+        make the chunk count -- and therefore the bill -- differ between two runs
+        on identical input.
+        """
+        texts = ["repeated boilerplate line here"] * 3 + [
+            "unique line %d" % i for i in range(5)
+        ]
+        chunks = [self._chunk(t, i, i * 100) for i, t in enumerate(texts)]
+        first = deduplicate(list(chunks))
+        second = deduplicate([self._chunk(t, i, i * 100) for i, t in enumerate(texts)])
+        assert [c.chunk_id for c in first.kept] == [c.chunk_id for c in second.kept]
+
+    def test_stable_hash_survives_a_different_hash_seed(self):
+        """The determinism guard, tested the only way it can be.
+
+        `PYTHONHASHSEED` salts `hash()` per PROCESS, so an in-process assertion
+        cannot see the bug at all -- the value is stable within one run and
+        differs between runs. This spawns two interpreters with different seeds
+        and requires the same answer, and confirms the built-in really does
+        differ under them (otherwise the test would pass on a platform where
+        there is nothing to defend against).
+        """
+        import os
+        import subprocess
+        import sys
+
+        program = (
+            "from proximadb_sdk.chunking_strategies.dedup import _stable_hash;"
+            "print(_stable_hash('boilerplate'), hash('boilerplate'))"
+        )
+        outputs = []
+        for seed in ("0", "1"):
+            environment = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": "src"}
+            completed = subprocess.run(
+                [sys.executable, "-c", program],
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=True,
+            )
+            outputs.append(completed.stdout.split())
+
+        assert outputs[0][0] == outputs[1][0], "_stable_hash changed with the seed"
+        assert outputs[0][1] != outputs[1][1], (
+            "built-in hash() did not vary, so this platform cannot demonstrate "
+            "the hazard and the guard is untested"
+        )
+
+    @pytest.mark.parametrize(
+        "strategy", [ChunkingStrategy.PARAGRAPH, ChunkingStrategy.SEMANTIC]
+    )
+    def test_recall_ratchet_no_answer_is_lost(self, strategy):
+        """Dedup must never reduce the number of retrievable answers.
+
+        Stated as a DELTA, not an absolute. A strategy's own containment
+        limitations are not dedup's fault, and an absolute floor would blame it
+        for them -- which is what the first version of this measurement did.
+        """
+        config = ChunkingConfig(
+            strategy=strategy,
+            embedding_provider=_deterministic_provider,
+            **EVAL_BUDGET,
+        )
+        built = ChunkingStrategyFactory.create_strategy(strategy, config)
+        for case in STANDARD_CASES:
+            text = by_name(case.corpus).text
+            chunks = list(built.chunk(text, "doc"))
+            before = score_case(case, chunks).contained
+            kept = deduplicate(list(chunks)).kept
+            after = any(case.needle in c.text for c in kept)
+            assert (
+                after >= before
+            ), f"{strategy.value}/{case.name}: dedup lost the answer"
+
+    def test_reduction_is_real_on_the_corpus(self):
+        # The cost claim, measured rather than asserted. Most of the saving is
+        # EXACT duplicates: loosening the threshold from 1.0 to 0.4 adds only a
+        # few points while taking on all the risk of dropping distinct content,
+        # which is why the default stays conservative.
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.PARAGRAPH,
+            embedding_provider=_deterministic_provider,
+            **EVAL_BUDGET,
+        )
+        built = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.PARAGRAPH, config
+        )
+        total = kept = 0
+        for entry in standard_corpus():
+            chunks = list(built.chunk(entry.text, "doc"))
+            total += len(chunks)
+            kept += len(deduplicate(list(chunks)).kept)
+        assert total > 0
+        reduction = 1 - kept / total
+        assert reduction > 0.15, f"expected a real saving, got {reduction:.1%}"
 
 
 class TestGoldenOutput:

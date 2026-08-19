@@ -84,6 +84,7 @@ from .contracts import (
     TokenBudget,
     TokenCounter,
 )
+from .dedup import DedupResult, deduplicate, jaccard, shingles
 
 # Document and binary parsers (OCR, reverse engineering)
 from .document_parsers import (  # Enums; Data structures; Tool detection; Parsers; Factory functions
@@ -177,6 +178,11 @@ __all__ = [
     # Text chunking strategies
     "SlidingWindowStrategy",
     "SentenceStrategy",
+    # Deduplication (TD-CHUNK-3 item 2)
+    "deduplicate",
+    "DedupResult",
+    "shingles",
+    "jaccard",
     # Boundary sources (ADR-091 D2)
     "Boundary",
     "BoundaryKind",
