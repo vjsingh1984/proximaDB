@@ -355,6 +355,16 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
         if candidate_peak is not None and baseline_peak
         else None
     )
+    candidate_load = candidate.get("load")
+    baseline_load = baseline.get("load")
+    qps_ratio = None
+    if isinstance(candidate_load, dict) and isinstance(baseline_load, dict):
+        baseline_qps = baseline_load.get("qps")
+        candidate_qps = candidate_load.get("qps")
+        if isinstance(candidate_qps, (int, float)) and isinstance(
+            baseline_qps, (int, float)
+        ):
+            qps_ratio = candidate_qps / baseline_qps if baseline_qps else None
     # The server issues application-counted byte-range reads. One additional
     # full-object GET may be control-plane/catalog work and is still billed,
     # but it is not evidence that the SDK split one ranged read. Compare the
@@ -414,6 +424,10 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
         ),
         "one_wire_range_get_per_application_get": one_wire_range_per_application_get,
     }
+    if qps_ratio is not None:
+        checks["qps_not_materially_regressed"] = qps_ratio >= getattr(
+            args, "min_qps_ratio", 0.95
+        )
     return {
         "baseline_cap_mib": baseline["range_cap_mib"],
         "recall_delta": recall_delta,
@@ -422,6 +436,7 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
         "p50_ratio": p50_ratio,
         "p95_ratio": p95_ratio,
         "rss_ratio": rss_ratio,
+        "qps_ratio": qps_ratio,
         "wire_to_application_get_ratio": wire / app if app else None,
         "wire_range_to_application_get_ratio": wire_ranges / app if app else None,
         "result_identity_diagnostics": identity_diagnostics,
@@ -466,11 +481,14 @@ def checkpoint_identity(result: dict) -> dict:
                 "decision_thresholds",
             )
         }
-        | {"include_adaptive": experiment.get("include_adaptive", False)},
+        | {
+            "include_adaptive": experiment.get("include_adaptive", False),
+            "concurrency_values": experiment.get("concurrency_values", [1]),
+        },
     }
 
 
-def point_identity(point: dict) -> tuple[str, int | None, int]:
+def point_identity(point: dict) -> tuple[str, int | None, int, int]:
     policy = point.get("range_policy", "fixed")
     cap = point.get("range_cap_mib")
     if policy not in {"fixed", "adaptive"}:
@@ -479,25 +497,31 @@ def point_identity(point: dict) -> tuple[str, int | None, int]:
         cap = int(cap)
     elif cap is not None:
         raise RuntimeError("adaptive range point must not claim one fixed cap")
-    return policy, cap, int(point["top_k"])
+    return policy, cap, int(point["top_k"]), int(point.get("concurrency", 1))
 
 
-def expected_point_identities(experiment: dict) -> set[tuple[str, int | None, int]]:
+def expected_point_identities(
+    experiment: dict,
+) -> set[tuple[str, int | None, int, int]]:
+    concurrency_values = experiment.get("concurrency_values", [1])
     identities = {
-        ("fixed", cap, top_k)
+        ("fixed", cap, top_k, concurrency)
         for cap in experiment["range_caps_mib"]
         for top_k in experiment["top_k_values"]
+        for concurrency in concurrency_values
     }
     if experiment.get("include_adaptive", False):
         identities.update(
-            ("adaptive", None, top_k) for top_k in experiment["top_k_values"]
+            ("adaptive", None, top_k, concurrency)
+            for top_k in experiment["top_k_values"]
+            for concurrency in concurrency_values
         )
     return identities
 
 
 def validate_resume(
     existing: dict, expected: dict
-) -> set[tuple[str, int | None, int]]:
+) -> set[tuple[str, int | None, int, int]]:
     if existing.get("status") not in {"running", "incomplete"}:
         raise RuntimeError("range-cap checkpoint is terminal; refusing resume")
     if checkpoint_identity(existing) != checkpoint_identity(expected):
@@ -563,6 +587,14 @@ def main() -> int:
     parser.add_argument("--coalesce-gap-mib", type=int, default=1)
     parser.add_argument("--top-k-values", default="10,20")
     parser.add_argument("--queries", type=int, default=1_000)
+    parser.add_argument(
+        "--concurrency-values",
+        default="1",
+        help=(
+            "closed-loop query concurrency levels; every policy/concurrency "
+            "point executes exactly --queries requests"
+        ),
+    )
     parser.add_argument("--query-start", type=int, default=0)
     parser.add_argument("--port", type=int, default=5690)
     parser.add_argument("--max-segments", type=int, default=1)
@@ -573,6 +605,7 @@ def main() -> int:
     parser.add_argument("--max-byte-amplification", type=float, default=1.50)
     parser.add_argument("--max-latency-ratio", type=float, default=1.10)
     parser.add_argument("--max-rss-ratio", type=float, default=1.10)
+    parser.add_argument("--min-qps-ratio", type=float, default=0.95)
     parser.add_argument("--host-quiet-window-secs", type=float, default=0)
     parser.add_argument("--host-quiet-timeout-secs", type=float, default=3600)
     parser.add_argument("--max-contention-retries", type=int, default=0)
@@ -588,6 +621,9 @@ def main() -> int:
     _matrix_lock = NPROBE.acquire_matrix_lock(output)
     caps = cap_mib_values(args.range_caps_mib)
     top_k_values = NPROBE.comma_separated_ints(args.top_k_values, "--top-k-values")
+    concurrency_values = NPROBE.comma_separated_ints(
+        args.concurrency_values, "--concurrency-values"
+    )
     if 4 not in caps:
         raise RuntimeError("--range-caps-mib must include the 4 MiB baseline")
     if args.coalesce_gap_mib < 0 or args.nprobe <= 0:
@@ -699,6 +735,8 @@ def main() -> int:
             "range_caps_mib": caps,
             "include_adaptive": args.include_adaptive,
             "top_k_values": top_k_values,
+            "concurrency_values": concurrency_values,
+            "load_model": "closed_loop_bounded",
             "fresh_process_per_point": True,
             "target_recall": args.target_recall,
             "decision_thresholds": {
@@ -707,6 +745,7 @@ def main() -> int:
                 "max_byte_amplification": args.max_byte_amplification,
                 "max_latency_ratio": args.max_latency_ratio,
                 "max_rss_ratio": args.max_rss_ratio,
+                "min_qps_ratio": args.min_qps_ratio,
             },
             "points": [],
         },
@@ -728,134 +767,146 @@ def main() -> int:
     policies: list[tuple[str, int | None]] = [("fixed", cap) for cap in caps]
     if args.include_adaptive:
         policies.append(("adaptive", None))
-    for range_policy, cap_mib in policies:
-        for top_k in top_k_values:
-            identity = (range_policy, cap_mib, top_k)
-            if identity in completed:
-                continue
-            policy_label = (
-                f"range-{cap_mib}mib"
-                if range_policy == "fixed"
-                else "range-adaptive"
-            )
-            label = f"{policy_label}-top-{top_k}"
-            attempt = 0
-            while True:
-                server = ACCEPTANCE.OwnedServer(
-                    binary=binary,
-                    config=config,
-                    server=server_url,
-                    log_path=run_root / f"{label}-attempt-{attempt}.log",
-                    local_disk_path=None,
-                    nprobe=args.nprobe,
-                    azure_emulator=True,
-                    coalesce_gap_bytes=args.coalesce_gap_mib * MIB,
-                    coalesce_range_bytes=(cap_mib or 4) * MIB,
-                    adaptive_read_strategy=range_policy == "adaptive",
-                )
-                sampler = None
-                contention = HostContentionMonitor()
-                try:
-                    wait_for_host_quiet(
-                        args.host_quiet_window_secs,
-                        args.host_quiet_timeout_secs,
-                    )
-                    contention.start()
-                    server.start()
-                    if server.process is None:
-                        raise RuntimeError("owned server did not expose its process")
-                    offset = wire_log.snapshot()
-                    sampler = RssSampler(server.process.pid)
-                    sampler.start()
-                    point = ACCEPTANCE.run_query_sweep(
-                        server_url,
-                        args.collection_id,
-                        query_path,
-                        args.groundtruth_path.resolve(),
-                        args.query_start,
-                        args.queries,
-                        top_k,
-                        label,
-                        args.query_format,
-                        args.groundtruth_format,
-                        contention.raise_if_conflict,
-                    )
-                    point["process_rss"] = sampler.stop()
-                    sampler = None
-                    point["host_contention"] = contention.stop()
-                    contention.raise_if_conflict()
-                    point["wire_http"] = wire_log.sample(offset)
-                    validate_wire_observation(label, point)
-                except (Exception, KeyboardInterrupt) as error:
-                    reason = f"{label}: {type(error).__name__}: {error}"
-                    if is_host_contention_error(error) and (
-                        attempt < args.max_contention_retries
-                    ):
-                        result["rejected_attempts"].append(
-                            {"label": label, "attempt": attempt, "reason": reason}
-                        )
-                        write_checkpoint(output, result, "running", reason)
-                        attempt += 1
-                        continue
-                    write_checkpoint(output, result, "incomplete", reason)
-                    raise
-                finally:
-                    if sampler is not None:
-                        sampler.stop()
-                    contention.stop()
-                    server.stop()
-                break
-            point["range_policy"] = range_policy
-            point["range_cap_mib"] = cap_mib
-            point["coalesce_gap_mib"] = (
-                args.coalesce_gap_mib if range_policy == "fixed" else None
-            )
-            point["nprobe"] = args.nprobe
-            point["wire_gets_per_query"] = (
-                point["wire_http"]["get_requests"] / args.queries
-            )
-            point["wire_to_application_get_ratio"] = (
-                point["wire_http"]["get_requests"] / point["physical_gets"]
-                if point["physical_gets"]
-                else None
-            )
-            point["wire_range_to_application_get_ratio"] = (
-                point["wire_http"]["range_get_requests"] / point["physical_gets"]
-                if point["physical_gets"]
-                else None
-            )
-            if attribution_failure := ACCEPTANCE.ivf_byte_attribution_failure(
-                label, point
-            ):
-                result["measurement_failures"].append(attribution_failure)
-            result["experiment"]["points"].append(point)
-            completed.add(identity)
-            write_checkpoint(output, result, "running")
 
-    for top_k in top_k_values:
-        baseline = next(
-            point
-            for point in result["experiment"]["points"]
-            if point.get("range_policy", "fixed") == "fixed"
-            and point["range_cap_mib"] == 4
-            and point["top_k"] == top_k
+    def measure_point(
+        range_policy: str,
+        cap_mib: int | None,
+        top_k: int,
+        concurrency: int,
+    ) -> dict:
+        policy_label = (
+            f"range-{cap_mib}mib" if range_policy == "fixed" else "range-adaptive"
         )
-        for candidate in result["experiment"]["points"]:
-            if candidate["top_k"] == top_k and point_identity(candidate) != (
-                "fixed",
-                4,
-                top_k,
-            ):
-                result["decisions"].append(
-                    {
-                        "top_k": top_k,
-                        "candidate_range_policy": candidate.get(
-                            "range_policy", "fixed"
-                        ),
-                        "candidate_cap_mib": candidate["range_cap_mib"],
-                        **decision_for(candidate, baseline, args),
-                    }
+        label = f"{policy_label}-top-{top_k}-c{concurrency}"
+        attempt = 0
+        while True:
+            server = ACCEPTANCE.OwnedServer(
+                binary=binary,
+                config=config,
+                server=server_url,
+                log_path=run_root / f"{label}-attempt-{attempt}.log",
+                local_disk_path=None,
+                nprobe=args.nprobe,
+                azure_emulator=True,
+                coalesce_gap_bytes=args.coalesce_gap_mib * MIB,
+                coalesce_range_bytes=(cap_mib or 4) * MIB,
+                adaptive_read_strategy=range_policy == "adaptive",
+            )
+            sampler = None
+            contention = HostContentionMonitor()
+            try:
+                wait_for_host_quiet(
+                    args.host_quiet_window_secs,
+                    args.host_quiet_timeout_secs,
                 )
+                contention.start()
+                server.start()
+                if server.process is None:
+                    raise RuntimeError("owned server did not expose its process")
+                offset = wire_log.snapshot()
+                sampler = RssSampler(server.process.pid)
+                sampler.start()
+                point = ACCEPTANCE.run_query_sweep(
+                    server_url,
+                    args.collection_id,
+                    query_path,
+                    args.groundtruth_path.resolve(),
+                    args.query_start,
+                    args.queries,
+                    top_k,
+                    label,
+                    args.query_format,
+                    args.groundtruth_format,
+                    contention.raise_if_conflict,
+                    concurrency=concurrency,
+                )
+                point["process_rss"] = sampler.stop()
+                sampler = None
+                point["host_contention"] = contention.stop()
+                contention.raise_if_conflict()
+                point["wire_http"] = wire_log.sample(offset)
+                validate_wire_observation(label, point)
+            except (Exception, KeyboardInterrupt) as error:
+                reason = f"{label}: {type(error).__name__}: {error}"
+                if is_host_contention_error(error) and (
+                    attempt < args.max_contention_retries
+                ):
+                    result["rejected_attempts"].append(
+                        {"label": label, "attempt": attempt, "reason": reason}
+                    )
+                    write_checkpoint(output, result, "running", reason)
+                    attempt += 1
+                    continue
+                write_checkpoint(output, result, "incomplete", reason)
+                raise
+            finally:
+                if sampler is not None:
+                    sampler.stop()
+                contention.stop()
+                server.stop()
+            break
+        point["range_policy"] = range_policy
+        point["range_cap_mib"] = cap_mib
+        point["coalesce_gap_mib"] = (
+            args.coalesce_gap_mib if range_policy == "fixed" else None
+        )
+        point["nprobe"] = args.nprobe
+        point["concurrency"] = concurrency
+        point["wire_gets_per_query"] = point["wire_http"]["get_requests"] / args.queries
+        point["wire_to_application_get_ratio"] = (
+            point["wire_http"]["get_requests"] / point["physical_gets"]
+            if point["physical_gets"]
+            else None
+        )
+        point["wire_range_to_application_get_ratio"] = (
+            point["wire_http"]["range_get_requests"] / point["physical_gets"]
+            if point["physical_gets"]
+            else None
+        )
+        if attribution_failure := ACCEPTANCE.ivf_byte_attribution_failure(label, point):
+            result["measurement_failures"].append(attribution_failure)
+        return point
+
+    # Keep each fixed/adaptive pair adjacent in time at one concurrency so
+    # machine drift cannot be confused with the range-policy comparison.
+    for concurrency in concurrency_values:
+        for top_k in top_k_values:
+            for range_policy, cap_mib in policies:
+                identity = (range_policy, cap_mib, top_k, concurrency)
+                if identity in completed:
+                    continue
+                point = measure_point(range_policy, cap_mib, top_k, concurrency)
+                result["experiment"]["points"].append(point)
+                completed.add(identity)
+                write_checkpoint(output, result, "running")
+
+    for concurrency in concurrency_values:
+        for top_k in top_k_values:
+            baseline = next(
+                point
+                for point in result["experiment"]["points"]
+                if point.get("range_policy", "fixed") == "fixed"
+                and point["range_cap_mib"] == 4
+                and point["top_k"] == top_k
+                and point.get("concurrency", 1) == concurrency
+            )
+            for candidate in result["experiment"]["points"]:
+                if (
+                    candidate["top_k"] == top_k
+                    and candidate.get("concurrency", 1) == concurrency
+                    and point_identity(candidate) != ("fixed", 4, top_k, concurrency)
+                ):
+                    result["decisions"].append(
+                        {
+                            "top_k": top_k,
+                            "concurrency": concurrency,
+                            "candidate_range_policy": candidate.get(
+                                "range_policy", "fixed"
+                            ),
+                            "candidate_cap_mib": candidate["range_cap_mib"],
+                            **decision_for(candidate, baseline, args),
+                        }
+                    )
     status = "fail" if result["measurement_failures"] else "pass"
     write_checkpoint(output, result, status)
     print(f"range-cap result: {output}", flush=True)

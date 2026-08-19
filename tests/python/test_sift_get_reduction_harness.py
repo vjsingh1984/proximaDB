@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import struct
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -147,6 +149,78 @@ def test_query_sweep_checks_progress_guard_before_queries_and_after_measurement(
 
     assert result["recall_at_k"] == 1.0
     assert guard_calls == ["checked", "checked"]
+
+
+def test_query_sweep_runs_bounded_concurrency_and_preserves_query_order() -> None:
+    metrics = dict.fromkeys(HARNESS.METRICS, 0.0)
+    lock = threading.Lock()
+    first_pair = threading.Barrier(2, timeout=1)
+    request_count = 0
+
+    def request(_url, *, method, body, timeout):
+        nonlocal request_count
+        assert method == "POST"
+        assert timeout == 300
+        query_id = int(body["vector"][0])
+        with lock:
+            request_count += 1
+            ordinal = request_count
+        if ordinal <= 2:
+            first_pair.wait()
+        time.sleep(0.01)
+        return {"results": [{"id": f"v{query_id}"}]}
+
+    with (
+        patch.object(
+            HARNESS,
+            "read_vectors",
+            return_value=[[float(index)] for index in range(4)],
+        ),
+        patch.object(HARNESS, "read_truth_ids", return_value=[[i] for i in range(4)]),
+        patch.object(HARNESS, "scrape", side_effect=[metrics, metrics]),
+        patch.object(HARNESS, "request_json", side_effect=request),
+    ):
+        result = HARNESS.run_query_sweep(
+            "http://127.0.0.1:5678",
+            "1",
+            Path("queries.u8bin"),
+            Path("truth.ivecs"),
+            0,
+            4,
+            1,
+            "concurrent",
+            "u8bin",
+            "ivecs",
+            concurrency=2,
+        )
+
+    expected = [HARNESS.query_result_identity([f"v{i}"]) for i in range(4)]
+    assert result["recall_at_k"] == 1.0
+    assert result["result_identity"]["ordered_ids_sha256_by_query"] == [
+        item["ordered_ids_sha256"] for item in expected
+    ]
+    assert result["load"] == {
+        "model": "closed_loop_bounded",
+        "configured_concurrency": 2,
+        "peak_in_flight": 2,
+        "wall_seconds": pytest.approx(result["load"]["wall_seconds"]),
+        "qps": pytest.approx(4 / result["load"]["wall_seconds"]),
+    }
+
+
+def test_query_sweep_rejects_nonpositive_concurrency() -> None:
+    with pytest.raises(RuntimeError, match="concurrency must be positive"):
+        HARNESS.run_query_sweep(
+            "http://127.0.0.1:5678",
+            "1",
+            Path("queries.u8bin"),
+            Path("truth.ivecs"),
+            0,
+            1,
+            1,
+            "invalid",
+            concurrency=0,
+        )
 
 
 def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(

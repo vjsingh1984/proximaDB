@@ -169,6 +169,7 @@ def checkpoint_result() -> dict:
             "fixed_coalesce_gap_bytes": 1024 * 1024,
             "range_caps_mib": [4, 8],
             "top_k_values": [10, 20],
+            "concurrency_values": [1],
             "fresh_process_per_point": True,
             "target_recall": 0.98,
             "decision_thresholds": {},
@@ -186,12 +187,20 @@ def test_checkpoint_resume_ignores_materialized_mtime_and_rejects_cap_change():
     expected["experiment"]["points"] = []
     expected["settled_geometry"]["segments"][0]["mtime_ns"] = 2
 
-    assert SWEEP.validate_resume(existing, expected) == {("fixed", 4, 10)}
+    assert SWEEP.validate_resume(existing, expected) == {("fixed", 4, 10, 1)}
 
     changed = copy.deepcopy(expected)
     changed["experiment"]["range_caps_mib"] = [4, 16]
     with pytest.raises(RuntimeError, match="provenance/configuration"):
         SWEEP.validate_resume(existing, changed)
+
+
+def test_checkpoint_treats_pre_concurrency_artifact_as_serial() -> None:
+    existing = checkpoint_result()
+    existing["experiment"].pop("concurrency_values")
+    expected = checkpoint_result()
+
+    assert SWEEP.validate_resume(existing, expected) == set()
 
 
 def test_checkpoint_write_is_atomic_and_records_progress(tmp_path: Path):
@@ -219,17 +228,30 @@ def test_adaptive_checkpoint_identity_and_expected_point_count(tmp_path: Path):
             "range_policy": "adaptive",
             "range_cap_mib": None,
             "top_k": 10,
+            "concurrency": 1,
         }
     ]
 
     expected = copy.deepcopy(result)
     expected["experiment"]["points"] = []
-    assert SWEEP.validate_resume(result, expected) == {("adaptive", None, 10)}
+    assert SWEEP.validate_resume(result, expected) == {("adaptive", None, 10, 1)}
 
     output = tmp_path / "adaptive-range.json"
     SWEEP.write_checkpoint(output, result, "running")
     persisted = SWEEP.json.loads(output.read_text())
     assert persisted["checkpoint"]["expected_points"] == 6
+
+
+def test_concurrency_values_expand_points_without_changing_query_count() -> None:
+    experiment = checkpoint_result()["experiment"]
+    experiment["concurrency_values"] = [1, 4, 8]
+    experiment["include_adaptive"] = True
+
+    identities = SWEEP.expected_point_identities(experiment)
+
+    assert len(identities) == 18
+    assert ("fixed", 4, 10, 8) in identities
+    assert ("adaptive", None, 20, 4) in identities
 
 
 def test_wire_validation_rejects_dead_observer_when_application_read_storage():
@@ -394,3 +416,47 @@ def test_decision_allows_bounded_recall_regression_but_preserves_hard_ratchet():
     assert below_ratchet["checks"]["recall_noninferior"] is True
     assert below_ratchet["checks"]["target_recall_maintained"] is False
     assert below_ratchet["promotion_eligible"] is False
+
+
+def test_concurrent_decision_requires_nonregressed_qps() -> None:
+    args = SimpleNamespace(
+        max_recall_regression=0.0005,
+        target_recall=0.98,
+        min_wire_get_reduction=0.2,
+        max_byte_amplification=1.5,
+        max_latency_ratio=1.1,
+        max_rss_ratio=1.1,
+        min_qps_ratio=0.95,
+    )
+    baseline = {
+        "range_cap_mib": 4,
+        "recall_at_k": 0.99,
+        "physical_gets": 100.0,
+        "bytes_read": 100.0,
+        "latency_ms": {"p50": 10.0, "p95": 20.0},
+        "process_rss": {"peak_bytes": 1_000},
+        "wire_http": {"get_requests": 101, "range_get_requests": 100},
+        "load": {"qps": 100.0},
+    }
+    candidate = copy.deepcopy(baseline)
+    candidate.update(
+        {
+            "range_cap_mib": None,
+            "physical_gets": 70.0,
+            "bytes_read": 105.0,
+            "latency_ms": {"p50": 9.0, "p95": 18.0},
+            "process_rss": {"peak_bytes": 1_050},
+            "wire_http": {"get_requests": 71, "range_get_requests": 70},
+            "load": {"qps": 94.0},
+        }
+    )
+
+    regressed = SWEEP.decision_for(candidate, baseline, args)
+    assert regressed["qps_ratio"] == 0.94
+    assert regressed["checks"]["qps_not_materially_regressed"] is False
+    assert regressed["promotion_eligible"] is False
+
+    candidate["load"]["qps"] = 96.0
+    retained = SWEEP.decision_for(candidate, baseline, args)
+    assert retained["checks"]["qps_not_materially_regressed"] is True
+    assert retained["promotion_eligible"] is True
