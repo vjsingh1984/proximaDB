@@ -17,8 +17,10 @@ The default-OFF exact-plan estimator now passes its exact-current BIGANN 1M
 and 10M paired gates: wire GET/query fell 24.1% and 20.2% respectively with
 identical aggregate recall, lower latency, and bounded bytes/RSS. The 3.3M
 point reduced wire GET/query by 24.3% but exceeded the predeclared peak-RSS
-ratio by 0.21 percentage points. No default is promoted yet; a serialized 3.3M
-RSS repeat and cache-tier validation remain open.
+ratio by 0.21 percentage points, and a serialized repeat reproduced that
+shape-specific miss. Under bounded concurrency, however, both the 3.3M and
+10M beds pass every gate at the concurrency-4 operating knee. No default is
+promoted yet; paired DRAM/persistent-disk cache validation remains open.
 
 | Priority
 | **P1.** Operation count is a direct Hot-tier Blob cost and latency multiplier.
@@ -459,8 +461,11 @@ At 3.3M the estimator reduced wire GETs by 24.29%, p50 by 31.29%, and
 p95 by 24.25%, while increasing bytes by 6.73%. Its peak-RSS ratio was
 1.10209 against the predeclared maximum 1.10, so this point is correctly
 ineligible for promotion; the 0.2089-percentage-point excess is not rounded
-away. A serialized repeat is required to distinguish sampling variance from a
-stable shape-specific memory cost.
+away. A serialized repeat measured a 1.10229 ratio, confirming a stable
+shape-specific serial memory cost rather than sampling variance. The fixed and
+adaptive processes had identical survivor/invariants resident bytes in both
+runs, localizing the extra roughly 455 MiB to transient range buffers or the
+allocator rather than persistent cache occupancy.
 
 The 3.3M full pair reported one result-set mismatch at query 233 despite
 identical aggregate recall and recall-hit totals. A focused fresh-process
@@ -476,6 +481,9 @@ the correctness decision. Raw artifacts:
 * `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-3m3-q233-4697205c2/matrix.json`
   (SHA-256
   `8c7ada84f4c0d6fbbc74acc5bd0231484adecc608d49831c4b23f8a611f4fb4e`).
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-3m3-repeat-4697205c2/matrix.json`
+  (SHA-256
+  `a166d20b68284b017a397666af88b62fd2683a30b7666472049d55510719d0d6`).
 
 At 10M the estimator reduced wire GETs by 20.17%, p50 by 18.55%, and p95 by
 24.25%, while increasing bytes by only 1.64% and peak RSS by 7.39%. All
@@ -489,10 +497,74 @@ Raw artifact:
 
 These points establish that the exact estimator bends the operation curve
 without changing IVF geometry or recall, but do not justify an unconditional
-default. The 3.3M RSS repeat and paired DRAM/persistent-disk cache evidence
-remain the promotion gates. As elsewhere in this TD, Azurite supports wire
+default. Paired DRAM/persistent-disk cache evidence remains the promotion gate.
+As elsewhere in this TD, Azurite supports wire
 operation shape/count and relative localhost latency, not Azure service
 latency.
+
+=== S3f: bounded-concurrency operating knee
+
+Serial latency and RSS are not a sufficient serving decision. A closed-loop,
+bounded-concurrency extension therefore replayed the same 1,000 distinct query
+indices at configured concurrency 1, 4, 8, and 16. Every fixed/adaptive point
+used a fresh server and cache state, and achieved its configured peak
+concurrency. Adjacent policy pairs limited host drift; a 10M fixed/concurrency-8
+attempt that observed an unrelated `rustc` process was rejected and rerun.
+
+[cols="1,1,1,1,1,1,1,1", options="header"]
+|===
+| Shape / concurrency / policy | Recall@10 | QPS | Wire GET/q | MiB/q
+| p50 / p95 ms | Peak RSS GiB | Paired gate
+
+| 3.3M / 1 / fixed | 0.9817 | 1.98 | 33.360 | 85.21 | 481 / 821 | 4.352 | baseline
+| 3.3M / 1 / adaptive | 0.9817 | 4.05 | 25.258 | 90.95 | 229 / 398 | 4.787 | RSS miss
+| 3.3M / 4 / fixed | 0.9817 | 4.53 | 33.162 | 85.38 | 900 / 1,142 | 4.461 | baseline
+| 3.3M / 4 / adaptive | 0.9817 | 7.40 | 24.742 | 90.72 | 547 / 719 | 4.816 | pass
+| 3.3M / 8 / fixed | 0.9817 | 4.59 | 32.951 | 85.36 | 1,777 / 2,220 | 4.525 | baseline
+| 3.3M / 8 / adaptive | 0.9817 | 7.63 | 24.360 | 90.34 | 1,058 / 1,381 | 4.920 | pass
+| 3.3M / 16 / fixed | 0.9817 | 4.44 | 33.924 | 88.79 | 3,661 / 4,722 | 4.684 | baseline
+| 3.3M / 16 / adaptive | 0.9817 | 7.56 | 24.637 | 91.46 | 2,152 / 2,729 | 5.047 | pass
+
+| 10M / 1 / fixed | 0.9801 | 2.37 | 52.903 | 124.79 | 434 / 519 | 4.378 | baseline
+| 10M / 1 / adaptive | 0.9803 | 2.91 | 42.232 | 126.84 | 338 / 476 | 4.702 | pass
+| 10M / 4 / fixed | 0.9801 | 3.05 | 51.880 | 124.14 | 1,348 / 1,621 | 4.506 | baseline
+| 10M / 4 / adaptive | 0.9804 | 4.36 | 41.170 | 126.11 | 919 / 1,226 | 4.793 | pass
+| 10M / 8 / fixed | 0.9802 | 3.02 | 51.411 | 124.13 | 2,691 / 3,364 | 4.610 | baseline
+| 10M / 8 / adaptive | 0.9803 | 4.33 | 40.735 | 125.81 | 1,876 / 2,391 | 4.855 | pass
+| 10M / 16 / fixed | 0.9801 | 2.44 | 51.209 | 124.69 | 6,240 / 10,677 | 4.758 | baseline
+| 10M / 16 / adaptive | 0.9804 | 2.42 | 39.967 | 125.69 | 6,564 / 9,280 | 5.060 | pass by declared gates; overloaded
+|===
+
+Concurrency 4 is the common operating knee. At 3.3M, adaptive ranges reduce
+wire GETs by 25.39%, improve QPS by 63.50%, reduce p50/p95 by 39.21%/37.00%,
+and use 7.96% more peak RSS with 6.25% more bytes. At 10M, they reduce wire
+GETs by 20.64%, improve QPS by 42.64%, reduce p50/p95 by 31.88%/24.41%, and
+use 6.37% more peak RSS with only 1.59% more bytes. Concurrency 8 provides no
+material QPS gain over 4 and roughly doubles latency; concurrency 16 is
+overload, most visibly at 10M where both policies fall below their
+concurrency-4 throughput.
+
+At the illustrative `$0.005/10K` Hot-Blob transaction rate, the
+concurrency-4 operation component falls from `$16.58` to `$12.37` per million
+queries at 3.3M and from `$25.94` to `$20.59` at 10M. This excludes bytes,
+compute, cache, and tier-dependent transfer charges and therefore is not a
+complete rate-card margin.
+
+Raw external artifacts:
+
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-concurrency-3m3-128bdd70d/matrix.json`
+  (SHA-256
+  `7dc0b3a11b1205b7981444630b388aee7172bee1adb6f226da530abd4d7144a6`).
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-concurrency-10m-128bdd70d/matrix.json`
+  (SHA-256
+  `76c4c61975358d40ba88551397bb7aa7cbee83b19d4a928c870d17d24b47795f`).
+
+The 10M adaptive points gained one to three aggregate recall hits and the 3.3M
+points had identical aggregate recall. A few result identities varied across
+fresh processes, consistent with the already isolated tie/nondeterminism
+diagnostic rather than range-policy data loss; no paired point lost more than
+the predeclared 0.0005 recall margin. These localhost results establish the
+relative concurrency knee and wire operation shape, not Azure service QPS.
 
 === S4: remove the redundant PAX-as-SST1 magic probe
 
