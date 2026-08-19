@@ -4365,6 +4365,40 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
             include_private=self.config.include_private,
             extract_relations=self.config.extract_relations,
         )
+        # Relations are NOT surfaced by the shared package's `chunk()` entry
+        # point -- they come from `parse()`. Passing `extract_relations` to the
+        # chunk config therefore accepted the flag and did nothing, and
+        # `code_knowledge.py` builds its graph EDGES from
+        # `chunk.metadata["relations"]`: the delegation left the code knowledge
+        # graph with nodes and no edges, silently.
+        #
+        # Restoring them costs a second parse (measured +66% on this path). That
+        # is the right trade here: the co-design mandate is explicit that CPU is
+        # not this system's dominant cost term, and a knowledge graph with no
+        # edges is not a cheaper graph, it is a broken one. Gated on the flag, so
+        # a caller that does not want relations does not pay for them.
+        relations_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        if self.config.extract_relations:
+            try:
+                parsed = _victor_codegraph.parse(
+                    text, language=language, file_path=source_id
+                )
+            except Exception:  # noqa: BLE001 - relations are enrichment, not the chunk
+                parsed = None
+            if parsed is not None:
+                for relation in getattr(parsed, "relations", ()):
+                    relations_by_symbol.setdefault(relation.from_symbol_id, []).append(
+                        {
+                            "to": relation.to_symbol_id,
+                            "type": getattr(
+                                relation.relation_type,
+                                "name",
+                                str(relation.relation_type),
+                            ),
+                            "confidence": getattr(relation, "confidence", 1.0),
+                        }
+                    )
+
         out: list[TextChunk] = []
         for c in _victor_codegraph.chunk(
             text, language=language, file_path=source_id, config=cfg
@@ -4373,6 +4407,9 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
             meta.setdefault("chunking_strategy", "code")
             meta.setdefault("chunk_type", "code")
             meta["source"] = "victor_codegraph"
+            symbol_relations = relations_by_symbol.get(meta.get("symbol_id", ""))
+            if symbol_relations:
+                meta["relations"] = symbol_relations
             out.append(
                 TextChunk(
                     text=c.text,
@@ -4382,6 +4419,15 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
                     metadata=meta,
                 )
             )
+        if not out and text.strip():
+            # The shared package knows nothing about this file type -- it covers
+            # far fewer extensions than this module advertises. Returning its
+            # empty list SILENTLY DISCARDS the whole document, which is the
+            # defect class ADR-091 exists to remove, and it is a regression the
+            # delegation introduced: the legacy path fell through to text
+            # chunking here. Fall back, and LABEL it, so a caller can tell a
+            # real symbol chunk from a text window (TD-CG2 R8).
+            return self._fallback_chunk(text, source_id, metadata)
         return out
 
     def _detect_language(self, file_path: str) -> str | None:
@@ -4395,9 +4441,16 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
         """Fallback to simple text chunking when parser not available"""
         from .semantic import SemanticStrategy
 
+        # Forward every size field. Naming a couple by hand is the same
+        # dropped-config bug this package already fixed in three other places:
+        # a field left out is indistinguishable from one left unset, so the
+        # fallback would quietly run on defaults rather than the caller's
+        # configuration.
         fallback_config = ChunkingConfig(
             chunk_size=self.config.chunk_size,
             chunk_overlap=self.config.chunk_overlap,
+            min_chunk_size=self.config.min_chunk_size,
+            max_chunk_size=self.config.max_chunk_size,
             preserve_code_blocks=True,
         )
         fallback = SemanticStrategy(fallback_config)

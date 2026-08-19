@@ -992,20 +992,36 @@ def test_strategy_init_specific_languages(no_ts_pack):
 
 
 def test_strategy_chunk_python_ast(ts_pack):
+    """The delegated code path's metadata contract.
+
+    Updated for the delegation rather than skipped. The original asserted that
+    `chunks[0]` carries `symbol_id`, which assumed every chunk is a symbol
+    chunk. The shared package additionally emits WINDOW chunks for code that
+    belongs to no symbol -- imports, module constants, module-level statements
+    -- which the in-SDK parser left covered by nothing at all. So chunk[0] is
+    now the imports window, and that is an improvement (TD-CG2 R4: the union of
+    chunk spans must cover every non-whitespace byte), not a regression.
+
+    What must still hold is that symbol chunks exist, carry symbol identity, and
+    carry their relations -- `code_knowledge.py` builds graph EDGES from
+    `metadata["relations"]`, so losing them yields a knowledge graph of nodes
+    with no edges.
+    """
     strat = create_code_chunker(languages=["python"])
     chunks = strat.chunk(PY_SOURCE, "pkg/mod.py", {"extra": "v"})
     assert chunks
-    c0 = chunks[0]
-    assert c0.metadata["chunking_strategy"] == "code"
-    assert c0.metadata["chunk_type"] == "code"
-    assert c0.metadata["language"] == "python"
-    assert c0.metadata["extra"] == "v"
-    assert "symbol_id" in c0.metadata
-    assert "fully_qualified_name" in c0.metadata
-    # some chunk should carry relations (top_level calls itself)
+    for chunk in chunks:
+        assert chunk.metadata["chunking_strategy"] == "code"
+        assert chunk.metadata["extra"] == "v"
+        assert "#" in chunk.chunk_id
+
+    symbol_chunks = [c for c in chunks if c.metadata.get("symbol_id")]
+    assert symbol_chunks, "no symbol chunks: the delegation extracted nothing"
+    assert all("fully_qualified_name" in c.metadata for c in symbol_chunks)
+    assert all(c.metadata["language"] == "python" for c in symbol_chunks)
+
+    # top_level calls itself, so at least one symbol must carry a relation.
     assert any("relations" in c.metadata for c in chunks)
-    # chunk_id format
-    assert "#" in c0.chunk_id
 
 
 def test_strategy_detect_language():
