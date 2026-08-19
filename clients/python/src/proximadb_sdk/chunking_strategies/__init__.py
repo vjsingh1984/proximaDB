@@ -23,6 +23,14 @@ from .base import (
     TextChunk,
     config_kwargs,
 )
+from .boundaries import (
+    Boundary,
+    BoundaryKind,
+    BoundarySource,
+    CompositeBoundarySource,
+    StrategyBoundarySource,
+    merge_boundaries,
+)
 
 # Code-aware chunking
 from .code import (  # Parser classes - Primary languages; Parser classes - Additional languages; Registry functions; Constants
@@ -161,6 +169,13 @@ __all__ = [
     # Text chunking strategies
     "SlidingWindowStrategy",
     "SentenceStrategy",
+    # Boundary sources (ADR-091 D2)
+    "Boundary",
+    "BoundaryKind",
+    "BoundarySource",
+    "StrategyBoundarySource",
+    "CompositeBoundarySource",
+    "merge_boundaries",
     # Sizing (declarative budget)
     "SizingPolicy",
     "ResolvedSizing",

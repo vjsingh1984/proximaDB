@@ -62,6 +62,14 @@ from proximadb_sdk.chunking_strategies.base import (
     OFFSET_CONTRACT_LEGACY,
     TextChunk,
 )
+from proximadb_sdk.chunking_strategies.boundaries import (
+    Boundary,
+    BoundaryKind,
+    BoundarySource,
+    CompositeBoundarySource,
+    StrategyBoundarySource,
+    merge_boundaries,
+)
 from proximadb_sdk.chunking_strategies.conformance import (
     BASIS_BYTE,
     BASIS_CHAR,
@@ -87,8 +95,13 @@ from proximadb_sdk.chunking_strategies.conformance import (
 from proximadb_sdk.chunking_strategies.conformance.invariants import (
     _wall_clock_budget,
 )
+from proximadb_sdk.chunking_strategies.contracts import (
+    ResolvedInputContract,
+    TokenBudget,
+)
 from proximadb_sdk.chunking_strategies.sizing import Absolute, Fraction
 from proximadb_sdk.chunking_strategies.spans import TextSlicer
+from proximadb_sdk.chunking_strategies.token_budget import TokenBudgetStrategy
 
 BUDGET = 2048
 DEFAULTS = {
@@ -1179,6 +1192,282 @@ class TestCapPostCondition:
         for chunk in chunks:
             assert len(re.findall(r"\S+", chunk.text)) <= 8
         assert check_totality(text, chunks) is None
+
+
+class TestBoundarySources:
+    """Proposing cuts, separately from choosing them (ADR-091 D2).
+
+    The claim under test is not that the abstraction exists, but that it buys
+    something: several kinds of structure informing ONE segmentation, which is
+    impossible while a strategy both proposes and segments.
+    """
+
+    @staticmethod
+    def _strategy(kind):
+        config = ChunkingConfig(strategy=kind, **DEFAULTS)
+        return ChunkingStrategyFactory.create_strategy(kind, config)
+
+    def test_a_strategy_becomes_a_source_without_being_rewritten(self):
+        # The compatibility facade: every strategy already answers
+        # preferred_boundaries, so it is already a source.
+        strategy = self._strategy(ChunkingStrategy.SENTENCE)
+        source = StrategyBoundarySource(strategy, kind=BoundaryKind.SENTENCE)
+        assert isinstance(source, BoundarySource)
+
+        text = by_name("prose").text
+        found = source.boundaries(text)
+        assert found
+        assert [b.end for b in found] == sorted(b.end for b in found)
+        assert all(0 < b.end <= len(text) for b in found)
+        assert all(b.kind is BoundaryKind.SENTENCE for b in found)
+
+    def test_a_composite_is_the_union_of_its_sources(self):
+        text = by_name("header_dense_markdown").text
+        sentences = StrategyBoundarySource(
+            self._strategy(ChunkingStrategy.SENTENCE), kind=BoundaryKind.SENTENCE
+        )
+        paragraphs = StrategyBoundarySource(
+            self._strategy(ChunkingStrategy.PARAGRAPH), kind=BoundaryKind.PARAGRAPH
+        )
+        composite = CompositeBoundarySource(sentences, paragraphs)
+
+        merged = {b.end for b in composite.boundaries(text)}
+        individually = {b.end for b in sentences.boundaries(text)} | {
+            b.end for b in paragraphs.boundaries(text)
+        }
+        assert merged == individually
+
+    def test_nested_structures_compose_to_nothing(self):
+        """Composition pays only when sources propose positions others cannot.
+
+        Measured, not assumed: on the header-dense corpus entry, paragraph ends
+        are a STRICT SUBSET of sentence ends (80 of 81), because a paragraph
+        break is also a sentence break. So composing SENTENCE with PARAGRAPH
+        adds exactly nothing.
+
+        Recorded because the natural first demo of a composite is "sentences
+        plus paragraphs", and it would look like the abstraction works while
+        proving nothing. The sources worth composing are the ones whose
+        positions are structurally independent -- a heading's START is not a
+        sentence END, which is why the heading case below does move the cuts.
+        """
+        text = by_name("header_dense_markdown").text
+        sentence_ends = {
+            b.end
+            for b in StrategyBoundarySource(
+                self._strategy(ChunkingStrategy.SENTENCE)
+            ).boundaries(text)
+        }
+        paragraph_ends = {
+            b.end
+            for b in StrategyBoundarySource(
+                self._strategy(ChunkingStrategy.PARAGRAPH)
+            ).boundaries(text)
+        }
+        assert paragraph_ends < sentence_ends
+
+    def test_merging_keeps_the_strongest_meaning_at_a_shared_offset(self):
+        # Sources agreeing is the COMMON case (a heading is also a paragraph
+        # break). Keeping the strongest preserves the informative meaning;
+        # keeping whichever came first would make segmentation depend on
+        # argument order.
+        weak = [Boundary(end=10, kind=BoundaryKind.SENTENCE, meaning={"who": "weak"})]
+        strong = [
+            Boundary(
+                end=10,
+                kind=BoundaryKind.HEADING,
+                meaning={"who": "strong", "path": "A"},
+            )
+        ]
+        assert merge_boundaries([weak, strong])[0].meaning["who"] == "strong"
+        # Order must not matter.
+        assert merge_boundaries([strong, weak])[0].meaning["who"] == "strong"
+
+    def test_merge_is_ordered_and_deduplicated(self):
+        merged = merge_boundaries(
+            [
+                [Boundary(end=30), Boundary(end=10)],
+                [Boundary(end=10), Boundary(end=20)],
+            ]
+        )
+        assert [b.end for b in merged] == [10, 20, 30]
+
+    def test_a_source_need_not_be_total_or_respect_a_budget(self):
+        # The whole point of the split: a source author knows about markdown,
+        # not about token budgets. Proposing two cuts in a long document is a
+        # legal source, and the segmenter still owns coverage.
+        class SparseSource:
+            name = "sparse"
+
+            def boundaries(self, text, *, source_id="doc", base_metadata=None):
+                return (
+                    Boundary(end=len(text) // 2, kind=BoundaryKind.SECTION),
+                    Boundary(end=len(text), kind=BoundaryKind.DOCUMENT),
+                )
+
+        assert isinstance(SparseSource(), BoundarySource)
+
+
+class TestSegmenterConsumesSources:
+    """`TokenBudgetStrategy` is the segmenter; it must take candidates from any source."""
+
+    @staticmethod
+    def _contract():
+        counter = WordTokenCounter()
+        return ResolvedInputContract(
+            model_id="m",
+            model_revision="r",
+            counter=counter,
+            effective_context_limit=512,
+        )
+
+    def _segmenter(self, source=None, target=12):
+        base = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.SENTENCE,
+            ChunkingConfig(
+                strategy=ChunkingStrategy.SENTENCE,
+                chunk_size=10_000,
+                min_chunk_size=1,
+                max_chunk_size=100_000,
+            ),
+        )
+        return TokenBudgetStrategy(
+            base,
+            TokenBudget(target_tokens=target, overlap_tokens=0, min_content_tokens=1),
+            self._contract(),
+            boundary_source=source,
+        )
+
+    def test_the_single_strategy_path_is_the_degenerate_general_one(self):
+        # Passing no source must be identical to adapting the wrapped strategy,
+        # or the compat path is a second implementation waiting to diverge.
+        text = by_name("prose").text
+        implicit = self._segmenter().chunk(text, "doc")
+        explicit = self._segmenter(
+            StrategyBoundarySource(
+                ChunkingStrategyFactory.create_strategy(
+                    ChunkingStrategy.SENTENCE,
+                    ChunkingConfig(
+                        strategy=ChunkingStrategy.SENTENCE,
+                        chunk_size=10_000,
+                        min_chunk_size=1,
+                        max_chunk_size=100_000,
+                    ),
+                )
+            )
+        ).chunk(text, "doc")
+        assert [(c.text, c.start_pos, c.end_pos) for c in implicit] == [
+            (c.text, c.start_pos, c.end_pos) for c in explicit
+        ]
+
+    def test_a_composite_source_changes_where_cuts_land(self):
+        """The load-bearing claim: composing sources is not decorative.
+
+        Uses `prose`, where the two structures genuinely diverge (522 sentence
+        ends against 61 paragraph ends). On `header_dense_markdown` they nearly
+        coincide, so the same test there would pass vacuously -- see
+        `test_nested_structures_compose_to_nothing`.
+        """
+        text = by_name("prose").text
+
+        def strat(kind):
+            return ChunkingStrategyFactory.create_strategy(
+                kind,
+                ChunkingConfig(
+                    strategy=kind,
+                    chunk_size=10_000,
+                    min_chunk_size=1,
+                    max_chunk_size=100_000,
+                ),
+            )
+
+        only_paragraph = StrategyBoundarySource(
+            strat(ChunkingStrategy.PARAGRAPH), kind=BoundaryKind.PARAGRAPH
+        )
+        composite = CompositeBoundarySource(
+            only_paragraph,
+            StrategyBoundarySource(
+                strat(ChunkingStrategy.SENTENCE), kind=BoundaryKind.SENTENCE
+            ),
+        )
+        one = self._segmenter(only_paragraph).chunk(text, "doc")
+        many = self._segmenter(composite).chunk(text, "doc")
+
+        assert [c.end_pos for c in one] != [c.end_pos for c in many]
+        # Coverage must survive the extra freedom -- more candidates must never
+        # mean less document.
+        for chunks in (one, many):
+            assert check_totality(text, chunks) is None
+            assert check_exactness(text, chunks) is None
+
+    def test_the_segmenter_resolves_candidates_at_token_granularity(self):
+        """Candidates closer together than one token are indistinguishable.
+
+        Measured while building this: on `header_dense_markdown` a heading START
+        at offset 49 and a paragraph END at 47 map to the SAME token index, so
+        adding the heading source moved no cut at all. That is correct -- the
+        segmenter cuts on the token grid, and there is no cut position between
+        two adjacent tokens -- but it is deeply counter-intuitive when a source
+        is visibly contributing offsets and nothing changes.
+
+        Recorded so the next person debugging "my boundary source does nothing"
+        checks token distance before suspecting the plumbing. Note the MEANING
+        still propagates, because it attaches to the token index either way.
+        """
+        text = by_name("header_dense_markdown").text
+
+        class NearMiss:
+            name = "near_miss"
+
+            def boundaries(self, text, *, source_id="doc", base_metadata=None):
+                # Two characters off a real paragraph end: a different offset,
+                # the same token.
+                return (Boundary(end=49, kind=BoundaryKind.HEADING),)
+
+        paragraph = StrategyBoundarySource(
+            ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategy.PARAGRAPH,
+                ChunkingConfig(
+                    strategy=ChunkingStrategy.PARAGRAPH,
+                    chunk_size=10_000,
+                    min_chunk_size=1,
+                    max_chunk_size=100_000,
+                ),
+            ),
+            kind=BoundaryKind.PARAGRAPH,
+        )
+        alone = self._segmenter(paragraph).chunk(text, "doc")
+        with_near_miss = self._segmenter(
+            CompositeBoundarySource(paragraph, NearMiss())
+        ).chunk(text, "doc")
+        assert [c.end_pos for c in alone] == [c.end_pos for c in with_near_miss]
+
+    def test_boundary_meaning_reaches_the_emitted_chunk(self):
+        # A cut position alone is lossy; `meaning` is the part retrieval wants,
+        # and every implementation in the ADR-091 census threw it away.
+        text = by_name("header_dense_markdown").text
+
+        class Headingish:
+            name = "headingish"
+
+            def boundaries(self, text, *, source_id="doc", base_metadata=None):
+                return tuple(
+                    Boundary(
+                        end=m.start(),
+                        kind=BoundaryKind.HEADING,
+                        meaning={"path": m.group(0).strip()},
+                    )
+                    for m in re.finditer(r"^#{1,6} .+$", text, re.MULTILINE)
+                    if m.start() > 0
+                ) + (Boundary(end=len(text), kind=BoundaryKind.DOCUMENT),)
+
+        chunks = self._segmenter(Headingish(), target=40).chunk(text, "doc")
+        carried = [c.metadata.get("boundary_meaning") for c in chunks]
+        assert any(m and "path" in m for m in carried), carried
+        assert any(
+            c.metadata.get("boundary_kind") == BoundaryKind.HEADING.value
+            for c in chunks
+        )
 
 
 class TestGoldenOutput:

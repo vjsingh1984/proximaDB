@@ -7,6 +7,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
 from .base import OFFSET_CONTRACT_EXACT, ChunkingStrategyInterface, TextChunk
+from .boundaries import StrategyBoundarySource
 from .contracts import (
     CompositeInputContract,
     InputRole,
@@ -42,12 +43,23 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
         input_contract: ResolvedInputContract | CompositeInputContract,
         *,
         role: InputRole = InputRole.DOCUMENT,
+        boundary_source: Any | None = None,
     ):
         super().__init__(boundary_strategy.config)
         self.boundary_strategy = boundary_strategy
+        # ADR-091 D2: this class IS the segmenter, and a segmenter consumes
+        # boundary *candidates* -- it should not care which component produced
+        # them or how many did. `boundary_source` is that seam; when it is None
+        # the wrapped strategy is adapted into a source, so the existing
+        # single-strategy path is the degenerate case of the general one rather
+        # than a parallel code path.
+        self.boundary_source = boundary_source or StrategyBoundarySource(
+            boundary_strategy
+        )
         self.budget = budget
         self.input_contract = as_composite_contract(input_contract)
         self.role = role
+        self._boundary_meaning: dict[int, tuple[int, str, dict]] = {}
         if budget.target_tokens > self.input_contract.minimum_context_limit:
             raise ValueError(
                 f"target_tokens={budget.target_tokens} exceeds the smallest model "
@@ -62,14 +74,26 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
         token_ends: Sequence[int],
     ) -> list[int]:
         preferred: set[int] = set()
-        for end_pos in self.boundary_strategy.preferred_boundaries(
-            text, source_id, base_metadata
+        self._boundary_meaning = {}
+        for boundary in self.boundary_source.boundaries(
+            text, source_id=source_id, base_metadata=base_metadata
         ):
+            end_pos = boundary.end
             if not 0 < end_pos <= len(text):
                 continue
             token_end = bisect.bisect_right(token_ends, end_pos)
             if token_end > 0:
                 preferred.add(token_end)
+                # Keep the strongest meaning that maps to this token boundary:
+                # several character offsets can collapse onto one token index,
+                # and the informative one should survive the collapse.
+                previous = self._boundary_meaning.get(token_end)
+                if previous is None or boundary.strength > previous[0]:
+                    self._boundary_meaning[token_end] = (
+                        boundary.strength,
+                        boundary.kind.value,
+                        dict(boundary.meaning),
+                    )
         preferred.add(len(token_ends))
         return sorted(preferred)
 
@@ -220,6 +244,12 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
                 "primary_content_tokens": content_tokens,
                 "token_budget": self.budget.to_manifest(),
                 "input_role": self.role.value,
+                "boundary_kind": (
+                    self._boundary_meaning.get(end_token, (0, None, {}))[1]
+                ),
+                "boundary_meaning": (
+                    self._boundary_meaning.get(end_token, (0, None, {}))[2]
+                ),
                 "has_overlap": actual_overlap_tokens > 0,
                 "overlap_tokens": actual_overlap_tokens,
                 "new_content_tokens": new_content_tokens,
