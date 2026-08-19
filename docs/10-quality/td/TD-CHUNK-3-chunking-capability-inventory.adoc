@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **In Progress — updated 2026-08-18.** Inventory corrected (the SDP stages are placeholders, not implementations — see the correction below). **Items 1 (heading paths, wired) and 2 (near-duplicate dedup) are done** on `feat/chunk-boundary-port`: `structure.py` (shared detection + `HeadingOutline.path_at`), `HeadingBoundarySource`, `annotate_heading_paths`, the `TextDocumentProcessor` call site so it actually ships, and `dedup.py`. Items 3-5 remain. Gated on TD-CHUNK-2's port existing; each capability lands as a `BoundarySource` or a post-segmentation pass, never as a new "strategy".
+| Status | **In Progress — updated 2026-08-18.** Inventory corrected (the SDP stages are placeholders, not implementations — see the correction below). **Items 1 (heading paths, wired) and 2 (near-duplicate dedup) are done** on `feat/chunk-boundary-port`: `structure.py` (shared detection + `HeadingOutline.path_at`), `HeadingBoundarySource`, `annotate_heading_paths`, the `TextDocumentProcessor` call site so it actually ships, and `dedup.py` — reachable from ingest via `ProcessorConfig.deduplicate_chunks`, **default OFF** per the ship-default-OFF-until-baked rule, since it removes chunks rather than adding metadata. Items 3-5 remain. Gated on TD-CHUNK-2's port existing; each capability lands as a `BoundarySource` or a post-segmentation pass, never as a new "strategy".
 | Dim | D4 (compute-per-modality) — secondary D1 (KSU: dedup), D3 (recall via boundary quality)
 | Pillar | PERF — secondary COST
 | Blocks | Nothing. This is the value-delivery TD; the three before it are the enabling work.
@@ -124,6 +124,11 @@ Built against the eval rubric rather than before it — the first capability to 
   looked like a bug: paragraph chunking merges each repeated footer with the *following* heading, so
   the chunks differ by `## Section N` and score 0.857. Boilerplate plus a little neighbouring context
   is the normal shape, and that context drags similarity down.
+* **Reachability is default-OFF here and default-ON for headings, and the asymmetry is the reason both
+  are defensible.** Annotation only *adds* metadata, so enabling it changes nothing a tenant has
+  stored; dedup *removes* chunks, so enabling it changes exactly that. Flipping the default remains a
+  product decision about stored data. Ordering is load-bearing: dedup runs *after* annotation so a
+  surviving representative keeps its heading path, or the cost saving buys a retrieval regression.
 * **The recall ratchet must be a DELTA.** Measuring "answers contained after dedup" read 6/8 and
   looked like content loss; it was `paragraph`'s own containment limit, with dedup removing nothing
   for those documents. An absolute floor blames a new component for a defect it did not cause.
