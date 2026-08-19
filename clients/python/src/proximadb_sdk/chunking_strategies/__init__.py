@@ -28,7 +28,9 @@ from .boundaries import (
     BoundaryKind,
     BoundarySource,
     CompositeBoundarySource,
+    HeadingBoundarySource,
     StrategyBoundarySource,
+    annotate_heading_paths,
     merge_boundaries,
 )
 
@@ -147,6 +149,12 @@ from .sizing import (
     SizingPolicy,
 )
 from .sliding_window import SlidingWindowStrategy
+from .structure import (
+    Heading,
+    HeadingOutline,
+    find_headings,
+    protected_spans,
+)
 from .token_budget import TokenBudgetStrategy
 from .tokenizers import HuggingFaceTokenCounter
 
@@ -175,7 +183,14 @@ __all__ = [
     "BoundarySource",
     "StrategyBoundarySource",
     "CompositeBoundarySource",
+    "HeadingBoundarySource",
+    "annotate_heading_paths",
     "merge_boundaries",
+    # Document structure (shared detection)
+    "Heading",
+    "HeadingOutline",
+    "find_headings",
+    "protected_spans",
     # Sizing (declarative budget)
     "SizingPolicy",
     "ResolvedSizing",

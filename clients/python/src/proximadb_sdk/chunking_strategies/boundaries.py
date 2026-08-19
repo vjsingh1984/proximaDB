@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
+from .structure import HeadingOutline, protected_spans
+
 
 class BoundaryKind(str, Enum):
     """What kind of structure proposed a cut.
@@ -221,3 +223,109 @@ class CompositeBoundarySource:
     def __repr__(self) -> str:
         names = ", ".join(s.name for s in self.sources)
         return f"CompositeBoundarySource({names})"
+
+
+class HeadingBoundarySource:
+    """Proposes a cut where each section begins, carrying its hierarchy path.
+
+    The first source that is not an adapter over an existing strategy, and the
+    thing the SDK lacked entirely (ADR-091 D2: ``HEADING`` "which the SDK lacks
+    entirely" becomes a source carrying the hierarchy path).
+
+    Where the value actually is
+    ---------------------------
+    Not in the cut positions. Measured while landing the port: a heading START
+    and the preceding paragraph END routinely fall within one token of each
+    other, and the segmenter resolves candidates on the token grid, so a heading
+    source frequently moves no cut at all. Its worth is the ``meaning`` it
+    carries — which is why :func:`annotate_heading_paths` exists and is the
+    recommended way to use this.
+
+    Each boundary describes the section it **closes**, because the segmenter
+    attaches a boundary's meaning to the chunk that ENDS there.
+    """
+
+    __slots__ = ("name", "_barriers_enabled")
+
+    def __init__(self, *, name: str = "heading", respect_code_blocks: bool = True):
+        self.name = name
+        self._barriers_enabled = respect_code_blocks
+
+    def boundaries(
+        self,
+        text: str,
+        *,
+        source_id: str = "doc",
+        base_metadata: dict[str, Any] | None = None,
+    ) -> Sequence[Boundary]:
+        outline = HeadingOutline.build(
+            text,
+            barriers=protected_spans(text) if self._barriers_enabled else [],
+        )
+        proposals: list[Boundary] = []
+        for heading in outline.headings:
+            if heading.start <= 0:
+                continue  # a cut at 0 divides nothing
+            # The section CLOSING here is the one containing the character
+            # before this heading.
+            proposals.append(
+                Boundary(
+                    end=heading.start,
+                    kind=BoundaryKind.HEADING,
+                    meaning=outline.meaning_at(heading.start - 1),
+                )
+            )
+        if text:
+            proposals.append(
+                Boundary(
+                    end=len(text),
+                    kind=BoundaryKind.DOCUMENT,
+                    meaning=outline.meaning_at(max(0, len(text) - 1)),
+                )
+            )
+        return tuple(proposals)
+
+    def __repr__(self) -> str:
+        return f"HeadingBoundarySource({self.name!r})"
+
+
+def annotate_heading_paths(
+    text: str,
+    chunks: Sequence[Any],
+    *,
+    respect_code_blocks: bool = True,
+    key: str = "heading_path",
+) -> Sequence[Any]:
+    """Label every chunk with the heading path it lives under. In place.
+
+    A post-segmentation pass rather than a boundary source, and deliberately so.
+    A source can only describe chunks that happen to END on one of its
+    proposals; a chunk that ended mid-section because the budget ran out gets
+    nothing. Most chunks are that kind. Labelling by LOOKUP instead of by
+    coincidence is what makes this work for every chunk, under every strategy,
+    including ones with no structural awareness at all.
+
+    Co-design: this is metadata on an existing chunk. No extra vectors, so no
+    KSU or KEU delta -- strictly free retrieval quality, which is why TD-CHUNK-3
+    sequences it first.
+
+    Chunks before the first heading are left unlabelled rather than given an
+    invented "Introduction", which would put a title in the index that the
+    document never contained.
+    """
+    outline = HeadingOutline.build(
+        text, barriers=protected_spans(text) if respect_code_blocks else []
+    )
+    if not outline.headings:
+        return chunks
+    for chunk in chunks:
+        start = int(getattr(chunk, "start_pos", 0))
+        meaning = outline.meaning_at(start)
+        if not meaning:
+            continue
+        metadata = getattr(chunk, "metadata", None)
+        if isinstance(metadata, dict):
+            metadata[key] = meaning["heading_path"]
+            metadata["heading_title"] = meaning["heading_title"]
+            metadata["heading_level"] = meaning["heading_level"]
+    return chunks

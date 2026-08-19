@@ -67,7 +67,9 @@ from proximadb_sdk.chunking_strategies.boundaries import (
     BoundaryKind,
     BoundarySource,
     CompositeBoundarySource,
+    HeadingBoundarySource,
     StrategyBoundarySource,
+    annotate_heading_paths,
     merge_boundaries,
 )
 from proximadb_sdk.chunking_strategies.conformance import (
@@ -101,6 +103,11 @@ from proximadb_sdk.chunking_strategies.contracts import (
 )
 from proximadb_sdk.chunking_strategies.sizing import Absolute, Fraction
 from proximadb_sdk.chunking_strategies.spans import TextSlicer
+from proximadb_sdk.chunking_strategies.structure import (
+    MARKDOWN_HEADING,
+    HeadingOutline,
+    protected_spans,
+)
 from proximadb_sdk.chunking_strategies.token_budget import TokenBudgetStrategy
 
 BUDGET = 2048
@@ -1468,6 +1475,181 @@ class TestSegmenterConsumesSources:
             c.metadata.get("boundary_kind") == BoundaryKind.HEADING.value
             for c in chunks
         )
+
+
+NESTED_DOC = """# Install
+
+intro text here
+
+## Docker
+
+docker text here
+
+### Compose
+
+compose text here
+
+## Native
+
+native text here
+
+# Usage
+
+usage text here
+"""
+
+
+class TestHeadingOutline:
+    """The hierarchy, which is the part every implementation threw away.
+
+    Heading *detection* was never the gap -- `semantic.py` already found
+    markdown and HTML headings and already excluded a `#` inside a fenced code
+    block. What it discarded was the ancestor chain: it recorded "level 2,
+    titled Docker" but not "Installation > Docker". Level and title alone do not
+    identify a section (half a dozen documents have a "Configuration" heading);
+    the path does.
+    """
+
+    def test_ancestors_nest_and_pop(self):
+        outline = HeadingOutline.build(NESTED_DOC)
+        assert [h.title for h in outline.headings] == [
+            "Install",
+            "Docker",
+            "Compose",
+            "Native",
+            "Usage",
+        ]
+        assert outline.paths == [
+            ("Install",),
+            ("Install", "Docker"),
+            ("Install", "Docker", "Compose"),
+            # Back up a level: a sibling must not inherit its predecessor's
+            # children, and must not become its own ancestor.
+            ("Install", "Native"),
+            ("Usage",),
+        ]
+
+    def test_a_level_jump_does_not_invent_ancestors(self):
+        # `#` then `###` skips level 2. The honest path names what is actually
+        # there rather than fabricating an intermediate section.
+        outline = HeadingOutline.build("# A\n\ntext\n\n### C\n\ntext\n")
+        assert outline.paths == [("A",), ("A", "C")]
+
+    def test_path_at_resolves_any_offset(self):
+        outline = HeadingOutline.build(NESTED_DOC)
+        offset = NESTED_DOC.index("compose text here")
+        assert outline.path_at(offset) == ("Install", "Docker", "Compose")
+
+    def test_content_before_the_first_heading_has_no_path(self):
+        # Inventing "Introduction" would put a title in the index that the
+        # document never contained.
+        text = "preamble\n\n# First\n\nbody\n"
+        outline = HeadingOutline.build(text)
+        assert outline.path_at(0) == ()
+        assert outline.meaning_at(0) == {}
+
+    def test_a_hash_inside_a_fenced_block_is_not_a_heading(self):
+        text = "# Real\n\n```bash\n# not a heading\necho hi\n```\n\nbody\n"
+        outline = HeadingOutline.build(text)
+        assert [h.title for h in outline.headings] == ["Real"]
+
+    def test_html_headings_with_attributes_are_found(self):
+        # A bare `<h2>` pattern never matched real markup, so HTML documents
+        # were never split by heading at all.
+        outline = HeadingOutline.build('<h1>Top</h1>\n<h2 class="x">Sub</h2>\n')
+        assert [h.title for h in outline.headings] == ["Top", "Sub"]
+        assert outline.paths[-1] == ("Top", "Sub")
+
+    def test_documents_without_headings_are_not_an_error(self):
+        outline = HeadingOutline.build("just prose, no structure at all")
+        assert outline.headings == []
+        assert outline.path_at(5) == ()
+
+
+class TestHeadingSourceAndAnnotation:
+    def test_the_source_carries_the_path_of_the_section_it_closes(self):
+        # The segmenter attaches a boundary's meaning to the chunk that ENDS
+        # there, so a heading boundary must describe the section being closed,
+        # not the one beginning.
+        found = HeadingBoundarySource().boundaries(NESTED_DOC)
+        assert isinstance(HeadingBoundarySource(), BoundarySource)
+        by_end = {b.end: b for b in found}
+        docker_start = NESTED_DOC.index("## Docker")
+        assert by_end[docker_start].meaning["heading_path"] == ["Install"]
+        compose_start = NESTED_DOC.index("### Compose")
+        assert by_end[compose_start].meaning["heading_path"] == ["Install", "Docker"]
+
+    def test_annotation_labels_every_chunk_not_just_lucky_ones(self):
+        """The reason this is a post-pass and not only a source.
+
+        A source can describe only chunks that happen to END on one of its
+        proposals. A chunk that ended mid-section because the budget ran out
+        gets nothing -- and most chunks are that kind. Labelling by LOOKUP works
+        for every chunk under every strategy, including ones with no structural
+        awareness at all.
+        """
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=40,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=80,
+        )
+        strategy = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        chunks = strategy.chunk(NESTED_DOC, "doc")
+        assert len(chunks) > 3
+
+        before = [c.metadata.get("heading_path") for c in chunks]
+        assert not any(before), "precondition: fixed_size knows nothing of headings"
+
+        annotate_heading_paths(NESTED_DOC, chunks)
+        labelled = [c.metadata.get("heading_path") for c in chunks]
+        assert all(labelled), "every chunk after the first heading must be labelled"
+        assert ["Install", "Docker", "Compose"] in labelled
+
+    def test_annotation_is_a_no_op_without_headings(self):
+        config = ChunkingConfig(strategy=ChunkingStrategy.FIXED_SIZE, **DEFAULTS)
+        strategy = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        text = "prose with no headings at all. " * 40
+        chunks = strategy.chunk(text, "doc")
+        annotate_heading_paths(text, chunks)
+        assert not any(c.metadata.get("heading_path") for c in chunks)
+
+    def test_annotation_adds_no_vectors(self):
+        # Co-design: metadata on an existing chunk. No extra chunks means no KEU
+        # and no KSU delta -- which is why TD-CHUNK-3 sequences this first as
+        # "strictly free quality".
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=40,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=80,
+        )
+        strategy = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        chunks = strategy.chunk(NESTED_DOC, "doc")
+        before = [(c.text, c.start_pos, c.end_pos) for c in chunks]
+        annotate_heading_paths(NESTED_DOC, chunks)
+        after = [(c.text, c.start_pos, c.end_pos) for c in chunks]
+        assert before == after, "annotation must not move or add a single chunk"
+
+    def test_semantic_and_the_shared_module_agree(self):
+        # One implementation, asserted rather than assumed: semantic.py now
+        # shares structure.py instead of owning a private copy, and a private
+        # copy drifting back is exactly what this program exists to prevent.
+        text = by_name("header_dense_markdown").text
+        strategy = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.SEMANTIC,
+            ChunkingConfig(strategy=ChunkingStrategy.SEMANTIC, **DEFAULTS),
+        )
+        assert strategy._protected_spans(text) == protected_spans(text)
+        assert strategy.markdown_header_pattern is MARKDOWN_HEADING
 
 
 class TestGoldenOutput:
