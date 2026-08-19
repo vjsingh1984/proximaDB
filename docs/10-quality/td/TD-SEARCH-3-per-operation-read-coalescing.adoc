@@ -14,9 +14,11 @@
 implemented. A fixed-bed Azurite wire experiment proves that 24--32 MiB ranges
 reduce physical GETs by 64--65% and that the Azure SDK does not split them.
 The default-OFF exact-plan estimator now passes its exact-current BIGANN 1M
-paired gate: wire GET/query fell 24.1% with identical results/recall, lower
-latency, +18.0% bytes, and +5.2% peak RSS. No default is promoted yet; 3.3M,
-10M, and cache-tier validation remain open.
+and 10M paired gates: wire GET/query fell 24.1% and 20.2% respectively with
+identical aggregate recall, lower latency, and bounded bytes/RSS. The 3.3M
+point reduced wire GET/query by 24.3% but exceeded the predeclared peak-RSS
+ratio by 0.21 percentage points. No default is promoted yet; a serialized 3.3M
+RSS repeat and cache-tier validation remain open.
 
 | Priority
 | **P1.** Operation count is a direct Hot-tier Blob cost and latency multiplier.
@@ -435,6 +437,62 @@ Raw external artifact:
 `3e0f4484dc71c9e3e259ec01edaf3a459faa318c7ce8ba20cb65b5de137af718`).
 Azurite proves operation shape/count and relative localhost latency; it is not
 Azure service-latency evidence.
+
+=== S3e: exact-current 3.3M and 10M checkpoints
+
+The same immutable release-server binary and paired harness then measured two
+larger, one-segment BIGANN beds. The 3.3M bed used `d=128`, `k_c=100`,
+`nprobe=16`; the 10M bed used `d=128`, `k_c=305`, `nprobe=22`. Both ran 1,000
+top-10 queries per policy with fresh processes and exact-scope ground truth.
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| Shape / policy | Recall@10 | Wire GET/q | MiB/q | p50 / p95 ms | Peak RSS GiB | Gate
+
+| 3.3M fixed 4 MiB | 0.9817 | 33.360 | 85.21 | 296.39 / 372.96 | 4.342 | baseline
+| 3.3M exact adaptive | 0.9817 | 25.258 | 90.95 | 203.66 / 282.51 | 4.785 | RSS miss
+| 10M fixed 4 MiB | 0.9802 | 52.903 | 124.79 | 509.23 / 784.17 | 4.378 | baseline
+| 10M exact adaptive | 0.9802 | 42.232 | 126.84 | 414.79 / 593.99 | 4.702 | pass
+|===
+
+At 3.3M the estimator reduced wire GETs by 24.29%, p50 by 31.29%, and
+p95 by 24.25%, while increasing bytes by 6.73%. Its peak-RSS ratio was
+1.10209 against the predeclared maximum 1.10, so this point is correctly
+ineligible for promotion; the 0.2089-percentage-point excess is not rounded
+away. A serialized repeat is required to distinguish sampling variance from a
+stable shape-specific memory cost.
+
+The 3.3M full pair reported one result-set mismatch at query 233 despite
+identical aggregate recall and recall-hit totals. A focused fresh-process
+replay made fixed and adaptive produce the same ordered and set hashes for that
+query (and the replayed fixed result matched the earlier adaptive result).
+Therefore exact identity is retained as a diagnostic rather than
+mis-attributed to the read-range policy; the predeclared bounded recall gate is
+the correctness decision. Raw artifacts:
+
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-3m3-4697205c2/matrix.json`
+  (SHA-256
+  `71eb37c8f786842cc36cad62f372842ef825b32790bacee1d0ecc2213eaf1d7f`).
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-3m3-q233-4697205c2/matrix.json`
+  (SHA-256
+  `8c7ada84f4c0d6fbbc74acc5bd0231484adecc608d49831c4b23f8a611f4fb4e`).
+
+At 10M the estimator reduced wire GETs by 20.17%, p50 by 18.55%, and p95 by
+24.25%, while increasing bytes by only 1.64% and peak RSS by 7.39%. All
+predeclared gates passed and all 1,000 ordered results, result sets, and recall
+hit counts matched. The largest observed adaptive wire range was 24 MiB and
+Azurite again reconciled exactly one HTTP range request per application range.
+Raw artifact:
+`/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-10m-4697205c2/matrix.json`
+(SHA-256
+`3066919cc24561d84bbda137c376cc9c75009eeae6c1472ab7d639e5ebaddd9d`).
+
+These points establish that the exact estimator bends the operation curve
+without changing IVF geometry or recall, but do not justify an unconditional
+default. The 3.3M RSS repeat and paired DRAM/persistent-disk cache evidence
+remain the promotion gates. As elsewhere in this TD, Azurite supports wire
+operation shape/count and relative localhost latency, not Azure service
+latency.
 
 === S4: remove the redundant PAX-as-SST1 magic probe
 
