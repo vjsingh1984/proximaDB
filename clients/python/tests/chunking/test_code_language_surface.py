@@ -368,3 +368,26 @@ def test_r5_offsets_honour_their_declared_basis():
             f"declared basis {basis!r} does not reproduce the chunk: "
             f"{sliced[:60]!r} != {chunk.text[:60]!r}"
         )
+
+
+def test_extension_aliases_only_target_supported_languages():
+    """The alias overlay must not become a new overclaim.
+
+    Mapping `.pyx` onto the working Python parser adds reach. Mapping `.hs`
+    onto a Haskell parser that does not exist is exactly the "20+ languages"
+    claim this slice removed. The difference is whether a real parser sits
+    behind the language, so that is what is asserted -- the overlay cannot grow
+    back into a table of languages nothing can parse.
+    """
+    from proximadb_sdk.chunking_strategies.code import (
+        _EXTENSION_ALIASES,
+        _victor_extension_map,
+    )
+
+    supported = set(_victor_extension_map().values())
+    if not supported:  # the extra is not installed; nothing to police
+        pytest.skip("victor-codegraph not installed")
+    unbacked = {
+        ext: lang for ext, lang in _EXTENSION_ALIASES.items() if lang not in supported
+    }
+    assert not unbacked, f"aliases pointing at unparseable languages: {unbacked}"
