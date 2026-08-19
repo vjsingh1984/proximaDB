@@ -753,6 +753,18 @@ class AzureCliPaxGeometry:
         payload = json.loads(completed.stdout)
         if not isinstance(payload, list):
             raise RuntimeError("Azure CLI blob inventory was not a JSON list")
+        # Azure's server-side prefix match is lexical, not path-segment aware:
+        # requesting ``run-3m3`` also returns ``run-3m3-ncomp128``. Enforce the
+        # canonical object-prefix boundary locally so geometry, empty-prefix
+        # checks, and evidence snapshots cannot mix sibling benchmark beds.
+        if self.prefix:
+            descendant_prefix = f"{self.prefix}/"
+            payload = [
+                item
+                for item in payload
+                if str(item.get("name", "")) == self.prefix
+                or str(item.get("name", "")).startswith(descendant_prefix)
+            ]
         return payload
 
     def require_empty_prefix(self) -> None:

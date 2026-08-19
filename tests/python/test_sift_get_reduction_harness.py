@@ -295,6 +295,14 @@ def test_azure_inventory_scopes_prefix_and_records_stable_identity(
             "name": "run-1/collections/7/manifest.json",
             "properties": {"contentLength": 50, "etag": "etag-2"},
         },
+        {
+            "name": "run-1-sibling/collections/7/segment.pax",
+            "properties": {
+                "contentLength": 9999,
+                "etag": "sibling-etag",
+                "lastModified": "2026-07-30T00:00:00Z",
+            },
+        },
     ]
     completed = SimpleNamespace(stdout=json.dumps(payload))
     geometry = HARNESS.AzureCliPaxGeometry("adls://benchmarks/run-1", tmp_path)
