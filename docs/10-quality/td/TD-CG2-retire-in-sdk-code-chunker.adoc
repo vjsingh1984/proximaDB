@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Open — filed 2026-08-17. The id was allocated by ADR-029 (2026-06-26) and never filed, which is the mechanical reason the migration stalled for seven weeks.** ADR-029 D2 decided this deletion; the delegation, the `[codegraph]` extra and a runtime `DeprecationWarning` all landed (#375, `d1c825768`) and their 4 tests pass — but nothing was deleted. `clients/python/src/proximadb_sdk/chunking_strategies/code.py` still ships 4,427 lines, 21 exported parser classes, 23 registered languages, and **57 failing tests that no CI job gates on**.
+| Status | **In Progress — updated 2026-08-19.** **S0 done:** `tests/chunking/` is GREEN (693 passed / 0 failed, from 56 failed); the per-language parser coverage is skipped behind one reviewable list in `conftest.py` that S4 deletes wholesale. **S2 done:** R6, R7 and R8 fixed. **S3 done:** the advertised surface is now a measured constant (`SYMBOL_EXTRACTING_LANGUAGES`, 16 languages) with its counterpart (`COVERED_WITHOUT_SYMBOLS`, 8) and a partition assertion, so the overclaim cannot recur silently. **S1 partial:** R1, R6, R7, R8 landed with tests; R2–R5 not yet written. **S4/S5 not started.** Original filing follows. — filed 2026-08-17. The id was allocated by ADR-029 (2026-06-26) and never filed, which is the mechanical reason the migration stalled for seven weeks.** ADR-029 D2 decided this deletion; the delegation, the `[codegraph]` extra and a runtime `DeprecationWarning` all landed (#375, `d1c825768`) and their 4 tests pass — but nothing was deleted. `clients/python/src/proximadb_sdk/chunking_strategies/code.py` still ships 4,427 lines, 21 exported parser classes, 23 registered languages, and **57 failing tests that no CI job gates on**.
 | Dim | D4 (compute-per-modality) — secondary D1 (object storage: chunk count sets stored vector count)
 | Pillar | OE — secondary COST
 | Blocks | ADR-029 moving to Accepted; ADR-091 (document-chunker consolidation) reusing the offset contract fixed here
@@ -118,6 +118,31 @@ R1 is deliberately the harshest: it converts "which languages do we support?" fr
 into a CI fact, and it is the assertion the whole ecosystem was missing — victor's own tests never
 mention ruby, kotlin, csharp, php, swift, scala, lua or tsx, and ProximaDB's tests that do cover them
 have been red the whole window. **Two suites, neither able to see the defect the other introduced.**
+
+== Measured on 2026-08-19, executing S0–S3
+
+The delegated path is materially better than the 2026-08-17 measurement of the LEGACY path suggested,
+and three defects that measurement could not see were sitting inside it.
+
+* **16 of 24 languages genuinely extract symbols** through delegation, not "1 of 23". The audit's
+  "10/23 stubs" was the in-SDK parser figure and does not describe the shipping path.
+* **R7 was costing half the symbols in every `.tsx` file.** This module maps `.tsx` to `typescript`
+  and passed that down, overriding the shared package's own `.tsx -> tsx` detection: 2 symbols where
+  detection yields 4. The fix is deleting one argument, exactly as this TD predicted.
+* **Two defects were hidden by the red suite**, which is the argument for S0's sequencing. The
+  delegation returned the shared package's *empty list* for unrecognised file types, silently
+  discarding whole documents — a regression the delegation introduced, since the legacy path fell
+  through to text chunking. And relations are not surfaced by the package's `chunk()` entry point at
+  all, so `extract_relations` was accepted and ignored while `code_knowledge.py` builds graph EDGES
+  from `metadata["relations"]`: the code knowledge graph had nodes and no edges.
+* **`include_tests` (R6) was a third instance of the same class** — accepted and ignored. Fixing it
+  then exposed a conflict with the new fallback, which had to be gated on *recognition* rather than
+  emptiness: a package that recognises a file and returns nothing has made a decision, and overriding
+  a decision is not the same as rescuing a document.
+
+The pattern across all four: **a config field read by nobody is indistinguishable from one left
+unset.** That is the same finding TD-CHUNK-5 records for the wire policy, and the same one that
+forced deriving config forwarding from dataclass fields in the document path.
 
 == Slices
 
