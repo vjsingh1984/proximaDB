@@ -73,25 +73,48 @@ impl HeaderTrustPolicy {
     /// constructors, so tests and embedded uses stay hermetic).
     pub const ENV_KEY: &'static str = "PROXIMADB_TENANT_HEADER_TRUST";
 
+    /// The tier-claim gate's env override key (see [`effective_tier`]).
+    pub const TIER_ENV_KEY: &'static str = "PROXIMADB_TIER_HEADER_TRUST";
+
     /// Resolve the deployment-effective policy: env override > `configured`
     /// (config.toml `[security.tenant] header_trust`) > `preset` (deployment-
     /// mode default). Returns the policy plus an optional warning to log —
     /// an unparseable env value TIGHTENS to `AuthenticatedOnly` (fail-closed)
     /// instead of silently running whatever the fallback was.
     pub fn effective(preset: Self, configured: Option<Self>) -> (Self, Option<String>) {
-        let fallback = configured.unwrap_or(preset);
-        match std::env::var(Self::ENV_KEY) {
-            Ok(raw) => match raw.parse::<Self>() {
-                Ok(policy) => (policy, None),
-                Err(e) => (
-                    Self::AuthenticatedOnly,
-                    Some(format!(
-                        "invalid {}: {e}; tightening to authenticated-only",
-                        Self::ENV_KEY
-                    )),
-                ),
-            },
-            Err(_) => (fallback, None),
+        Self::resolve_from_env(
+            std::env::var(Self::ENV_KEY).ok(),
+            configured.unwrap_or(preset),
+        )
+    }
+
+    /// Same resolution for the **tier-claim** gate
+    /// (`PROXIMADB_TIER_HEADER_TRUST` / `[security.tenant] tier_header_trust`):
+    /// same precedence ladder, same fail-closed tightening. The gates are
+    /// separately configurable because a deployment may trust its gateway to
+    /// stamp tenant ids while not (yet) trusting tier claims, or vice versa.
+    pub fn effective_tier(preset: Self, configured: Option<Self>) -> (Self, Option<String>) {
+        Self::resolve_from_env(
+            std::env::var(Self::TIER_ENV_KEY).ok(),
+            configured.unwrap_or(preset),
+        )
+    }
+
+    /// Pure env-value resolution shared by both gates: parse `raw` over
+    /// `fallback`, tightening to `AuthenticatedOnly` (with a warning) on an
+    /// unparseable value. Pure so the ladder is testable without mutating the
+    /// process environment (edition 2024 requires `unsafe` for that).
+    fn resolve_from_env(raw: Option<String>, fallback: Self) -> (Self, Option<String>) {
+        match raw.map(|r| r.parse::<Self>()) {
+            Some(Ok(policy)) => (policy, None),
+            Some(Err(e)) => (
+                Self::AuthenticatedOnly,
+                Some(format!(
+                    "invalid {}: {e}; tightening to authenticated-only",
+                    Self::ENV_KEY
+                )),
+            ),
+            None => (fallback, None),
         }
     }
 }
@@ -207,6 +230,112 @@ pub fn resolve_tenant_assertion(
                 authenticated: binding.tenant_id.clone(),
             })
         }
+    }
+}
+
+// ===========================================================================
+// Tier claims — the entitlement-hint gate (ADR-0053 W8)
+// ===========================================================================
+
+/// Why a client-supplied tier claim was dropped. Unlike
+/// [`TenantAssertionError`], a dropped claim does NOT fail the request: the
+/// claim is an entitlement *hint* (cache share / cost multiplier), so the
+/// surface drops the claim, proceeds unstamped, and lets every reader fall
+/// back to the default tier. Never map this onto a 4xx — a mis-scoped strict
+/// policy must not take traffic down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TierClaimRejection {
+    /// A claim was presented with no authenticated tenant binding and the
+    /// policy is not `Open` — the self-stamping escalation vector.
+    Unauthenticated { tenant: String, claim: String },
+    /// `GatewayOnly` and the binding is an ordinary (non-gateway) principal:
+    /// a plain tenant credential must not self-assign an entitlement.
+    NonGatewayPrincipal { tenant: String, claim: String },
+}
+
+impl std::fmt::Display for TierClaimRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unauthenticated { tenant, claim } => write!(
+                f,
+                "tier claim '{claim}' for tenant '{tenant}' dropped: no authenticated \
+                 binding and the tier-header trust policy is not open"
+            ),
+            Self::NonGatewayPrincipal { tenant, claim } => write!(
+                f,
+                "tier claim '{claim}' for tenant '{tenant}' dropped: policy is \
+                 gateway-only and the principal is not a gateway"
+            ),
+        }
+    }
+}
+
+/// Gate a client-supplied **tier claim** (REST `X-Tenant-Tier`, gRPC
+/// `x-tenant-tier` metadata, pgwire `proximadb_tier` startup parameter)
+/// under the deployment tier policy ([`HeaderTrustPolicy::effective_tier`]).
+/// Pure — no I/O, no logging; the surface drops (never rejects the request)
+/// and owns the audit trail.
+///
+/// The claim names an *entitlement*, not a tenant: a control plane stamps it
+/// so the engine's cache `LimitsResolver` / cost multiplier resolve the
+/// tenant's real tier. Any client with network access could otherwise
+/// self-stamp `enterprise`, so the claim is only honored from callers the
+/// policy trusts.
+///
+/// Truth table (C = claim, B = binding):
+///
+/// | C | B | policy | result |
+/// |---|---|--------|--------|
+/// | – | – | any | `Ok(None)` |
+/// | ✓ | – | `Open` | `Ok(Some)` (legacy/dev) |
+/// | ✓ | – | strict | `Err(Unauthenticated)` |
+/// | ✓ | ✓ | `Open`/`AuthenticatedOnly` | `Ok(Some)` |
+/// | ✓ | gateway + `GatewayOnly` | | `Ok(Some)` |
+/// | ✓ | non-gateway + `GatewayOnly` | | `Err(NonGatewayPrincipal)` |
+///
+/// Note on gRPC: the claim is read inside post-authentication code, so a
+/// binding is structurally always present there and `AuthenticatedOnly` can
+/// never drop a gRPC claim — only `GatewayOnly` can. That is by construction,
+/// not a gap.
+pub fn resolve_tier_claim(
+    claim: Option<&str>,
+    binding: Option<&AuthenticatedTenantBinding>,
+    policy: HeaderTrustPolicy,
+) -> Result<Option<String>, TierClaimRejection> {
+    let claim = claim.map(str::trim).filter(|c| !c.is_empty());
+
+    let Some(claim) = claim else {
+        return Ok(None);
+    };
+
+    match binding {
+        // No authenticated binding: honor the claim only under Open.
+        None => match policy {
+            HeaderTrustPolicy::Open => Ok(Some(claim.to_string())),
+            HeaderTrustPolicy::AuthenticatedOnly | HeaderTrustPolicy::GatewayOnly => {
+                Err(TierClaimRejection::Unauthenticated {
+                    tenant: String::new(),
+                    claim: claim.to_string(),
+                })
+            }
+        },
+        // Authenticated caller. The claim is an entitlement hint about the
+        // acting tenant, not an identity assertion, so a claim that differs
+        // from the binding's tenant is NOT a mismatch (the gateway topology
+        // stamps the end user's tier while holding a service credential) —
+        // only the principal class is checked.
+        Some(binding) => match policy {
+            HeaderTrustPolicy::Open | HeaderTrustPolicy::AuthenticatedOnly => {
+                Ok(Some(claim.to_string()))
+            }
+            HeaderTrustPolicy::GatewayOnly if binding.is_gateway_principal => {
+                Ok(Some(claim.to_string()))
+            }
+            HeaderTrustPolicy::GatewayOnly => Err(TierClaimRejection::NonGatewayPrincipal {
+                tenant: binding.tenant_id.clone(),
+                claim: claim.to_string(),
+            }),
+        },
     }
 }
 
@@ -611,5 +740,131 @@ mod tests {
         assert_eq!(id.subject.as_deref(), Some("alice"));
         assert_eq!(id.auth_class, AuthClass::Authenticated);
         assert_eq!(id.tenant_stable_id, Some(7));
+    }
+
+    // --- ADR-0053 W8: resolve_tier_claim + the tier env gate ---
+
+    #[test]
+    fn tier_claim_truth_table() {
+        use HeaderTrustPolicy::{AuthenticatedOnly, GatewayOnly, Open};
+
+        // No claim → Ok(None) in every mode (gate inert — most requests
+        // never carry the header).
+        for policy in [Open, AuthenticatedOnly, GatewayOnly] {
+            assert_eq!(resolve_tier_claim(None, None, policy), Ok(None));
+            assert_eq!(
+                resolve_tier_claim(None, Some(&binding("acme", false)), policy),
+                Ok(None)
+            );
+        }
+
+        // Claim + no binding: Open honors (legacy/dev), strict drops with
+        // Unauthenticated — the escalation vector being closed.
+        assert_eq!(
+            resolve_tier_claim(Some("enterprise"), None, Open),
+            Ok(Some("enterprise".to_string()))
+        );
+        for policy in [AuthenticatedOnly, GatewayOnly] {
+            assert_eq!(
+                resolve_tier_claim(Some("enterprise"), None, policy),
+                Err(TierClaimRejection::Unauthenticated {
+                    tenant: String::new(),
+                    claim: "enterprise".to_string(),
+                })
+            );
+        }
+
+        // Claim + authenticated binding: accepted under Open and
+        // AuthenticatedOnly (the claim is an entitlement hint about the
+        // acting tenant, not an identity assertion — no mismatch check).
+        for policy in [Open, AuthenticatedOnly] {
+            assert_eq!(
+                resolve_tier_claim(Some("pro"), Some(&binding("acme", false)), policy),
+                Ok(Some("pro".to_string()))
+            );
+        }
+
+        // GatewayOnly: only a gateway principal may stamp.
+        assert_eq!(
+            resolve_tier_claim(Some("pro"), Some(&binding("system", true)), GatewayOnly),
+            Ok(Some("pro".to_string()))
+        );
+        assert_eq!(
+            resolve_tier_claim(Some("pro"), Some(&binding("acme", false)), GatewayOnly),
+            Err(TierClaimRejection::NonGatewayPrincipal {
+                tenant: "acme".to_string(),
+                claim: "pro".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn tier_claim_whitespace_is_absent() {
+        for policy in [
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            HeaderTrustPolicy::GatewayOnly,
+        ] {
+            assert_eq!(resolve_tier_claim(Some("   "), None, policy), Ok(None));
+            assert_eq!(resolve_tier_claim(Some(""), None, policy), Ok(None));
+        }
+    }
+
+    #[test]
+    fn tier_claim_rejection_displays_actionably() {
+        let e = TierClaimRejection::Unauthenticated {
+            tenant: "acme".into(),
+            claim: "enterprise".into(),
+        };
+        let msg = e.to_string();
+        assert!(
+            msg.contains("enterprise") && msg.contains("dropped"),
+            "{msg}"
+        );
+        let e = TierClaimRejection::NonGatewayPrincipal {
+            tenant: "acme".into(),
+            claim: "pro".into(),
+        };
+        assert!(e.to_string().contains("gateway-only"), "{}", e);
+    }
+
+    #[test]
+    fn env_policy_resolution_truth_table_is_pure() {
+        use HeaderTrustPolicy::{AuthenticatedOnly, GatewayOnly, Open};
+
+        let fallback = AuthenticatedOnly;
+        // Unset env → fallback passthrough.
+        assert_eq!(
+            HeaderTrustPolicy::resolve_from_env(None, fallback),
+            (fallback, None)
+        );
+        // Parsed value wins.
+        assert_eq!(
+            HeaderTrustPolicy::resolve_from_env(Some("open".into()), fallback),
+            (Open, None)
+        );
+        assert_eq!(
+            HeaderTrustPolicy::resolve_from_env(Some("gateway-only".into()), fallback),
+            (GatewayOnly, None)
+        );
+        // Unparseable tightens fail-closed with a warning naming the env key.
+        let (policy, warn) = HeaderTrustPolicy::resolve_from_env(Some("bogus".into()), GatewayOnly);
+        assert_eq!(policy, AuthenticatedOnly);
+        let warn = warn.expect("unparseable env must warn");
+        assert!(warn.contains("PROXIMADB_TENANT_HEADER_TRUST"), "{warn}");
+    }
+
+    #[test]
+    fn tier_env_key_is_distinct_from_tenant_env_key() {
+        // Guards against the two gates silently merging: each must read its
+        // own env var. (effective/effective_tier differ only in the key they
+        // read, so a copy-paste that reuses ENV_KEY would make the tier gate
+        // inherit the tenant gate's operator intent.)
+        assert_ne!(HeaderTrustPolicy::ENV_KEY, HeaderTrustPolicy::TIER_ENV_KEY);
+        assert_eq!(HeaderTrustPolicy::ENV_KEY, "PROXIMADB_TENANT_HEADER_TRUST");
+        assert_eq!(
+            HeaderTrustPolicy::TIER_ENV_KEY,
+            "PROXIMADB_TIER_HEADER_TRUST"
+        );
     }
 }

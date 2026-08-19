@@ -1,6 +1,6 @@
 = ENV GATE REGISTRY — the authoritative catalog of `PROXIMADB_*` environment gates
 :status: Authoritative (CI-enforced by `scripts/check_env_gates.py`)
-:updated: 2026-07-25
+:updated: 2026-08-19
 
 == Why this exists
 
@@ -44,6 +44,8 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_ADVISOR_OBS_DISK_SIDECAR` | Path to append advisor search observations as JSONL for offline analysis. | OFF (unset = no-op) | opt-in; — | src/services/advisor_observations.rs
 | `PROXIMADB_AUTHZ_REQUIRE_GRANTS` | ADR-090 L1.2 / TD-SEC-2 Slice C: the **process-wide DEFAULT** grant-enforcement mode for tenants that have no explicit posture record — truthy ⇒ `Enforce`, unset ⇒ `Off`. It is NO LONGER a global mandate: a per-tenant `TenantSecurityPosture` (`<data_dir>/abac/tenant-posture.json`, set via `PUT /api/v2/abac/tenant-posture/{tenant}`) overrides it in BOTH directions, so a tenant can be onboarded to `Enforce` individually or held back from a globally-armed rollout. The intermediate `Audit` mode evaluates grants and logs the would-be denial but still ADMITS — the rehearsal step that makes the flip to `Enforce` safe. Armed with no grant store attached still fails CLOSED. | OFF (unset ⇒ default posture `Off` = policy-only admission, today's behavior) | opt-in; TD-AUTHZ-1, TD-SEC-2 | src/security/rls/abac_adapter.rs
 | `PROXIMADB_AZURE_EMULATOR` | Point the Azure blob backend at the Azurite emulator. | OFF (false) | test-only; — | src/storage/persistence/filesystem/mod.rs
+| `PROXIMADB_ARROW_IPC_PORT` | Container-plumbing override of the Arrow Flight (arrow_ipc) listen port. | config-file value (5678 family) | config-mirror; — | deploy/docker/Dockerfile
+| `PROXIMADB_BIND_ADDRESS` | Container-plumbing override of the bind address the multiplexed server listens on. | config-file value | config-mirror; — | deploy/docker/Dockerfile
 | `PROXIMADB_AZURE_TEST` | Gate that enables the `#[ignore]`d Azure dual-store integration test. | test skipped unless set | test-only; — | src/index/axis/indexes/dual_store_ivf.rs
 | `PROXIMADB_CACHE_PREFILL` | restart warming replay (0=off) | ON | TD-CACHE-1 | `src/database.rs (+1)`
 | `PROXIMADB_CACHE_LOCAL_DISK_MAX_GB` | Shared persistent PAX warm-tier budget in GiB; only active when the local-disk path is configured. Zero disables the tier. | 100 | config-mirror; ADR-085/TD-CACHE-9 | src/storage/engines/sst/core.rs
@@ -106,6 +108,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_FS_READ_RANGES_COALESCE_MAX` | Ceiling (bytes) on one merged physical read — the over-read/RSS bound. Bounds MERGING, not individual reads: a lone logical range larger than this is still fetched whole. Ignored when the gap gate is unset. | backend `IopsBudget::for_path(url).max` (Azure 4 MiB, S3/GCS 16 MiB, local 8 MiB); an explicit value is CLAMPED to that ceiling, so this can tighten the bound but never loosen it — raising the backend profile is TD-SEARCH-3's call | opt-in; ADR-034 P7 | src/storage/persistence/filesystem/mod.rs
 | `PROXIMADB_FUSION_POOL_CAP` | Per-source candidate cap (top-N by raw score) bounding cross-modal fusion fan-out RAM. | unset = unbounded | opt-in; TD-XMODAL-9 | src/services/fusion_service.rs
 | `PROXIMADB_GCS_ANONYMOUS` | Use anonymous GCS auth (fake-gcs-server). | false | test-only; — | src/storage/persistence/filesystem/mod.rs
+| `PROXIMADB_GRPC_PORT` | Container-plumbing override of the gRPC listen port. | config-file value (5679) | config-mirror; — | deploy/docker/Dockerfile
 | `PROXIMADB_GCS_ENDPOINT` | Override the GCS endpoint URL (fake-gcs / custom). | None (real GCS) | config-mirror; — | src/storage/persistence/filesystem/mod.rs
 | `PROXIMADB_GCS_TEST` | Gate that enables the `#[ignore]`d GCS dual-store integration test. | test skipped unless set | test-only; — | src/index/axis/indexes/dual_store_ivf.rs
 | `PROXIMADB_GCS_TEST_BUCKET` | Bucket name for GCS integration tests. | "proximadb-test" | test-only; — | src/storage/persistence/filesystem/gcs_store.rs
@@ -148,6 +151,15 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_MATERIALIZE_OBJECT_ID_PATHS` | Keys materialized table object path by stable object_id instead of table name | OFF | opt-in; ADR-031 | `src/services/dml/mod.rs`
 | `PROXIMADB_MATERIALIZE_ROW_GROUP_ROWS` | Iceberg warehouse writer max row-group row count | 65,536 | opt-in tuning; — | `crates/storage/proximadb-iceberg-engine/src/lib.rs`
 | `PROXIMADB_MEMORY_POOL_SIZE_MB` | Global shared memory-pool size (MB) | smart default from system memory | opt-in tuning; — | `src/storage/engines/core/ops/performance_optimization.rs`
+| `PROXIMADB_METRICS_PORT` | Container-plumbing override of the Prometheus metrics port. | config-file value | config-mirror; — | deploy/docker/Dockerfile
+| `PROXIMADB_MODE` | Container-plumbing deployment-mode selector. | config-file value | config-mirror; — | deploy/docker/Dockerfile
+| `PROXIMADB_MODEL_FETCH_RETRIES` | Entrypoint retry count for the optional embedding-model boot fetch. | 2 | opt-in; — | deploy/docker/entrypoint.sh
+| `PROXIMADB_MODEL_FETCH_TIMEOUT` | Entrypoint curl timeout (seconds) for the embedding-model boot fetch. | 120 | opt-in; — | deploy/docker/entrypoint.sh
+| `PROXIMADB_MODEL_ONNX_FILE` | Filename of the ONNX model under `PROXIMADB_EMBED_MODEL_DIR`. | bge-small-en-v1.5.onnx | opt-in; — | deploy/docker/entrypoint.sh
+| `PROXIMADB_MODEL_ONNX_SHA256` | Optional integrity pin for the fetched ONNX model (ADR-0016; mismatch rejects the download, keeps baked-in). | unset = no pin check | opt-in; — | deploy/docker/entrypoint.sh
+| `PROXIMADB_MODEL_ONNX_URL` | Optional URL the entrypoint fetches the ONNX embedding model from at container boot. | unset = use baked-in model (no fetch) | opt-in; — | deploy/docker/entrypoint.sh
+| `PROXIMADB_MODEL_TOKENIZER_SHA256` | Optional integrity pin for the fetched tokenizer. | unset = no pin check | opt-in; — | deploy/docker/entrypoint.sh
+| `PROXIMADB_MODEL_TOKENIZER_URL` | Optional URL the entrypoint fetches tokenizer.json from at container boot. | unset = use baked-in model (no fetch) | opt-in; — | deploy/docker/entrypoint.sh
 | `PROXIMADB_METERING_FLUSH_INTERVAL_SECS` | Durable `_metering` sink flush cadence (seconds) | 3600 (1 h) | opt-in tuning; TD-161 | `src/database.rs`
 | `PROXIMADB_METERING_KSU_GAUGE_INTERVAL_SECS` | Prometheus resident-storage KSU gauge poll interval (seconds) | 300 (5 min) | opt-in tuning; ADR-030 | `src/database.rs`
 | `PROXIMADB_NATIVE_ALLOW_GROUPED_AGG` | Opts grouped-aggregate plans into native routing (else routed to DataFusion) | OFF (any value set ⇒ allow) | opt-in; TD-OLAP-11 | `src/network/postgres/relational_pipeline.rs`
@@ -235,12 +247,17 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_SYSCAT_WARM_DIR` | On-disk warm-tier dir inserted between hot and canonical system-catalog cache. | falls back to builder field, else `None` (hot→canonical) | opt-in; TD-SC-2b | src/services/collection/manager.rs:228
 | `PROXIMADB_TENANT_HEADER_TRUST` | Tenant header-trust policy override (open/authenticated-only/gateway-only). | env>config>preset; unset → `Open`; unparseable → tightens to AuthenticatedOnly | config-mirror; — | crates/foundation/proximadb-tenant/src/identity_trust.rs:83
 | `PROXIMADB_TEST_BERT_ONNX_PATH` | Path to a cross-encoder ONNX model for a manual ORT integration test. | unset → test skips | test-only; — | crates/modalities/proximadb-rank-onnx/src/ort_tokenized_scorer_session.rs:306
+| `PROXIMADB_REST_PORT` | Container-plumbing override of the REST listen port. | config-file value | config-mirror; — | deploy/docker/Dockerfile
 | `PROXIMADB_TEST_LOG_LEVEL` | Sample env used to test TOML `${...}` placeholder expansion (log_level). | unset → placeholder test n/a | test-only; — | src/core/config_loader_tests.rs:958
 | `PROXIMADB_TEST_NODE_ID` | Sample env used to test TOML `${...}` placeholder expansion (node_id). | unset → placeholder test n/a | test-only; — | src/core/config_loader_tests.rs:957
 | `PROXIMADB_TEST_ONNX_PATH` | Path to an ONNX model for a manual ORT scorer integration test. | unset → test skips | test-only; — | crates/modalities/proximadb-rank-onnx/src/ort_scorer_session.rs:245
 | `PROXIMADB_TEST_REAL_CORPUS` | Path to a real-vector corpus file for an `#[ignore]` IVF recall test. | unset → test skips | test-only; — | src/index/axis/indexes/dual_store_ivf.rs:3520
 | `PROXIMADB_TEST_RECOVERY_CRASH_POINT` | Test seam injecting a crash at `after_materialize`/`after_mark_flushed` in WAL recovery. | unset → normal recovery path | test-only; TD-OBJSTORE-4 S3 | src/storage/persistence/write_ahead_log/recovery_manager.rs:651
 | `PROXIMADB_TEST_SECRET` | Throwaway credential for CDC auth-wiring tests (avoids hard-coded secret). | falls back to `"test-secret-{pid}"` | test-only; — | src/cdc/sinks/webhook.rs:534
+| `PROXIMADB_TIER_HEADER_TRUST` | Tier-claim trust policy override (ADR-0053 W8): gates the client-supplied entitlement claim (`X-Tenant-Tier` REST header, `x-tenant-tier` gRPC metadata, `proximadb_tier` pgwire startup param) that sets a tenant's cache entitlement + cost multiplier. A rejected claim is DROPPED (warned once per tenant), never a 4xx. | env>config>preset; unset → `Open` (`AuthenticatedOnly` under multi-tenant); unparseable → tightens to AuthenticatedOnly | config-mirror; — | crates/foundation/proximadb-tenant/src/identity_trust.rs
+| `PROXIMADB_TIER_CONFIG_FETCH_RETRIES` | Entrypoint retry count for the tier-config boot fetch. | 2 | opt-in; — | deploy/docker/entrypoint.sh
+| `PROXIMADB_TIER_CONFIG_FETCH_TIMEOUT` | Entrypoint curl timeout (seconds) for the tier-config boot fetch. | 10 | opt-in; — | deploy/docker/entrypoint.sh
+| `PROXIMADB_TIER_CONFIG_URL` | Optional URL the entrypoint fetches the runtime tier-config overlay from at container boot (atomic replace, JSON sanity check, baked-in fallback on failure — the runtime-delivery rung of the tier-config ladder, ADR-037 seam / ADR-0053 D3). Legacy `ANVAIOPS_PRICING_URL` honored while unset. | unset = use file at PROXIMADB_TIER_CONFIG_PATH (no fetch) | opt-in; — | deploy/docker/entrypoint.sh
 | `PROXIMADB_TIER_CONFIG_PATH` | Path to the runtime tier-config overlay JSON. | falls back to `/config/tier-config.json` | config-mirror; Phase B-5 | crates/foundation/proximadb-tenant/src/tenant_tier_types.rs:101
 | `PROXIMADB_TOKENIZER_PATH` | Override path for the BGE tokenizer.json. | falls back to `/var/lib/proximadb/models/tokenizer.json` (then whitespace fallback) | config-mirror; — | crates/modalities/proximadb-embedding/src/tokenizer.rs:23
 | `PROXIMADB_TRACE_COMPACTION_MEM` | Emits per-stage RSS/mem trace lines during compaction. | OFF | eval; — | src/storage/engines/sst/compaction.rs:92

@@ -430,6 +430,6 @@ pub mod identity_trust;
 pub use identity_trust::{
     AuthClass, AuthenticatedTenantBinding, GATEWAY_ROLE, HeaderTrustPolicy, OPERATOR_ROLE,
     ReadEnforcementComposition, ResolvedRequestIdentity, ResolvedTenantAssertion,
-    TenantAssertionError, TenantStableIdResolver, read_enforcement_composition,
-    resolve_subject_assertion, resolve_tenant_assertion,
+    TenantAssertionError, TenantStableIdResolver, TierClaimRejection, read_enforcement_composition,
+    resolve_subject_assertion, resolve_tenant_assertion, resolve_tier_claim,
 };

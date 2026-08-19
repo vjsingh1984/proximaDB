@@ -307,6 +307,13 @@ pub struct TenantExtractorConfig {
     /// [`HeaderTrustPolicy`]). Default `Open` — default-safe for existing
     /// deployments; `multi_tenant()` strict mode uses `AuthenticatedOnly`.
     pub header_trust: HeaderTrustPolicy,
+    /// Trust policy for the client-supplied `X-Tenant-Tier` claim (ADR-0053
+    /// W8). The claim names an *entitlement* (cache share / cost
+    /// multiplier), so a client with direct network access could otherwise
+    /// self-stamp `enterprise`. Dropped claims never fail the request —
+    /// the tenant simply resolves its default tier. Default `Open`;
+    /// `multi_tenant()` strict mode uses `AuthenticatedOnly`.
+    pub tier_header_trust: HeaderTrustPolicy,
 }
 
 impl Default for TenantExtractorConfig {
@@ -318,6 +325,7 @@ impl Default for TenantExtractorConfig {
             validate_tenant: false, // Disable validation by default (enable in production)
             system_tenants: vec!["system".to_string(), "admin".to_string()],
             header_trust: HeaderTrustPolicy::Open,
+            tier_header_trust: HeaderTrustPolicy::Open,
         }
     }
 }
@@ -341,6 +349,7 @@ impl TenantExtractorConfig {
             validate_tenant: false,
             system_tenants: vec!["system".to_string()],
             header_trust: HeaderTrustPolicy::Open,
+            tier_header_trust: HeaderTrustPolicy::Open,
         }
     }
 
@@ -356,6 +365,11 @@ impl TenantExtractorConfig {
             // Relax per-deployment with PROXIMADB_TENANT_HEADER_TRUST=open
             // (trusted-gateway topologies should prefer gateway-only).
             header_trust: HeaderTrustPolicy::AuthenticatedOnly,
+            // Same rationale for the tier claim: on a multi-tenant
+            // deployment the cache entitlement must not be self-stampable by
+            // an unauthenticated caller. Gateway topologies stamping tier
+            // claims should set PROXIMADB_TIER_HEADER_TRUST=gateway-only.
+            tier_header_trust: HeaderTrustPolicy::AuthenticatedOnly,
         }
     }
 
@@ -383,11 +397,19 @@ impl TenantExtractorConfig {
         self
     }
 
+    /// Builder: Set the tier-claim trust policy (ADR-0053 W8).
+    pub fn with_tier_header_trust(mut self, policy: HeaderTrustPolicy) -> Self {
+        self.tier_header_trust = policy;
+        self
+    }
+
     /// Apply deployment env overrides. Called at server construction (NOT in
     /// constructors, so tests and embedded uses stay hermetic). Delegates to
     /// the ONE shared resolution (`HeaderTrustPolicy::effective`): env
     /// `PROXIMADB_TENANT_HEADER_TRUST` wins; an unparseable value tightens
     /// to `authenticated-only` (fail-closed) rather than silently weakening.
+    /// The tier-claim gate resolves identically from its own
+    /// `PROXIMADB_TIER_HEADER_TRUST` key (ADR-0053 W8).
     pub fn apply_env_overrides(mut self) -> Self {
         let (policy, warning) = HeaderTrustPolicy::effective(self.header_trust, None);
         if let Some(warning) = warning {
@@ -399,6 +421,17 @@ impl TenantExtractorConfig {
             );
         }
         self.header_trust = policy;
+
+        let (policy, warning) = HeaderTrustPolicy::effective_tier(self.tier_header_trust, None);
+        if let Some(warning) = warning {
+            warn!("{warning}");
+        } else if policy != self.tier_header_trust {
+            tracing::info!(
+                %policy,
+                "tier-claim trust policy set from PROXIMADB_TIER_HEADER_TRUST"
+            );
+        }
+        self.tier_header_trust = policy;
         self
     }
 }
@@ -556,6 +589,42 @@ impl TenantExtractor {
         None
     }
 
+    /// Read and gate the `X-Tenant-Tier` claim (ADR-0053 W8). The claim is
+    /// honored only from callers the tier policy trusts; a rejected claim is
+    /// DROPPED (warned once per tenant) — never a 4xx, since the claim is an
+    /// entitlement hint and the request proceeds at the tenant's default
+    /// tier. The registry stamp stays insert-only: rejection depends on the
+    /// requester's auth class, not the claim value, so clearing on rejection
+    /// would let any anonymous request strip a legitimately-stamped tenant
+    /// (downgrade-DoS).
+    fn gated_tier_claim(&self, req: &Request) -> Option<String> {
+        let claim = req
+            .headers()
+            .get("x-tenant-tier")
+            .and_then(|v| v.to_str().ok());
+
+        let binding = self
+            .authenticated_tenant_binding(req)
+            .map(|(binding, _source)| binding);
+
+        match proximadb_tenant::resolve_tier_claim(
+            claim,
+            binding.as_ref(),
+            self.config.tier_header_trust,
+        ) {
+            Ok(tier) => tier,
+            Err(rejection) => {
+                let tenant = binding
+                    .as_ref()
+                    .map(|b| b.tenant_id.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                warn_once_per_tenant("rest", &tenant, &rejection);
+                None
+            }
+        }
+    }
+
     /// Validate tenant exists and is active
     fn validate_tenant(&self, tenant_id: &str, source: TenantIdSource) -> bool {
         // System tenants bypass validation
@@ -625,6 +694,41 @@ fn authenticated_subject(req: &Request) -> Option<String> {
         .map(|user| user.user_id.clone())
 }
 
+/// Warn once per (surface, tenant, rejection) that a tier claim was dropped,
+/// so a strict policy facing a stamping control plane cannot flood the log.
+/// Shared by every surface's tier-claim gate (REST here; gRPC via
+/// [`warn_tier_claim_dropped`]). The `tenant` is the *acting* tenant when the
+/// surface knows it, else the binding's (or empty for anonymous claims).
+fn warn_once_per_tenant(
+    surface: &str,
+    tenant: &str,
+    rejection: &proximadb_tenant::TierClaimRejection,
+) {
+    static WARNED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let warned = WARNED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    if let Ok(mut set) = warned.lock()
+        && set.insert(format!("{surface}:{tenant}:{rejection}"))
+    {
+        tracing::warn!(
+            target: "proximadb::tenant_audit",
+            surface,
+            tenant,
+            "dropped x-tenant-tier claim: {rejection} \
+             (governed by PROXIMADB_TIER_HEADER_TRUST)"
+        );
+    }
+}
+
+/// Wrapper the other network surfaces' tier-claim gates call (gRPC).
+pub(crate) fn warn_tier_claim_dropped(
+    surface: &str,
+    tenant: &str,
+    rejection: &proximadb_tenant::TierClaimRejection,
+) {
+    warn_once_per_tenant(surface, tenant, rejection);
+}
+
 pub async fn tenant_middleware(
     axum::extract::State(extractor): axum::extract::State<TenantExtractor>,
     mut req: Request,
@@ -654,12 +758,9 @@ pub async fn tenant_middleware(
             // claim (`X-Tenant-Tier`), record it in the process-global registry
             // the cache LimitsResolver reads. The id is opaque (commercial tier
             // names + their cache shares are operator config, not OSS code).
-            let tier_claim = req
-                .headers()
-                .get("x-tenant-tier")
-                .and_then(|v| v.to_str().ok())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
+            // ADR-0053 W8: the claim is gated by `tier_header_trust` — an
+            // untrusted claim is dropped (warned), never a 4xx.
+            let tier_claim = extractor.gated_tier_claim(&req);
 
             // Inject tenant context into request extensions
             let mut context = MiddlewareTenantContext::new(tenant_id, source);
@@ -1064,6 +1165,112 @@ mod tests {
             .extract_tenant_id(&req)
             .expect_err("non-gateway principal must not delegate");
         assert!(matches!(err, TenantAssertionError::Mismatch { .. }));
+    }
+
+    // ── Tier-claim gate (ADR-0053 W8) ───────────────────────────────────────
+
+    /// A request with an `X-Tenant-Tier` claim and an optional authenticated
+    /// binding (mirrors `trust_request` for the tier header).
+    fn tier_request(claim: Option<&str>, authenticated: Option<&str>) -> Request {
+        let mut req = trust_request(None, authenticated);
+        if let Some(claim) = claim {
+            req.headers_mut().insert(
+                "x-tenant-tier",
+                axum::http::HeaderValue::from_str(claim).expect("header value"),
+            );
+        }
+        req
+    }
+
+    fn tier_extractor(policy: HeaderTrustPolicy) -> TenantExtractor {
+        TenantExtractor::with_config(TenantExtractorConfig {
+            tier_header_trust: policy,
+            ..TenantExtractorConfig::default()
+        })
+    }
+
+    // Unique tenant ids per test: TENANT_TIERS is a process-global insert-only
+    // registry with no removal API, so shared ids would couple tests.
+    const T_OPEN: &str = "tier-test-open-tenant";
+    const T_AUTHD: &str = "tier-test-authd-tenant";
+    const T_BOUND: &str = "tier-test-bound-tenant";
+    const T_GW: &str = "tier-test-gateway-tenant";
+    const T_GW_OK: &str = "tier-test-gateway-ok-tenant";
+
+    #[test]
+    fn tier_claim_open_records_stamp_for_bare_header() {
+        let got = tier_extractor(HeaderTrustPolicy::Open)
+            .gated_tier_claim(&tier_request(Some("enterprise"), None));
+        assert_eq!(got.as_deref(), Some("enterprise"));
+    }
+
+    #[test]
+    fn tier_claim_authenticated_only_drops_anonymous_claim() {
+        let got = tier_extractor(HeaderTrustPolicy::AuthenticatedOnly)
+            .gated_tier_claim(&tier_request(Some("enterprise"), None));
+        assert_eq!(got, None, "anonymous self-stamp must be dropped");
+    }
+
+    #[test]
+    fn tier_claim_authenticated_only_accepts_credential_bound_claim() {
+        let got = tier_extractor(HeaderTrustPolicy::AuthenticatedOnly)
+            .gated_tier_claim(&tier_request(Some("pro"), Some(T_BOUND)));
+        assert_eq!(got.as_deref(), Some("pro"));
+    }
+
+    #[test]
+    fn tier_claim_gateway_only_drops_plain_credential_claim() {
+        let got = tier_extractor(HeaderTrustPolicy::GatewayOnly)
+            .gated_tier_claim(&tier_request(Some("enterprise"), Some(T_GW)));
+        assert_eq!(got, None, "a plain tenant credential must not self-assign");
+    }
+
+    #[test]
+    fn tier_claim_gateway_only_accepts_gateway_principal_claim() {
+        // The gateway topology: a service credential with the gateway role
+        // stamps the END USER's tier claim — accepted even though the claim's
+        // tier has nothing to do with the credential's tenant.
+        let mut req = tier_request(Some("enterprise"), None);
+        let mut ctx = crate::security::UnifiedUserContext::anonymous();
+        ctx.tenant_id = Some("svc-gw".to_string());
+        ctx.auth_method = crate::security::UnifiedAuthMethod::JWT;
+        ctx.roles.push(proximadb_tenant::GATEWAY_ROLE.to_string());
+        req.extensions_mut().insert(ctx);
+
+        let got = tier_extractor(HeaderTrustPolicy::GatewayOnly).gated_tier_claim(&req);
+        assert_eq!(got.as_deref(), Some("enterprise"));
+    }
+
+    #[test]
+    fn tier_claim_absent_header_is_ok_in_every_mode() {
+        for policy in [
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            HeaderTrustPolicy::GatewayOnly,
+        ] {
+            assert_eq!(
+                tier_extractor(policy).gated_tier_claim(&tier_request(None, None)),
+                None,
+                "no header, no gate — policy {policy}"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_tenant_strict_mode_defaults_tier_gate_to_authenticated_only() {
+        assert_eq!(
+            TenantExtractorConfig::multi_tenant().tier_header_trust,
+            HeaderTrustPolicy::AuthenticatedOnly,
+            "multi-tenant deployments must not accept self-stamped tier claims"
+        );
+        assert_eq!(
+            TenantExtractorConfig::default().tier_header_trust,
+            HeaderTrustPolicy::Open
+        );
+        assert_eq!(
+            TenantExtractorConfig::single_tenant("t").tier_header_trust,
+            HeaderTrustPolicy::Open
+        );
     }
 
     #[test]

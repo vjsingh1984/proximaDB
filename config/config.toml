@@ -353,6 +353,12 @@ mode = "development"  # development | production | enterprise
 # ("open"; "authenticated-only" under multi-tenant strict mode). The
 # PROXIMADB_TENANT_HEADER_TRUST env var overrides both.
 # header_trust = "open"  # open | authenticated-only | gateway-only
+# Tier-claim trust policy (ADR-0053 W8) for the entitlement claim (REST
+# X-Tenant-Tier, gRPC x-tenant-tier, pgwire proximadb_tier startup param).
+# Unset => same deployment-mode preset ladder; PROXIMADB_TIER_HEADER_TRUST
+# overrides. A rejected claim is DROPPED (never a 4xx): the tenant resolves
+# its default tier.
+# tier_header_trust = "open"  # open | authenticated-only | gateway-only
 
 [security.authentication]
 enabled = false
