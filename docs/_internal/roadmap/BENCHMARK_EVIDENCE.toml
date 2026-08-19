@@ -847,6 +847,23 @@ version = "binary/source 16712f1ac830556ebf3f62f41aabbb595ea838d9"
 notes = "Matrix SHA-256 bf9080c722d1b4dbc49f15ae62173a87c4b4e013bc093b6850cda012f9745149; binary SHA-256 ff7675af778c04f280cf57fdf8093a49e51ec390a026baecc38de981b7996500. External raw artifact: /Users/vijaysingh/proximadb-bench-data/runs/range-cap-knee24-16712f1ac/matrix.json; raw logs are losslessly gzip-compressed and the regenerable PAX snapshot was removed. Latency values are retained for provenance but are not accepted as isolated latency evidence. The repeated 4 MiB top-10 controls span 0.9835-0.9840, motivating paired per-query diagnostics instead of exact aggregate equality."
 
 [[claims]]
+id = "pax_adaptive_range_estimator_bigann1m"
+claim = "On one immutable BIGANN 1M PAX v3 segment (d=128, k_c=30), the default-OFF exact-plan range estimator at nprobe=6/top-10 reduced reconciled Azurite wire GET/query from 10.077 to 7.647 (24.11%) while preserving recall@10=0.9800 and all 1,000 ordered/result-set identities. Bytes/query rose 18.04%, peak RSS rose 5.15%, and p50/p95 fell 31.51%/29.11%; every predeclared paired promotion gate passed."
+metric = "wire and application GET/query + paired result identity/recall + bytes/query + p50/p95 + peak RSS"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc",
+  "docs/12-design/adr/ADR-065-clustered-tier-regions-single-segment.adoc",
+]
+bench_source = "scripts/bench/range_cap_sweep.py"
+bench_command = "<repo-python> scripts/bench/range_cap_sweep.py --binary <release-server> --binary-source-revision 4697205c2c1431f0f5a74a86c50119c8487a6259 --config <bigann-1M-bed-config> --run-root <run-root> --output <matrix.json> --collection-id 1 --storage-url az://<container>/run-1M-ncomp32 --azurite-debug-log <azurite-debug.log> --base-path <bigann10m.u8bin> --base-format u8bin --query-path <bigann-query.u8bin> --query-format u8bin --groundtruth-path <bigann1M-top100.ivecs> --groundtruth-format ivecs --groundtruth-scope-rows 1000000 --rows 1000000 --nprobe 6 --range-caps-mib 4 --include-adaptive --coalesce-gap-mib 1 --top-k-values 10 --queries 1000 --target-recall 0.98 --max-byte-amplification 1.25 --max-rss-ratio 1.10 --host-quiet-window-secs 30"
+artifact = "docs/10-quality/td/TD-SEARCH-3-per-operation-read-coalescing.adoc"
+hardware = "Local macOS arm64 Apple Silicon, 64 GiB RAM, compiler-free serialized release-server points; Azurite localhost HTTP backend"
+date = "2026-08-18"
+version = "binary/source 4697205c2c1431f0f5a74a86c50119c8487a6259; matrix harness revision 264a0c25ff2f140c5966d68e42d3141b4044e986"
+notes = "Matrix SHA-256 3e0f4484dc71c9e3e259ec01edaf3a459faa318c7ce8ba20cb65b5de137af718; binary SHA-256 48a727e840fbf9858051ed65e888ddae103f9c9584d5775193391a3610445511; bed config SHA-256 5b7b7758dcf92810bd823ba2eff0becaed28767854e8e89a278928ac71497848. External raw artifact: /Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-1m-4697205c2/matrix.json. The estimator selected from exact query-local ranges; it did not alter nprobe or writer geometry. This validates the 1M shape only. The feature remains default-OFF pending 3.3M/10M and cache-tier evidence. Azurite supports wire-operation and relative-latency conclusions, not Azure service latency."
+
+[[claims]]
 id = "compaction_memory_amplification_3m3"
 claim = "After canonical-record and in-place-MVCC copy removal, a release-profile 3.3M-vector PAX compaction over the production Azure backend/Azurite path still consumes 9.85x incremental RSS per input-segment byte; input bytes are therefore a usable conservative admission currency, with 12x initial headroom"
 metric = "incremental_peak_rss_bytes / input_segment_bytes + compaction wall time + settled segment count + recall@10"

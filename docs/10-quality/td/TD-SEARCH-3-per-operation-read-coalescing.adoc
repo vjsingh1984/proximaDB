@@ -13,9 +13,10 @@
 | **In Progress.** The physical-operation counter and bounded prefix read are
 implemented. A fixed-bed Azurite wire experiment proves that 24--32 MiB ranges
 reduce physical GETs by 64--65% and that the Azure SDK does not split them.
-No larger default is promoted yet: 32 MiB exceeds the declared RSS bound, while
-24 MiB needs an exact-current paired rerun under the bounded recall
-non-inferiority gate. The SIFT1M cloud/restart evidence gate remains open.
+The default-OFF exact-plan estimator now passes its exact-current BIGANN 1M
+paired gate: wire GET/query fell 24.1% with identical results/recall, lower
+latency, +18.0% bytes, and +5.2% peak RSS. No default is promoted yet; 3.3M,
+10M, and cache-tier validation remain open.
 
 | Priority
 | **P1.** Operation count is a direct Hot-tier Blob cost and latency multiplier.
@@ -401,6 +402,40 @@ Hot/standard. Plumbing actual Cool/Cold/Archive placement to this leaf is a
 prerequisite before enabling adaptive reads on retrieval-billed tiers; path
 aliases alone must never guess a billing tier.
 
+=== S3d: exact-current adaptive 1M checkpoint
+
+The release-server binary built from `4697205c2c1431f0f5a74a86c50119c8487a6259`
+(SHA-256
+`48a727e840fbf9858051ed65e888ddae103f9c9584d5775193391a3610445511`)
+ran the immutable one-segment BIGANN 1M bed (`d=128`, `k_c=30`, `nprobe=6`)
+for 1,000 top-10 queries. Each policy used a fresh process/cache and the
+Azurite wire observer reconciled one HTTP range request per application range.
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| Policy | Recall@10 | Wire GET/q | MiB/q | p50 / p95 ms | Peak RSS GiB
+
+| Fixed 4 MiB | 0.9800 | 10.077 | 28.56 | 99.93 / 133.49 | 4.348
+| Exact adaptive | 0.9800 | 7.647 | 33.71 | 68.44 / 94.63 | 4.571
+|===
+
+The estimator admitted query-local caps through 24 MiB (the largest observed
+wire range was 19.26 MiB), while the 0.5% knee rule prevents a larger cap from
+winning when its request benefit is negligible. Relative to the fixed policy it
+reduced wire
+GETs by 24.11%, reduced p50 by 31.51% and p95 by 29.11%, increased bytes by
+18.04%, and increased peak RSS by 5.15%. All predeclared gates passed. The
+ordered result and result-set identities matched for all 1,000 queries; recall
+hit totals were identical. This is sufficient to retain the implementation
+behind its default-OFF gate, not sufficient to flip the default across shapes.
+
+Raw external artifact:
+`/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-1m-4697205c2/matrix.json`
+(SHA-256
+`3e0f4484dc71c9e3e259ec01edaf3a459faa318c7ce8ba20cb65b5de137af718`).
+Azurite proves operation shape/count and relative localhost latency; it is not
+Azure service-latency evidence.
+
 === S4: remove the redundant PAX-as-SST1 magic probe
 
 The first passing release run after the persistent-tier implementation reported
@@ -617,9 +652,9 @@ materialized segment geometry:
 . recall@10 (must not regress below the ratchet);
 . prefix disabled (`0`) versus 1 MiB versus a justified alternative.
 
-Before interpreting finer `k_c` as GET-optimal, complete the paired
-non-inferiority/identity rerun for the 24 MiB candidate and repeat an eligible
-cap on `k_c=90`. Keep any
+Before interpreting finer `k_c` as GET-optimal, repeat the adaptive policy on
+the settled 3.3M and 10M beds and measure its DRAM/persistent-disk cache
+interaction. Keep any
 resulting policy tier-aware: Hot flat Blob in the same region may prefer fewer,
 larger requests; Cool/Cold/remote placement must jointly price bytes and
 requests. The measured sweep does not authorize a production-default change.
