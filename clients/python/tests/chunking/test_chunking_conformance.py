@@ -52,9 +52,15 @@ from proximadb_sdk.chunking_strategies import (
     ChunkingConfig,
     ChunkingStrategy,
     ChunkingStrategyFactory,
+    ChunkingStrategyInterface,
     ResolvedSizing,
     SizingPolicy,
     config_kwargs,
+)
+from proximadb_sdk.chunking_strategies.base import (
+    OFFSET_CONTRACT_EXACT,
+    OFFSET_CONTRACT_LEGACY,
+    TextChunk,
 )
 from proximadb_sdk.chunking_strategies.conformance import (
     BASIS_BYTE,
@@ -1037,6 +1043,142 @@ class TestDocumentedNonInvariants:
         text = "alpha beta gamma"
         assert counter.count(text) != len(counter.content_offsets(text))
         assert counter.count(text) == len(counter.content_offsets(text)) + 2
+
+
+class TestCapPostCondition:
+    """`max_chunk_size` must hold for chunks a strategy has ALREADY emitted.
+
+    Per-strategy discipline was sufficient while there were seven strategies
+    maintained together. TD-CHUNK-2 makes boundary sources plural and
+    composable, so the number of places that could forget is about to grow --
+    and a forgotten cap is invisible in production (the provider truncates
+    silently). Hence a structural guarantee rather than a convention.
+    """
+
+    class _OverCapStrategy(ChunkingStrategyInterface):
+        """A deliberately non-compliant source: one chunk, whole document."""
+
+        _offset_contract = OFFSET_CONTRACT_EXACT
+
+        def chunk(self, text, source_id, base_metadata=None):
+            return [
+                TextChunk(
+                    text=text,
+                    start_pos=0,
+                    end_pos=len(text),
+                    chunk_id=f"{source_id}_chunk_0",
+                    metadata={"source_id": source_id, "total_chunks": 1},
+                )
+            ]
+
+    class _LegacyOverCapStrategy(_OverCapStrategy):
+        """Same violation, but its offsets do not index the source."""
+
+        _offset_contract = OFFSET_CONTRACT_LEGACY
+
+    @staticmethod
+    def _config(cap):
+        return ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=cap,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=cap,
+        )
+
+    def test_an_over_cap_chunk_is_split(self):
+        text = "word " * 400
+        cap = 100
+        chunks = self._OverCapStrategy(self._config(cap)).chunk(text, "doc")
+
+        assert len(chunks) > 1, "the guard did not engage"
+        for chunk in chunks:
+            assert chunk.end_pos - chunk.start_pos <= cap, chunk.text[:40]
+            assert chunk.metadata.get("cap_enforced") is True
+
+    def test_splitting_preserves_content_and_exactness(self):
+        # Splitting must not become its own data-loss bug.
+        text = "word " * 400
+        chunks = self._OverCapStrategy(self._config(100)).chunk(text, "doc")
+        assert check_totality(text, chunks) is None
+        assert check_exactness(text, chunks) is None
+        assert "".join(c.text for c in chunks) == text
+
+    def test_ids_are_restated_so_none_collide(self):
+        # Ids encode POSITION; leaving them after a count change emits duplicate
+        # ids -- the exact collision this program already found in anvaiops.
+        text = "word " * 400
+        chunks = self._OverCapStrategy(self._config(100)).chunk(text, "doc")
+        ids = [c.chunk_id for c in chunks]
+        assert len(set(ids)) == len(ids)
+        assert ids[0] == "doc_chunk_0" and ids[1] == "doc_chunk_1"
+        assert all(c.metadata["total_chunks"] == len(chunks) for c in chunks)
+
+    def test_a_compliant_strategy_is_returned_untouched(self):
+        # The guard must be a genuine no-op on the common path -- same objects,
+        # not merely equal ones -- or it would rewrite every chunk in the SDK.
+        config = ChunkingConfig(strategy=ChunkingStrategy.FIXED_SIZE, **DEFAULTS)
+        strat = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        text = by_name("prose").text
+        first = strat.chunk(text, "doc")
+        assert all(not c.metadata.get("cap_enforced") for c in first)
+
+    def test_legacy_offsets_are_left_alone(self):
+        # Re-cutting means indexing the source with the chunk's own offsets. A
+        # legacy strategy's offsets do not index the source, so splitting on
+        # them would produce confidently wrong text. Refusing is the honest act.
+        text = "word " * 400
+        chunks = self._LegacyOverCapStrategy(self._config(100)).chunk(text, "doc")
+        assert len(chunks) == 1
+        assert not chunks[0].metadata.get("cap_enforced")
+
+    def test_the_guard_does_not_narrow_the_signature_it_guards(self):
+        """A guard that changes the API it guards is worse than no guard.
+
+        `CodeChunkingStrategy.chunk` takes `metadata=` where the base class
+        takes `base_metadata=` -- a real interface divergence in this codebase.
+        A wrapper that restates the common signature silently rejects the
+        divergent one with a TypeError, which is how this first shipped.
+        """
+
+        class DivergentSignature(ChunkingStrategyInterface):
+            _offset_contract = OFFSET_CONTRACT_EXACT
+
+            def chunk(self, text, source_id, metadata=None, *, extra=None):
+                return [
+                    TextChunk(
+                        text=text,
+                        start_pos=0,
+                        end_pos=len(text),
+                        chunk_id=f"{source_id}_chunk_0",
+                        metadata={"seen": metadata, "extra": extra},
+                    )
+                ]
+
+        strategy = DivergentSignature(self._config(10_000))
+        chunks = strategy.chunk("abc", "doc", {"a": 1}, extra="x")
+        assert chunks[0].metadata["seen"] == {"a": 1}
+        assert chunks[0].metadata["extra"] == "x"
+
+    def test_the_guard_is_measure_aware(self):
+        # A char-arithmetic cut would mis-split under a token measure. The cap
+        # here is 8 WORDS, so a character reading would produce ~50 chunks.
+        text = " ".join(f"word{i}" for i in range(80))
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=8,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=8,
+            measure=TokenMeasure(WordTokenCounter()),
+        )
+        chunks = self._OverCapStrategy(config).chunk(text, "doc")
+        assert len(chunks) <= 12, f"{len(chunks)} chunks: cut in characters"
+        for chunk in chunks:
+            assert len(re.findall(r"\S+", chunk.text)) <= 8
+        assert check_totality(text, chunks) is None
 
 
 class TestGoldenOutput:
