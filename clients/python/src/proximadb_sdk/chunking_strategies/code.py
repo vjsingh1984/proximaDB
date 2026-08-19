@@ -29,7 +29,13 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 
-from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
+from .base import (
+    OFFSET_BASIS_BYTE,
+    OFFSET_CONTRACT_EXACT,
+    ChunkingConfig,
+    ChunkingStrategyInterface,
+    TextChunk,
+)
 
 # Optional delegation target (TD-CG2). Imported softly so the SDK keeps working without
 # the `codegraph` extra; when present, it is the single source of truth for code chunking.
@@ -4474,6 +4480,17 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
                 "code" if c.metadata.get("symbol_id") else "code_window"
             )
             meta["source"] = "victor_codegraph"
+            # TD-CG2 R5. These offsets are UTF-8 BYTE offsets, while every text
+            # strategy fills the same field with CHARACTER offsets -- one type,
+            # two incompatible units. A consumer slicing a Python `str` with a
+            # byte offset silently corrupts any non-ASCII source, and until now
+            # there was no way to tell which it held.
+            #
+            # `document_processor` persists these values, so the unit is a
+            # STORED contract. The marker is therefore additive and readers must
+            # treat its ABSENCE as legacy: mixed-read-safe, no flag day.
+            meta["offset_basis"] = OFFSET_BASIS_BYTE
+            meta["offset_contract"] = OFFSET_CONTRACT_EXACT
             symbol_relations = relations_by_symbol.get(meta.get("symbol_id", ""))
             if symbol_relations:
                 meta["relations"] = symbol_relations

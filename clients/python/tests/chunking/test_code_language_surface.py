@@ -184,3 +184,187 @@ def test_r6_include_tests_is_forwarded():
         "include_tests=False returned chunks, so the flag is still being "
         "accepted and ignored"
     )
+
+
+# ---------------------------------------------------------------------------
+# R2-R5: the invariants a code chunker owes its caller, independent of language.
+#
+# R1/R6/R7/R8 cover the SURFACE (which languages, which flags, which labels).
+# These four cover the OUTPUT, and they are the assertions that authorise the
+# deletion in slice S4: the delegated path must satisfy them before the in-SDK
+# parsers can be removed, or the retirement trades a known-broken implementation
+# for an unmeasured one.
+# ---------------------------------------------------------------------------
+
+#: Upstream defects in victor-codegraph 0.9.0, recorded rather than hidden.
+#: `strict=True` makes this a BIDIRECTIONAL ratchet: if an upstream release
+#: fixes one, the xpass FAILS and forces the marker off, so a fix cannot land
+#: unnoticed and the exception cannot outlive its cause.
+#:
+#: R3/rust: the package emits a window chunk for `impl Beta { ... }` AND a
+#: nested symbol chunk for the `fn gamma` inside it, so the method body is
+#: embedded twice -- paid once at ingest and stored forever.
+#: R4/js,ts,java: a class yields a HEADER chunk rather than a whole-class chunk,
+#: leaving the closing brace covered by nothing.
+_R3_UPSTREAM_NESTING = {"rust"}
+_R4_UPSTREAM_COVERAGE = {"javascript", "typescript", "java"}
+
+_R_LANGUAGE_NAMES = ["python", "javascript", "typescript", "go", "rust", "java"]
+
+
+def _r_params(known_red: set[str], reason: str):
+    return [
+        (
+            pytest.param(
+                language,
+                marks=pytest.mark.xfail(strict=True, reason=f"{reason} ({language})"),
+            )
+            if language in known_red
+            else pytest.param(language)
+        )
+        for language in _R_LANGUAGE_NAMES
+    ]
+
+
+R_LANGUAGES = _R_LANGUAGE_NAMES
+
+NON_ASCII_SOURCE = (
+    "def greet_日本語(name):\n"
+    '    """Grüße — with a naïve emoji 🎌."""\n'
+    '    return f"こんにちは {name}"\n'
+    "\n"
+    "class Café:\n"
+    "    def au_lait(self):\n"
+    "        return '☕'\n"
+)
+
+
+@pytest.mark.parametrize("language", R_LANGUAGES)
+def test_r2_no_chunk_exceeds_the_configured_cap(language):
+    """A chunk over the cap is paid for and then discarded by the provider.
+
+    The legacy path never consulted max_chunk_size at all -- measured at 10.6x
+    over a 400-character budget. This is the assertion that proves the delegation
+    is the fix rather than assuming it.
+    """
+    filename, source = SAMPLES[language]
+    cap = 200
+    strategy = CodeChunkingStrategy(
+        CodeChunkingConfig(chunk_size=cap, max_chunk_size=cap, min_chunk_size=1)
+    )
+    for chunk in strategy.chunk(source, filename):
+        assert (
+            len(chunk.text) <= cap
+        ), f"{language}: emitted {len(chunk.text)} chars against a {cap} cap"
+
+
+@pytest.mark.parametrize(
+    "language",
+    _r_params(
+        _R3_UPSTREAM_NESTING, "victor-codegraph 0.9.0 nests a symbol in a window"
+    ),
+)
+def test_r3_no_chunk_is_nested_inside_another(language):
+    """Nesting is the KEU multiplier, expressed as an assertion.
+
+    The legacy path emitted each method inside its class chunk and again alone,
+    so method bodies were embedded twice -- paid for once at ingest and stored
+    forever. Overlap between siblings is a tuning choice; strict containment is
+    double billing.
+    """
+    filename, source = SAMPLES[language]
+    chunks = CodeChunkingStrategy(
+        CodeChunkingConfig(chunk_size=400, max_chunk_size=400, min_chunk_size=1)
+    ).chunk(source, filename)
+    spans = [(c.start_pos, c.end_pos) for c in chunks]
+    for i, (start, end) in enumerate(spans):
+        for j, (other_start, other_end) in enumerate(spans):
+            if i == j:
+                continue
+            strictly_inside = (
+                other_start <= start
+                and end <= other_end
+                and (other_end - other_start) > (end - start)
+            )
+            assert not strictly_inside, (
+                f"{language}: chunk {i} {(start, end)} is nested inside chunk "
+                f"{j} {(other_start, other_end)} -- its text is embedded twice"
+            )
+
+
+@pytest.mark.parametrize(
+    "language",
+    _r_params(
+        _R4_UPSTREAM_COVERAGE,
+        "victor-codegraph 0.9.0 emits a class header, orphaning the closing brace",
+    ),
+)
+def test_r4_every_non_whitespace_character_is_covered(language):
+    """Imports, module constants and top-level statements are content too.
+
+    The legacy path covered only symbol bodies, so 61 of 4,311 characters of a
+    real file landed in no chunk and were unretrievable. Measured over
+    non-whitespace characters, since inter-chunk whitespace is a legitimate
+    casualty of any segmentation.
+    """
+    filename, source = SAMPLES[language]
+    chunks = CodeChunkingStrategy(
+        CodeChunkingConfig(chunk_size=400, max_chunk_size=400, min_chunk_size=1)
+    ).chunk(source, filename)
+
+    covered = bytearray(len(source))
+    for chunk in chunks:
+        for position in range(max(0, chunk.start_pos), min(len(source), chunk.end_pos)):
+            covered[position] = 1
+    missed = [
+        index
+        for index, character in enumerate(source)
+        if not character.isspace() and not covered[index]
+    ]
+    assert not missed, (
+        f"{language}: {len(missed)} non-whitespace characters in no chunk, "
+        f"first at {missed[0]} ({source[missed[0]:missed[0] + 30]!r})"
+    )
+
+
+def test_r5_offset_basis_is_declared():
+    """Offsets are persisted, so their UNIT is a stored contract.
+
+    The code path publishes UTF-8 byte offsets through the same field every text
+    strategy fills with character offsets. One type, two incompatible units. A
+    consumer slicing a Python str with a byte offset silently corrupts any
+    non-ASCII source, and there is no way to tell which it holds without a
+    declared basis.
+    """
+    chunks = CodeChunkingStrategy(
+        CodeChunkingConfig(chunk_size=400, max_chunk_size=400, min_chunk_size=1)
+    ).chunk(NON_ASCII_SOURCE, "t.py")
+    assert chunks
+    for chunk in chunks:
+        assert (
+            "offset_basis" in chunk.metadata
+        ), "no offset_basis: a consumer cannot tell bytes from characters"
+        assert chunk.metadata["offset_basis"] in {"char", "byte"}
+
+
+def test_r5_offsets_honour_their_declared_basis():
+    """Declaring a basis is worth nothing unless slicing by it reproduces the text.
+
+    Non-ASCII is the only case that can distinguish the two, which is exactly why
+    it took a multi-byte fixture to see this at all.
+    """
+    chunks = CodeChunkingStrategy(
+        CodeChunkingConfig(chunk_size=400, max_chunk_size=400, min_chunk_size=1)
+    ).chunk(NON_ASCII_SOURCE, "t.py")
+    assert chunks
+    encoded = NON_ASCII_SOURCE.encode("utf-8")
+    for chunk in chunks:
+        basis = chunk.metadata.get("offset_basis")
+        if basis == "char":
+            sliced = NON_ASCII_SOURCE[chunk.start_pos : chunk.end_pos]
+        else:
+            sliced = encoded[chunk.start_pos : chunk.end_pos].decode("utf-8", "replace")
+        assert sliced == chunk.text, (
+            f"declared basis {basis!r} does not reproduce the chunk: "
+            f"{sliced[:60]!r} != {chunk.text[:60]!r}"
+        )
