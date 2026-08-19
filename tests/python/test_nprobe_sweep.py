@@ -13,6 +13,14 @@ SWEEP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SWEEP)
 
 
+def test_binary_neutral_paths_follow_language_boundary_not_filename_allowlist():
+    assert SWEEP.is_binary_neutral_path("docs/12-design/adr/example.adoc")
+    assert SWEEP.is_binary_neutral_path("scripts/bench/new_experiment.py")
+    assert SWEEP.is_binary_neutral_path("tests/python/test_new_experiment.py")
+    assert not SWEEP.is_binary_neutral_path("src/storage/engines/sst/search/mod.rs")
+    assert not SWEEP.is_binary_neutral_path("Cargo.toml")
+
+
 def expected_result() -> dict:
     return {
         "protocol": "pax_nprobe_topk_matrix",

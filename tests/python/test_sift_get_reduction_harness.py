@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import struct
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -116,6 +118,109 @@ def test_query_result_identity_separates_membership_from_order() -> None:
     assert first["set_ids_sha256"] != changed["set_ids_sha256"]
     assert first["result_count"] == 3
     assert first["unique_result_count"] == 2
+
+
+def test_query_sweep_checks_progress_guard_before_queries_and_after_measurement() -> None:
+    guard_calls = []
+    metrics = dict.fromkeys(HARNESS.METRICS, 0.0)
+    with (
+        patch.object(HARNESS, "read_vectors", return_value=[[0.0, 1.0]]),
+        patch.object(HARNESS, "read_truth_ids", return_value=[[1]]),
+        patch.object(HARNESS, "scrape", side_effect=[metrics, metrics]),
+        patch.object(
+            HARNESS,
+            "request_json",
+            return_value={"results": [{"id": "v1"}]},
+        ),
+    ):
+        result = HARNESS.run_query_sweep(
+            "http://127.0.0.1:5678",
+            "1",
+            Path("queries.u8bin"),
+            Path("truth.ivecs"),
+            0,
+            1,
+            1,
+            "guarded",
+            "u8bin",
+            "ivecs",
+            lambda: guard_calls.append("checked"),
+        )
+
+    assert result["recall_at_k"] == 1.0
+    assert guard_calls == ["checked", "checked"]
+
+
+def test_query_sweep_runs_bounded_concurrency_and_preserves_query_order() -> None:
+    metrics = dict.fromkeys(HARNESS.METRICS, 0.0)
+    lock = threading.Lock()
+    first_pair = threading.Barrier(2, timeout=1)
+    request_count = 0
+
+    def request(_url, *, method, body, timeout):
+        nonlocal request_count
+        assert method == "POST"
+        assert timeout == 300
+        query_id = int(body["vector"][0])
+        with lock:
+            request_count += 1
+            ordinal = request_count
+        if ordinal <= 2:
+            first_pair.wait()
+        time.sleep(0.01)
+        return {"results": [{"id": f"v{query_id}"}]}
+
+    with (
+        patch.object(
+            HARNESS,
+            "read_vectors",
+            return_value=[[float(index)] for index in range(4)],
+        ),
+        patch.object(HARNESS, "read_truth_ids", return_value=[[i] for i in range(4)]),
+        patch.object(HARNESS, "scrape", side_effect=[metrics, metrics]),
+        patch.object(HARNESS, "request_json", side_effect=request),
+    ):
+        result = HARNESS.run_query_sweep(
+            "http://127.0.0.1:5678",
+            "1",
+            Path("queries.u8bin"),
+            Path("truth.ivecs"),
+            0,
+            4,
+            1,
+            "concurrent",
+            "u8bin",
+            "ivecs",
+            concurrency=2,
+        )
+
+    expected = [HARNESS.query_result_identity([f"v{i}"]) for i in range(4)]
+    assert result["recall_at_k"] == 1.0
+    assert result["result_identity"]["ordered_ids_sha256_by_query"] == [
+        item["ordered_ids_sha256"] for item in expected
+    ]
+    assert result["load"] == {
+        "model": "closed_loop_bounded",
+        "configured_concurrency": 2,
+        "peak_in_flight": 2,
+        "wall_seconds": pytest.approx(result["load"]["wall_seconds"]),
+        "qps": pytest.approx(4 / result["load"]["wall_seconds"]),
+    }
+
+
+def test_query_sweep_rejects_nonpositive_concurrency() -> None:
+    with pytest.raises(RuntimeError, match="concurrency must be positive"):
+        HARNESS.run_query_sweep(
+            "http://127.0.0.1:5678",
+            "1",
+            Path("queries.u8bin"),
+            Path("truth.ivecs"),
+            0,
+            1,
+            1,
+            "invalid",
+            concurrency=0,
+        )
 
 
 def test_u8bin_prefix_uses_physical_rows_and_preserves_declared_rows(
@@ -263,6 +368,14 @@ def test_azure_inventory_scopes_prefix_and_records_stable_identity(
         {
             "name": "run-1/collections/7/manifest.json",
             "properties": {"contentLength": 50, "etag": "etag-2"},
+        },
+        {
+            "name": "run-1-sibling/collections/7/segment.pax",
+            "properties": {
+                "contentLength": 9999,
+                "etag": "sibling-etag",
+                "lastModified": "2026-07-30T00:00:00Z",
+            },
         },
     ]
     completed = SimpleNamespace(stdout=json.dumps(payload))
@@ -810,3 +923,39 @@ def test_server_records_explicit_query_range_policy(tmp_path: Path) -> None:
     assert environment["PROXIMADB_PAX_COALESCE_GAP"] == "1048576"
     assert environment["PROXIMADB_PAX_VECTOR_COALESCE_RANGE"] == "16777216"
     assert environment["PROXIMADB_PAX_COALESCE_RANGE"] == "16777216"
+
+
+def test_server_adaptive_range_policy_removes_inherited_overrides(tmp_path: Path) -> None:
+    process = SimpleNamespace(poll=lambda: None)
+    server = HARNESS.OwnedServer(
+        tmp_path / "proximadb-server",
+        tmp_path / "benchmark.toml",
+        "http://127.0.0.1:5790",
+        tmp_path / "server.log",
+        None,
+        adaptive_read_strategy=True,
+    )
+
+    inherited = {
+        "PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER": "0",
+        "PROXIMADB_PAX_VECTOR_COALESCE_GAP": "7",
+        "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": "8",
+        "PROXIMADB_PAX_COALESCE_GAP": "9",
+        "PROXIMADB_PAX_COALESCE_RANGE": "10",
+    }
+    with (
+        patch.dict(HARNESS.os.environ, inherited),
+        patch.object(HARNESS.subprocess, "Popen", return_value=process) as popen,
+        patch.object(HARNESS, "request_json", return_value={}),
+    ):
+        server.start()
+
+    environment = popen.call_args.kwargs["env"]
+    assert environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] == "1"
+    for name in (
+        "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+        "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+        "PROXIMADB_PAX_COALESCE_GAP",
+        "PROXIMADB_PAX_COALESCE_RANGE",
+    ):
+        assert name not in environment

@@ -100,7 +100,7 @@ impl IopsBudget {
             // S3 / HTTP: no hard range limit; 8 MiB sweet spot.
             Some("s3" | "http" | "https") => Self::S3,
             // GCS: same as S3.
-            Some("gs") => Self::GCS,
+            Some("gs" | "gcs") => Self::GCS,
             // Local / MinIO / bare path: no round-trip cost. ADR-073: an
             // HDD-backed location (500 IOPS, seek-bound) must coalesce like a
             // cloud store — the measured sweep puts the LOCAL profile at ~191
@@ -179,6 +179,41 @@ pub fn write_target_block_bytes(destination_url: Option<&str>) -> u64 {
         Some(url) => IopsBudget::for_path(url).target_block_bytes(),
         None => IopsBudget::CLOUD.target_block_bytes(),
     }
+}
+
+/// Candidate merged-range caps for the adaptive **read** planner.
+///
+/// This is intentionally separate from [`IopsBudget::max`]. That field bounds
+/// writer block geometry; raising it to improve reads would silently create
+/// larger blocks at flush/compaction time. Read candidates instead begin at the
+/// backend's conservative target and grow through a small deterministic set up
+/// to a provider-bounded ceiling. The exact range planner scores the resulting
+/// GET/byte plans for the current selected cells.
+///
+/// Azure's 24 MiB ceiling covers the measured 1M and 768-d knees without
+/// admitting the 32 MiB point that exceeded the declared RSS guard. S3/GCS keep
+/// their existing 16 MiB maximum; local storage remains bounded at 8 MiB.
+pub fn read_range_cap_candidates(path: &str) -> Vec<u64> {
+    let budget = IopsBudget::for_path(path);
+    let scheme = path.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
+    let ceiling = match scheme.as_deref() {
+        Some("az" | "azure" | "adls" | "abfs") => 24 * 1024 * 1024,
+        Some("s3" | "gs" | "gcs" | "http" | "https") => 16 * 1024 * 1024,
+        Some("file" | "minio") | None => 8 * 1024 * 1024,
+        Some(_) => 8 * 1024 * 1024,
+    };
+
+    let mut caps = Vec::with_capacity(6);
+    for multiplier in [1_u64, 2, 3, 4, 6] {
+        let cap = budget.target.saturating_mul(multiplier);
+        if cap > 0 && cap <= ceiling && caps.last().copied() != Some(cap) {
+            caps.push(cap);
+        }
+    }
+    if caps.last().copied() != Some(ceiling) {
+        caps.push(ceiling);
+    }
+    caps
 }
 
 #[cfg(test)]
@@ -271,5 +306,40 @@ mod tests {
     #[test]
     fn target_block_bytes_is_the_target() {
         assert_eq!(IopsBudget::CLOUD.target_block_bytes(), 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn adaptive_read_caps_cover_the_measured_azure_knees() {
+        let mib = 1024 * 1024;
+        let expected = vec![4 * mib, 8 * mib, 12 * mib, 16 * mib, 24 * mib];
+        for path in ["az://c/k", "azure://c/k", "adls://c/k", "abfs://c/k"] {
+            assert_eq!(read_range_cap_candidates(path), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn adaptive_read_caps_are_backend_bounded_and_monotone() {
+        let mib = 1024 * 1024;
+        assert_eq!(
+            read_range_cap_candidates("s3://b/k"),
+            vec![8 * mib, 16 * mib]
+        );
+        assert_eq!(
+            read_range_cap_candidates("gs://b/k"),
+            vec![8 * mib, 16 * mib]
+        );
+        assert_eq!(
+            read_range_cap_candidates("gcs://b/k"),
+            vec![8 * mib, 16 * mib]
+        );
+        assert_eq!(
+            read_range_cap_candidates("file:///data/k"),
+            vec![mib, 2 * mib, 3 * mib, 4 * mib, 6 * mib, 8 * mib]
+        );
+        for path in ["az://c/k", "s3://b/k", "file:///data/k", "redis://x/k"] {
+            let caps = read_range_cap_candidates(path);
+            assert!(!caps.is_empty(), "{path}");
+            assert!(caps.windows(2).all(|pair| pair[0] < pair[1]), "{path}");
+        }
     }
 }

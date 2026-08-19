@@ -41,6 +41,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -753,6 +754,18 @@ class AzureCliPaxGeometry:
         payload = json.loads(completed.stdout)
         if not isinstance(payload, list):
             raise RuntimeError("Azure CLI blob inventory was not a JSON list")
+        # Azure's server-side prefix match is lexical, not path-segment aware:
+        # requesting ``run-3m3`` also returns ``run-3m3-ncomp128``. Enforce the
+        # canonical object-prefix boundary locally so geometry, empty-prefix
+        # checks, and evidence snapshots cannot mix sibling benchmark beds.
+        if self.prefix:
+            descendant_prefix = f"{self.prefix}/"
+            payload = [
+                item
+                for item in payload
+                if str(item.get("name", "")) == self.prefix
+                or str(item.get("name", "")).startswith(descendant_prefix)
+            ]
         return payload
 
     def require_empty_prefix(self) -> None:
@@ -1191,7 +1204,11 @@ def run_query_sweep(
     phase: str,
     query_format: str = "fvecs",
     groundtruth_format: str = "ivecs",
+    progress_guard=None,
+    concurrency: int = 1,
 ) -> dict:
+    if concurrency <= 0:
+        raise RuntimeError("query concurrency must be positive")
     queries = read_vectors(query_path, query_format, query_start, query_count)
     groundtruth = read_truth_ids(
         groundtruth_path, groundtruth_format, query_start, query_count
@@ -1204,15 +1221,50 @@ def run_query_sweep(
     result_counts = []
     unique_result_counts = []
     recall_hits_by_query = []
-    for offset, query in enumerate(queries):
-        started = time.perf_counter()
-        response = request_json(
-            f"{server}/api/v2/collections/{collection_id}/search",
-            method="POST",
-            body={"vector": query, "top_k": top_k},
-            timeout=300,
-        )
-        latencies.append((time.perf_counter() - started) * 1000)
+    in_flight = 0
+    peak_in_flight = 0
+    in_flight_lock = threading.Lock()
+
+    def execute_query(indexed_query):
+        nonlocal in_flight, peak_in_flight
+        offset, query = indexed_query
+        if progress_guard is not None:
+            progress_guard()
+        with in_flight_lock:
+            in_flight += 1
+            peak_in_flight = max(peak_in_flight, in_flight)
+        try:
+            started = time.perf_counter()
+            response = request_json(
+                f"{server}/api/v2/collections/{collection_id}/search",
+                method="POST",
+                body={"vector": query, "top_k": top_k},
+                timeout=300,
+            )
+            latency_ms = (time.perf_counter() - started) * 1000
+            return offset, latency_ms, response
+        finally:
+            with in_flight_lock:
+                in_flight -= 1
+
+    wall_started = time.perf_counter()
+    indexed_queries = list(enumerate(queries))
+    if concurrency == 1:
+        outcomes = [execute_query(item) for item in indexed_queries]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=concurrency,
+            thread_name_prefix="pax-query",
+        ) as executor:
+            # Map returns in input order. Recall and result hashes therefore
+            # remain tied to query index, not nondeterministic completion order.
+            outcomes = list(executor.map(execute_query, indexed_queries))
+    wall_seconds = time.perf_counter() - wall_started
+
+    for expected_offset, (offset, latency_ms, response) in enumerate(outcomes):
+        if offset != expected_offset:
+            raise RuntimeError(f"{phase}: concurrent query order was not preserved")
+        latencies.append(latency_ms)
         response_results = response.get("results")
         if not isinstance(response_results, list):
             raise RuntimeError(f"{phase}: query {offset} returned no result list")
@@ -1234,6 +1286,8 @@ def run_query_sweep(
         recall_hits = len(returned & expected)
         recall_hits_by_query.append(recall_hits)
         recalls.append(recall_hits / top_k)
+    if progress_guard is not None:
+        progress_guard()
     after = scrape(server)
     quality_checkpoints = prefix_quality_checkpoints(recalls, latencies)
     latencies.sort()
@@ -1270,6 +1324,13 @@ def run_query_sweep(
         "phase": phase,
         "query_start": query_start,
         "query_count": query_count,
+        "load": {
+            "model": "closed_loop_bounded",
+            "configured_concurrency": concurrency,
+            "peak_in_flight": peak_in_flight,
+            "wall_seconds": wall_seconds,
+            "qps": query_count / wall_seconds,
+        },
         "top_k": top_k,
         "recall_at_k": sum(recalls) / len(recalls),
         "recall_hits_total": sum(recall_hits_by_query),
@@ -1333,6 +1394,7 @@ def run_query_sweep(
         f"bytes/q={result['bytes_per_query'] / 1_000_000:.2f}MB "
         f"p50={result['latency_ms']['p50']:.2f}ms "
         f"p95={result['latency_ms']['p95']:.2f}ms "
+        f"c={concurrency} qps={result['load']['qps']:.2f} "
         f"cells/q={result['ivf']['cells_probed_per_query']:.2f} "
         f"rows/q={result['ivf']['probed_rows_per_query']:.0f} "
         f"rounds/q={result['ivf']['fetch_rounds_per_query']:.2f} "
@@ -1476,6 +1538,7 @@ class OwnedServer:
         azure_emulator: bool = False,
         coalesce_gap_bytes: int = AZURE_COALESCE_GAP_BYTES,
         coalesce_range_bytes: int = AZURE_COALESCE_RANGE_BYTES,
+        adaptive_read_strategy: bool = False,
     ):
         self.binary = binary
         self.config = config
@@ -1491,6 +1554,7 @@ class OwnedServer:
             raise RuntimeError("coalescing gap must be non-negative and range positive")
         self.coalesce_gap_bytes = coalesce_gap_bytes
         self.coalesce_range_bytes = coalesce_range_bytes
+        self.adaptive_read_strategy = adaptive_read_strategy
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -1502,12 +1566,6 @@ class OwnedServer:
                 "PROXIMADB_CACHE_PREFILL": "0",
                 "PROXIMADB_CACHE_ON_WRITE": "all",
                 "PROXIMADB_L0_COMPACTION_ENABLED": "1",
-                # Keep the planner fixed across local and Azure profiles so
-                # backend choice does not silently change the read geometry.
-                "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(self.coalesce_gap_bytes),
-                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(self.coalesce_range_bytes),
-                "PROXIMADB_PAX_COALESCE_GAP": str(self.coalesce_gap_bytes),
-                "PROXIMADB_PAX_COALESCE_RANGE": str(self.coalesce_range_bytes),
             }
         )
         # The diagnostic object-cold phase must remain cold even when the
@@ -1521,8 +1579,30 @@ class OwnedServer:
             "PROXIMADB_IVF_NCOMP",
             "PROXIMADB_PAX_READ_COARSE_NPROBE",
             "PROXIMADB_TRAINING_COMPACTION_MIN_MB",
+            "PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER",
+            "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+            "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+            "PROXIMADB_PAX_COALESCE_GAP",
+            "PROXIMADB_PAX_COALESCE_RANGE",
         ):
             environment.pop(inherited_gate, None)
+        if self.adaptive_read_strategy:
+            environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] = "1"
+        else:
+            # Keep the planner fixed across local and Azure profiles so
+            # backend choice does not silently change controlled sweeps.
+            environment.update(
+                {
+                    "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(
+                        self.coalesce_gap_bytes
+                    ),
+                    "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(
+                        self.coalesce_range_bytes
+                    ),
+                    "PROXIMADB_PAX_COALESCE_GAP": str(self.coalesce_gap_bytes),
+                    "PROXIMADB_PAX_COALESCE_RANGE": str(self.coalesce_range_bytes),
+                }
+            )
         if self.ivf_k is not None:
             environment["PROXIMADB_IVF_K"] = str(self.ivf_k)
         if self.n_comp is not None:
@@ -2329,18 +2409,13 @@ def main() -> int:
             capture_output=True,
             text=True,
         ).stdout.splitlines()
+        # Python harness tests cannot alter the Rust release executable. Keep
+        # the provenance boundary language-based instead of maintaining a
+        # filename allowlist every time a new benchmark protocol lands.
         unsafe_changes = [
             path
             for path in changed_since_build
-            if not path.startswith(("docs/", "scripts/"))
-            and path
-            not in {
-                "tests/python/test_sift_get_reduction_harness.py",
-                "tests/python/test_bigann_prefix_groundtruth.py",
-                "tests/python/test_nprobe_geometry_analysis.py",
-                "tests/python/test_nprobe_sweep.py",
-                "tests/python/test_range_cap_sweep.py",
-            }
+            if not path.startswith(("docs/", "scripts/", "tests/python/"))
         ]
         if unsafe_changes:
             raise RuntimeError(

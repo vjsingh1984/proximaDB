@@ -140,6 +140,31 @@ until that rerun passes and `k_c=90` is repeated at the same cap. The result
 does establish that the 4 MiB cap, rather than cell geometry alone, dominated
 this bed's Hot-Blob operation count.
 
+**Adaptive read-plan amendment (2026-08-17).** Exact-current measurements now
+show that cap choice is shape-dependent even when writer geometry keeps average
+SQ8 cells near 4 MiB. On BIGANN 1M (`128d`, `k_c=30`, `nprobe=6`), the
+4/8/12/16/24 MiB curve measured 10.077/8.177/7.796/7.657/7.647 wire GET/query;
+bytes rose from 28.56 MiB/query to 33.11--33.71 MiB/query. Thus 8 MiB is the
+latency knee, 16 MiB the operation knee, and 24 MiB is dominated. On the
+491,655-row 768d `k_c=90`, `nprobe=30` bed, 24 MiB reduced top-10 wire GETs
+47.514 -> 26.790 with +4.0% bytes and approximately half the median latency.
+
+ADR-065 therefore rejects both a universal 4 MiB cap and a universal larger
+cap. Under the existing default-OFF storage read-strategy gate, Regions A/B/D
+may enumerate provider-bounded policies and execute their real coalescing state
+machine without I/O. A tier-aware engine-core objective chooses from exact
+cold-miss GET/byte estimates, bounds Hot-cloud bytes to 1.25x the conservative baseline, prices
+retrieval-billed tiers more strictly, and chooses the smaller cap when scores
+are within 0.5%. Explicit operator overrides retain precedence and an absent
+gate retains the fixed policy. This changes neither selected cells nor decoded
+rows, so it is a physical I/O decision rather than an ANN-quality decision.
+The first slice holds the backend-derived gap constant; adaptive gap candidates
+remain deferred until a paired gap/RSS sweep provides evidence.
+PAX currently supplies no per-object access-tier metadata at this read leaf, so
+an absent tier is explicitly the active Hot/standard profile. Cool/Cold/Archive
+promotion requires plumbing the canonical `ObjectAccessTier`; URL aliases do
+not infer billing tier.
+
 === Explicitly rejected / deferred
 
 * **Separate files per family** — needs a multi-object commit protocol
