@@ -74,6 +74,15 @@ def test_storage_scope_requires_canonical_azure_url():
         SWEEP.azure_storage_scope("file:///tmp/bed")
 
 
+def test_azurite_geometry_inventory_requires_connection_string():
+    with pytest.raises(RuntimeError, match="AZURE_STORAGE_CONNECTION_STRING"):
+        SWEEP.require_azurite_inventory_connection({})
+
+    SWEEP.require_azurite_inventory_connection(
+        {"AZURE_STORAGE_CONNECTION_STRING": "UseDevelopmentStorage=true"}
+    )
+
+
 def test_cap_values_are_positive_unique_mib():
     assert SWEEP.cap_mib_values("4,8,16,32") == [4, 8, 16, 32]
     with pytest.raises(RuntimeError, match="duplicates"):

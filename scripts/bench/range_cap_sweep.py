@@ -17,11 +17,13 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -86,6 +88,15 @@ def azure_storage_scope(storage_url: str) -> tuple[str, str]:
     if parsed.scheme != "az" or not parsed.netloc or not parsed.path.strip("/"):
         raise RuntimeError("range-cap sweep requires canonical az://container/prefix")
     return parsed.netloc, parsed.path.strip("/")
+
+
+def require_azurite_inventory_connection(environment: Mapping[str, str]) -> None:
+    """Fail before setup when Azure CLI cannot address the emulator bed."""
+    if not environment.get("AZURE_STORAGE_CONNECTION_STRING", "").strip():
+        raise RuntimeError(
+            "range-cap Azurite geometry inventory requires "
+            "AZURE_STORAGE_CONNECTION_STRING"
+        )
 
 
 class AzuriteWireLog:
@@ -566,6 +577,8 @@ def main() -> int:
     parser.add_argument("--host-quiet-timeout-secs", type=float, default=3600)
     parser.add_argument("--max-contention-retries", type=int, default=0)
     args = parser.parse_args()
+
+    require_azurite_inventory_connection(os.environ)
 
     repository = Path(__file__).resolve().parents[2]
     binary_source = args.binary.resolve()
