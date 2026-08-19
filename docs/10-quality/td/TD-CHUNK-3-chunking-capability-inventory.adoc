@@ -117,6 +117,33 @@ Cheapest-and-free first, so value lands before the expensive measurement work:
 . **Small-to-big on ORION edges** — the largest piece of new design; sequence last so it lands on a port
   and an invariant suite that are already proven.
 
+== The eval harness exists (2026-08-18) — items 2/4/5 are now unblocked
+
+Built on `feat/chunk-boundary-port` as `conformance/evals.py`, because this TD says the absent
+capabilities need their rubric *before* they are written. Eight cases, each a real question expressed
+as the literal span that answers it, scored on **output** (containment, density) and **trajectory**
+(structural integrity, attributability), gated on recorded floors in the same CI job as the invariant
+ratchet.
+
+**The design decision worth carrying forward: this is deliberately NOT an eval of the embedding
+model.** Scoring recall@k would move the gate whenever the model or the index changed, so a red gate
+could never be attributed to chunking — and a gate that cannot attribute its own failure gets muted.
+Every metric is model-independent and measures only what the chunker decides. Retrieval-level
+recall@k belongs in the ANN harnesses, where the model *is* the thing under test; this measures the
+layer underneath, which those harnesses assume and never check.
+
+Two results worth acting on:
+
+* **SEMANTIC scores best on every axis** (containment 1.00, density 0.462, structure 1.00,
+  attributability 0.62) — the strategy production was repointed *away from* in #1670 for losing up to
+  100% of a document. Its correctness defects are fixed; its boundary quality is the highest of the
+  seven. This is precisely the measurement `TextDocumentProcessor._get_chunker` asks for in its own
+  comment. **Filed as evidence, not acted on** — eight synthetic cases is not enough to flip a
+  production default, and the comment already asks for that to be a separate, measured decision.
+* Scoring must happen at a **tight budget**. At the default 512 every corpus answer fits and every
+  chunker scores 1.00 containment; a saturated metric measures nothing. A guard test now fails if the
+  rubric ever flattens again.
+
 == Evals, not just tests
 
 Boundary quality is a ranked surface, so per the evals mandate it needs a rubric rather than an
