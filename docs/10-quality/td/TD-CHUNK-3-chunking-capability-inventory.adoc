@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Open — filed 2026-08-17 with ADR-091; inventory corrected 2026-08-18 (the SDP stages are placeholders, not implementations — see the correction below).** Gated on TD-CHUNK-2's port existing; each capability lands as a `BoundarySource` or a post-segmentation pass, never as a new "strategy".
+| Status | **In Progress — updated 2026-08-18.** Inventory corrected (the SDP stages are placeholders, not implementations — see the correction below). **Item 1 of the sequencing, heading paths, is done** on `feat/chunk-boundary-port`: `structure.py` (shared detection + `HeadingOutline.path_at`), `HeadingBoundarySource`, and `annotate_heading_paths`. Items 2-5 remain. Gated on TD-CHUNK-2's port existing; each capability lands as a `BoundarySource` or a post-segmentation pass, never as a new "strategy".
 | Dim | D4 (compute-per-modality) — secondary D1 (KSU: dedup), D3 (recall via boundary quality)
 | Pillar | PERF — secondary COST
 | Blocks | Nothing. This is the value-delivery TD; the three before it are the enabling work.
@@ -79,6 +79,25 @@ Each item names the cost term it moves, per the mandate — no item lands on "it
 * **Rust splitter → compute down, quality up.** Replaces ProximaDB's two Python regexes, one of which is
   the quadratic path (518 KB → 17.5 s). Evaluate behind the TD-CHUNK-2 port, which is exactly the seam
   ADR-091 chose so a native segmenter is a backend swap and not a rewrite.
+
+== What heading paths taught (2026-08-18, item 1 done)
+
+* **Detection was never the gap.** `semantic.py` already found markdown and HTML headings and already
+  excluded a `#` inside a fenced code block. What it discarded was the **hierarchy** — it recorded
+  "level 2, titled Docker", never "Installation > Docker". Level and title do not identify a section;
+  the path does. The census entry "detects headings then discards them" is more precisely "detects
+  headings, keeps level and title, discards the ancestor chain".
+* **The value is the annotator, not the boundary source** — and this follows from TD-CHUNK-2's
+  token-granularity finding. A heading *start* and the preceding paragraph *end* usually fall within
+  one token, so a heading source often moves no cut. A source can only describe chunks that happen to
+  END on one of its proposals, and most chunks end mid-section because the budget ran out. Labelling
+  by **lookup** (`annotate_heading_paths`) works for every chunk under every strategy, including
+  `fixed_size`, which knows nothing of structure.
+* **The extraction was the point.** The correct detection was private inside `SemanticStrategy` —
+  exactly how this census's five forks happened. It moved to `structure.py` and is now shared rather
+  than copied, asserted by a test so a private copy cannot drift back.
+* Content before the first heading is deliberately left **unlabelled** rather than given an invented
+  "Introduction", which would put a title in the index that the document never contained.
 
 == Sequencing
 
