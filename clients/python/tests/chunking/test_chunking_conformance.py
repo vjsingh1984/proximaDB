@@ -1658,6 +1658,19 @@ class TestHeadingSourceAndAnnotation:
         assert strategy.markdown_header_pattern is MARKDOWN_HEADING
 
 
+#: Module scope, not class scope: a comprehension in a class body cannot see
+#: names bound in that same body (only the outermost iterable is evaluated
+#: there). Same trap as TOKEN_MEASURED_STRATEGIES above.
+BOILERPLATE_LINE = (
+    "Copyright 2026 Example Corp. All rights reserved worldwide everywhere."
+)
+BOILERPLATE_DOC = "".join(
+    f"Unique body paragraph number {i} with its own distinct wording written.\n\n"
+    f"{BOILERPLATE_LINE}\n\n"
+    for i in range(6)
+)
+
+
 class TestIngestCarriesHeadingPaths:
     """The capability must reach the product, not merely exist.
 
@@ -1713,6 +1726,66 @@ class TestIngestCarriesHeadingPaths:
         assert [(c.text, c.start_pos, c.end_pos) for c in on] == [
             (c.text, c.start_pos, c.end_pos) for c in off
         ]
+
+    @staticmethod
+    def _dedup_processor(**overrides):
+        from proximadb_sdk.document_processor import (
+            ProcessorConfig,
+            TextDocumentProcessor,
+        )
+
+        settings = {
+            "chunk_size": 80,
+            "chunk_overlap": 0,
+            "min_chunk_size": 1,
+            "max_chunk_size": 160,
+        }
+        settings.update(overrides)
+        return TextDocumentProcessor(ProcessorConfig(**settings))
+
+    def test_dedup_is_off_by_default(self):
+        """Default OFF, unlike heading annotation, and the difference matters.
+
+        Annotation only ADDS metadata; dedup REMOVES chunks, so enabling it
+        changes what a tenant has stored. That is a product decision, and the
+        repo's rule for anything in that class is to ship default-off until
+        baked.
+        """
+        chunks = self._dedup_processor().chunk(BOILERPLATE_DOC, "doc.md")
+        assert not any(c.metadata.get("duplicates_absorbed") for c in chunks)
+        assert len(chunks) == 12
+
+    def test_dedup_engages_when_opted_in(self):
+        plain = self._dedup_processor().chunk(BOILERPLATE_DOC, "doc.md")
+        deduped = self._dedup_processor(deduplicate_chunks=True).chunk(
+            BOILERPLATE_DOC, "doc.md"
+        )
+        assert len(deduped) < len(plain)
+        absorbed = [
+            c.metadata.get("duplicates_absorbed")
+            for c in deduped
+            if c.metadata.get("duplicates_absorbed")
+        ]
+        assert absorbed, "removal must be recorded, never silent"
+
+    def test_opting_in_keeps_every_distinct_body(self):
+        # The safety property at the product boundary: only the repeated
+        # boilerplate may go, never a body paragraph.
+        deduped = self._dedup_processor(deduplicate_chunks=True).chunk(
+            BOILERPLATE_DOC, "doc.md"
+        )
+        text = " ".join(c.text for c in deduped)
+        for i in range(6):
+            assert f"number {i}" in text, f"body paragraph {i} was dropped"
+
+    def test_dedup_runs_after_annotation_so_survivors_keep_their_path(self):
+        # Order matters: a representative that loses its heading path would
+        # trade a cost saving for a retrieval regression.
+        document = "# Guide\n\n" + BOILERPLATE_DOC
+        deduped = self._dedup_processor(
+            deduplicate_chunks=True, preserve_structure=True
+        ).chunk(document, "doc.md")
+        assert all(c.metadata.get("heading_path") for c in deduped)
 
     def test_a_document_without_headings_is_untouched(self):
         plain = "Just prose with no structure whatsoever. " * 20

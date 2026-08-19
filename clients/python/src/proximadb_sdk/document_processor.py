@@ -199,6 +199,26 @@ class ProcessorConfig:
     #: annotation, which is what happens today.
     preserve_structure: bool = True
 
+    #: Drop near-duplicate chunks before they are embedded and stored.
+    #:
+    #: **Default OFF**, unlike heading annotation, and the difference is the
+    #: point: annotation only ADDS metadata, while this REMOVES chunks, so
+    #: enabling it changes what a tenant has stored. Measured safe (24-31%
+    #: fewer chunks with no eval answer lost) and still opt-in, per the
+    #: repo's ship-default-OFF-until-baked rule. Turning it on by default is a
+    #: product decision about stored data, not a code one.
+    #:
+    #: Removals are recorded on the chunk that absorbed them
+    #: (`duplicates_absorbed`, `duplicate_spans`), never silent.
+    deduplicate_chunks: bool = False
+
+    #: Jaccard similarity at or above which two chunks are the same. High by
+    #: design: keeping a duplicate costs a little money, while dropping a
+    #: distinct chunk removes content nothing downstream can detect is
+    #: missing. Measured: almost all of the available saving is at 1.0 (exact
+    #: duplicates), so a conservative threshold gives up very little.
+    deduplicate_threshold: float = 0.9
+
     # Code-specific settings
     include_docstrings: bool = True
     include_comments: bool = True
@@ -816,6 +836,17 @@ class TextDocumentProcessor(DocumentProcessor):
         # no-op on documents without headings.
         if self.config.preserve_structure:
             annotate_heading_paths(content, text_chunks)
+
+        # Applied AFTER annotation so a surviving representative keeps its
+        # heading path, and after chunking so the partition was total before
+        # anything was dropped -- dedup is a selection over the partition, not
+        # part of forming it.
+        if self.config.deduplicate_chunks:
+            from .chunking_strategies.dedup import deduplicate
+
+            text_chunks = deduplicate(
+                list(text_chunks), threshold=self.config.deduplicate_threshold
+            ).kept
 
         processed = []
         for chunk in text_chunks:
