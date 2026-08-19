@@ -4414,6 +4414,13 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
             chunk_overlap_tokens=max(0, int(self.config.chunk_overlap / 3.5)),
             languages=self.config.languages,
             include_private=self.config.include_private,
+            # TD-CG2 R6: forwarded, because the shared package implements it and
+            # this module never passed it on -- so `include_tests=False` was
+            # accepted and ignored, and a caller excluding test files got them
+            # all anyway. Third instance of the same class in this file, after
+            # `extract_relations` and the dropped size fields: a config field
+            # that is read by nobody is indistinguishable from one left unset.
+            include_tests=self.config.include_tests,
             extract_relations=self.config.extract_relations,
         )
         # Relations are NOT surfaced by the shared package's `chunk()` entry
@@ -4479,7 +4486,11 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
                     metadata=meta,
                 )
             )
-        if not out and text.strip():
+        if (
+            not out
+            and text.strip()
+            and not self._recognised_by_victor(source_id, language)
+        ):
             # The shared package knows nothing about this file type -- it covers
             # far fewer extensions than this module advertises. Returning its
             # empty list SILENTLY DISCARDS the whole document, which is the
@@ -4487,8 +4498,29 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
             # delegation introduced: the legacy path fell through to text
             # chunking here. Fall back, and LABEL it, so a caller can tell a
             # real symbol chunk from a text window (TD-CG2 R8).
+            #
+            # Gated on "could not handle it", NOT on "returned nothing". Those
+            # are different, and conflating them defeats every deliberate
+            # exclusion: with `include_tests=False` the package correctly
+            # returns nothing for a test file, and an ungated fallback would
+            # text-chunk it straight back in.
             return self._fallback_chunk(text, source_id, metadata)
         return out
+
+    @staticmethod
+    def _recognised_by_victor(source_id: str, explicit_language: str | None) -> bool:
+        """True when the shared package can identify this file's language.
+
+        The distinction that makes the fallback safe: a package that RECOGNISES
+        a file and returns no chunks has made a decision, and overriding it
+        would silently undo the caller's configuration.
+        """
+        if explicit_language:
+            return True
+        try:
+            return _victor_codegraph.detect_language(source_id) is not None
+        except Exception:  # noqa: BLE001 - detection is advisory
+            return False
 
     def _detect_language(self, file_path: str) -> str | None:
         """Detect language from file extension using global registry"""

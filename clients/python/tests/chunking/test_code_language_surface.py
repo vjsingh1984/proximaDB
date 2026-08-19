@@ -161,3 +161,26 @@ def test_every_advertised_language_has_a_sample():
     advertised = set(EXTENSION_TO_LANGUAGE.values())
     missing = advertised - set(SAMPLES)
     assert not missing, f"advertised languages with no R1 sample: {missing}"
+
+
+def test_r6_include_tests_is_forwarded():
+    """`include_tests=False` must actually exclude test files.
+
+    The shared package implements it (2 chunks -> 0 on a test module); this
+    module simply never passed it on, so the flag was accepted and ignored. A
+    caller asking to exclude tests from its index got every one of them.
+    """
+    source = "def test_alpha():\n    assert True\n\ndef test_beta():\n    assert 1\n"
+
+    included = CodeChunkingStrategy(
+        CodeChunkingConfig(include_tests=True, min_chunk_size=1)
+    ).chunk(source, "test_foo.py")
+    assert included, "precondition: test files are chunked when included"
+
+    excluded = CodeChunkingStrategy(
+        CodeChunkingConfig(include_tests=False, min_chunk_size=1)
+    ).chunk(source, "test_foo.py")
+    assert not excluded, (
+        "include_tests=False returned chunks, so the flag is still being "
+        "accepted and ignored"
+    )
