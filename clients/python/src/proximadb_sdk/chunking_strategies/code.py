@@ -4211,6 +4211,47 @@ def get_supported_extensions() -> list[str]:
     return list(EXTENSION_TO_LANGUAGE.keys())
 
 
+#: Languages that genuinely extract SYMBOLS through the delegated path, as
+#: opposed to being merely covered by window chunks. Measured, and asserted by
+#: the R1 test in `tests/chunking/test_code_language_surface.py` -- so "which
+#: languages do we support?" is a CI fact rather than a docstring claim, which
+#: is what TD-CG2 found the whole ecosystem was missing.
+#:
+#: The remainder of EXTENSION_TO_LANGUAGE is still detected and still chunked;
+#: those files are covered by window or fallback chunks and simply carry no
+#: symbol metadata. Covered-without-symbols and unsupported are different
+#: states, and conflating them is what let "20+ languages" stand unchallenged.
+SYMBOL_EXTRACTING_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "bash",
+        "c",
+        "cpp",
+        "csharp",
+        "go",
+        "java",
+        "javascript",
+        "kotlin",
+        "lua",
+        "php",
+        "python",
+        "rust",
+        "scala",
+        "swift",
+        "tsx",
+        "typescript",
+    }
+)
+
+#: Detected and chunked, but yielding no symbols today. Named explicitly so the
+#: gap is visible in code rather than discovered by a user. `ruby` and `perl`
+#: are upstream gaps in the shared package's node tables; `haskell` and `elixir`
+#: have no grammar entry there at all; `json`, `xml` and `yaml` are data
+#: formats, for which "symbol" is not a meaningful notion.
+COVERED_WITHOUT_SYMBOLS: frozenset[str] = frozenset(
+    {"ruby", "perl", "haskell", "elixir", "sql", "json", "xml", "yaml"}
+)
+
+
 class CodeChunkingStrategy(ChunkingStrategyInterface):
     """
     AST-aware code chunking strategy.
@@ -4281,11 +4322,21 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
             List of TextChunk objects, one per symbol
         """
         metadata = metadata or {}
-        language = metadata.get("language") or self._detect_language(source_id)
+        explicit_language = metadata.get("language")
+        language = explicit_language or self._detect_language(source_id)
 
         # TD-CG2: when the shared package is installed, it is the source of truth.
+        # Pass only an EXPLICIT caller override, never this module's own
+        # extension guess (TD-CG2 R7). The two maps disagree, and ours is worse:
+        # it maps `.tsx` to "typescript", which overrides the shared package's
+        # own `.tsx -> tsx` detection and costs HALF the symbols in the file
+        # (measured 2 of 4). Deleting one argument is the whole fix. Where the
+        # shared package cannot detect a language it returns nothing, and the
+        # labelled text fallback below covers that.
         if _victor_codegraph is not None:
-            return self._chunk_via_victor_codegraph(text, source_id, language, metadata)
+            return self._chunk_via_victor_codegraph(
+                text, source_id, explicit_language, metadata
+            )
 
         parser = self._get_parser(language)
         if parser is None:
@@ -4405,7 +4456,16 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
         ):
             meta = {**metadata, **c.metadata}
             meta.setdefault("chunking_strategy", "code")
-            meta.setdefault("chunk_type", "code")
+            # TD-CG2 R8: a caller must be able to tell a real symbol from a
+            # window over a language nothing understood. Labelling everything
+            # "code" made those indistinguishable, so a consumer building a code
+            # graph could not tell which chunks carry structure. Three states,
+            # because they are three different things: a symbol, a window the
+            # shared package emitted over code it could not attribute, and our
+            # own text fallback for file types it does not handle at all.
+            meta["chunk_type"] = (
+                "code" if c.metadata.get("symbol_id") else "code_window"
+            )
             meta["source"] = "victor_codegraph"
             symbol_relations = relations_by_symbol.get(meta.get("symbol_id", ""))
             if symbol_relations:

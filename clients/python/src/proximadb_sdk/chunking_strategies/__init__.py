@@ -8,7 +8,11 @@ This package provides a clean interface for text chunking with proper separation
 - Extensible interface for custom strategies
 
 For code-aware chunking, use the CodeChunkingStrategy which provides:
-- AST-based parsing using tree-sitter for 20+ languages
+- AST-based symbol extraction for the languages in
+  `code.SYMBOL_EXTRACTING_LANGUAGES` (16, measured and asserted in CI), delegated
+  to the shared `victor-codegraph` package. Other detected languages are still
+  chunked and covered, but carry no symbol metadata -- see
+  `code.COVERED_WITHOUT_SYMBOLS`.
 - Symbol extraction (functions, classes, methods, etc.)
 - Relationship extraction (calls, imports, inheritance)
 - Pluggable architecture for adding new language support
