@@ -365,7 +365,7 @@ rmp-serde = "1.1"
 tonic-prost = "0.14"
 # Compression libraries (workspace-inheritable for modality/horizontal crates)
 brotli = "6.0"
-bzip2 = "0.5"
+bzip2 = "0.6"
 flate2 = { version = "1.0", default-features = true }
 lz4_flex = "0.11"
 snap = "1.1"
