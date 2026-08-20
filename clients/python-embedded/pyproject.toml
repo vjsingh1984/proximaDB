@@ -1,74 +1,13 @@
-[build-system]
-requires = ["maturin>=1.4,<2.0"]
-build-backend = "maturin"
-
-[project]
-name = "proximadb_embedded"
-version = "0.3.0"
-description = "ProximaDB Embedded - In-process vector database for Python with zero network overhead"
-authors = [
-    {name = "Vijaykumar Singh", email = "vijay@anvaiops.com"}
-]
-license = {text = "Apache-2.0"}
-readme = "README.md"
-requires-python = ">=3.10"
-keywords = ["vector", "database", "embedded", "similarity", "search", "ml", "ai", "embeddings"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Rust",
-    "Topic :: Database",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Operating System :: MacOS",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: Microsoft :: Windows",
-]
-
-dependencies = [
-    "numpy>=1.21.0",
-]
-
-[project.optional-dependencies]
-arrow = [
-    "pyarrow>=14.0.0",
-    "pandas>=1.5.0",
-]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.20.0",
-    "pytest-benchmark>=4.0.0",
-    "black>=22.0.0",
-    "isort>=5.10.0",
-    "mypy>=1.0.0",
-    "ruff>=0.0.280",
-]
-
-[project.urls]
-Homepage = "https://github.com/anvai-labs/proximaDB"
-Documentation = "https://github.com/anvai-labs/proximaDB#readme"
-Repository = "https://github.com/anvai-labs/proximaDB"
-Issues = "https://github.com/anvai-labs/proximaDB/issues"
-
-[tool.maturin]
-# Build settings
-features = ["python", "pylib"]
-# Builds are invoked against the repo-root Cargo manifest (`-m ../../Cargo.toml`),
-# so this path must remain rooted from the manifest directory to keep the
-# canonical `proximadb_embedded` package name stable across wheels.
-python-source = "clients/python-embedded/src"
-module-name = "proximadb_embedded._proximadb_embedded"
-bindings = "pyo3"
-
-# Strip release builds for smaller size
-strip = true
-
-# Compatibility settings
-compatibility = "manylinux2014"
+# NOT a buildable package config. The canonical `proximadb_embedded` wheel is
+# built from the REPO-ROOT pyproject.toml (`manifest-path =
+# "crates/binding/proximadb-embedded/Cargo.toml"`, `python-source =
+# "clients/python-embedded/src"`) — see `release-python.yml`. This file used to
+# carry its own [build-system]+[tool.maturin] with the PRE-#1448 settings
+# (`features = ["python", "pylib"]`, no manifest-path); `pylib` no longer
+# exists, so building from this directory could never work, and having two
+# configs with one correct was a standing trap (#1675). The blocks below are
+# only the dev-tool configuration for the tests and benchmarks in this
+# directory.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
