@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Measure object-cold, DRAM-warm, and persistent-disk-warm PAX reads.
+"""Compare fixed and adaptive PAX reads across object, DRAM, and disk tiers.
 
-Every measured phase searches the same query slice.  DRAM is warmed with a
+Fixed and adaptive policies run adjacently at the same requested concurrency,
+and every measured phase searches the same query slice.  DRAM is warmed with a
 disjoint slice so a process-local query-result cache cannot impersonate a PAX
-range-cache hit.  The persistent tier is populated in measured-then-warmup
-order: the second, disjoint slice exerts eviction pressure on the first slice,
-spilling its ranges before the server restarts with empty DRAM.
+range-cache hit.  Each policy owns a separate persistent-cache directory.  Its
+disk tier is populated in measured-then-warmup order: the second, disjoint
+slice exerts eviction pressure on the first slice, spilling its ranges before
+the server restarts with empty DRAM.
 
 Azurite's append-only debug log is reconciled with application counters for
 each measured phase.  It proves HTTP request shape, not production Azure
@@ -17,11 +19,14 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 MIB = 1024 * 1024
 AZURE_HOT_READ_USD_PER_10K = 0.005
+MEASURED_PHASES = ("object_cold", "dram_warm", "disk_warm")
+CACHE_PHASES = ("dram_warm", "disk_warm")
 
 
 def load_module(name: str, path: Path):
@@ -66,10 +71,32 @@ def disk_population_order() -> tuple[str, str]:
     return ("measured", "warmup")
 
 
-def disk_path_for_attempt(run_root: Path, attempt: int) -> Path:
+def range_policies(include_adaptive: bool) -> tuple[str, ...]:
+    return ("fixed", "adaptive") if include_adaptive else ("fixed",)
+
+
+def disk_path_for_attempt(run_root: Path, policy: str, attempt: int) -> Path:
     if attempt < 0:
         raise RuntimeError("attempt must be non-negative")
-    return run_root / f"local-disk-cache-attempt-{attempt}"
+    if policy not in range_policies(True):
+        raise RuntimeError(f"unsupported range policy: {policy}")
+    return run_root / f"local-disk-cache-{policy}-attempt-{attempt}"
+
+
+def remove_discarded_cache_paths(run_root: Path, paths: dict[str, Path]) -> None:
+    """Remove only policy cache directories owned by a rejected attempt."""
+    resolved_root = run_root.resolve()
+    for policy, path in paths.items():
+        expected_prefix = f"local-disk-cache-{policy}-attempt-"
+        resolved = path.resolve()
+        if (
+            policy not in range_policies(True)
+            or resolved.parent != resolved_root
+            or not resolved.name.startswith(expected_prefix)
+        ):
+            raise RuntimeError(f"refusing to remove unowned cache path: {path}")
+        if resolved.exists():
+            shutil.rmtree(resolved)
 
 
 def hit_ratio(hits: float, misses: float) -> float | None:
@@ -84,30 +111,146 @@ def add_cache_ratios(point: dict) -> dict:
     return point
 
 
-def compare_phase(candidate: dict, baseline: dict, query_count: int) -> dict:
+def compare_points(candidate: dict, baseline: dict, query_count: int) -> dict:
     if query_count <= 0:
         raise RuntimeError("query count must be positive")
     candidate_gets = candidate["physical_gets"]
     baseline_gets = baseline["physical_gets"]
+    candidate_wire_gets = candidate["wire_http"]["get_requests"]
+    baseline_wire_gets = baseline["wire_http"]["get_requests"]
     candidate_bytes = candidate["bytes_read"]
     baseline_bytes = baseline["bytes_read"]
-    candidate_gets_per_query = candidate_gets / query_count
+    candidate_wire_gets_per_query = candidate_wire_gets / query_count
+    candidate_peak = candidate["process_rss"]["peak_bytes"]
+    baseline_peak = baseline["process_rss"]["peak_bytes"]
+    candidate_qps = candidate["load"]["qps"]
+    baseline_qps = baseline["load"]["qps"]
     return {
-        "get_reduction": (
+        "application_get_reduction": (
             1.0 - candidate_gets / baseline_gets if baseline_gets else None
         ),
-        "byte_reduction": (
-            1.0 - candidate_bytes / baseline_bytes if baseline_bytes else None
+        "wire_get_reduction": (
+            1.0 - candidate_wire_gets / baseline_wire_gets
+            if baseline_wire_gets
+            else None
         ),
+        "bytes_ratio": (candidate_bytes / baseline_bytes if baseline_bytes else None),
         "p50_ratio": (candidate["latency_ms"]["p50"] / baseline["latency_ms"]["p50"]),
         "p95_ratio": (candidate["latency_ms"]["p95"] / baseline["latency_ms"]["p95"]),
+        "rss_ratio": (
+            candidate_peak / baseline_peak
+            if candidate_peak is not None and baseline_peak
+            else None
+        ),
+        "qps_ratio": candidate_qps / baseline_qps if baseline_qps else None,
         "recall_delta": candidate["recall_at_k"] - baseline["recall_at_k"],
-        "result_identity_equal": (
-            candidate["result_identity"] == baseline["result_identity"]
+        "result_identity_diagnostics": RANGE.result_identity_diagnostics(
+            candidate, baseline
         ),
         "azure_hot_read_cogs_per_million_queries_usd": (
-            candidate_gets_per_query * 1_000_000 / 10_000 * AZURE_HOT_READ_USD_PER_10K
+            candidate_wire_gets_per_query
+            * 1_000_000
+            / 10_000
+            * AZURE_HOT_READ_USD_PER_10K
         ),
+    }
+
+
+def evaluate_promotion(
+    policy_results: dict,
+    *,
+    query_count: int,
+    concurrency: int,
+    target_recall: float,
+    max_recall_regression: float,
+    min_disk_get_reduction: float,
+    min_adaptive_cold_get_reduction: float,
+    max_adaptive_warm_get_ratio: float,
+    max_byte_amplification: float,
+    max_latency_ratio: float,
+    max_rss_ratio: float,
+    min_qps_ratio: float,
+) -> dict:
+    """Evaluate cache benefit within each policy and adaptive safety by tier."""
+    checks = {}
+    cache_comparisons = {}
+    for policy, policy_result in policy_results.items():
+        phases = policy_result["phases"]
+        cache_comparisons[policy] = {
+            phase: compare_points(phases[phase], phases["object_cold"], query_count)
+            for phase in CACHE_PHASES
+        }
+        for phase in MEASURED_PHASES:
+            point = phases[phase]
+            checks[f"{policy}.{phase}.target_recall"] = (
+                point["recall_at_k"] >= target_recall
+            )
+            checks[f"{policy}.{phase}.achieved_concurrency"] = (
+                point["load"]["peak_in_flight"] == concurrency
+            )
+            range_ratio = point["wire_range_to_application_get_ratio"]
+            checks[f"{policy}.{phase}.wire_range_reconciled"] = (
+                range_ratio is not None and abs(range_ratio - 1.0) <= 0.01
+            )
+        disk = phases["disk_warm"]
+        checks[f"{policy}.disk_warm.local_disk_hit"] = disk["local_disk"]["hits"] > 0
+        disk_get_reduction = cache_comparisons[policy]["disk_warm"][
+            "wire_get_reduction"
+        ]
+        checks[f"{policy}.disk_warm.get_reduction"] = (
+            disk_get_reduction is not None
+            and disk_get_reduction >= min_disk_get_reduction
+        )
+
+    paired_comparisons = {}
+    if "adaptive" in policy_results:
+        fixed = policy_results["fixed"]["phases"]
+        adaptive = policy_results["adaptive"]["phases"]
+        for phase in MEASURED_PHASES:
+            comparison = compare_points(adaptive[phase], fixed[phase], query_count)
+            paired_comparisons[phase] = comparison
+            checks[f"paired.{phase}.recall_noninferior"] = (
+                comparison["recall_delta"] >= -max_recall_regression
+            )
+            checks[f"paired.{phase}.bytes_bounded"] = (
+                comparison["bytes_ratio"] is not None
+                and comparison["bytes_ratio"] <= max_byte_amplification
+            )
+            checks[f"paired.{phase}.p50_bounded"] = (
+                comparison["p50_ratio"] <= max_latency_ratio
+            )
+            checks[f"paired.{phase}.p95_bounded"] = (
+                comparison["p95_ratio"] <= max_latency_ratio
+            )
+            checks[f"paired.{phase}.rss_bounded"] = (
+                comparison["rss_ratio"] is not None
+                and comparison["rss_ratio"] <= max_rss_ratio
+            )
+            checks[f"paired.{phase}.qps_bounded"] = (
+                comparison["qps_ratio"] is not None
+                and comparison["qps_ratio"] >= min_qps_ratio
+            )
+
+        cold_reduction = paired_comparisons["object_cold"]["wire_get_reduction"]
+        checks["paired.object_cold.get_reduction"] = (
+            cold_reduction is not None
+            and cold_reduction >= min_adaptive_cold_get_reduction
+        )
+        for phase in CACHE_PHASES:
+            warm_reduction = paired_comparisons[phase]["wire_get_reduction"]
+            checks[f"paired.{phase}.get_not_regressed"] = (
+                warm_reduction is not None
+                and 1.0 - warm_reduction <= max_adaptive_warm_get_ratio
+            )
+
+    failures = [name for name, passed in checks.items() if not passed]
+    return {
+        "cache_comparisons": cache_comparisons,
+        "paired_comparisons": paired_comparisons,
+        "checks": checks,
+        "gate_failures": failures,
+        "measurement_valid": not failures,
+        "promotion_eligible": not failures and "adaptive" in policy_results,
     }
 
 
@@ -139,6 +282,7 @@ def run_measured_phase(
     query_start: int,
     query_count: int,
     top_k: int,
+    concurrency: int,
     wire_log,
 ) -> dict:
     if server.process is None:
@@ -161,6 +305,7 @@ def run_measured_phase(
             query_format,
             groundtruth_format,
             contention.raise_if_conflict,
+            concurrency=concurrency,
         )
     finally:
         rss = sampler.stop()
@@ -201,8 +346,14 @@ def main() -> int:
     parser.add_argument("--rows", type=int, required=True)
     parser.add_argument("--nprobe", type=int, required=True)
     parser.add_argument("--range-cap-mib", type=int, required=True)
+    parser.add_argument(
+        "--include-adaptive",
+        action="store_true",
+        help="pair the fixed cap with the default-OFF exact-plan chooser",
+    )
     parser.add_argument("--coalesce-gap-mib", type=int, default=1)
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--warmup-queries", type=int, default=500)
     parser.add_argument("--measured-queries", type=int, default=500)
     parser.add_argument("--query-start", type=int, default=0)
@@ -210,8 +361,14 @@ def main() -> int:
     parser.add_argument("--max-segments", type=int, default=1)
     parser.add_argument("--required-layout-version", type=int, default=3)
     parser.add_argument("--target-recall", type=float, default=0.98)
+    parser.add_argument("--max-recall-regression", type=float, default=0.0005)
     parser.add_argument("--min-disk-get-reduction", type=float, default=0.20)
-    parser.add_argument("--max-cache-latency-ratio", type=float, default=1.10)
+    parser.add_argument("--min-adaptive-cold-get-reduction", type=float, default=0.10)
+    parser.add_argument("--max-adaptive-warm-get-ratio", type=float, default=1.05)
+    parser.add_argument("--max-byte-amplification", type=float, default=1.25)
+    parser.add_argument("--max-latency-ratio", type=float, default=1.10)
+    parser.add_argument("--max-rss-ratio", type=float, default=1.10)
+    parser.add_argument("--min-qps-ratio", type=float, default=0.95)
     parser.add_argument("--host-quiet-window-secs", type=float, default=0)
     parser.add_argument("--host-quiet-timeout-secs", type=float, default=3600)
     parser.add_argument("--max-contention-retries", type=int, default=0)
@@ -226,8 +383,8 @@ def main() -> int:
     _matrix_lock = NPROBE.acquire_matrix_lock(output)
     if not args.collection_id.isdecimal():
         raise RuntimeError("--collection-id must be a decimal catalog object id")
-    if args.range_cap_mib <= 0 or args.nprobe <= 0:
-        raise RuntimeError("range cap and nprobe must be positive")
+    if args.range_cap_mib <= 0 or args.nprobe <= 0 or args.concurrency <= 0:
+        raise RuntimeError("range cap, nprobe, and concurrency must be positive")
     if args.coalesce_gap_mib < 0:
         raise RuntimeError("coalescing gap must be non-negative")
     if args.max_contention_retries < 0:
@@ -281,7 +438,7 @@ def main() -> int:
         )
 
     result = {
-        "protocol": "pax_cache_tier_sweep",
+        "protocol": "pax_paired_cache_tier_sweep",
         "status": "running",
         "git_revision": current_revision,
         "collection_id": args.collection_id,
@@ -316,7 +473,9 @@ def main() -> int:
             "fixed_nprobe": args.nprobe,
             "fixed_range_cap_mib": args.range_cap_mib,
             "fixed_coalesce_gap_mib": args.coalesce_gap_mib,
+            "range_policies": list(range_policies(args.include_adaptive)),
             "top_k": args.top_k,
+            "concurrency": args.concurrency,
             "disk_population_order": list(disk_population_order()),
             "disk_population_reason": (
                 "measured ranges are touched before a disjoint slice exerts "
@@ -330,16 +489,34 @@ def main() -> int:
             "host_quiet_window_seconds": args.host_quiet_window_secs,
             "host_quiet_timeout_seconds": args.host_quiet_timeout_secs,
             "max_contention_retries": args.max_contention_retries,
+            "decision_thresholds": {
+                "target_recall": args.target_recall,
+                "max_recall_regression": args.max_recall_regression,
+                "min_disk_get_reduction": args.min_disk_get_reduction,
+                "min_adaptive_cold_get_reduction": (
+                    args.min_adaptive_cold_get_reduction
+                ),
+                "max_adaptive_warm_get_ratio": args.max_adaptive_warm_get_ratio,
+                "max_byte_amplification": args.max_byte_amplification,
+                "max_latency_ratio": args.max_latency_ratio,
+                "max_rss_ratio": args.max_rss_ratio,
+                "min_qps_ratio": args.min_qps_ratio,
+            },
         },
-        "phases": {},
-        "comparisons": {},
+        "policy_results": {},
+        "cache_comparisons": {},
+        "paired_comparisons": {},
+        "checks": {},
         "gate_failures": [],
         "rejected_attempts": [],
     }
     write_result(output, result)
 
     server_url = f"http://127.0.0.1:{args.port}"
-    def new_server(label: str, disk_path: Path | None):
+
+    def new_server(label: str, disk_path: Path | None, policy: str):
+        if policy not in range_policies(True):
+            raise RuntimeError(f"unsupported range policy: {policy}")
         return ACCEPTANCE.OwnedServer(
             binary=binary,
             config=config,
@@ -350,6 +527,7 @@ def main() -> int:
             azure_emulator=True,
             coalesce_gap_bytes=args.coalesce_gap_mib * MIB,
             coalesce_range_bytes=args.range_cap_mib * MIB,
+            adaptive_read_strategy=policy == "adaptive",
         )
 
     def query(label: str, server, bounds: list[int]) -> dict:
@@ -365,71 +543,89 @@ def main() -> int:
             query_start=bounds[0],
             query_count=bounds[1] - bounds[0],
             top_k=args.top_k,
+            concurrency=args.concurrency,
             wire_log=wire_log,
         )
 
+    policies = range_policies(args.include_adaptive)
     active = None
     try:
         attempt = 0
         while True:
-            attempt_phases = {}
-            local_disk = disk_path_for_attempt(run_root, attempt)
+            attempt_results = {policy: {"phases": {}} for policy in policies}
+            local_disks = {
+                policy: disk_path_for_attempt(run_root, policy, attempt)
+                for policy in policies
+            }
             try:
-                RANGE.wait_for_host_quiet(
-                    args.host_quiet_window_secs,
-                    args.host_quiet_timeout_secs,
-                )
-                active = new_server(f"object-cold-attempt-{attempt}", None)
-                active.start()
-                attempt_phases["object_cold"] = query(
-                    "object_cold", active, slices["measured"]
-                )
-                active.stop()
-                active = None
-
-                RANGE.wait_for_host_quiet(
-                    args.host_quiet_window_secs,
-                    args.host_quiet_timeout_secs,
-                )
-                active = new_server(f"dram-warm-attempt-{attempt}", None)
-                active.start()
-                attempt_phases["dram_warmup"] = query(
-                    "dram_warmup", active, slices["warmup"]
-                )
-                attempt_phases["dram_warm"] = query(
-                    "dram_warm", active, slices["measured"]
-                )
-                active.stop()
-                active = None
-
-                RANGE.wait_for_host_quiet(
-                    args.host_quiet_window_secs,
-                    args.host_quiet_timeout_secs,
-                )
-                active = new_server(
-                    f"disk-populate-attempt-{attempt}", local_disk
-                )
-                active.start()
-                for slice_name in disk_population_order():
-                    attempt_phases[f"disk_population_{slice_name}"] = query(
-                        f"disk_population_{slice_name}",
-                        active,
-                        slices[slice_name],
+                for policy in policies:
+                    RANGE.wait_for_host_quiet(
+                        args.host_quiet_window_secs,
+                        args.host_quiet_timeout_secs,
                     )
-                active.stop()
-                active = None
+                    active = new_server(
+                        f"{policy}-object-cold-attempt-{attempt}", None, policy
+                    )
+                    active.start()
+                    attempt_results[policy]["phases"]["object_cold"] = query(
+                        f"{policy}.object_cold", active, slices["measured"]
+                    )
+                    active.stop()
+                    active = None
 
-                RANGE.wait_for_host_quiet(
-                    args.host_quiet_window_secs,
-                    args.host_quiet_timeout_secs,
-                )
-                active = new_server(f"disk-warm-attempt-{attempt}", local_disk)
-                active.start()
-                attempt_phases["disk_warm"] = query(
-                    "disk_warm", active, slices["measured"]
-                )
-                active.stop()
-                active = None
+                for policy in policies:
+                    RANGE.wait_for_host_quiet(
+                        args.host_quiet_window_secs,
+                        args.host_quiet_timeout_secs,
+                    )
+                    active = new_server(
+                        f"{policy}-dram-warm-attempt-{attempt}", None, policy
+                    )
+                    active.start()
+                    attempt_results[policy]["phases"]["dram_warmup"] = query(
+                        f"{policy}.dram_warmup", active, slices["warmup"]
+                    )
+                    attempt_results[policy]["phases"]["dram_warm"] = query(
+                        f"{policy}.dram_warm", active, slices["measured"]
+                    )
+                    active.stop()
+                    active = None
+
+                for policy in policies:
+                    local_disk = local_disks[policy]
+                    RANGE.wait_for_host_quiet(
+                        args.host_quiet_window_secs,
+                        args.host_quiet_timeout_secs,
+                    )
+                    active = new_server(
+                        f"{policy}-disk-populate-attempt-{attempt}",
+                        local_disk,
+                        policy,
+                    )
+                    active.start()
+                    for slice_name in disk_population_order():
+                        phase = f"disk_population_{slice_name}"
+                        attempt_results[policy]["phases"][phase] = query(
+                            f"{policy}.{phase}", active, slices[slice_name]
+                        )
+                    active.stop()
+                    active = None
+
+                    RANGE.wait_for_host_quiet(
+                        args.host_quiet_window_secs,
+                        args.host_quiet_timeout_secs,
+                    )
+                    active = new_server(
+                        f"{policy}-disk-warm-attempt-{attempt}",
+                        local_disk,
+                        policy,
+                    )
+                    active.start()
+                    attempt_results[policy]["phases"]["disk_warm"] = query(
+                        f"{policy}.disk_warm", active, slices["measured"]
+                    )
+                    active.stop()
+                    active = None
             except (Exception, KeyboardInterrupt) as error:
                 if active is not None:
                     active.stop()
@@ -441,53 +637,45 @@ def main() -> int:
                         {
                             "attempt": attempt,
                             "reason": f"{type(error).__name__}: {error}",
-                            "discarded_phases": sorted(attempt_phases),
-                            "discarded_local_disk_path": str(local_disk),
+                            "discarded_phases": {
+                                policy: sorted(policy_result["phases"])
+                                for policy, policy_result in attempt_results.items()
+                            },
+                            "discarded_local_disk_paths": {
+                                policy: str(path)
+                                for policy, path in local_disks.items()
+                            },
                         }
                     )
+                    remove_discarded_cache_paths(run_root, local_disks)
                     write_result(output, result)
                     attempt += 1
                     continue
                 raise
-            result["phases"] = attempt_phases
+            result["policy_results"] = attempt_results
             result["experiment"]["accepted_attempt"] = attempt
-            result["experiment"]["accepted_local_disk_path"] = str(local_disk)
+            result["experiment"]["accepted_local_disk_paths"] = {
+                policy: str(path) for policy, path in local_disks.items()
+            }
             write_result(output, result)
             break
 
-        baseline = result["phases"]["object_cold"]
-        for phase in ("dram_warm", "disk_warm"):
-            result["comparisons"][phase] = compare_phase(
-                result["phases"][phase], baseline, args.measured_queries
-            )
-        measured = [
-            baseline,
-            result["phases"]["dram_warm"],
-            result["phases"]["disk_warm"],
-        ]
-        if any(point["recall_at_k"] < args.target_recall for point in measured):
-            result["gate_failures"].append("a measured phase fell below recall ratchet")
-        for phase in ("dram_warm", "disk_warm"):
-            comparison = result["comparisons"][phase]
-            if not comparison["result_identity_equal"]:
-                result["gate_failures"].append(
-                    f"{phase} changed result identity relative to object cold"
-                )
-            if comparison["p50_ratio"] > args.max_cache_latency_ratio:
-                result["gate_failures"].append(f"{phase} materially regressed p50")
-            if comparison["p95_ratio"] > args.max_cache_latency_ratio:
-                result["gate_failures"].append(f"{phase} materially regressed p95")
-        disk = result["phases"]["disk_warm"]
-        if disk["local_disk"]["hits"] <= 0:
-            result["gate_failures"].append(
-                "disk-warm phase recorded zero local-disk hits"
-            )
-        disk_reduction = result["comparisons"]["disk_warm"]["get_reduction"]
-        if disk_reduction is None or disk_reduction < args.min_disk_get_reduction:
-            result["gate_failures"].append(
-                "disk-warm GET reduction was below threshold"
-            )
-        result["status"] = "pass" if not result["gate_failures"] else "fail"
+        evaluation = evaluate_promotion(
+            result["policy_results"],
+            query_count=args.measured_queries,
+            concurrency=args.concurrency,
+            target_recall=args.target_recall,
+            max_recall_regression=args.max_recall_regression,
+            min_disk_get_reduction=args.min_disk_get_reduction,
+            min_adaptive_cold_get_reduction=args.min_adaptive_cold_get_reduction,
+            max_adaptive_warm_get_ratio=args.max_adaptive_warm_get_ratio,
+            max_byte_amplification=args.max_byte_amplification,
+            max_latency_ratio=args.max_latency_ratio,
+            max_rss_ratio=args.max_rss_ratio,
+            min_qps_ratio=args.min_qps_ratio,
+        )
+        result.update(evaluation)
+        result["status"] = "pass" if evaluation["measurement_valid"] else "fail"
     except (Exception, KeyboardInterrupt) as error:
         result["status"] = "incomplete"
         result["error"] = f"{type(error).__name__}: {error}"

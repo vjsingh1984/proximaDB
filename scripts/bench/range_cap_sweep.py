@@ -337,6 +337,53 @@ class HostContentionMonitor:
         }
 
 
+def result_identity_diagnostics(candidate: dict, baseline: dict) -> dict | None:
+    """Describe cross-process result drift without treating ties as data loss."""
+    baseline_identity = baseline.get("result_identity")
+    candidate_identity = candidate.get("result_identity")
+    if not isinstance(baseline_identity, dict) or not isinstance(
+        candidate_identity, dict
+    ):
+        return None
+
+    diagnostics = {}
+    for label, key in (
+        ("ordered_result", "ordered_ids_sha256_by_query"),
+        ("result_set", "set_ids_sha256_by_query"),
+        ("recall_hits", "recall_hits_by_query"),
+    ):
+        baseline_values = baseline_identity.get(key)
+        candidate_values = candidate_identity.get(key)
+        if not isinstance(baseline_values, list) or not isinstance(
+            candidate_values, list
+        ):
+            raise RuntimeError(f"result identity is missing {key}")
+        if len(baseline_values) != len(candidate_values):
+            raise RuntimeError(f"result identity length differs for {key}")
+        mismatches = [
+            index
+            for index, (before, after) in enumerate(
+                zip(baseline_values, candidate_values, strict=True)
+            )
+            if before != after
+        ]
+        diagnostics[f"{label}_mismatch_count"] = len(mismatches)
+        diagnostics[f"{label}_first_mismatch_queries"] = mismatches[:20]
+        if label == "recall_hits":
+            deltas = [
+                after - before
+                for before, after in zip(baseline_values, candidate_values, strict=True)
+            ]
+            diagnostics["recall_hit_delta_total"] = sum(deltas)
+            diagnostics["queries_with_fewer_recall_hits"] = sum(
+                delta < 0 for delta in deltas
+            )
+            diagnostics["queries_with_more_recall_hits"] = sum(
+                delta > 0 for delta in deltas
+            )
+    return diagnostics
+
+
 def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> dict:
     wire = candidate["wire_http"]["get_requests"]
     base_wire = baseline["wire_http"]["get_requests"]
@@ -371,47 +418,7 @@ def decision_for(candidate: dict, baseline: dict, args: argparse.Namespace) -> d
     # range requests for the SDK-splitting gate while retaining total GETs for
     # the economic reduction calculation.
     one_wire_range_per_application_get = abs(wire_ranges - app) < 0.5
-    baseline_identity = baseline.get("result_identity")
-    candidate_identity = candidate.get("result_identity")
-    identity_diagnostics = None
-    if isinstance(baseline_identity, dict) and isinstance(candidate_identity, dict):
-        identity_diagnostics = {}
-        for label, key in (
-            ("ordered_result", "ordered_ids_sha256_by_query"),
-            ("result_set", "set_ids_sha256_by_query"),
-            ("recall_hits", "recall_hits_by_query"),
-        ):
-            baseline_values = baseline_identity.get(key)
-            candidate_values = candidate_identity.get(key)
-            if not isinstance(baseline_values, list) or not isinstance(
-                candidate_values, list
-            ):
-                raise RuntimeError(f"result identity is missing {key}")
-            if len(baseline_values) != len(candidate_values):
-                raise RuntimeError(f"result identity length differs for {key}")
-            mismatches = [
-                index
-                for index, (before, after) in enumerate(
-                    zip(baseline_values, candidate_values, strict=True)
-                )
-                if before != after
-            ]
-            identity_diagnostics[f"{label}_mismatch_count"] = len(mismatches)
-            identity_diagnostics[f"{label}_first_mismatch_queries"] = mismatches[:20]
-            if label == "recall_hits":
-                deltas = [
-                    after - before
-                    for before, after in zip(
-                        baseline_values, candidate_values, strict=True
-                    )
-                ]
-                identity_diagnostics["recall_hit_delta_total"] = sum(deltas)
-                identity_diagnostics["queries_with_fewer_recall_hits"] = sum(
-                    delta < 0 for delta in deltas
-                )
-                identity_diagnostics["queries_with_more_recall_hits"] = sum(
-                    delta > 0 for delta in deltas
-                )
+    identity_diagnostics = result_identity_diagnostics(candidate, baseline)
     checks = {
         "recall_noninferior": recall_noninferior,
         "target_recall_maintained": candidate["recall_at_k"] >= args.target_recall,
