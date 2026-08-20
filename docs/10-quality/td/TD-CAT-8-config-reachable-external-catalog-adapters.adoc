@@ -212,8 +212,8 @@ Trying to gate `oltp.rs` surfaced this, and it is not caused by the gate — `ol
   compile** — sqlx's compile-time lint rejects `sqlx::query(&stmt)` at `oltp.rs:291` and `:317`
   ("dynamic SQL strings should be audited for possible injections").
 
-So the feature has rotted without anyone noticing, which means **CI's feature matrix does not cover
-it** — a green build is not evidence the feature works.
+So the feature has rotted without anyone noticing. **`oltp-catalog*` appears in no workflow at
+all**, so nothing has ever compiled it — a green build is not evidence the feature works.
 
 This also explains why gating `oltp.rs` is messier than it looks: the three root-crate tests that
 construct an `OltpCatalog` with `sqlite::memory:` are exercising the **in-memory no-op path**, not
@@ -275,6 +275,39 @@ mirroring `abac_admin::authorize_operator`) is applied to all 11 handlers.
 is now `create_configured_catalog`, dispatching Glue / Unity / Polaris to the existing
 `CatalogManager::create_*_catalog` factories, which already carry explicit feature-off variants
 naming the cargo feature to build with. Credentials are passed to the factory and never logged.
+
+== 🔴 Sixth correction: the matrix DOES cover `enterprise-catalogs` — it just cannot see tests
+
+In a commit message on this branch I wrote that `rest/canonical/catalog.rs`'s test module had rotted
+"because CI does not exercise `--features enterprise-catalogs`". **That is wrong.** The matrix at
+`ci.yml:850` includes `{ label: "enterprise-catalogs", args: "--features enterprise-catalogs" }`.
+
+The true cause is sharper, and applies to **every** entry in that matrix — the job runs
+
+[source,sh]
+----
+cargo check -p "$pkg" ${{ matrix.args }}
+----
+
+with **no `--all-targets`**. `cargo check` compiles the library only, so `#[cfg(test)]` modules
+behind a feature are never compiled by CI: the feature is covered, its tests are not. That is how a
+test module could carry a `CatalogNamespace` literal seven fields out of date and stay green.
+
+Two distinct blind spots, not one:
+
+[cols="2,3", options="header"]
+|===
+| Gap | Consequence
+
+| `oltp-catalog*` is in **no** workflow
+| its *library* breakage (sqlx's injection lint) went unnoticed on develop
+| the matrix runs `cargo check` without `--all-targets`
+| *test* rot behind ANY covered feature is invisible — `enterprise-catalogs` included
+|===
+
+Adding `--all-targets` would close the second across every feature at once. **Not done here**: it
+will surface pre-existing breakage in other feature-gated test modules, which deserves its own
+change rather than riding along in a catalog PR. Filed as the concrete next step.
 
 == Still to do
 
