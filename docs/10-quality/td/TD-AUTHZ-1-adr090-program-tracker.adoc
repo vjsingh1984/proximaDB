@@ -167,11 +167,22 @@ slices file as TD-AUTHZ-2, -3, … referencing this tracker.
 
 == Layer L2 — row/vector: one subject-parameterized model
 
-. **L2.1** `$subject.<attr>` substitution in `compile_security_filter`
-  (`abac/compile.rs:277-302`) sourcing `SubjectAttributes::load_bearing()` only;
-  missing attribute ⇒ deny (mirror the missing-ref compile at `compile.rs:45-58`).
-  Harvest parameterization semantics from legacy RLS (`rls/service.rs:294-470`), then
-  retire `rls/policy.rs` + `secure_operations.rs`.
+. ~~**L2.1** `$subject.<attr>` substitution~~ — **SHIPPED.** `compile_security_filter` now takes
+  `&SubjectAttributes` as a **required** parameter (not an optional second entry point: a security
+  compile that cannot see the subject would silently compare against the literal string
+  `"$subject.dept"` and match nothing). Placeholders resolve through
+  `SubjectAttributes::load_bearing`, so a **claim-sourced** value denies rather than satisfying the
+  predicate — the anti-forgery property, teeth-proven by swapping `load_bearing` for `get`: exactly
+  one test fails and the other 63 still pass.
++
+Two framing corrections worth keeping: this was a **missing capability, not a hole** —
+`compile_security_filter` took no subject *at all*, so subject-parameterized policy could not be
+expressed. And there was no legacy spelling to harvest: `rls/service.rs` carries no placeholder
+syntax. `$subject.<attr>` was already the spelling documented on
+`FileSystemPredicateObjectStore` (`dept == $subject.dept`), so it was reused rather than
+re-invented — one spelling, not two.
++
+Retiring `rls/policy.rs` + `secure_operations.rs` remains open and is tracked under L2.5.
 . **L2.2** Close the six `System` bypasses: `graph/hybrid/mod.rs:1406`,
   `rest/canonical/analytics.rs:170`, `query/unified/executor.rs:447`,
   `services/search/streaming.rs:345`, `vectors/legacy.rs:6512` (port impl),

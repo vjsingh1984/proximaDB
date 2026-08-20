@@ -74,7 +74,7 @@ fn dept_eng_subject_sees_only_dept_eng_rows() {
     .expect("alice is bound and permitted");
 
     // --- Compile the security filter from the resolved refs ---
-    let security = compile_security_filter(ctx.row_predicate_refs(), &store);
+    let security = compile_security_filter(ctx.row_predicate_refs(), &store, ctx.subject());
 
     // --- Evaluate: alice (dept=eng) should see only dept=eng rows ---
     let rows = [
@@ -157,7 +157,7 @@ fn missing_predicate_ref_denies_all_rows() {
     .expect("alice is bound");
 
     // The compiled filter is unsatisfiable (missing ref → deny-all).
-    let security = compile_security_filter(ctx.row_predicate_refs(), &store);
+    let security = compile_security_filter(ctx.row_predicate_refs(), &store, ctx.subject());
     let row = json!({"dept": "eng"});
     let resolve = |f: &str| row.get(f).cloned();
     assert!(
@@ -241,8 +241,9 @@ fn different_subjects_see_different_rows() {
     .admitted()
     .expect("bob");
 
-    let sec_alice = compile_security_filter(ctx_alice.row_predicate_refs(), &store);
-    let sec_bob = compile_security_filter(ctx_bob.row_predicate_refs(), &store);
+    let sec_alice =
+        compile_security_filter(ctx_alice.row_predicate_refs(), &store, ctx_alice.subject());
+    let sec_bob = compile_security_filter(ctx_bob.row_predicate_refs(), &store, ctx_bob.subject());
 
     let eng_row = json!({"dept": "eng"});
     let hr_row = json!({"dept": "hr"});
