@@ -42,7 +42,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use arc_swap::ArcSwap;
 
-use crate::observability::io_trace::IoTraceSnapshot;
+use crate::observability::io_trace::{IoTraceSnapshot, VectorAccessTrace};
 use crate::query::compute_scheduler::{QueryShape, backend_label};
 use crate::query::table_write_plan::ComputeBackend;
 
@@ -61,6 +61,9 @@ pub fn install_route_cost_observer() {
             GLOBAL_ROUTE_COST_MODEL.observe_by_label(shape_class, backend_label, snap);
         },
     )));
+    crate::observability::io_trace::set_vector_access_observer(Some(Box::new(|snap| {
+        observe_vector_access_snapshot(&GLOBAL_ROUTE_COST_MODEL, snap);
+    })));
     // Flag-gated live override (default OFF). PROXIMADB_ROUTE_COST_OVERRIDE is
     // either the original global bool ("1"/"true" → every class) or, for the
     // TD-EXEC-2 staged go-live, a comma-separated list of shape-class prefixes
@@ -74,6 +77,37 @@ pub fn install_route_cost_observer() {
         tracing::info!("route cost model: live override enabled with scope {scope:?}");
     }
     GLOBAL_ROUTE_COST_MODEL.set_override_scope(scope);
+}
+
+/// Exact, unbucketed physical geometry for one vector access-path cost cell.
+/// The engine belongs in the shape so exact and ANN cells are compared only
+/// within the same physical implementation. Caller intent is evidence carried
+/// by the durable trace, not a cell dimension: partitioning on intent would
+/// prevent the exact-vs-ANN comparison this observe-only slice exists to make.
+pub fn vector_access_shape(access: &VectorAccessTrace) -> String {
+    format!(
+        "vector/engine={}/dim={}/k={}/filter={}",
+        access.engine,
+        access.dimensions,
+        access.top_k,
+        if access.has_filter { "yes" } else { "no" }
+    )
+}
+
+/// Fold a completed vector query into the shared measured-cost cell store.
+/// Aggregate I/O/compute cannot be apportioned truthfully across multiple
+/// vector operators, so multi-access queries remain durable evidence but are
+/// excluded from online learning until operator-local costs exist.
+fn observe_vector_access_snapshot(model: &RouteCostModel, snap: &IoTraceSnapshot) -> bool {
+    let [access] = snap.vector_accesses.as_slice() else {
+        return false;
+    };
+    model.observe_by_label(
+        &vector_access_shape(access),
+        access.actual_path.as_str(),
+        snap,
+    );
+    true
 }
 
 // ── Override scope: global bool → per-shape-class staged go-live (D4) ───────
@@ -1034,7 +1068,14 @@ impl RouteCostModel {
 
     /// Current learned estimate for one (shape-class, backend), if any history.
     pub fn estimate(&self, shape_class: &str, backend: &ComputeBackend) -> Option<RouteCost> {
-        let key = (shape_class.to_string(), backend_label(backend));
+        self.estimate_by_label(shape_class, &backend_label(backend))
+    }
+
+    /// Current learned estimate for an arbitrary bounded access-path label.
+    /// Vector exact/ANN observations share the same persistence and EWMA
+    /// machinery without becoming peer `ComputeBackend` variants.
+    pub fn estimate_by_label(&self, shape_class: &str, route_label: &str) -> Option<RouteCost> {
+        let key = (shape_class.to_string(), route_label.to_string());
         let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
         let c = cells.get(&key)?;
         if c.samples == 0 {
@@ -1762,6 +1803,51 @@ mod tests {
             .expect("label-keyed observation is visible to typed estimate");
         assert_eq!(by_label.samples, 1);
         assert!((by_label.range_gets - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vector_access_cost_cells_admit_only_unambiguous_single_operator_queries() {
+        use crate::observability::io_trace::{
+            VectorAccessPath, VectorAccessTrace, VectorSearchIntent,
+        };
+
+        let access = VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: VectorSearchIntent::Adaptive,
+            actual_path: VectorAccessPath::Exact,
+        };
+        let model = RouteCostModel::new();
+        let single = IoTraceSnapshot {
+            range_gets: 2,
+            bytes_read: 8 << 20,
+            vector_accesses: vec![access.clone()],
+            ..Default::default()
+        };
+        assert!(observe_vector_access_snapshot(&model, &single));
+        let shape = vector_access_shape(&access);
+        let estimate = model
+            .estimate_by_label(&shape, "exact")
+            .expect("single access is attributable");
+        assert_eq!(estimate.samples, 1);
+        assert_eq!(estimate.range_gets, 2.0);
+
+        let ambiguous = IoTraceSnapshot {
+            range_gets: 99,
+            vector_accesses: vec![access.clone(), access],
+            ..Default::default()
+        };
+        assert!(!observe_vector_access_snapshot(&model, &ambiguous));
+        assert_eq!(
+            model
+                .estimate_by_label(&shape, "exact")
+                .expect("original cell remains")
+                .samples,
+            1,
+            "aggregate query cost must not be assigned to either of two operators"
+        );
     }
 
     #[test]
