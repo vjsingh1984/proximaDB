@@ -5,7 +5,6 @@
 //! - AWS Glue: AWS Glue Data Catalog integration (feature-gated)
 //! - Unity: Databricks Unity Catalog integration (feature-gated)
 //! - Polaris: Apache Polaris (Iceberg REST Catalog) (feature-gated)
-//! - Hive: Apache Hive Metastore (Thrift)
 //! - Iceberg: Generic Iceberg catalogs (REST, JDBC, Hadoop)
 //!
 //! Design Principles:
@@ -583,26 +582,8 @@ mod tests {
     }
 
     // ========================
-    // Hive Catalog Tests
-    // ========================
-
-    #[tokio::test]
-    async fn test_create_hive_catalog() {
-        let manager = CatalogManager::new();
-
-        // Hive catalog creation should work (even without a real Thrift server)
-        let result = manager
-            .create_hive_catalog("hive", "thrift://localhost:9083")
-            .await;
-
-        assert!(result.is_ok());
-        assert!(manager.list_catalogs().await.contains(&"hive".to_string()));
-    }
-
-    // ========================
     // Multi-catalog Tests
     // ========================
-
     #[tokio::test]
     async fn test_multiple_catalogs() {
         let manager = CatalogManager::new();

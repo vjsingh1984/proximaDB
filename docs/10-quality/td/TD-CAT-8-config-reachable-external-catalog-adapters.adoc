@@ -1,14 +1,14 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-CAT-8: decide the fate of the config-reachable external catalog adapters
-:status: Open
+:status: In Progress
 :dim: D5
 :pillar: OE
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open
+| Status | In Progress — the two non-conforming adapters closed; federation wiring next
 | Severity | Medium — build cost + an undecided public/wire surface, not a correctness bug
 | Component | `crates/control/proximadb-catalog/src/{hive,iceberg,glue}.rs`, `manager.rs`
 | Relates to | [[TD-CAT-7]] (the trait split that would reclassify these), ADR-039
@@ -85,6 +85,83 @@ The work is *connecting two existing halves*, not designing anything:
 . Feature-gate behind `external-catalogs` (default-off) so five never-executed adapters stop
   compiling into every binary. Build cost is a dimension this repo pays (cold builds ~30 min,
   `CARGO_BUILD_JOBS` capped at 3 for OOM). **Measure the delta; do not assert it.**
+
+== 🔴 Third correction: two of the five adapters were not what the plan assumed
+
+The decision above ("move their existing HTTP/thrift/SDK bodies across — they already do exactly
+these operations") was checked against the code before any was written. **It holds for three of
+five and fails for two.**
+
+[cols="1,3", options="header"]
+|===
+| Adapter | What it actually is
+
+| `Unity` | **Real.** HTTP to the Unity REST API via `reqwest` (`unity.rs:272`, `:299`).
+| `Polaris` | **Real.** HTTP with OAuth token + retry (`polaris.rs:247`, `:266`, `:299`).
+| `Glue` | **Real** via `aws_sdk_glue` when a client is configured. Note: each operation is
+  `if let Some(client) = &self.client { … }` with **no else**, so with no client (or the `aws`
+  feature off) it no-ops and returns `Ok`.
+| `Hive` | **A MOCK.** `thrift_uri` is stored at construction and never used to connect; every
+  operation reads and writes `mock_databases` / `mock_tables` HashMaps. The code says so: "In
+  production, this would be a proper Thrift client."
+| `Iceberg` | **Real but LOCAL.** Persists metadata as JSON under `warehouse` via `tokio::fs` — not
+  an external metastore at all.
+|===
+
+Registering the Hive mock as a federation adapter would have made "federation works"
+indistinguishable from "we returned what we put in a HashMap" — the defect class this whole
+program exists to close, reintroduced by the fix for it.
+
+== Shipped: the two non-conforming adapters
+
+=== `HiveCatalog` deleted
+
+~780 lines that connected to nothing, plus its factory, its public surface, and the four tests that
+asserted the mock behaved like a mock. A real Hive client would share no code with it, so nothing
+reusable was lost.
+
+The `hive` proto arm is retained for now but `convert_proto_catalog_config` no longer answers every
+config with the same sentence — it names the reason per arm, and for `Hive` it says the backend was
+removed. Retiring the wire arm is a follow-up (v1 serde is hand-maintained, with its own drift
+gate).
+
+One real dependency had to be replaced: `write_ahead_log`'s TD-FLUSH-8 fixture used `HiveCatalog`
+for its *shape* — a catalog whose `list_namespaces` omits `default` while a table under it
+resolves. That worked only as a side effect of someone else's mock, so the test's actual
+requirement was invisible. It is now an explicit `UnlistedDefaultNamespaceCatalog` double that
+implements the three methods the flush-side walk calls and errors by name on everything else.
+
+=== `IcebergCatalog` now fails closed instead of lying
+
+Two silent defects, both from configuration that was accepted, echoed back, and ignored:
+
+. **`IcebergBackend` was never dispatched on.** It was derived from the URI scheme
+  (`jdbc:` → `Jdbc`, `s3://` → `Hadoop`), stored, and reported by `health_check` — the only other
+  use in the file. A JDBC URI got you local files while health reported "Jdbc".
+. **A remote warehouse resolved to `std::env::temp_dir()`.** `parse_warehouse` mapped
+  `s3://`/`gs://`/`az://` to a temp directory, so catalog metadata for a cloud warehouse was
+  written to `/tmp` and did not survive a restart — the same failure the native catalog closed in
+  TD-OBJSTORE-1 (#960), whose own comment says a clear error is "strictly safer than silently
+  caching the catalog under /tmp".
+
+The module's doc example configured **both** (`uri: "jdbc:postgresql://…"`,
+`warehouse: "s3://my-bucket/warehouse"`), so the documented usage was the broken one.
+
+`new` now rejects a `jdbc:` URI and any remote warehouse with an error saying what will not happen
+and why. `Jdbc` stays on the enum (discriminant stability) documented as unconstructible.
+
+**Teeth**: removing the guards makes both rejection tests fail while
+`a_local_warehouse_still_constructs` keeps passing — a guard that rejected everything would look
+correct without that positive control.
+
+Iceberg stays on the internal `Catalog` trait: it is a local Iceberg-format store, not an external
+metastore, so `ExternalCatalog` would misdescribe it.
+
+== Still to do
+
+Implement `ExternalCatalog` for **Unity, Polaris and Glue**, delete their `impl Catalog`, construct
+a `FederatedCatalog`, and feature-gate them behind `external-catalogs`. That is the federation build
+proper; this change cleared the two adapters that could not honestly take part in it.
 
 == The decision that was to be made
 

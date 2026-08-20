@@ -446,12 +446,40 @@ pub fn configure_routes() -> Router<CatalogApiState> {
 // Conversion Helpers
 // =============================================================================
 
-/// Convert proto catalog config to ProximaDB catalog config
-fn convert_proto_catalog_config(_proto_config: &CatalogConfig) -> ApiResult<()> {
-    // Catalog type conversion: maps internal catalog representation to proto
-    Err(ApiError::NotImplemented(
-        "Catalog config conversion not yet implemented".to_string(),
-    ))
+/// Validate a proto catalog config.
+///
+/// Runtime catalog creation is not wired: this endpoint has always returned
+/// `501` for **every** arm, `Native` included. TD-CAT-8 keeps that, but stops
+/// the response from being the same sentence regardless of what was asked for —
+/// an operator who configures `Hive` deserves to be told that backend is gone,
+/// not that "conversion" is unimplemented.
+fn convert_proto_catalog_config(proto_config: &CatalogConfig) -> ApiResult<()> {
+    use crate::proto::proximadb_v1::catalog_config::Config;
+
+    let detail = match &proto_config.config {
+        // TD-CAT-8: the Hive adapter was an in-memory mock — `thrift_uri` was
+        // stored and never connected to. It was deleted rather than left to
+        // answer as though it had federated anything. The wire arm is retired
+        // with it; say so instead of implying it might work later.
+        Some(Config::Hive(_)) => {
+            "the Hive Metastore backend has been removed (it never connected to a metastore);              this catalog type is no longer supported"
+        }
+        Some(Config::Native(_)) => {
+            "the native catalog is configured at startup (server.metadata_url), not through              this endpoint"
+        }
+        Some(Config::Glue(_) | Config::Unity(_) | Config::Polaris(_)) => {
+            "external metastore federation is not wired to this endpoint yet (TD-CAT-8); the              adapter exists but nothing constructs it from a request"
+        }
+        Some(Config::Iceberg(_) | Config::Delta(_)) => {
+            "this catalog type is constructed programmatically, not through this endpoint"
+        }
+        None => "no catalog config was supplied",
+    };
+
+    Err(ApiError::NotImplemented(format!(
+        "cannot create catalog '{}': {detail}",
+        proto_config.name
+    )))
 }
 
 /// Convert ProximaDB namespace to proto namespace

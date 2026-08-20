@@ -71,7 +71,6 @@ pub mod dr_restore;
 pub mod embedding_precision_policy;
 #[cfg(feature = "aws")]
 pub mod glue;
-pub mod hive;
 pub mod iceberg;
 // Iceberg REST catalog service + PAX segment registry (moved from the root
 // `src/catalog` — they follow `CatalogManager` into this crate now that the

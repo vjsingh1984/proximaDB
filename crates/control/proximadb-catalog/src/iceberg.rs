@@ -26,8 +26,10 @@
 //!
 //! ```ignore
 //! let config = IcebergCatalogConfig {
-//!     uri: "jdbc:postgresql://localhost:5432/iceberg".to_string(),
-//!     warehouse: "s3://my-bucket/warehouse".to_string(),
+//!     // Local metadata only — a `jdbc:` URI or a remote warehouse is rejected
+//!     // at construction (TD-CAT-8); this catalog writes metadata to local disk.
+//!     uri: "file:///var/lib/proximadb/iceberg".to_string(),
+//!     warehouse: "file:///var/lib/proximadb/warehouse".to_string(),
 //! };
 //! let catalog = IcebergCatalog::new("iceberg", config, cache).await?;
 //! ```
@@ -81,7 +83,11 @@ pub struct IcebergCatalogConfig {
 /// Iceberg catalog backend type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IcebergBackend {
-    /// JDBC catalog (PostgreSQL, MySQL, etc.)
+    /// JDBC catalog (PostgreSQL, MySQL, etc.).
+    ///
+    /// **Not implemented, and unconstructible** — `IcebergCatalog::new` rejects a
+    /// `jdbc:` URI (TD-CAT-8). Retained so the variant's discriminant stays
+    /// stable for anything that persisted it; remove at the next clean break.
     Jdbc,
     /// Hadoop FileSystem catalog
     Hadoop,
@@ -192,14 +198,42 @@ impl IcebergCatalog {
     ) -> Result<Self> {
         info!("Initializing Iceberg catalog: {}", name);
 
-        // Determine backend type
-        let backend = if config.uri.starts_with("jdbc:") {
-            IcebergBackend::Jdbc
-        } else if config.uri.starts_with("hdfs://")
-            || config.uri.starts_with("s3://")
-            || config.uri.starts_with("gs://")
-            || config.uri.starts_with("file://")
-        {
+        // TD-CAT-8: fail closed on any configuration this implementation cannot
+        // honour. `backend` used to be derived from the URI scheme, stored,
+        // echoed back by `health_check` — and never dispatched on. A `jdbc:`
+        // URI got you local files while health reported "Jdbc", and a cloud
+        // `warehouse` got you catalog metadata in `std::env::temp_dir()`. Both
+        // were silent: the operator's configuration was accepted, reported back
+        // to them, and ignored.
+        //
+        // Same precedent as `CatalogManager::create_native_catalog`, whose own
+        // comment says an unsupported scheme surfacing a clear error is
+        // "strictly safer than silently caching the catalog under /tmp"
+        // (TD-OBJSTORE-1, #960).
+        if config.uri.starts_with("jdbc:") {
+            return Err(anyhow!(
+                "iceberg catalog '{name}': a JDBC metastore URI ('{}') is not implemented — \
+                 this catalog stores metadata on the local filesystem. Use a file:// URI, or \
+                 an external Iceberg REST catalog.",
+                config.uri
+            ));
+        }
+        for remote in ["s3://", "gs://", "az://", "abfs://", "adls://", "hdfs://"] {
+            if config.warehouse.starts_with(remote) {
+                return Err(anyhow!(
+                    "iceberg catalog '{name}': warehouse '{}' is remote, but this catalog \
+                     writes its metadata to the LOCAL filesystem — it would land in a temp \
+                     directory, not in the warehouse, and would not survive a restart. Use a \
+                     local warehouse path.",
+                    config.warehouse
+                ));
+            }
+        }
+
+        // Only local backends remain reachable, so the reported backend is now
+        // the one actually in use. `Jdbc` is retained on the enum for wire/API
+        // compatibility but is unconstructible — the guard above rejects it.
+        let backend = if config.uri.starts_with("file://") || config.uri.starts_with("hdfs://") {
             IcebergBackend::Hadoop
         } else {
             IcebergBackend::Memory
@@ -231,14 +265,8 @@ impl IcebergCatalog {
     fn parse_warehouse(warehouse: &str) -> Result<PathBuf> {
         if let Some(path) = warehouse.strip_prefix("file://") {
             Ok(PathBuf::from(path))
-        } else if warehouse.starts_with("s3://")
-            || warehouse.starts_with("gs://")
-            || warehouse.starts_with("az://")
-        {
-            // For cloud storage, use local cache
-            let cache_dir = std::env::temp_dir().join("proximadb_iceberg_cache");
-            Ok(cache_dir)
         } else {
+            // Remote warehouses are rejected in `new`; this is the local path.
             Ok(PathBuf::from(warehouse))
         }
     }
@@ -1309,6 +1337,78 @@ impl LakehouseExtension for IcebergCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn open(uri: &str, warehouse: &str) -> Result<IcebergCatalog> {
+        IcebergCatalog::new(
+            "t".to_string(),
+            IcebergCatalogConfig {
+                uri: uri.to_string(),
+                warehouse: warehouse.to_string(),
+                ..Default::default()
+            },
+            Arc::new(CatalogCache::new(16, 60)),
+        )
+        .await
+    }
+
+    /// TD-CAT-8: a `jdbc:` URI used to be accepted, recorded as
+    /// `IcebergBackend::Jdbc`, reported as such by `health_check` — and then
+    /// ignored, because nothing ever dispatched on the backend. The operator's
+    /// configuration was echoed back to them and not honoured.
+    ///
+    /// Teeth: delete the guard in `new` and this constructs successfully again,
+    /// which is precisely the silent state being removed.
+    #[tokio::test]
+    async fn a_jdbc_uri_is_rejected_rather_than_silently_stored_locally() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let warehouse = dir.path().display().to_string();
+        let err = open("jdbc:postgresql://localhost:5432/iceberg", &warehouse)
+            .await
+            .err()
+            .expect("a JDBC metastore is not implemented and must not be accepted");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("JDBC") && message.contains("not implemented"),
+            "the rejection must name what is unsupported, got: {message}"
+        );
+    }
+
+    /// A remote warehouse used to resolve to `std::env::temp_dir()` — catalog
+    /// metadata written to /tmp for a bucket the operator named, surviving no
+    /// restart. Same failure the native catalog closed in TD-OBJSTORE-1 (#960).
+    #[tokio::test]
+    async fn a_remote_warehouse_is_rejected_rather_than_written_to_a_temp_dir() {
+        for warehouse in [
+            "s3://bucket/warehouse",
+            "gs://bucket/warehouse",
+            "az://acct/warehouse",
+            "abfs://acct/warehouse",
+            "adls://acct/warehouse",
+            "hdfs://nn/warehouse",
+        ] {
+            let err = open("file:///tmp/iceberg", warehouse)
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{warehouse} must be rejected, not accepted"));
+            assert!(
+                err.to_string().contains("remote"),
+                "{warehouse}: the rejection must say why, got: {err}"
+            );
+        }
+    }
+
+    /// The positive control: the configuration this catalog CAN honour still
+    /// works. Without it, a guard that rejected everything would look correct.
+    #[tokio::test]
+    async fn a_local_warehouse_still_constructs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let warehouse = format!("file://{}", dir.path().display());
+        let catalog = open("file:///var/lib/proximadb/iceberg", &warehouse)
+            .await
+            .expect("a local warehouse is the supported configuration");
+        assert_eq!(catalog.backend, IcebergBackend::Hadoop);
+    }
 
     #[test]
     fn test_iceberg_type_conversion() {

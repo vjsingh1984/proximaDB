@@ -265,27 +265,6 @@ impl CatalogManager {
         Ok(catalog)
     }
 
-    /// Create and register a Hive Metastore catalog
-    pub async fn create_hive_catalog(
-        &self,
-        name: &str,
-        thrift_uri: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use crate::hive::HiveCatalogConfig;
-
-        let config = HiveCatalogConfig {
-            thrift_uri: thrift_uri.to_string(),
-            ..Default::default()
-        };
-
-        let catalog =
-            crate::hive::HiveCatalog::new(name.to_string(), config, self.cache.clone()).await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
     /// Create and register an Iceberg catalog
     pub async fn create_iceberg_catalog(
         &self,
