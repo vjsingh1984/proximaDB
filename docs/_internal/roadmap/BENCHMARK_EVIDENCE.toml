@@ -949,3 +949,17 @@ hardware = "Local macOS arm64 Apple Silicon, 64 GiB RAM, serialized release-serv
 date = "2026-08-03"
 version = "b4c1d3343d6cbfc799503918100b25aba0564165"
 notes = "Binary SHA-256 e62f464ea70f7bcb0339428202d26a4efb21224efba8b902d34cd218cc712e54; result SHA-256 62cf7a933a0ee90b98f74e4fb053751e5635694bfe1b86608ca8944175e8d37d. Qualifying spill: 4 L1 -> one 2.58M-row L2 in 74.198s; scratch delta 5,171,175,625 B / input 690,242,135 B = 7.492x. Final geometry: 2 L2, 3.3M rows, 903,573,016 B, 200 total cells. Region A/B object bytes were zero in both cached phases. Whole-process peak 11,927,437,312 B and delta 8,512,225,280 B include overlapping flush/in-memory compaction/WAL/cache/allocator state and are not attributed to the 512 MiB spill reservation. Disk-warm p50 58.56ms and Azurite cold p50 345.07ms do not meet the original 50ms aspiration. TD remains open for injected failures, deterministic-output matrix, and isolated memory proof."
+
+[[claims]]
+id = "codesign_measure_arc_sift1m_azurite_2026_07_26"
+claim = "Co-design measurement arc (SIFT-1M, Azurite object store, develop post TD-FLUSH-6+TD-CACHE-5+ADR-074-S1+record_count): recall@10=0.98 (coalesced-RaBitQ cascade over 8 uncompacted L0 files — compaction NOT firing is a cloud-LATENCY gap, not a recall gap). Direct-Azurite (1ms GET) query is CPU-bound: p50=1ms p95=11ms. 50ms-GET cloud regime (artificial-latency proxy) is I/O-bound: degree=1 steady ~3458ms, degree=4 steady ~1700ms => S2 ~2x speedup (bounded by file_count/degree = 8/4). Effective GETs/query ~70-140 (8 files)."
+metric = "recall@10=0.98; latency p50=1ms (local CPU-bound); 50ms-GET regime degree1 ~3458ms -> degree4 ~1700ms (~2x S2); ~70-140 GETs/query"
+status = "measured"
+bench_source = "src/storage/engines/sst/search/mod.rs"
+artifact = "docs/_internal/status/CODESIGN_MEASURE_ARC_SIFT1M_AZURITE_2026_07_26.adoc"
+asserted_in = ["docs/10-quality/td/TD-SEARCH-2-parallel-morsel-search.adoc"]
+bench_command = "Azurite blob emulator + 50ms artificial-latency reverse proxy; SIFT-1M ingest (1M, 274s); Phase1 direct (recall/latency), Phase2 proxy degree sweep PROXIMADB_SEARCH_PARALLEL_FILES=1 vs =4"
+hardware = "Local macOS arm64, Azurite (direct :10010 + 50ms proxy :10000), release+azure build off develop 39ab809c6"
+date = "2026-07-26"
+version = "develop (post #1216/#1218/#1221/#1223/#1224)"
+notes = "Compaction did NOT fire (8 L0, 0 L1+) => full-scan, no IVF pruning. recall=0.98 is full-scan RaBitQ (recall-exact; compaction cuts GETs+vectors-ranked, not recall). The earlier 0.23 recall was a flush-blocked/memtable artifact. S2 speedup bounded by file_count/degree (8/4~2x); more files => more S2 headroom. record_count=0 persists (Table 'default.1' — #1224 incomplete: resolve_collection_id_and_name config=None fallback returns the id)."
