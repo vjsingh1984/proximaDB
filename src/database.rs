@@ -174,6 +174,15 @@ impl ProximaDB {
         // (PROXIMADB_ROUTE_COST_OVERRIDE, default OFF; enablement gated by
         // TD-ROUTE-1's capability-aware candidate fix).
         crate::query::route_cost_model::install_route_cost_observer();
+        // Make the SECOND object-storage stack observable. `ProximaObjectStore`
+        // (graph cold payloads/segments, the Iceberg bridge, RangedSegmentReader)
+        // goes straight to upstream `object_store` and recorded nothing, so every
+        // per-query I/O figure this system reported covered only the FileSystem
+        // stack — i.e. vector and relational. Installed once here; absent, the
+        // hook is inert and behaviour is unchanged.
+        proximadb_object_store::install_io_recorder(std::sync::Arc::new(
+            crate::storage::persistence::filesystem::IoTraceObjectStoreRecorder,
+        ));
         // Warm the cost model from persisted cells so the measured routing
         // history survives restarts (behavior unchanged while override is off).
         crate::query::route_cost_model::load_persisted_cost_model(&config.server.data_dir);
