@@ -23,8 +23,9 @@ and source/span qrels are projected and evaluated for each corpus.
 * Every corpus must be `complete_source`, use `overflow_policy=split`, retain short tails, record
   exact deduplication, and assert zero truncation.
 * Token budget, overlap, tokenizer/model revision, role renderer, structural strategy and character
-  ceiling are manifest identity. Long-context runs use a 131,072-character ceiling so the token
-  budget is the intended binding constraint.
+  ceiling are manifest identity. Long-context runs use a 1,048,576-character ceiling so the token
+  budget, rather than a legacy structural cap, is the intended binding constraint even for
+  pathological source spans.
 * Schema-v2 corpora record every source-span occurrence separately from canonical deduplicated
   chunks. This preserves update, ACL, citation and qrels lineage.
 * `sum(rendered_tokens^2)` is a full-attention work proxy, not measured compute time. Vector byte
