@@ -77,16 +77,26 @@ def test_strategy_interface_metadata_and_normalization_helpers():
     assert strategy.normalize_text(" alpha   beta \n gamma ") == "alpha beta gamma"
 
 
-def test_fixed_size_strategy_chunks_and_skips_small_tail():
+def test_fixed_size_strategy_chunks_and_keeps_small_tail():
+    """The undersized final window is retained, not dropped.
+
+    Previously asserted ``["abcde", "fghij"]`` — i.e. that the trailing ``"xy"``
+    was discarded. Silently dropping the tail loses content; chunking is a total
+    partition of its input (ADR-091 axiom 1).
+    """
     strategy = FixedSizeStrategy(
         ChunkingConfig(chunk_size=5, min_chunk_size=3, chunk_overlap=0)
     )
-    chunks = strategy.chunk("abcdefghijxy", "doc", {"tenant": "acme"})
+    source = "abcdefghijxy"
+    chunks = strategy.chunk(source, "doc", {"tenant": "acme"})
 
-    assert [chunk.text for chunk in chunks] == ["abcde", "fghij"]
+    assert [chunk.text for chunk in chunks] == ["abcde", "fghij", "xy"]
+    assert "".join(chunk.text for chunk in chunks) == source
+    for chunk in chunks:
+        assert source[chunk.start_pos : chunk.end_pos] == chunk.text
     assert chunks[0].metadata["chunk_type"] == "fixed_size"
     assert chunks[0].metadata["tenant"] == "acme"
-    assert chunks[0].metadata["total_chunks"] == 2
+    assert chunks[0].metadata["total_chunks"] == 3
     assert strategy.chunk("   ", "doc") == []
 
 
@@ -164,31 +174,40 @@ def test_semantic_strategy_detects_headers_topics_and_preserves_blocks():
         "| a | b |\n|---|---|\n| 1 | 2 |"
     )
 
-    sections = strategy._identify_sections(markdown)
-    preserved_text, preserved_blocks = strategy._preserve_special_blocks(markdown)
+    sections = strategy._section_spans(markdown)
+    barriers = strategy._protected_spans(markdown)
     chunks = strategy.chunk(markdown, "doc", {"tenant": "acme"})
 
-    assert sections[0][3]["section_type"] == "introduction"
-    assert any(section[3].get("header_title") == "Overview" for section in sections)
-    assert "<<CODE_BLOCK_0>>" in preserved_text
-    assert any(block["type"] == "code" for block in preserved_blocks)
-    assert any(block["type"] == "table" for block in preserved_blocks)
-    assert (
-        strategy._restore_special_blocks(preserved_text, preserved_blocks) == markdown
-    )
+    # Sections are (start, end, metadata) spans and tile the document
+    # contiguously, which is what makes totality structural.
+    assert sections[0][2]["section_type"] == "introduction"
+    assert any(section[2].get("header_title") == "Overview" for section in sections)
+    assert sections[0][0] == 0 and sections[-1][1] == len(markdown)
+    for earlier, later in zip(sections, sections[1:], strict=False):
+        assert earlier[1] == later[0]
+
+    # Fences and tables are protected spans now, not placeholder substitutions.
+    assert any("print('x')" in markdown[a:b] for a, b in barriers)
+    assert any(markdown[a:b].lstrip().startswith("|") for a, b in barriers)
+
     assert chunks
     assert chunks[0].metadata["tenant"] == "acme"
     assert chunks[-1].metadata["total_chunks"] == len(chunks)
+    # The heading line now belongs to a chunk; it previously belonged to none.
+    assert any("# Overview" in c.text for c in chunks)
+    for chunk in chunks:
+        assert markdown[chunk.start_pos : chunk.end_pos] == chunk.text
 
-    html_sections = strategy._identify_sections("<h2>Intro</h2>Body")
-    assert html_sections[0][3]["header_type"] == "html"
-    assert html_sections[0][3]["header_title"] == "Intro"
+    # `<h2 class=...>` used to be unmatchable, so real HTML never split.
+    html_sections = strategy._section_spans('<h2 class="hdr">Intro</h2>Body')
+    assert html_sections[0][2]["header_type"] == "html"
+    assert html_sections[0][2]["header_title"] == "Intro"
 
-    topic_sections = strategy._identify_topic_sections(
+    topic_sections = strategy._topic_section_spans(
         "First topic.\n\nHowever this is a transition.\n\n---\n\nFinally done."
     )
     assert topic_sections
-    assert {section[3]["boundary_type"] for section in topic_sections} <= {
+    assert {section[2]["boundary_type"] for section in topic_sections} <= {
         "section_break",
         "topic_transition",
     }
@@ -197,19 +216,31 @@ def test_semantic_strategy_detects_headers_topics_and_preserves_blocks():
 
 
 def test_semantic_strategy_splits_large_sections():
-    strategy = SemanticStrategy(ChunkingConfig(chunk_size=25, min_chunk_size=1))
-    section_metadata = {"header_title": "Large", "has_header": True}
+    """An oversized section splits into spans, not into reconstructed strings.
 
-    chunks = strategy._split_large_section(
-        "Paragraph one has enough text.\n\nParagraph two has enough text.",
-        start_pos=5,
-        source_id="doc",
-        chunk_index=3,
-        base_metadata={"source": "unit"},
-        section_metadata=section_metadata,
+    Was ``_split_large_section``, which advanced its cursor by the length of the
+    NEXT paragraph (``current_chunk_start += len(current_chunk_text)`` right after
+    rebinding ``current_chunk_text = para``) — unbounded offset drift, and the
+    direct source of the overlapping spans that showed up as no-containment
+    violations. The replacement returns ``(span, forced)`` pairs and the text is
+    derived from the span.
+    """
+    strategy = SemanticStrategy(ChunkingConfig(chunk_size=25, min_chunk_size=1))
+    source = (
+        "# Large\n" "Paragraph one has enough text.\n\nParagraph two has enough text."
     )
 
-    assert len(chunks) == 2
+    pieces = strategy._split_section(source, 0, len(source), [])
+    assert len(pieces) >= 2
+    for (start, end), _forced in pieces:
+        assert source[start:end] == source[start:end].strip()
+        assert end - start <= strategy.config.max_chunk_size
+    # Spans are ordered and non-overlapping, which is what the old cursor broke.
+    for (_s1, e1), (s2, _e2) in zip(pieces, pieces[1:], strict=False):
+        assert e1 <= s2
+
+    chunks = strategy.chunk(source, "doc", {"source": "unit"})
+    assert chunks
     assert chunks[0].metadata["chunk_type"] == "semantic_split"
     assert chunks[0].metadata["parent_section"] == "Large"
     assert chunks[0].metadata["source"] == "unit"

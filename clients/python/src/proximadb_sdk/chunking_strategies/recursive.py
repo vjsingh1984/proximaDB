@@ -6,7 +6,12 @@ Applies multiple strategies recursively to achieve optimal chunk sizes.
 
 from typing import Any
 
-from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
+from .base import (
+    OFFSET_CONTRACT_EXACT,
+    ChunkingConfig,
+    ChunkingStrategyInterface,
+    TextChunk,
+)
 from .paragraph import ParagraphStrategy
 from .sentence import SentenceStrategy
 from .sliding_window import SlidingWindowStrategy
@@ -21,6 +26,11 @@ class RecursiveStrategy(ChunkingStrategyInterface):
     2. Sentence-based chunking for large paragraphs
     3. Sliding window as last resort
     """
+
+    #: Span-first by composition: it re-bases its sub-strategies' spans into the
+    #: parent frame, so it became exact the moment paragraph/sentence did. It was
+    #: inheriting the ``legacy`` default and therefore UNDER-promising.
+    _offset_contract = OFFSET_CONTRACT_EXACT
 
     def __init__(self, config: ChunkingConfig):
         super().__init__(config)
@@ -49,7 +59,10 @@ class RecursiveStrategy(ChunkingStrategyInterface):
         chunk_index = 0
 
         for para_chunk in para_chunks:
-            if len(para_chunk.text) > self.config.max_chunk_size:
+            if (
+                self._size(para_chunk.text, 0, len(para_chunk.text))
+                > self.config.max_chunk_size
+            ):
                 # Chunk is too large - apply sentence chunking
                 sub_chunks = self._recursive_split(
                     para_chunk.text,
@@ -118,7 +131,10 @@ class RecursiveStrategy(ChunkingStrategyInterface):
 
             # Check if sentence chunks are still too large
             for i, sent_chunk in enumerate(sentence_chunks):
-                if len(sent_chunk.text) > self.config.max_chunk_size:
+                if (
+                    self._size(sent_chunk.text, 0, len(sent_chunk.text))
+                    > self.config.max_chunk_size
+                ):
                     # Still too large - use sliding window
                     sub_chunks = self._sliding_window_split(
                         sent_chunk.text,

@@ -16,7 +16,13 @@ For code-aware chunking, use the CodeChunkingStrategy which provides:
 - Robust error handling with fallback strategies
 """
 
-from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface, TextChunk
+from .base import (
+    ChunkingConfig,
+    ChunkingStrategy,
+    ChunkingStrategyInterface,
+    TextChunk,
+    config_kwargs,
+)
 
 # Code-aware chunking
 from .code import (  # Parser classes - Primary languages; Parser classes - Additional languages; Registry functions; Constants
@@ -125,6 +131,13 @@ from .recursive import RecursiveStrategy
 from .semantic import SemanticStrategy
 from .semantic_embedding import SemanticEmbeddingStrategy
 from .sentence import SentenceStrategy
+from .sizing import (
+    Absolute,
+    Fraction,
+    Of,
+    ResolvedSizing,
+    SizingPolicy,
+)
 from .sliding_window import SlidingWindowStrategy
 from .token_budget import TokenBudgetStrategy
 from .tokenizers import HuggingFaceTokenCounter
@@ -148,6 +161,12 @@ __all__ = [
     # Text chunking strategies
     "SlidingWindowStrategy",
     "SentenceStrategy",
+    # Sizing (declarative budget)
+    "SizingPolicy",
+    "ResolvedSizing",
+    "Absolute",
+    "Fraction",
+    "Of",
     "ParagraphStrategy",
     "SemanticStrategy",
     "SemanticEmbeddingStrategy",

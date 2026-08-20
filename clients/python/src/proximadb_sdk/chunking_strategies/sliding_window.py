@@ -7,7 +7,7 @@ Simple overlapping window approach for text chunking.
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from .base import ChunkingStrategyInterface, TextChunk
+from .base import OFFSET_CONTRACT_EXACT, ChunkingStrategyInterface, TextChunk
 
 
 class SlidingWindowStrategy(ChunkingStrategyInterface):
@@ -21,6 +21,11 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
     #: overlap carry-over (<= chunk_size chars) is enough to stream.
     supports_streaming = True
 
+    #: Already span-first: every chunk is a verbatim slice of the source, which
+    #: is why this is the one strategy that survived the audit clean on all ten
+    #: corpus entries. It is the reference the others are migrating toward.
+    _offset_contract = OFFSET_CONTRACT_EXACT
+
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
     ) -> list[TextChunk]:
@@ -33,8 +38,10 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
         base_metadata = base_metadata or {}
         chunks = []
 
-        # Calculate step size (chunk_size - overlap)
-        step_size = max(1, self.config.chunk_size - self.config.chunk_overlap)
+        # Step and window are both counted in the configured measure's units,
+        # not characters. Under the default character measure `_advance` is
+        # `start + n`, so this is the original arithmetic exactly.
+        step_units = max(1, self.config.chunk_size - self.config.chunk_overlap)
 
         # Create chunks
         position = 0
@@ -43,14 +50,22 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
         while position < len(text):
             # Calculate chunk boundaries
             start_pos = position
-            end_pos = min(position + self.config.chunk_size, len(text))
+            end_pos = self._fit_end(text, position, self.config.chunk_size, len(text))
+            if end_pos <= start_pos:
+                end_pos = min(start_pos + 1, len(text))
+            # A step must always make progress, whatever the measure says.
+            next_position = max(
+                position + 1, min(self._advance(text, position, step_units), len(text))
+            )
 
             # Extract chunk text
             chunk_text = text[start_pos:end_pos]
 
             # Skip if chunk is too small (unless it's the last chunk)
-            if len(chunk_text) < self.config.min_chunk_size and end_pos < len(text):
-                position += step_size
+            if self._size(
+                text, start_pos, end_pos
+            ) < self.config.min_chunk_size and end_pos < len(text):
+                position = next_position
                 continue
 
             # Create chunk
@@ -76,7 +91,7 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
             chunk_index += 1
 
             # Move to next position
-            position += step_size
+            position = next_position
 
             # Break if we've reached the end
             if end_pos >= len(text):
@@ -107,6 +122,7 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
         characters plus a single piece.
         """
         self.validate_config()
+        self._require_streamable_measure()
 
         base_metadata = base_metadata or {}
         chunk_size = self.config.chunk_size
@@ -177,7 +193,7 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
                 # At EOF the buffer end is the true input end. A window is final
                 # when its (clamped) end reaches the input end.
                 is_final = at_eof and (position + chunk_size >= total_so_far)
-                if len(raw) < min_chunk_size and not is_final:
+                if self._size(raw, 0, len(raw)) < min_chunk_size and not is_final:
                     position += step_size
                     trim_to(position)
                     continue

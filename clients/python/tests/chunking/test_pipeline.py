@@ -686,8 +686,17 @@ class TestPipelineWithEmbedding:
 
     @pytest.mark.asyncio
     async def test_process_async_with_embeddings(self):
-        """Test async processing with embeddings."""
-        mock_provider = Mock()
+        """Test async processing with embeddings.
+
+        The provider is spec'd to expose ONLY ``embed_texts``. A bare ``Mock()``
+        auto-creates every attribute, so ``hasattr(provider,
+        "embed_texts_async")`` is True and the async path awaits a Mock, which is
+        not awaitable. That went unnoticed because this input (27 chars, under the
+        default ``min_chunk_size``) used to be silently DROPPED by the semantic
+        chunker, so there was never a chunk to embed and the async embedding path
+        was unreachable.
+        """
+        mock_provider = Mock(spec=["embed_texts"])
         mock_provider.embed_texts = Mock(return_value=[[0.1] * 128])
 
         pipeline = ChunkingPipeline(embedding_provider=mock_provider)

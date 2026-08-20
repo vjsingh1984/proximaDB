@@ -1,14 +1,47 @@
 """
 Semantic chunking strategy
 
-Chunks text based on semantic boundaries like sections, topics, and content structure.
-This strategy focuses on text-based semantic analysis without embeddings.
+Chunks text based on semantic boundaries like sections, topics, and content
+structure. This strategy focuses on text-based semantic analysis without
+embeddings.
+
+Rewritten span-first (ADR-091 axiom 1/2). The previous implementation had four
+compounding defects that made it the worst strategy in the audit:
+
+* ``_preserve_special_blocks`` substituted ``<<CODE_BLOCK_N>>`` placeholders into
+  the text while iterating ``finditer`` matches captured from the PRE-mutation
+  string, so every match after the first spliced at stale offsets and destroyed
+  content. Both ``preserve_code_blocks`` and ``preserve_tables`` default to true,
+  so this was the default path. It also meant chunk spans indexed the substituted
+  string while chunk text was the restored one — two different strings.
+* Sections began at ``header["end"]``, so the header line itself belonged to no
+  chunk. A document that is only headers produced nothing at all.
+* Sections below ``min_chunk_size`` were dropped with no ``else``, so 40 short
+  sections returned ZERO chunks — the defect ADR-091 cites as decisive.
+* ``max_chunk_size`` was never referenced anywhere in the file.
+
+The replacement is a **contiguous span partition** of the document, which makes
+totality and non-overlap structural rather than checked afterwards, plus
+**protected spans**: a code fence or table is declared atomic and no boundary may
+land inside it. Same config flags, honest mechanism — ``preserve_code_blocks``
+now means "a code block is indivisible" rather than "a code block is temporarily
+replaced by a placeholder".
 """
 
+import bisect
 import re
 from typing import Any
 
-from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
+from .base import (
+    OFFSET_CONTRACT_EXACT,
+    ChunkingConfig,
+    ChunkingStrategyInterface,
+    TextChunk,
+)
+from .spans import Span, hard_split, is_empty, merge_spans, strip_span
+
+#: A section: raw span plus the metadata it contributes to its chunks.
+Section = tuple[int, int, dict[str, Any]]
 
 
 class SemanticStrategy(ChunkingStrategyInterface):
@@ -24,6 +57,9 @@ class SemanticStrategy(ChunkingStrategyInterface):
     Note: This does NOT use embeddings - that's a separate concern
     """
 
+    #: Span-first: every chunk is a verbatim slice of the source.
+    _offset_contract = OFFSET_CONTRACT_EXACT
+
     def __init__(self, config: ChunkingConfig):
         super().__init__(config)
         self._compile_patterns()
@@ -33,8 +69,12 @@ class SemanticStrategy(ChunkingStrategyInterface):
         # Markdown headers
         self.markdown_header_pattern = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
-        # HTML headers
-        self.html_header_pattern = re.compile(r"<h([1-6])>(.*?)</h\1>", re.IGNORECASE)
+        # HTML headers. The old `<h([1-6])>` required a BARE tag, so ordinary
+        # markup like `<h2 class="hdr">` never matched and real HTML was never
+        # split by headers at all.
+        self.html_header_pattern = re.compile(
+            r"<h([1-6])\b[^>]*>(.*?)</h\1>", re.IGNORECASE | re.DOTALL
+        )
 
         # Code blocks
         self.code_block_pattern = re.compile(r"```[\s\S]*?```|~~~[\s\S]*?~~~")
@@ -42,198 +82,297 @@ class SemanticStrategy(ChunkingStrategyInterface):
         # Tables (simple markdown)
         self.table_pattern = re.compile(r"^\|.*\|$[\s\S]*?(?=\n\n|\Z)", re.MULTILINE)
 
-        # Topic transition indicators
+        # Paragraph boundaries within a section
+        self.paragraph_pattern = re.compile(r"\n\s*\n+")
+
+        # Topic transition indicators. `\b` matters: without it "Firstly",
+        # "Secondary", "Nextcloud" and "Thence" all registered as transitions.
         self.transition_patterns = [
             re.compile(
-                r"^(however|moreover|furthermore|additionally|consequently|therefore|thus)",
+                r"^(?:however|moreover|furthermore|additionally|consequently"
+                r"|therefore|thus)\b",
                 re.IGNORECASE | re.MULTILINE,
             ),
             re.compile(
-                r"^(in conclusion|in summary|to summarize|finally)",
+                r"^(?:in conclusion|in summary|to summarize|finally)\b",
                 re.IGNORECASE | re.MULTILINE,
             ),
             re.compile(
-                r"^(first|second|third|next|then|lastly)", re.IGNORECASE | re.MULTILINE
+                r"^(?:first|second|third|next|then|lastly)\b",
+                re.IGNORECASE | re.MULTILINE,
             ),
         ]
 
         # Section breaks
         self.section_break_pattern = re.compile(r"^[\-\*_]{3,}$", re.MULTILINE)
 
-    def _identify_sections(
-        self, text: str
-    ) -> list[tuple[str, int, int, dict[str, Any]]]:
-        """Identify semantic sections in the text"""
-        sections = []
+    # ------------------------------------------------------------------
+    # Protected spans (the honest replacement for placeholder substitution)
+    # ------------------------------------------------------------------
 
-        # Find all headers
-        headers = []
+    def _protected_spans(self, text: str) -> list[Span]:
+        """Spans no boundary may land inside, merged and disjoint.
 
-        # Markdown headers
+        Replaces the substitute-then-restore round trip entirely: the text is
+        never rewritten, so offsets stay native and nothing can be spliced away.
+        """
+        raw: list[Span] = []
+        if self.config.preserve_code_blocks:
+            raw += [
+                (m.start(), m.end()) for m in self.code_block_pattern.finditer(text)
+            ]
+        if self.config.preserve_tables:
+            raw += [(m.start(), m.end()) for m in self.table_pattern.finditer(text)]
+        if not raw:
+            return []
+        raw.sort()
+        merged: list[Span] = [raw[0]]
+        for start, end in raw[1:]:
+            if start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        return merged
+
+    @staticmethod
+    def _protects(barriers: list[Span], position: int) -> Span | None:
+        """The barrier strictly containing ``position``, if any."""
+        if not barriers:
+            return None
+        index = bisect.bisect_right([b[0] for b in barriers], position) - 1
+        if index < 0:
+            return None
+        start, end = barriers[index]
+        return (start, end) if start < position < end else None
+
+    # ------------------------------------------------------------------
+    # Sections — a contiguous partition of [0, len(text))
+    # ------------------------------------------------------------------
+
+    def _section_spans(self, text: str) -> list[Section]:
+        """Partition the document into sections, contiguously.
+
+        Contiguity is what makes totality structural: sections tile the whole
+        document, so no span can go missing between them and none can nest.
+        """
+        barriers = self._protected_spans(text)
+        headers: list[dict[str, Any]] = []
         for match in self.markdown_header_pattern.finditer(text):
-            level = len(match.group(1))
-            title = match.group(2).strip()
+            if self._protects(barriers, match.start()):
+                continue  # a '#' comment inside a fenced block is not a heading
             headers.append(
                 {
                     "start": match.start(),
                     "end": match.end(),
-                    "level": level,
-                    "title": title,
+                    "level": len(match.group(1)),
+                    "title": match.group(2).strip(),
                     "type": "markdown",
                 }
             )
-
-        # HTML headers
         for match in self.html_header_pattern.finditer(text):
-            level = int(match.group(1))
-            title = match.group(2).strip()
+            if self._protects(barriers, match.start()):
+                continue
             headers.append(
                 {
                     "start": match.start(),
                     "end": match.end(),
-                    "level": level,
-                    "title": title,
+                    "level": int(match.group(1)),
+                    "title": re.sub(r"<[^>]+>", "", match.group(2)).strip(),
                     "type": "html",
                 }
             )
-
-        # Sort headers by position
         headers.sort(key=lambda h: h["start"])
 
-        # Create sections based on headers
-        if headers:
-            # First section (before first header)
-            if headers[0]["start"] > 0:
-                sections.append(
-                    (
-                        text[: headers[0]["start"]].strip(),
-                        0,
-                        headers[0]["start"],
-                        {"section_type": "introduction", "has_header": False},
-                    )
+        if not headers:
+            return self._topic_section_spans(text)
+
+        sections: list[Section] = []
+        if headers[0]["start"] > 0:
+            sections.append(
+                (
+                    0,
+                    headers[0]["start"],
+                    {"section_type": "introduction", "has_header": False},
                 )
-
-            # Sections with headers
-            for i, header in enumerate(headers):
-                section_start = header["end"]
-                section_end = (
-                    headers[i + 1]["start"] if i + 1 < len(headers) else len(text)
+            )
+        for index, header in enumerate(headers):
+            # Starts at the header's START, not its end: the heading line is the
+            # most retrieval-valuable line in the section, and excluding it also
+            # punched a hole in the partition.
+            section_end = (
+                headers[index + 1]["start"] if index + 1 < len(headers) else len(text)
+            )
+            sections.append(
+                (
+                    header["start"],
+                    section_end,
+                    {
+                        "section_type": "content",
+                        "has_header": True,
+                        "header_level": header["level"],
+                        "header_title": header["title"],
+                        "header_type": header["type"],
+                    },
                 )
-
-                section_text = text[section_start:section_end].strip()
-                if section_text:
-                    sections.append(
-                        (
-                            section_text,
-                            section_start,
-                            section_end,
-                            {
-                                "section_type": "content",
-                                "has_header": True,
-                                "header_level": header["level"],
-                                "header_title": header["title"],
-                                "header_type": header["type"],
-                            },
-                        )
-                    )
-        else:
-            # No headers found - use other semantic boundaries
-            sections = self._identify_topic_sections(text)
-
+            )
         return sections
 
-    def _identify_topic_sections(
-        self, text: str
-    ) -> list[tuple[str, int, int, dict[str, Any]]]:
-        """Identify sections based on topic transitions"""
-        sections = []
-
-        # Find section breaks
-        breaks = []
-        for match in self.section_break_pattern.finditer(text):
-            breaks.append(match.start())
-
-        # Find topic transitions
-        transitions = []
+    def _topic_section_spans(self, text: str) -> list[Section]:
+        """Sections from topic transitions when the document has no headers."""
+        breaks = {m.start() for m in self.section_break_pattern.finditer(text)}
+        transitions: set[int] = set()
         for pattern in self.transition_patterns:
             for match in pattern.finditer(text):
-                # Find the start of the paragraph containing the transition
-                para_start = text.rfind("\n\n", 0, match.start()) + 2
-                if para_start == 1:  # No paragraph break found
-                    para_start = 0
-                transitions.append(para_start)
+                para_start = text.rfind("\n\n", 0, match.start())
+                transitions.add(0 if para_start < 0 else para_start + 2)
 
-        # Combine and sort boundaries
-        boundaries = sorted(set([0] + breaks + transitions + [len(text)]))
-
-        # Create sections
-        for i in range(len(boundaries) - 1):
-            section_text = text[boundaries[i] : boundaries[i + 1]].strip()
-            if section_text:
-                sections.append(
-                    (
-                        section_text,
-                        boundaries[i],
-                        boundaries[i + 1],
-                        {
-                            "section_type": "topic_based",
-                            "has_header": False,
-                            "boundary_type": (
-                                "topic_transition"
-                                if boundaries[i] in transitions
-                                else "section_break"
-                            ),
-                        },
-                    )
+        cuts = sorted({0, len(text)} | breaks | transitions)
+        sections: list[Section] = []
+        for start, end in zip(cuts, cuts[1:], strict=False):
+            if end <= start:
+                continue
+            sections.append(
+                (
+                    start,
+                    end,
+                    {
+                        "section_type": "topic_based",
+                        "has_header": False,
+                        "boundary_type": (
+                            "topic_transition"
+                            if start in transitions
+                            else "section_break"
+                        ),
+                    },
                 )
-
-        return (
-            sections
-            if sections
-            else [(text, 0, len(text), {"section_type": "single", "has_header": False})]
-        )
-
-    def _preserve_special_blocks(self, text: str) -> tuple[str, list[dict[str, Any]]]:
-        """Extract and preserve special blocks (code, tables)"""
-        preserved_blocks = []
-
-        # Extract code blocks
-        for match in self.code_block_pattern.finditer(text):
-            block_id = f"<<CODE_BLOCK_{len(preserved_blocks)}>>"
-            preserved_blocks.append(
-                {
-                    "id": block_id,
-                    "content": match.group(0),
-                    "type": "code",
-                    "start": match.start(),
-                    "end": match.end(),
-                }
             )
-            text = text[: match.start()] + block_id + text[match.end() :]
+        if not sections:
+            sections = [(0, len(text), {"section_type": "single", "has_header": False})]
+        return sections
 
-        # Extract tables
-        for match in self.table_pattern.finditer(text):
-            block_id = f"<<TABLE_BLOCK_{len(preserved_blocks)}>>"
-            preserved_blocks.append(
-                {
-                    "id": block_id,
-                    "content": match.group(0),
-                    "type": "table",
-                    "start": match.start(),
-                    "end": match.end(),
-                }
-            )
-            text = text[: match.start()] + block_id + text[match.end() :]
+    def _merge_undersized(self, sections: list[Section], text: str) -> list[Section]:
+        """Fold sections below the floor into a neighbour instead of dropping.
 
-        return text, preserved_blocks
+        A header-bearing section merges FORWARD, into the body it introduces: a
+        lone ``## Section 3`` chunk is retrievable but useless, while the heading
+        plus its answer is the unit a reader actually wants. Everything else
+        merges backward. Dropping — the old behaviour — is the one option with no
+        correct reading, and on header-dense Markdown it returned zero chunks.
+        """
+        if not sections:
+            return sections
+        floor = self.config.min_chunk_size
+        cap = self.config.max_chunk_size
 
-    def _restore_special_blocks(
-        self, text: str, preserved_blocks: list[dict[str, Any]]
-    ) -> str:
-        """Restore preserved special blocks"""
-        for block in preserved_blocks:
-            text = text.replace(block["id"], block["content"])
-        return text
+        out: list[Section] = []
+        # A section held back to be merged FORWARD into the next one. Its
+        # metadata is kept as the base so a heading's title/level survives into
+        # the chunk that ends up carrying its body.
+        pending: Section | None = None
+
+        for start, end, meta in sections:
+            if pending is not None:
+                start = pending[0]
+                meta = {**pending[2], **meta}
+                pending = None
+
+            span = strip_span(text, start, end)
+            if is_empty(span):
+                # Whitespace only: extend the previous section so the partition
+                # stays contiguous, or hold it for the next one.
+                if out:
+                    out[-1] = (out[-1][0], end, out[-1][2])
+                else:
+                    pending = (start, end, meta)
+                continue
+
+            if self._size_of_span(text, span) >= floor:
+                out.append((start, end, meta))
+                continue
+
+            if meta.get("has_header"):
+                pending = (start, end, meta)  # merge forward, into its body
+            elif out and self._size(text, out[-1][0], end) <= cap:
+                out[-1] = (out[-1][0], end, out[-1][2])  # merge backward
+            else:
+                pending = (start, end, meta)
+
+        if pending is not None:
+            if out and self._size(text, out[-1][0], pending[1]) <= cap:
+                out[-1] = (out[-1][0], pending[1], out[-1][2])
+            else:
+                out.append(pending)  # emit short rather than drop
+        return out
+
+    # ------------------------------------------------------------------
+    # Splitting a section to the budget
+    # ------------------------------------------------------------------
+
+    def _section_units(self, text: str, start: int, end: int, barriers: list[Span]):
+        """Paragraph-ish units within a section, never cutting inside a barrier."""
+        units: list[Span] = []
+        cursor = start
+        for match in self.paragraph_pattern.finditer(text, start, end):
+            if self._protects(barriers, match.start()):
+                continue
+            unit = strip_span(text, cursor, match.start())
+            cursor = match.end()
+            if not is_empty(unit):
+                units.append(unit)
+        tail = strip_span(text, cursor, end)
+        if not is_empty(tail):
+            units.append(tail)
+        return units
+
+    def _split_section(
+        self, text: str, start: int, end: int, barriers: list[Span]
+    ) -> list[tuple[Span, bool]]:
+        """Split one section into (span, forced) at or under the cap."""
+        span = strip_span(text, start, end)
+        if is_empty(span):
+            return []
+        if self._size_of_span(text, span) <= self.config.chunk_size:
+            return [(span, False)]
+
+        units = self._section_units(text, span[0], span[1], barriers)
+        if not units:
+            units = [span]
+
+        out: list[tuple[Span, bool]] = []
+        group: list[Span] = []
+        for unit in units:
+            if group:
+                group_start = group[0][0]
+                if self._size(text, group_start, unit[1]) > self.config.chunk_size:
+                    current = self._size(text, group_start, group[-1][1])
+                    fits_cap = (
+                        self._size(text, group_start, unit[1])
+                        <= self.config.max_chunk_size
+                    )
+                    if current >= self.config.min_chunk_size or not fits_cap:
+                        out.append((merge_spans(group), False))
+                        group = []
+            group.append(unit)
+        if group:
+            out.append((merge_spans(group), False))
+
+        # Cap backstop. A single unit — a giant table, a fence, minified content —
+        # can still exceed it, and emitting over the cap is worse than an ugly
+        # cut: the provider truncates silently or rejects the call.
+        capped: list[tuple[Span, bool]] = []
+        for (piece_start, piece_end), _forced in out:
+            if self._size(text, piece_start, piece_end) <= self.config.max_chunk_size:
+                capped.append(((piece_start, piece_end), False))
+                continue
+            for cut in hard_split(
+                text, piece_start, piece_end, self.config.max_chunk_size
+            ):
+                capped.append((cut, True))
+        return capped
+
+    # ------------------------------------------------------------------
+    # Public surface
+    # ------------------------------------------------------------------
 
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
@@ -241,158 +380,64 @@ class SemanticStrategy(ChunkingStrategyInterface):
         """Create chunks based on semantic boundaries"""
         self.validate_config()
 
-        if not text:
+        if not text or not text.strip():
             return []
 
         base_metadata = base_metadata or {}
-        chunks = []
+        barriers = self._protected_spans(text)
+        sections = self._merge_undersized(self._section_spans(text), text)
 
-        # Preserve special blocks if configured
-        preserved_blocks = []
-        if self.config.preserve_code_blocks or self.config.preserve_tables:
-            text, preserved_blocks = self._preserve_special_blocks(text)
-
-        # Identify semantic sections
-        sections = self._identify_sections(text)
-
-        # Process sections into chunks
-        chunk_index = 0
-
-        for section_text, start_pos, end_pos, section_metadata in sections:
-            # Restore special blocks in section
-            if preserved_blocks:
-                section_text = self._restore_special_blocks(
-                    section_text, preserved_blocks
-                )
-
-            # Check section size
-            if len(section_text) <= self.config.chunk_size:
-                # Section fits in one chunk
-                if len(section_text) >= self.config.min_chunk_size:
-                    chunk_metadata = {
-                        **base_metadata,
-                        **section_metadata,
-                        "chunk_type": "semantic",
-                    }
-
-                    chunk = TextChunk(
-                        text=section_text,
-                        start_pos=start_pos,
-                        end_pos=end_pos,
-                        chunk_id=f"{source_id}_chunk_{chunk_index}",
-                        metadata=chunk_metadata,
+        chunks: list[TextChunk] = []
+        for start, end, section_metadata in sections:
+            pieces = self._split_section(text, start, end, barriers)
+            multi = len(pieces) > 1
+            for sub_index, (span, forced) in enumerate(pieces):
+                metadata = {
+                    **base_metadata,
+                    **section_metadata,
+                    "chunk_type": "semantic_split" if multi else "semantic",
+                    "forced_split": forced,
+                }
+                if multi:
+                    metadata["parent_section"] = section_metadata.get(
+                        "header_title", "untitled"
                     )
-
-                    self.add_chunk_metadata(chunk, chunk_index, -1, "semantic")
-                    chunks.append(chunk)
-                    chunk_index += 1
-            else:
-                # Section too large - split it
-                sub_chunks = self._split_large_section(
-                    section_text,
-                    start_pos,
-                    source_id,
-                    chunk_index,
-                    base_metadata,
-                    section_metadata,
+                    metadata["sub_index"] = sub_index
+                chunk = TextChunk(
+                    text=text[span[0] : span[1]],
+                    start_pos=span[0],
+                    end_pos=span[1],
+                    chunk_id=f"{source_id}_chunk_{len(chunks)}",
+                    metadata=metadata,
                 )
-                chunks.extend(sub_chunks)
-                chunk_index += len(sub_chunks)
+                self.add_chunk_metadata(chunk, len(chunks), -1, "semantic")
+                chunks.append(chunk)
 
-        # Update total chunks count
         for chunk in chunks:
             chunk.metadata["total_chunks"] = len(chunks)
-
         return chunks
 
-    def _split_large_section(
+    def preferred_boundaries(
         self,
         text: str,
-        start_pos: int,
         source_id: str,
-        chunk_index: int,
-        base_metadata: dict[str, Any],
-        section_metadata: dict[str, Any],
-    ) -> list[TextChunk]:
-        """Split a large section into smaller chunks"""
-        chunks = []
+        base_metadata: dict[str, Any] | None = None,
+    ) -> list[int]:
+        """Expose section and paragraph ends, not legacy character grouping.
 
-        # Try paragraph-based splitting first
-        paragraphs = re.split(r"\n\s*\n+", text)
-
-        current_chunk_text = ""
-        current_chunk_start = start_pos
-        sub_index = 0
-
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
-                continue
-
-            # Check if adding paragraph exceeds size
-            separator = "\n\n" if current_chunk_text else ""
-            if (
-                current_chunk_text
-                and len(current_chunk_text) + len(separator) + len(para)
-                > self.config.chunk_size
-            ):
-                # Create chunk
-                if len(current_chunk_text) >= self.config.min_chunk_size:
-                    chunk_metadata = {
-                        **base_metadata,
-                        **section_metadata,
-                        "chunk_type": "semantic_split",
-                        "parent_section": section_metadata.get(
-                            "header_title", "untitled"
-                        ),
-                        "sub_index": sub_index,
-                    }
-
-                    chunk = TextChunk(
-                        text=current_chunk_text,
-                        start_pos=current_chunk_start,
-                        end_pos=current_chunk_start + len(current_chunk_text),
-                        chunk_id=f"{source_id}_chunk_{chunk_index + sub_index}",
-                        metadata=chunk_metadata,
-                    )
-
-                    self.add_chunk_metadata(
-                        chunk, chunk_index + sub_index, -1, "semantic"
-                    )
-                    chunks.append(chunk)
-                    sub_index += 1
-
-                # Start new chunk
-                current_chunk_text = para
-                current_chunk_start += len(current_chunk_text) + len(separator)
-            else:
-                # Add to current chunk
-                current_chunk_text += separator + para
-
-        # Handle remaining text
-        if current_chunk_text and (
-            len(current_chunk_text) >= self.config.min_chunk_size or not chunks
-        ):
-            chunk_metadata = {
-                **base_metadata,
-                **section_metadata,
-                "chunk_type": "semantic_split",
-                "parent_section": section_metadata.get("header_title", "untitled"),
-                "sub_index": sub_index,
-            }
-
-            chunk = TextChunk(
-                text=current_chunk_text,
-                start_pos=current_chunk_start,
-                end_pos=current_chunk_start + len(current_chunk_text),
-                chunk_id=f"{source_id}_chunk_{chunk_index + sub_index}",
-                metadata=chunk_metadata,
-            )
-
-            self.add_chunk_metadata(chunk, chunk_index + sub_index, -1, "semantic")
-            chunks.append(chunk)
-
-        return chunks
+        Without this override the budgeter fell back to the base default, which
+        derives boundaries from ``chunk().end_pos`` — i.e. from output rather
+        than from structure.
+        """
+        barriers = self._protected_spans(text)
+        boundaries: set[int] = {len(text)}
+        for start, end, _meta in self._section_spans(text):
+            span = strip_span(text, start, end)
+            if not is_empty(span):
+                boundaries.add(span[1])
+            for unit in self._section_units(text, start, end, barriers):
+                boundaries.add(unit[1])
+        return sorted(b for b in boundaries if 0 < b <= len(text))
 
     def __repr__(self) -> str:
         return f"SemanticStrategy(chunk_size={self.config.chunk_size})"

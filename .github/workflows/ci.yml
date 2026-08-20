@@ -2282,6 +2282,43 @@ jobs:
             --baseline docs/_internal/roadmap/COVERAGE_BASELINE.json \
             --current /tmp/sdk-current.json
 
+  # TD-CHUNK-1 / ADR-091: the chunking conformance ratchet.
+  #
+  # Chunking had NO gate at all. `sdk-coverage-ratchet` runs `tests/unit/` only,
+  # so `tests/chunking/` was never executed by CI — which is precisely how 56
+  # failing tests came to live on develop unnoticed while the subsystem carried no
+  # tier in docs/SUPPORTED_SURFACE.adoc.
+  #
+  # This job runs the invariant sweep (ADR-091's axioms over the shared corpus)
+  # against a RECORDED baseline. It is a bidirectional ratchet: a new violation
+  # fails, and a *fixed* violation also fails until the baseline is updated in the
+  # same commit — so a defect cannot be repaired silently, nor rot back.
+  #
+  # Deliberately narrow and fast (~30s): it does not run the rest of
+  # tests/chunking/, whose pre-existing failures are TD-CG2's business. Widening
+  # it to the whole directory is a step in TD-CG2, not here.
+  chunking-conformance:
+    name: Chunking Conformance Ratchet (TD-CHUNK-1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: ${{ !inputs.skip_tests && needs.changes.outputs.python == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: clients/python/pyproject.toml
+      - name: Install SDK
+        working-directory: clients/python
+        run: pip install -e ".[test]"
+      - name: Run the chunking invariant sweep against the recorded baseline
+        working-directory: clients/python
+        run: |
+          pytest tests/chunking/test_chunking_conformance.py \
+            -q -p no:cacheprovider --timeout=300 -o addopts=""
+
   # ============================================================================
   # INTEGRATION TESTS - Server + Python SDK
   # ============================================================================
@@ -2678,6 +2715,8 @@ jobs:
       - python-lint
       - python-test
       - sdk-coverage-ratchet
+      # chunking invariants (ADR-091 axioms) — the subsystem had no gate at all
+      - chunking-conformance
       - integration-test
       - docker-build
       - docs-validation

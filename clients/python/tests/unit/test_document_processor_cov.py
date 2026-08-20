@@ -447,7 +447,10 @@ def test_text_get_chunker_lazy_import(monkeypatch):
     base_mod = _types.ModuleType("proximadb_sdk.chunking_strategies.base")
 
     class ChunkingStrategy:
-        SEMANTIC = "semantic"
+        # The processor moved off SEMANTIC, which was measured losing 4-100% of
+        # a document (zero chunks on header-dense Markdown) and was the only
+        # production caller of it in the SDK.
+        RECURSIVE = "recursive"
 
     class ChunkingConfig:
         def __init__(self, **kw):
@@ -456,23 +459,27 @@ def test_text_get_chunker_lazy_import(monkeypatch):
     base_mod.ChunkingStrategy = ChunkingStrategy
     base_mod.ChunkingConfig = ChunkingConfig
 
-    sem_mod = _types.ModuleType("proximadb_sdk.chunking_strategies.semantic")
+    rec_mod = _types.ModuleType("proximadb_sdk.chunking_strategies.recursive")
 
-    class SemanticStrategy:
+    class RecursiveStrategy:
         def __init__(self, cfg):
             self.cfg = cfg
 
-    sem_mod.SemanticStrategy = SemanticStrategy
+    rec_mod.RecursiveStrategy = RecursiveStrategy
 
     monkeypatch.setitem(sys.modules, "proximadb_sdk.chunking_strategies.base", base_mod)
     monkeypatch.setitem(
-        sys.modules, "proximadb_sdk.chunking_strategies.semantic", sem_mod
+        sys.modules, "proximadb_sdk.chunking_strategies.recursive", rec_mod
     )
 
     p = TextDocumentProcessor(ProcessorConfig(chunk_size=64, chunk_overlap=8))
     chunker = p._get_chunker()
-    assert isinstance(chunker, SemanticStrategy)
+    assert isinstance(chunker, RecursiveStrategy)
     assert p._get_chunker() is chunker
+    # The size floors/ceilings are forwarded now; they were silently dropped,
+    # so the chunker ran on ChunkingConfig defaults instead of the processor's.
+    assert chunker.cfg.kw["min_chunk_size"] == p.config.min_chunk_size
+    assert chunker.cfg.kw["max_chunk_size"] == p.config.max_chunk_size
 
 
 # ---------------------------------------------------------------------------
