@@ -183,10 +183,40 @@ syntax. `$subject.<attr>` was already the spelling documented on
 re-invented — one spelling, not two.
 +
 Retiring `rls/policy.rs` + `secure_operations.rs` remains open and is tracked under L2.5.
-. **L2.2** Close the six `System` bypasses: `graph/hybrid/mod.rs:1406`,
-  `rest/canonical/analytics.rs:170`, `query/unified/executor.rs:447`,
-  `services/search/streaming.rs:345`, `vectors/legacy.rs:6512` (port impl),
-  `fusion_service.rs:775` (graph leg).
+. **L2.2** Close the `System` reads that stand in for a missing client context.
+  **Re-surveyed 2026-08-20 — the original entry was wrong in three ways**, so it is restated here
+  rather than patched.
++
+--
+**a. "Six" is an undercount by roughly 4×.** There are **22** sites whose origin string carries
+`[CLIENT-PLACEHOLDER]`, across nine subsystems: `dml` (14), and one each in `legacy::search`,
+`table_write_executor`, `rest::analytics`, `graph::hybrid`, `unified::executor`, `streaming`,
+`embedded`, `embedded::streaming`. (Reproduce with the grep in (b) — an earlier pass of this
+survey said 23 by double-counting `legacy.rs`, whose other two System reads carry the honest
+`records_search (no abac enforcer)` / `(no client subject)` origins, not a placeholder.)
+
+**b. The line numbers were stale, and citing them was the wrong index anyway.** Every one had
+moved (`vectors/legacy.rs:6512` → `:816`/`:833`/`:3530`; `fusion_service.rs:775` → `:546`/`:552`).
+The durable index is the **origin string**: the codebase already declares which reads are missing
+their client context, so the inventory is a grep, not a hand-maintained list. Use
+`grep -r 'CLIENT-PLACEHOLDER'`.
+
+**c. These are not "bypasses" in the escape-hatch sense.** `SystemReadContext` carries no subject,
+produces no cache key, and **deliberately does not implement `ClientServable`** — so a sink that
+serves clients cannot be handed one without failing to compile. That guard is intact (exactly one
+`impl ClientServable`, for `AuthorizedReadContext`). The gap is that these reads run *unfiltered
+under a reason that is not true*, not that they can leak to a client through this seam.
+--
++
+**A related erosion worth fixing with them.** `SystemReadReason` exists so that "naming the reason
+is what makes `SystemReadContext` auditable rather than a blanket escape hatch" — but **48 of 61**
+uses are `Statistics`, including 14 DML reads that emit no statistics. The reason enum has lost its
+discriminating power; only the `origin` string still carries information. Either the placeholders
+get their real client context (the fix), or they need a reason that says what they are.
+
+**Legitimately named and out of scope:** `IndexBuild` (4), `ForeignKeyResolution` (5), the
+`(no abac enforcer)` / `(no client subject)` sites (3, honestly named), and 22 test-scaffolding
+sites (all marked `::tests` in the origin).
 . **L2.3** ~~Tenant-partition the predicate-object store~~ — **RE-RANKED, not a security gap.**
   The original entry ("honor the trait contract at `compile.rs:62-64`; today cross-tenant deref
   resolves") is accurate about the *code* and wrong about the *risk*. Cross-tenant deref does
