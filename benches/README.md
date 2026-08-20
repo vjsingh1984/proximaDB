@@ -7,7 +7,7 @@ Comprehensive benchmark suite for ProximaDB performance validation and competito
 This benchmark suite provides:
 
 1. **ANN-Benchmarks Integration** - Standardized benchmarks following the ANN-benchmarks methodology
-2. **Competitor Comparisons** - Direct performance comparison with Qdrant, Weaviate, Milvus, and Pinecone
+2. **Competitor Comparisons** - via the vendored VectorDBBench (see below; the old fabricated harness is removed)
 3. **Storage Engine Benchmarks** - Performance tests for all 6 ProximaDB storage engines
 4. **Index Type Comparisons** - HNSW, IVF, Annoy, Flat, LSH, PQ, DiskANN
 
@@ -65,34 +65,24 @@ cargo run -p proximadb-ann-bench -- \
   --runs 100
 ```
 
-### Running Competitor Comparisons
+### Competitor comparisons
 
-First, start the competitor databases:
+The former `proximadb-vectordb-compare` harness has been **removed**. Despite
+its CLI accepting `--competitors qdrant,weaviate,milvus,pinecone` and this
+README instructing readers to start those databases in Docker, the harness
+never connected to any of them — every competitor function returned
+hardcoded "representative results" (fixed QPS/recall/build-time literals).
+A comparison harness that fabricates its comparison is worse than none: it
+manufactures confidence exactly where measurement is supposed to live, and
+it is part of how an 8× vector-read gap to LanceDB went unnoticed until an
+external consumer measured it (#1690).
 
-```bash
-# Start Qdrant
-docker run -d -p 6333:6333 qdrant/qdrant
-
-# Start Weaviate
-docker run -d -p 8080:8080 semitechnologies/weaviate
-
-# Start Milvus (using docker-compose)
-cd docker/milvus && docker-compose up -d
-```
-
-Then run the comparison:
-
-```bash
-cargo build -p proximadb-vectordb-compare
-
-# Compare all databases on SIFT
-./target/debug/proximadb-vectordb-compare \
-  --dataset sift \
-  --num-vectors 1000000 \
-  --dimensions 128 \
-  --num-queries 1000 \
-  --competitors qdrant,weaviate,milvus,pinecone
-```
+For real competitor comparisons use upstream
+[VectorDBBench](https://github.com/zilliztech/VectorDBBench) (real clients,
+including LanceDB; writing a ProximaDB client for it is the missing piece —
+an earlier vendored copy was removed from this tree years ago), and register
+every resulting claim in `BENCHMARK_EVIDENCE.toml` with the exact command and
+environment, per the evidence-ledger rules.
 
 ## Results
 

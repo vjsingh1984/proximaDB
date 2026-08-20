@@ -447,3 +447,47 @@ per-protocol and never in a separate gateway box that re-derives state the datab
 or policies attach to the one `EdgePolicyPlane` stage, not a parallel path. Collapse L7 in-process;
 keep only a thin L4 front (P2, P8, P10; see
 link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[the edge HLD]).
+
+== 8. Dimension 6 — The Embedded Deployment (added 2026-08-20)
+
+This document originally defined five dimensions, all cloud-shaped, and its
+central thesis — "the dominant cost term is I/O round-trips and egress, *not*
+CPU" — is exactly inverted for the embedded, single-tenant, local-disk
+deployment. The word "embedded" did not appear in this blueprint at all, while
+a consuming project (Victor) selected a backend on embedded behavior. The
+result was measured, not hypothetical: the co-designed system lost or tied
+every axis against client-side SQLite+LanceDB — ingest 3.6×, vector reads
+8.4×, storage parity — until the causes were traced (proximaDB#1690, #1695).
+
+*Dominant cost terms of the embedded dimension* (in observed order):
+
+. *Memory copies and per-row decodes.* A local `fs.read` is nearly free; what
+  costs is decoding every row of every segment per query
+  (`search_pax_file_exact`: whole-object read → second copy → per-row msgpack
+  → per-row SQ8 decode → post-filter discarding >95%). A 46 MB decode is
+  invisible in a cost model where an object GET dominates; it is everything
+  when the GET is a page-cache hit.
+. *Per-item work proportional to resident size.* Four instances of this one
+  defect class reached hot paths (CSR rebuild per replayed edge #1678;
+  projection scan per ingested edge #1695; client-side full-graph scans
+  victor#915; whole-segment decode per filtered query TD-FPRUNE-1). Fixed-size
+  tests cannot see it; the asymptotic ratchet
+  (`tests/graph_ingest_asymptotic_integration_test.rs`) exists to block the
+  class.
+. *Per-operation setup.* The Python SDK constructed a fresh HTTP client per
+  call (~13 ms — more than triple LanceDB's entire query). In-process, the
+  analogue is per-call conversion cost (TD-145: Arrow-native ingestion).
+
+*Mandate deltas for this dimension:*
+
+. *The embedded trace is CPU-shaped.* Mandate-2 traces for embedded routes
+  must report bytes *copied* and rows *decoded* per query, not object-store
+  round-trips (there are none worth counting).
+. *The in-process binding is the embedded product.* The subprocess/UDS mode is
+  an availability fallback, not the performance story; anything quoting
+  embedded performance must state which transport it measured
+  (`transport_kind` on the SDK adapter).
+. *Claims live in the evidence ledger.* Embedded latency/throughput claims in
+  any doc must reference a `BENCHMARK_EVIDENCE.toml` entry with `status =
+  "measured"`. The prior "sub-6ms" claims predating this section were never
+  registered and are retired.
