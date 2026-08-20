@@ -753,6 +753,56 @@ link:../../_internal/status/BIGANN_NPROBE_GEOMETRY_100K_10M_2026_08_04.adoc[the
 five-scale partial evidence artifact] for source hashes, coverage, fits, charts,
 and remaining measurement gates.
 
+=== S3c: the k_c=90 eligible-cap repeat (2026-08-20) — 24 MiB is NOT eligible
+
+The `k_c=90` repeat this TD required is complete. Immutable bed
+`bge768-ncomp32-bed` (768-d BGE, 491,655 rows, `k_c=90`, `n_comp=32`, one
+segment, layout v3), binary `598232ff9`, paired 4 vs 24 MiB, fixed gap 1 MiB,
+fresh process per point, host-quiet guard armed (`--host-quiet-window-secs 120`,
+3 retries/point). Artifacts: `runs/kc90-eligible-cap-598232ff9` (nprobe 12) and
+`runs/kc90-eligible-cap-np25-598232ff9` (nprobe 25).
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| nprobe | top_k | recall | wire GET reduction | bytes | p50 | RSS
+| 12 | 10 | 0.9330 (below SLA) | −30.5% | 1.034 | 0.588 | 1.089
+| 12 | 20 | 0.9230 (below SLA) | −28.9% | 1.073 | 0.680 | 1.075
+| **25** | **10** | **0.9825 ✓** | **−40.8%** | 1.041 | 0.538 | **1.1019 ✗**
+| **25** | **20** | 0.9784 (below SLA) | −41.0% | 1.056 | 0.555 | 1.089
+|===
+
+**Verdict: `promotion_eligible = false` on every point.** Each fails for a
+different reason, and the distinction matters:
+
+* **nprobe=25 / top-10 fails ONLY on `rss_not_materially_regressed`** — 1.1019
+  against the 1.10 bound. This is the same guard that disqualified 32 MiB at
+  `k_c=30`, and it is the binding constraint at the natural cell count. The
+  `k_c=30` bed sat at 1.064; memory pressure rises with cell count and probe
+  count, so 24 MiB brushes the ceiling exactly where production geometry sits.
+* **The nprobe=12 rows fail `target_recall_maintained` by construction, not
+  because of the cap.** 12 probes of 90 cells is 13% coverage against 40% at
+  `k_c=30`; the recall floor for this bed is 25 (top-10). Recorded so the rows
+  are not mistaken for a cap defect.
+* **nprobe=25 / top-20 fails recall** because 25 is the top-10 floor; top-20
+  needs ~30. Not yet measured.
+
+**The headline reduction is a function of `(k_c, nprobe)`, not a constant.**
+−64% at `k_c=30`/nprobe 12, −30% at `k_c=90`/nprobe 12, −41% at
+`k_c=90`/nprobe 25. The widely-quoted −64% came from the most favourable corner
+of that space. Any COGS projection built on it overstates the gain roughly 2×
+at the natural cell count.
+
+**The cap still costs no recall.** `recall_delta` is +0.0003 and −0.0001, and the
+per-query identity diagnostics show 8 and 4 mismatches of 1000, bidirectional
+(+3 / −2 net hits) — the same noise-level signature as every prior run.
+
+**Consequence for the 24 MiB default: do not promote on this evidence.** The
+open question is no longer "does the win reproduce" — it does, at −41% — but
+"which cap is eligible under the RSS bound at production geometry". The natural
+follow-up is a ladder (4/8/16/24) on this bed at nprobe=25 to find the largest
+cap that holds RSS ≤ 1.10, which is what `read_range_cap_candidates` (#1671) was
+built to express.
+
 == Remaining inefficiencies
 
 * The filesystem trait's generic `read_ranges()` is bounded-concurrent but
