@@ -4,7 +4,7 @@
 
 [cols="1,3"]
 |===
-|Status|Proposed
+|Status|Proposed — **recommended for Accepted as of 2026-08-19**; see "Status recommendation" below. Victor's companion ADR-014 has been Accepted since 2026-07-02.
 |Date|2026-06-26
 |Deciders|Vijaykumar Singh
 |Relates to|`CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc` (the keystone substrate spec), `OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc` (OSS capability vs SaaS policy), ADR-022 (agent-memory layer), ADR-027 (unified storage + metering substrate); anvaiops `ADR-0017-code-graph-as-a-service`; Victor `victor-coding` / `victor-contracts`
@@ -149,14 +149,37 @@ Distilled from Victor's measured CPG trace, ProximaDB's substrate spec, and Llam
 
 == Migration (phased, mixed-read-safe)
 
-. **TD-CG1** — Stand up `victor-codegraph` by promoting `victor-coding`'s chunker; port ProximaDB's
-  richer taxonomy + the `to_proxima_records()` adapter; add size-capping; fix the JS/TS parser. Ship
-  with round-trip + recall-parity tests (per CLAUDE.md storage-migration mandate, even though this is a
-  library) and an **eval suite** for the ranked/extracted surface (CLAUDE.md mandate 13).
-. **TD-CG2** — ProximaDB SDK: add `[codegraph]` extra → `victor-codegraph`; deprecate `code.py` with a
-  shim that re-exports + warns; delete after one minor release.
+. **TD-CG1 — DONE.** `victor-codegraph` 0.9.0 is published and installed; ProximaDB's richer taxonomy
+  (18 `CodeSymbolType` + 18 `CodeRelationType` members) is present there **verbatim, including
+  identical integer values** — verified 18/18 during TD-CG2 S4 — and `to_proxima_records()` lives in
+  its `adapter.py`. Size-capping works: zero over-budget chunks at four budgets (512/128/32/8 tokens),
+  against a legacy path measured 10.6× over a 400-character cap. JS/TS is non-empty, though it emits a
+  class *header* chunk rather than a whole-class chunk (pinned as a strict xfail by TD-CG2 R4).
+. **TD-CG2 — DONE (2026-08-19).** The `[codegraph]` extra landed with the delegation (#375); TD-CG2
+  then deleted the duplicate outright: `code.py` 4,589 → 571 lines, ~6,430 lines removed in total,
+  21 parser classes and their registries gone. `tests/chunking/` went from 56 failing to **685 passed
+  / 0 skipped / 0 failed**.
++
+Two departures from the plan above, both deliberate and both recorded in TD-CG2:
++
+--
+* **No re-export shim.** The neutral model stays in-tree. Re-exporting is the cleaner expression of
+  "the shared package is the source of truth" and would make `document_parsers.py` (23 references)
+  fail whenever the *optional* extra is absent. Import-safety beats elegance for a model whose
+  integer values are identical either way.
+* **The deprecation was retired, not honoured by deletion.** `code.py` survives as a ~570-line
+  adapter, so "delete after one minor release" no longer describes anything: the class IS the
+  consumption this ADR asked for, and a `DeprecationWarning` on the only supported code-chunking
+  entry point is false. The warning was removed in S5 rather than left to train callers to filter
+  warnings.
+--
++
+The deletion was justified on measured cost, not hygiene: the legacy path emitted each method body
+twice inside its class chunk (**2.0× the input** in characters on a 4,311-char file), so this is a
+~2× **KEU** and **KSU** reduction per indexed repository. It moves no compute term — the delegated
+path runs the same tree-sitter parse.
 . **TD-CG3** — anvaiops F3 worker imports the package; adds SaaS layer only. Gated behind ADR-0017
-  Gate #1.
+  Gate #1. **Not started in this repo's view**; tracked in anvaiops.
 
 == Verification
 
@@ -166,3 +189,42 @@ Distilled from Victor's measured CPG trace, ProximaDB's substrate spec, and Llam
   `anvai*`/commercial reference).
 * Substrate: `to_proxima_records()` output round-trips through `EmbeddedProximaDB` and reproduces the
   `tests/embedded_code_graph_parity_e2e.rs` impact_analysis/fusion_search results.
+
+== Status recommendation (added 2026-08-19 by TD-CG2 S5)
+
+**Recommend Accepted.** D1–D3 are all discharged in this repo, and the deletion this ADR authorised
+has happened and is gated:
+
+* **D1 (extract the package)** — published, consumed, and now the *only* code-parsing implementation
+  the SDK has.
+* **D2 (consume, do not re-implement)** — the duplicate is deleted rather than deprecated-in-place,
+  which is the state D2 actually describes. Absent the extra, code chunking fails loudly naming it;
+  the previous behaviour was a silent fall-through to broken in-SDK parsers.
+* **D3 (dependency direction)** — `scripts/check_oss_boundary.py` stays green; the SDK gained no
+  `anvai*`/commercial reference.
+
+What Accepted would *not* mean, and should be read alongside the ADR:
+
+* **The advertised surface narrowed, and that is the finding.** 16 languages genuinely extract
+  symbols; 2 more are detected but symbol-less; 6 were withdrawn. The original "20+ languages" claim
+  never had a test behind it — victor's own tests never mentioned ruby, kotlin, csharp, php, swift,
+  scala, lua or tsx, and ProximaDB's tests that did cover them were red the whole window. Two suites,
+  neither able to see the defect the other introduced. This is now a CI fact partitioned in both
+  directions (TD-CG2 R1), and it is the first time chunking has a row in
+  `docs/SUPPORTED_SURFACE.adoc` at all.
+* **Two upstream defects remain**, pinned as strict xfails so an upstream fix cannot land unnoticed:
+  a Rust `impl` window chunk emitted alongside its nested `fn` (the KEU multiplier, still present),
+  and a JS/TS/Java class header chunk leaving the closing brace uncovered. Accepting this ADR accepts
+  a delegated path that is better on every axis measured, not a perfect one.
+
+Deferred to the deciders per convention: an ADR's status is not a TD's to change.
+
+== Scope note: the document-chunker half is now tracked (added 2026-08-19)
+
+Consequences above record the *document* chunker triplication (ProximaDB ⊕ victor-rag ⊕ anvaiops
+connector-sdk) as out of scope and "a separate ADR". That ADR exists:
+**ADR-091 — Document Chunking Consolidation: one total partition, boundary-proposal split from token-budget segmentation**, which decomposes chunking
+into grid × measure × budget and makes span-first construction an axiom. TD-CHUNK-1..5 execute it.
+The `victor-docchunk` shape floated here was **not** the path taken — consolidation happened inside
+the SDK behind a single span-first spine first, because a shared package that exports the same
+offset defects to three consumers is worse than three copies of them.

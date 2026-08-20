@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **In Progress — updated 2026-08-19.** **S0 done:** `tests/chunking/` is GREEN (693 passed / 0 failed, from 56 failed); the per-language parser coverage is skipped behind one reviewable list in `conftest.py` that S4 deletes wholesale. **S2 done:** R6, R7 and R8 fixed. **S3 done:** the advertised surface is now a measured constant (`SYMBOL_EXTRACTING_LANGUAGES`, 16 languages) with its counterpart (`COVERED_WITHOUT_SYMBOLS`, 8) and a partition assertion, so the overclaim cannot recur silently. **S1 done:** R1–R8 all landed with tests. **S4 DONE**: `code.py` is 4,589 -> 561 lines, ~6,430 lines removed in total, and `tests/chunking/` needs no skips at all (684 passed / 0 skipped / 0 failed). **S5 not started** (SUPPORTED_SURFACE row; ADR-029 -> Accepted). Original filing follows. — filed 2026-08-17. The id was allocated by ADR-029 (2026-06-26) and never filed, which is the mechanical reason the migration stalled for seven weeks.** ADR-029 D2 decided this deletion; the delegation, the `[codegraph]` extra and a runtime `DeprecationWarning` all landed (#375, `d1c825768`) and their 4 tests pass — but nothing was deleted. `clients/python/src/proximadb_sdk/chunking_strategies/code.py` still ships 4,427 lines, 21 exported parser classes, 23 registered languages, and **57 failing tests that no CI job gates on**.
+| Status | **Resolved — updated 2026-08-19.** **S0 done:** `tests/chunking/` is GREEN (693 passed / 0 failed, from 56 failed); the per-language parser coverage is skipped behind one reviewable list in `conftest.py` that S4 deletes wholesale. **S2 done:** R6, R7 and R8 fixed. **S3 done:** the advertised surface is now a measured constant (`SYMBOL_EXTRACTING_LANGUAGES`, 16 languages) with its counterpart (`COVERED_WITHOUT_SYMBOLS`, 8) and a partition assertion, so the overclaim cannot recur silently. **S1 done:** R1–R8 all landed with tests. **S4 DONE**: `code.py` is 4,589 -> 561 lines, ~6,430 lines removed in total, and `tests/chunking/` needs no skips at all (684 passed / 0 skipped / 0 failed). **S5 done:** chunking has a support-tier row in `docs/SUPPORTED_SURFACE.adoc` for the first time (two rows -- document chunking Supported, code chunking Beta), ADR-029's migration section is marked done with the two deliberate departures recorded, and ADR-029 -> Accepted is *recommended* there rather than applied (an ADR's status is the deciders' call). **All slices complete; this TD is Resolved pending the ADR status call and the two upstream bug reports.** Original filing follows. — filed 2026-08-17. The id was allocated by ADR-029 (2026-06-26) and never filed, which is the mechanical reason the migration stalled for seven weeks.** ADR-029 D2 decided this deletion; the delegation, the `[codegraph]` extra and a runtime `DeprecationWarning` all landed (#375, `d1c825768`) and their 4 tests pass — but nothing was deleted. `clients/python/src/proximadb_sdk/chunking_strategies/code.py` still ships 4,427 lines, 21 exported parser classes, 23 registered languages, and **57 failing tests that no CI job gates on**.
 | Dim | D4 (compute-per-modality) — secondary D1 (object storage: chunk count sets stored vector count)
 | Pillar | OE — secondary COST
 | Blocks | ADR-029 moving to Accepted; ADR-091 (document-chunker consolidation) reusing the offset contract fixed here
@@ -244,3 +244,46 @@ returning text windows looks like working code chunking while extracting no symb
 * **Someone will propose keeping `code.py` "just for the languages victor lacks."** That reproduces the
   duplication ADR-029 removed, and the languages in question (Haskell, Elixir) are stubs that return
   nothing anyway. There is no version of this argument that survives the measurement.
+
+== S5 executed 2026-08-19 — closing the record
+
+The slice was specified as documentation, and writing the SUPPORTED_SURFACE row is what exposed that
+three claims in shipped code had not survived S4's deletion. A tier row is a promise; deriving one
+from constants that are no longer true would have published the untruth rather than caught it.
+
+**Three false claims removed from `code.py`.** The module docstring still promised a fallback to "the
+legacy in-file implementation below" — deleted in S4. The package docstring still advertised a
+"pluggable architecture for adding new language support" after the registries that made it pluggable
+were removed. And the `DeprecationWarning` fired on every construction of the only supported
+code-chunking entry point the SDK has. That warning was ADR-029's steer *off a duplicate parser*; the
+duplicate is gone, so `CodeChunkingStrategy` now IS the consumption ADR-029 asked for. A
+`DeprecationWarning` means "this will be removed", which is false, and a warning nobody can act on
+trains callers to filter warnings. Retired, with the test inverted to hold it retired.
+
+**`COVERED_WITHOUT_SYMBOLS` was conflating two states, and the one-directional partition assertion is
+why nobody saw it.** S4 narrowed the extension map from 59 extensions to 40, which silently moved six
+of that set's eight members out of the advertised map — leaving one name covering both "advertised but
+symbol-less" (`ruby`, `sql`) and "not advertised at all" (`perl`, `haskell`, `elixir`, `json`, `xml`,
+`yaml`). The assertion checked `advertised - accounted` only: it catches a language advertised without
+classification, and cannot catch a claim about something no longer shipped. Now an **equality**, which
+has no third state, plus `WITHDRAWN_LANGUAGES` as the standing record of S3's decision. Withdrawn is
+not discarded — those files still chunk through the labelled fallback, and both coverage tests now run
+over both sets.
+
+The generalisation is worth carrying forward: **a ratchet that only tightens in one direction records
+growth and misses retreat.** Every narrowing this program performed — the extension map, the
+strategy surface, the parser set — is invisible to an assertion of that shape.
+
+**The tier row itself.** Two rows, because the two halves have genuinely different support stories:
+document chunking is **Supported** (0 violations against 70 of 70 clean cases, a golden oracle proving
+neutrality and an eval suite scoring quality), code chunking is **Beta** (needs an optional extra and
+carries two pinned upstream defects). The row states the 16-language symbol-extracting set explicitly
+and instructs readers not to quote "20+ languages" — the claim this TD was filed to retire.
+
+=== What remains, and it is not this TD's
+
+* **ADR-029 → Accepted** is recommended in the ADR with its evidence, and deferred to the deciders.
+* **Two upstream bug reports** against `victor-codegraph` 0.9.0 (Rust nested-symbol double emission;
+  JS/TS/Java class-header chunk), both already pinned as strict xfails so a fix cannot land unnoticed.
+* **`ruby` symbol extraction** is an upstream node-table gap. It sits in `COVERED_WITHOUT_SYMBOLS`
+  honestly rather than being claimed, which was the whole point.
