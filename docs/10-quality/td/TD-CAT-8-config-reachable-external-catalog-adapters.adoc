@@ -227,11 +227,66 @@ rather than a persistence strategy to preserve.
 one was deleted; the remaining two that do compile are a local catalog and an inert Glue shim.
 Do not cite the original claim.
 
+== 🔴 Fifth correction, and it REVERSES this TD's decision
+
+The "keep and finish" decision above rested on my claim that federation was *two disconnected
+halves*: `ExternalCatalog` + `FederatedCatalog` waiting for adapters. Before building toward it I
+looked for a **consumer**. There isn't one — and the reason is that the job already has an owner.
+
+`CatalogManager` is this system's cross-catalog layer:
+
+* `register(Arc<dyn Catalog>)` — the registry the three real adapters already register with.
+* `resolve_table(fqn)` — resolves the same `catalog.namespace.table` form
+  `FederatedCatalog::resolve_table` was written for, plus `resolve_table_scoped` with structural
+  tenant isolation.
+* Live callers: `arrow_ipc/service.rs`, `rest/canonical/handlers.rs`,
+  `write_ahead_log/mod.rs`, `query/authority_context.rs`, `services/snapshot/coordinator.rs`,
+  `catalog/index_location_resolver.rs`.
+
+Against that, `federation/` had **0** `ExternalCatalog` impls, **0** `FederatedCatalog`
+construction sites, and **0** `ConstraintSupport` consumers outside its own module. Implementing
+the adapters against it would have moved working code onto a dead trait and stood a second
+resolver beside the live one.
+
+**Decision replaced: `federation/` deleted (1047 lines).** The adapters keep `impl Catalog`. If
+per-catalog constraint-capability metadata is wanted later it belongs on `CatalogManager`, not a
+parallel type.
+
+== 🔴 A live authorization hole, found while wiring the config path
+
+Every handler in `src/network/rest/canonical/catalog.rs` does real work — `drop_catalog` calls
+`unregister_catalog`; `create_namespace` / `create_table` mutate the target catalog — and **none
+checked authorization**. `auth_middleware_unified` (`rest/server.rs:919`) authenticates, but
+authentication is not authorization: any authenticated principal could have dropped a catalog.
+
+It had not bitten because **the router was mounted at the wrong path**: `configure_routes`
+registered absolute `/api/v1/catalogs/...` paths, and `handlers.rs` nested that router *under*
+`/api/v1/catalogs`, so every endpoint answered at `/api/v1/catalogs/api/v1/catalogs/...`. The
+documented API did not exist at its documented path.
+
+Fixing the path alone would have turned a latent hole into a live one, so both land together:
+`require_catalog_operator` (`SystemAdmin` ∪ `ConfigureSystem`, fail-closed on an absent context,
+mirroring `abac_admin::authorize_operator`) is applied to all 11 handlers.
+
+== Shipped: the config path
+
+`convert_proto_catalog_config` took `_proto_config` and returned `NotImplemented` for every arm,
+`Native` included — the only configuration route to an external metastore was a constant error. It
+is now `create_configured_catalog`, dispatching Glue / Unity / Polaris to the existing
+`CatalogManager::create_*_catalog` factories, which already carry explicit feature-off variants
+naming the cargo feature to build with. Credentials are passed to the factory and never logged.
+
 == Still to do
 
-Implement `ExternalCatalog` for **Unity, Polaris and Glue**, delete their `impl Catalog`, construct
-a `FederatedCatalog`, and feature-gate them behind `external-catalogs`. That is the federation build
-proper; this change cleared the two adapters that could not honestly take part in it.
+Nothing, for federation itself — the fifth correction above removed that work rather than doing it.
+
+Remaining, all recorded in the corrections above and none of it federation:
+
+* `oltp.rs` module gate + `OltpCatalog`'s two-way breakage (material for [[TD-CAT-7]] item 4).
+* The `Hive` proto arm's retirement (v1 serde is hand-maintained, with its own drift gate). The arm
+  now fails with a message saying the backend was removed, so it is loud rather than silent.
+* Pre-existing unused imports in `rest/canonical/catalog.rs`, visible only under
+  `--features enterprise-catalogs`.
 
 == The decision that was to be made
 

@@ -1610,6 +1610,15 @@ dependencies = [
 
 [[package]]
 name = "bzip2"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49ecfb22d906f800d4fe833b6282cf4dc1c298f5057ca0b5445e5c209735ca47"
+dependencies = [
+ "bzip2-sys",
+]
+
+[[package]]
+name = "bzip2"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
@@ -4097,6 +4106,17 @@ dependencies = [
 
 [[package]]
 name = "hostname"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c731c3e10504cc8ed35cfe2f1db4c9274c3d35fa486e3b31df46f068ef3e867"
+dependencies = [
+ "libc",
+ "match_cfg",
+ "winapi",
+]
+
+[[package]]
+name = "hostname"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
@@ -4836,7 +4856,7 @@ dependencies = [
  "email_address",
  "fastrand",
  "futures-util",
- "hostname",
+ "hostname 0.4.2",
  "httpdate",
  "idna",
  "mime",
@@ -5163,6 +5183,12 @@ checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "match_cfg"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffbee8634e0d45d258acb448e7eaab3fce7a0a467395d4d9f228e3c1f01fb2e4"
 
 [[package]]
 name = "matchers"
@@ -6646,7 +6672,7 @@ dependencies = [
  "brotli 6.0.0",
  "bytemuck",
  "bytes",
- "bzip2",
+ "bzip2 0.5.2",
  "chrono",
  "chrono-tz",
  "clap",
@@ -6666,7 +6692,7 @@ dependencies = [
  "half",
  "hex",
  "hkdf 0.12.4",
- "hostname",
+ "hostname 0.3.1",
  "http-body-util",
  "httpmock",
  "hyper 1.11.0",
@@ -7242,7 +7268,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "brotli 6.0.0",
- "bzip2",
+ "bzip2 0.6.1",
  "flate2",
  "lz4_flex 0.11.6",
  "proximadb-compression-types",
@@ -7390,7 +7416,7 @@ dependencies = [
  "chrono",
  "crc32fast",
  "datafusion",
- "hostname",
+ "hostname 0.4.2",
  "jni 0.21.1",
  "libc",
  "napi",
@@ -8616,7 +8642,7 @@ dependencies = [
  "bincode",
  "brotli 6.0.0",
  "bytemuck",
- "bzip2",
+ "bzip2 0.6.1",
  "flate2",
  "lz4_flex 0.11.6",
  "num_cpus",
@@ -11082,7 +11108,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",

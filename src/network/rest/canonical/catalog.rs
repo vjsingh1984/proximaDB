@@ -722,7 +722,7 @@ fn convert_data_type_to_proto(data_type: &ProximaType) -> crate::proto::proximad
 mod tests {
     use super::*;
     use crate::security::rbac_service::UnifiedAuthMethod;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     fn ctx_with_permissions(perms: Vec<UnifiedPermission>) -> UnifiedUserContext {
         UnifiedUserContext {
@@ -750,7 +750,7 @@ mod tests {
     #[test]
     fn an_ordinary_principal_cannot_reach_the_external_catalog_api() {
         let err = require_catalog_operator(Some(&ctx_with_permissions(vec![
-            UnifiedPermission::ReadCollection,
+            UnifiedPermission::TenantRead,
         ])))
         .expect_err("a non-operator must be refused");
         assert!(
@@ -788,17 +788,21 @@ mod tests {
 
     #[test]
     fn test_convert_namespace_to_proto() {
-        let ns = CatalogNamespace {
-            levels: vec!["db".to_string(), "schema".to_string()],
-            properties: [("key".to_string(), "value".to_string())]
-                .iter()
-                .cloned()
-                .collect(),
-            owner: Some("user".to_string()),
-            location: Some("/path".to_string()),
-            created_at_ms: 12345,
-            updated_at_ms: 67890,
-        };
+        // TD-CAT-8: the struct literal here predated seven `CatalogNamespace`
+        // fields and had stopped compiling. Nothing noticed because this module
+        // only builds under `--features enterprise-catalogs`, which CI does not
+        // exercise — the same shape as `oltp-catalog-sqlite` being broken on
+        // develop. Built through the constructor now, so the next field addition
+        // does not rot it again.
+        let mut ns = CatalogNamespace::new(vec!["db".to_string(), "schema".to_string()]);
+        ns.properties = [("key".to_string(), "value".to_string())]
+            .iter()
+            .cloned()
+            .collect();
+        ns.owner = Some("user".to_string());
+        ns.location = Some("/path".to_string());
+        ns.created_at_ms = 12345;
+        ns.updated_at_ms = 67890;
 
         let proto_ns = convert_namespace_to_proto(ns);
 
