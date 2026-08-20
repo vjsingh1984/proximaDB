@@ -67,6 +67,21 @@ fn non_negative_stat(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
 
+/// Record count for a wire response: `Some` only when the server actually knows.
+///
+/// An absent stats block means the counter was never written, which is NOT the
+/// same as an empty collection — the write path does not call
+/// `MetadataStore::update_stats`, so a populated collection routinely has none.
+/// Both endpoints used to coerce that into `0` (`unwrap_or_default()` on the
+/// detail path, `map_or(0, ..)` on the list path), producing a confident wrong
+/// answer indistinguishable from "empty". That cost one downstream project a
+/// false durability bug report before the cause was found (#1527).
+fn record_count_for_wire(
+    stats: Option<&crate::proto::proximadb_v1::CollectionStats>,
+) -> Option<u64> {
+    stats.map(|s| non_negative_stat(s.vector_count))
+}
+
 fn collection_create_failure_error(collection_name: &str, error_code: Option<&str>) -> ApiError {
     let code = error_code.unwrap_or_default();
     let lower_code = code.to_ascii_lowercase();
@@ -921,8 +936,15 @@ pub struct QuantizationConfigOutput {
 /// Collection statistics for v2 API
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CollectionStatsV2 {
-    /// Total number of records
-    pub record_count: u64,
+    /// Total number of records, or `null` when the server does not know.
+    ///
+    /// `null` is a real answer here, not a gap. The counter is maintained by
+    /// `MetadataStore::update_stats`, which the record write path does not call,
+    /// so a collection that has never had stats written carries none. Reporting
+    /// `0` in that case is a *confident wrong answer* — indistinguishable from a
+    /// genuinely empty collection, and it cost one downstream project a false
+    /// durability bug report before the cause was found (#1527).
+    pub record_count: Option<u64>,
     /// Total storage size in bytes
     pub storage_size_bytes: u64,
     /// Number of indexed fields
@@ -993,6 +1015,10 @@ pub async fn get_collection_v2(
             // Extract collection info from response
             let collection = resp.collection.unwrap_or_default();
             let config = collection.config.unwrap_or_default();
+            // Read the count off the Option *before* unwrapping: an absent stats
+            // block means "unknown", and `unwrap_or_default()` below would turn
+            // that into a reported 0.
+            let record_count = record_count_for_wire(collection.stats.as_ref());
             let stats = collection.stats.unwrap_or_default();
 
             let engine_str = collection_storage_engine_label(config.storage_engine);
@@ -1110,7 +1136,7 @@ pub async fn get_collection_v2(
                 ),
                 schema,
                 stats: CollectionStatsV2 {
-                    record_count: non_negative_stat(stats.vector_count),
+                    record_count,
                     storage_size_bytes: non_negative_stat(stats.data_size_bytes),
                     indexed_fields,
                     text_field_count,
@@ -1276,8 +1302,11 @@ pub async fn list_collections_v2(
                         proxima_record_enabled: cfg
                             .and_then(|c| c.enable_proxima_record)
                             .unwrap_or(false),
+                        // `map_or(0, ..)` reported 0 for a collection whose
+                        // stats were never written — the same fabricated answer
+                        // the detail endpoint gave. Absent stats now stay absent.
                         record_count: if include_stats {
-                            Some(c.stats.as_ref().map_or(0, |s| s.vector_count as u64))
+                            record_count_for_wire(c.stats.as_ref())
                         } else {
                             None
                         },
@@ -3413,6 +3442,49 @@ pub async fn post_collection_recluster_v2(
 mod tests {
     use super::*;
 
+    /// "Unknown" and "empty" must not look the same on the wire.
+    ///
+    /// The counter is maintained by `MetadataStore::update_stats`, which the
+    /// record write path never calls, so a populated collection routinely has no
+    /// stats block. Coercing that to `0` gives a confident wrong answer that is
+    /// indistinguishable from a genuinely empty collection — a downstream project
+    /// read it as data loss and filed a durability bug against us (#1527).
+    #[test]
+    fn record_count_is_none_when_the_server_has_no_stats() {
+        assert_eq!(
+            record_count_for_wire(None),
+            None,
+            "an absent stats block means unknown; reporting 0 claims the collection is empty"
+        );
+    }
+
+    #[test]
+    fn record_count_reports_a_known_value_including_a_real_zero() {
+        let populated = crate::proto::proximadb_v1::CollectionStats {
+            vector_count: 1_000,
+            ..Default::default()
+        };
+        assert_eq!(record_count_for_wire(Some(&populated)), Some(1_000));
+
+        // A written zero is a real answer and must survive as Some(0) — the point
+        // is to distinguish "known to be empty" from "not known".
+        let genuinely_empty = crate::proto::proximadb_v1::CollectionStats {
+            vector_count: 0,
+            ..Default::default()
+        };
+        assert_eq!(record_count_for_wire(Some(&genuinely_empty)), Some(0));
+    }
+
+    /// A negative count is corruption, not a value to forward.
+    #[test]
+    fn record_count_clamps_a_negative_count_rather_than_wrapping() {
+        let corrupt = crate::proto::proximadb_v1::CollectionStats {
+            vector_count: -5,
+            ..Default::default()
+        };
+        assert_eq!(record_count_for_wire(Some(&corrupt)), Some(0));
+    }
+
     #[test]
     fn active_algorithm_defaults_to_hnsw_for_legacy_config() {
         // No tags + no index_configs → default literal "hnsw". The
@@ -5003,7 +5075,10 @@ mod tests {
             canonical_embedding_precision: None,
             schema: None,
             stats: CollectionStatsV2 {
-                record_count: 0,
+                // Some(0), not 0: the field is Option<u64> now so "unknown" and
+                // "known to be empty" are distinguishable. This fixture is about
+                // index_specs/quantization, so it just needs a known value.
+                record_count: Some(0),
                 storage_size_bytes: 0,
                 indexed_fields: 0,
                 text_field_count: 0,

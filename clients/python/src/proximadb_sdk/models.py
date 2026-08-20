@@ -1052,7 +1052,14 @@ class CollectionConfig(BaseModel):
 class CollectionStats(BaseModel):
     """Collection statistics"""
 
-    vector_count: int = 0
+    #: Number of vectors, or ``None`` when the server does not know.
+    #:
+    #: ``None`` and ``0`` mean different things: ``0`` is a collection the
+    #: server knows to be empty, ``None`` is a collection whose counter was
+    #: never maintained (the write path does not call ``update_stats``).
+    #: These used to be indistinguishable, and reading the fabricated ``0``
+    #: as "empty" produced a false data-loss report against the server.
+    vector_count: int | None = None
     index_size_bytes: int = 0
     data_size_bytes: int = 0
 
@@ -1152,8 +1159,12 @@ class Collection(BaseModel):
         return self.config.storage_engine
 
     @property
-    def vector_count(self) -> int:
-        """Backward compatibility property for vector count"""
+    def vector_count(self) -> int | None:
+        """Backward compatibility property for vector count.
+
+        ``None`` means the server did not report a count, which is distinct
+        from a known-zero collection.
+        """
         return self.stats.vector_count
 
 

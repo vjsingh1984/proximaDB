@@ -1747,7 +1747,6 @@ pub mod types {
     ///  "type": "object",
     ///  "required": [
     ///    "indexed_fields",
-    ///    "record_count",
     ///    "storage_size_bytes",
     ///    "text_field_count"
     ///  ],
@@ -1759,8 +1758,11 @@ pub mod types {
     ///      "minimum": 0.0
     ///    },
     ///    "record_count": {
-    ///      "description": "Total number of records",
-    ///      "type": "integer",
+    ///      "description": "Total number of records, or `null` when the server does not know.\n\n`null` is a real answer here, not a gap. The counter is maintained by\n`MetadataStore::update_stats`, which the record write path does not call,\nso a collection that has never had stats written carries none. Reporting\n`0` in that case is a *confident wrong answer* — indistinguishable from a\ngenuinely empty collection, and it cost one downstream project a false\ndurability bug report before the cause was found (#1527).",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
     ///      "format": "int64",
     ///      "minimum": 0.0
     ///    },
@@ -1784,8 +1786,16 @@ pub mod types {
     pub struct CollectionStatsV2 {
         ///Number of indexed fields
         pub indexed_fields: i32,
-        ///Total number of records
-        pub record_count: i64,
+        /// Total number of records, or `null` when the server does not know.
+        ///
+        /// `null` is a real answer here, not a gap. The counter is maintained by
+        /// `MetadataStore::update_stats`, which the record write path does not call,
+        /// so a collection that has never had stats written carries none. Reporting
+        /// `0` in that case is a *confident wrong answer* — indistinguishable from a
+        /// genuinely empty collection, and it cost one downstream project a false
+        /// durability bug report before the cause was found (#1527).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub record_count: ::std::option::Option<i64>,
         ///Total storage size in bytes
         pub storage_size_bytes: i64,
         ///Number of TEXT fields with dedicated storage
@@ -10054,7 +10064,7 @@ pub mod types {
         #[derive(Clone, Debug)]
         pub struct CollectionStatsV2 {
             indexed_fields: ::std::result::Result<i32, ::std::string::String>,
-            record_count: ::std::result::Result<i64, ::std::string::String>,
+            record_count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
             storage_size_bytes: ::std::result::Result<i64, ::std::string::String>,
             text_field_count: ::std::result::Result<i32, ::std::string::String>,
         }
@@ -10062,7 +10072,7 @@ pub mod types {
             fn default() -> Self {
                 Self {
                     indexed_fields: Err("no value supplied for indexed_fields".to_string()),
-                    record_count: Err("no value supplied for record_count".to_string()),
+                    record_count: Ok(Default::default()),
                     storage_size_bytes: Err("no value supplied for storage_size_bytes".to_string()),
                     text_field_count: Err("no value supplied for text_field_count".to_string()),
                 }
@@ -10081,7 +10091,7 @@ pub mod types {
             }
             pub fn record_count<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<i64>,
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
                 T::Error: ::std::fmt::Display,
             {
                 self.record_count = value
