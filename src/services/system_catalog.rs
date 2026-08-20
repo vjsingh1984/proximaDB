@@ -811,6 +811,19 @@ impl SystemCatalog {
         // a tenant scope. Mirrors NativeCatalog::create_namespace_inner.
         ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
         ns.tenant_id = tenant_id;
+        // TD-CAT-9: the stable catalog object_id, minted from the ONE
+        // system-wide sequence that mints table object_ids (ADR-031
+        // reconciliation amendment 1 — one sequence, not per-type). The default
+        // backend had been the only internal catalog leaving this `None` while
+        // reporting the same `catalog_type` as `NativeCatalog`, which does mint.
+        //
+        // Legacy namespaces persisted before this keep `object_id: None` and are
+        // deliberately NOT backfilled: this catalog's state is derived from the
+        // WAL, so an in-RAM backfill would be non-durable and would re-mint a
+        // DIFFERENT id on every restart — churn plus a collision risk, which is
+        // worse than the absence. `max_object_id` folds whatever ids exist, so
+        // old and new coexist safely (mixed-read-safe, mandate #8).
+        ns.object_id = Some(self.mint_object_id(None)?);
         self.commit(CatalogDelta::UpsertNamespace {
             namespace: Box::new(ns.clone()),
         })
@@ -1425,31 +1438,80 @@ mod tests {
         Ok(())
     }
 
-    /// TD-CAT-7 / TD-CAT-9: `SystemCatalog::create_namespace` does **not** mint
-    /// a namespace `object_id`, while `NativeCatalog::create_namespace_inner`
-    /// does (ADR-031 / TD-181 P0). Two internal backends reporting the same
-    /// `catalog_type` disagree about whether namespaces carry a catalog
-    /// surrogate — pinned here so the divergence is a stated fact rather than a
-    /// surprise for the first consumer that keys on it. Closing it is TD-CAT-9:
-    /// it changes what draws from the shared id sequence, and the recovery floor
-    /// folds tables only, so it needs its own no-reissue-across-restart proof.
+    /// TD-CAT-9: the default backend now mints a namespace `object_id` from the
+    /// same system-wide sequence as tables — `NativeCatalog` always did, and the
+    /// two report the same `catalog_type`, so the divergence was a trap for the
+    /// first consumer to key on it.
     #[tokio::test]
-    async fn system_catalog_namespaces_carry_no_object_id_yet() -> Result<()> {
+    async fn namespaces_carry_a_minted_object_id() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let cat = catalog(dir.path()).await;
-        let levels = nslevels(&["cat7_ns"]);
+        let levels = nslevels(&["cat9_ns"]);
         let created = cat.create_namespace(&levels, HashMap::new()).await?;
+        let object_id = created
+            .object_id
+            .expect("an identity authority mints a namespace object_id");
 
         assert_eq!(
-            created.object_id, None,
-            "if this starts minting, TD-CAT-9 landed — fold namespace ids into \
-             SystemCatalogState::max_object_id in the same change or a restart \
-             can re-issue a live namespace's id"
+            cat.get_namespace_by_object_id(object_id).await?,
+            Some(levels),
+            "the reverse lookup must resolve an id this catalog itself minted"
         );
         assert_eq!(
-            cat.get_namespace_by_object_id(1).await?,
+            cat.get_namespace_by_object_id(object_id + 9_999).await?,
             None,
-            "nothing to resolve while no namespace carries an id"
+            "an unknown id is still None — the honest one"
+        );
+        Ok(())
+    }
+
+    /// TD-CAT-9: the sibling of `object_ids_are_never_reissued_across_a_restart`
+    /// (TD-AUTHZ-2, below) for **namespace** ids — the half that test cannot
+    /// reach, because it only ever mints tables.
+    ///
+    /// Minting namespace ids without folding them into the recovery floor is
+    /// strictly worse than not minting at all: the floor would recover from
+    /// tables only, land *below* a live namespace's id, and hand it to the next
+    /// object. Object ids key policy bindings and grants, so that is a new table
+    /// inheriting a dead namespace's permissions.
+    ///
+    /// The ordering is load-bearing — the LAST id minted before the restart is a
+    /// namespace's. Neuter the namespace fold in
+    /// `SystemCatalogState::max_object_id` and this fails; with the namespace
+    /// created before the table it would pass either way, which is the shape of
+    /// a test that proves nothing.
+    #[tokio::test]
+    async fn namespace_object_ids_are_never_reissued_across_a_restart() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+
+        let last_ns_object_id = {
+            let cat = SystemCatalog::open("default", &wal).await?;
+            let first = nslevels(&["cat9_a"]);
+            cat.create_namespace(&first, HashMap::new()).await?;
+            cat.create_table(&TableIdentifier::new(first, "t"), vec_schema("t"))
+                .await?;
+            // Minted last, so it holds the persisted high-water mark.
+            cat.create_namespace(&nslevels(&["cat9_b"]), HashMap::new())
+                .await?
+                .object_id
+                .expect("namespace object_id")
+        };
+
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        let fresh = reopened
+            .create_table(
+                &TableIdentifier::new(nslevels(&["cat9_a"]), "t2"),
+                vec_schema("t2"),
+            )
+            .await?
+            .object_id
+            .expect("table object_id");
+
+        assert!(
+            fresh > last_ns_object_id,
+            "object id {fresh} was re-issued at or below the persisted namespace id \
+             {last_ns_object_id}; the recovery floor does not fold namespace ids"
         );
         Ok(())
     }
