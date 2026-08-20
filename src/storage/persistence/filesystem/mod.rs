@@ -1154,11 +1154,18 @@ impl FilesystemFactory {
     /// blocks of a pruned scan together.
     ///
     /// Whether those logical ranges become fewer physical requests depends on
-    /// the filesystem's [`FileSystem::range_coalesce_policy`]. With no policy
-    /// — the default — each range is one physical GET, and object stores bill
-    /// per request. This doc comment previously asserted that the backend
-    /// coalesced; it did not, and no backend overrode `read_ranges`, so callers
-    /// trusting it silently paid one billed request per range.
+    /// `PROXIMADB_FS_READ_RANGES_COALESCE_GAP`. **Unset — the default — means
+    /// one physical GET per range**, and object stores bill per request.
+    ///
+    /// When armed, this method plans the merge itself rather than delegating,
+    /// because this is the layer that knows the backend: `IopsBudget::for_path`
+    /// needs the URL, and the filesystem-types crate is a leaf that must not
+    /// depend upward to reach it. Callers still receive exactly one buffer per
+    /// input range, in input order, sliced exactly.
+    ///
+    /// An earlier version of this comment asserted the backend coalesced. It
+    /// did not, and no backend overrode `read_ranges`, so callers trusting it
+    /// silently paid one billed request per range.
     pub async fn read_ranges(
         &self,
         url: &str,
@@ -1166,7 +1173,71 @@ impl FilesystemFactory {
     ) -> FsResult<Vec<Vec<u8>>> {
         let fs = self.get_filesystem(url)?;
         let path = Self::resolve_path(url)?;
-        fs.read_ranges(&path, ranges).await
+        let Some(policy) = Self::range_coalesce_policy_for(url) else {
+            return fs.read_ranges(&path, ranges).await;
+        };
+
+        // Coalesce HERE rather than inside the filesystem, because this is the
+        // layer that knows the backend: `IopsBudget::for_path` needs the URL,
+        // and `proximadb-storage-filesystem-types` is a leaf crate that must
+        // not depend up into `storage-common` to reach it.
+        //
+        // Scope is exactly right by construction, not by luck:
+        //   * the SST vector path issues singular `read_range` calls after
+        //     planning its own coalescing, so it cannot double-merge here;
+        //   * `SmartIo` coalesces internally and calls `FileSystem::read_ranges`
+        //     directly, bypassing this method, so it cannot double-merge either;
+        //   * the DataFusion PAX adapter is the one production caller, and it
+        //     currently pays one billed GET per surviving block.
+        let plan =
+            proximadb_storage_filesystem_types::read_ranges_plan::coalesce_ranges_with_mapping(
+                &ranges,
+                Some(policy),
+            )?;
+        let mut buffers = Vec::with_capacity(plan.physical.len());
+        for physical in &plan.physical {
+            buffers.push(
+                fs.read_range(&path, physical.start, physical.end - physical.start)
+                    .await?,
+            );
+        }
+        Ok(plan
+            .mapping
+            .iter()
+            .map(|slice| match slice.physical {
+                Some(idx) => {
+                    proximadb_storage_filesystem_types::read_ranges_plan::slice_from_physical(
+                        &buffers[idx],
+                        *slice,
+                    )
+                }
+                None => Vec::new(),
+            })
+            .collect())
+    }
+
+    /// Range-merging policy for `url`, or `None` to issue one request per range.
+    ///
+    /// Gate semantics: **unset is OFF**. An explicit `0` gap is a legitimate
+    /// setting — "merge only exactly-adjacent ranges" — so absence, not zero,
+    /// has to mean disabled. The byte ceiling defaults to the backend's own
+    /// `IopsBudget` maximum and is clamped to it, so this knob can tighten the
+    /// over-read bound but never loosen it past what the backend profile
+    /// already permits. Raising that profile is TD-SEARCH-3's call, not this
+    /// gate's.
+    fn range_coalesce_policy_for(
+        url: &str,
+    ) -> Option<proximadb_storage_filesystem_types::RangeCoalescePolicy> {
+        let budget = proximadb_storage_common::iops_budget::IopsBudget::for_path(url);
+        resolve_range_coalesce_policy(
+            std::env::var("PROXIMADB_FS_READ_RANGES_COALESCE_GAP")
+                .ok()
+                .as_deref(),
+            std::env::var("PROXIMADB_FS_READ_RANGES_COALESCE_MAX")
+                .ok()
+                .as_deref(),
+            budget.max,
+        )
     }
 
     pub async fn write(
@@ -1700,5 +1771,99 @@ impl proximadb_storage_ports::FilesystemPort for FilesystemFactory {
 
     async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>> {
         FilesystemFactory::list(self, url).await
+    }
+}
+
+/// Pure resolution of the range-coalescing gate, split out so its semantics are
+/// testable without mutating process environment (`set_var`/`remove_var` are
+/// unsafe in edition 2024 precisely because they race across threads).
+///
+/// `None` means "issue one physical request per logical range" — today's
+/// behaviour, and what an unset gate must produce.
+fn resolve_range_coalesce_policy(
+    gap_raw: Option<&str>,
+    max_raw: Option<&str>,
+    ceiling: u64,
+) -> Option<proximadb_storage_filesystem_types::RangeCoalescePolicy> {
+    // Absence is OFF. A malformed value is also OFF rather than defaulting to
+    // some merging: silently coalescing because someone typo'd a gap would
+    // change billed request counts with no signal anywhere.
+    let max_gap_bytes = gap_raw?.trim().parse::<u64>().ok()?;
+    let max_merged_bytes = max_raw
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(ceiling)
+        .min(ceiling)
+        .max(1);
+    Some(proximadb_storage_filesystem_types::RangeCoalescePolicy {
+        max_gap_bytes,
+        max_merged_bytes,
+    })
+}
+
+#[cfg(test)]
+mod range_coalesce_gate_tests {
+    use super::resolve_range_coalesce_policy;
+
+    const AZURE_MAX: u64 = 4 * 1024 * 1024;
+
+    /// Unset must be OFF, so an un-gated deployment issues exactly the requests
+    /// it issues today.
+    #[test]
+    fn unset_gap_disables_coalescing() {
+        assert!(resolve_range_coalesce_policy(None, None, AZURE_MAX).is_none());
+        // ...and a max without a gap is still off — the gap is the arming knob.
+        assert!(resolve_range_coalesce_policy(None, Some("1048576"), AZURE_MAX).is_none());
+    }
+
+    /// Zero is a REAL setting ("merge only exactly-adjacent ranges"), which is
+    /// why OFF has to be encoded as absence rather than as zero.
+    #[test]
+    fn explicit_zero_gap_is_armed_not_disabled() {
+        let policy = resolve_range_coalesce_policy(Some("0"), None, AZURE_MAX)
+            .expect("explicit 0 must arm the policy");
+        assert_eq!(policy.max_gap_bytes, 0);
+        assert_eq!(
+            policy.max_merged_bytes, AZURE_MAX,
+            "defaults to the backend ceiling"
+        );
+    }
+
+    /// A typo must not silently change billed request counts.
+    #[test]
+    fn malformed_gap_is_off_rather_than_guessed() {
+        for bad in ["", "1MiB", "-1", "0x10", "1.5"] {
+            assert!(
+                resolve_range_coalesce_policy(Some(bad), None, AZURE_MAX).is_none(),
+                "malformed gap {bad:?} must disable, not guess"
+            );
+        }
+    }
+
+    /// The ceiling can be tightened but never loosened. Raising a backend's
+    /// range profile is TD-SEARCH-3's decision, gated on its own measurement —
+    /// this knob must not be a back door to it.
+    #[test]
+    fn max_is_clamped_to_the_backend_ceiling() {
+        let tighter = resolve_range_coalesce_policy(Some("65536"), Some("1048576"), AZURE_MAX)
+            .expect("armed");
+        assert_eq!(
+            tighter.max_merged_bytes,
+            1024 * 1024,
+            "tightening is honoured"
+        );
+
+        let looser = resolve_range_coalesce_policy(Some("65536"), Some("25165824"), AZURE_MAX)
+            .expect("armed");
+        assert_eq!(
+            looser.max_merged_bytes, AZURE_MAX,
+            "24 MiB must clamp to the backend ceiling, not widen it"
+        );
+
+        let zero =
+            resolve_range_coalesce_policy(Some("65536"), Some("0"), AZURE_MAX).expect("armed");
+        assert_eq!(
+            zero.max_merged_bytes, 1,
+            "a zero ceiling would merge nothing at all"
+        );
     }
 }
