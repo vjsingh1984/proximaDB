@@ -147,7 +147,7 @@ ORDER BY v.score DESC;
 
 ==== ProximaDB Advantage
 
-Single database replaces 3-4 separate systems. Cross-model queries eliminate application-side joins. Embedded mode enables agent sidecar deployment with zero network latency. The SST engine provides sub-6ms vector search, and ORION delivers sub-microsecond graph node lookups -- both critical for real-time agent context retrieval.
+Single database replaces 3-4 separate systems. Cross-model queries eliminate application-side joins. The in-process (PyO3) embedded mode has zero network latency; the Python SDK's managed-subprocess embedded mode communicates over UDS+HTTP and does not. Latency claims here are governed by `BENCHMARK_EVIDENCE.toml`: the previously cited "sub-6ms vector search" was never registered as measured there, and the measured end-to-end route (warm, 10K vectors) is ~20 ms; the in-process search body measured ~0.024 ms at small scale. Do not quote latency numbers from this catalog -- quote the evidence ledger.
 
 '''
 
