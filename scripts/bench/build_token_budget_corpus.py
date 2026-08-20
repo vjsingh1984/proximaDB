@@ -226,7 +226,9 @@ def _histogram(values: list[int]) -> dict[str, int | None]:
     }
 
 
-def _atomic_paths(output_dir: Path) -> tuple[Path, Path, Path, Path]:
+def _atomic_paths(
+    output_dir: Path,
+) -> tuple[Path, Path, Path, Path, Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     texts_fd, texts_name = tempfile.mkstemp(
         prefix="texts.", suffix=".tmp", dir=output_dir
@@ -234,11 +236,23 @@ def _atomic_paths(output_dir: Path) -> tuple[Path, Path, Path, Path]:
     chunks_fd, chunks_name = tempfile.mkstemp(
         prefix="chunks.", suffix=".tmp", dir=output_dir
     )
+    occurrences_fd, occurrences_name = tempfile.mkstemp(
+        prefix="chunk_occurrences.", suffix=".tmp", dir=output_dir
+    )
     os.close(texts_fd)
     os.close(chunks_fd)
+    os.close(occurrences_fd)
     texts_tmp = Path(texts_name)
     chunks_tmp = Path(chunks_name)
-    return texts_tmp, chunks_tmp, output_dir / "texts.json", output_dir / "chunks.jsonl"
+    occurrences_tmp = Path(occurrences_name)
+    return (
+        texts_tmp,
+        chunks_tmp,
+        occurrences_tmp,
+        output_dir / "texts.json",
+        output_dir / "chunks.jsonl",
+        output_dir / "chunk_occurrences.jsonl",
+    )
 
 
 def build(args: argparse.Namespace) -> dict[str, Any]:
@@ -268,7 +282,14 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         **{key: value for key, value in vars(config).items() if key != "strategy"},
     )
 
-    texts_tmp, chunks_tmp, texts_path, chunks_path = _atomic_paths(args.output_dir)
+    (
+        texts_tmp,
+        chunks_tmp,
+        occurrences_tmp,
+        texts_path,
+        chunks_path,
+        occurrences_path,
+    ) = _atomic_paths(args.output_dir)
     token_lengths: dict[str, list[int]] = defaultdict(list)
     new_content_token_lengths: list[int] = []
     actual_overlap_token_lengths: list[int] = []
@@ -278,13 +299,15 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     dropped_spans: list[dict[str, Any]] = []
     stopped_at_max_chunks = False
     allow_partial_corpus = getattr(args, "allow_partial_corpus", False)
-    seen_chunk_digests: set[bytes] = set()
+    canonical_chunk_ids: dict[bytes, str] = {}
     duplicate_chunk_count = 0
+    chunk_occurrence_count = 0
     try:
         with (
             args.input.open("r", encoding="utf-8") as source,
             texts_tmp.open("w", encoding="utf-8") as texts,
             chunks_tmp.open("w", encoding="utf-8") as chunks_out,
+            occurrences_tmp.open("w", encoding="utf-8") as occurrences_out,
         ):
             texts.write("[")
             first_text = True
@@ -334,12 +357,6 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                     if args.max_chunks is not None and chunk_count >= args.max_chunks:
                         stopped_at_max_chunks = True
                         break
-                    if args.deduplicate == "exact":
-                        digest = hashlib.sha256(chunk.text.encode("utf-8")).digest()
-                        if digest in seen_chunk_digests:
-                            duplicate_chunk_count += 1
-                            continue
-                        seen_chunk_digests.add(digest)
                     new_content_tokens = chunk.metadata.get("new_content_tokens")
                     actual_overlap_tokens = chunk.metadata.get("overlap_tokens")
                     if (
@@ -356,6 +373,34 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                         raise AssertionError(
                             f"chunk {chunk_count} has invalid actual overlap metadata"
                         )
+                    canonical_id = chunk.chunk_id
+                    deduplicated_alias = False
+                    if args.deduplicate == "exact":
+                        digest = hashlib.sha256(chunk.text.encode("utf-8")).digest()
+                        existing_id = canonical_chunk_ids.get(digest)
+                        if existing_id is not None:
+                            canonical_id = existing_id
+                            deduplicated_alias = True
+                            duplicate_chunk_count += 1
+                        else:
+                            canonical_chunk_ids[digest] = canonical_id
+                    occurrences_out.write(
+                        json.dumps(
+                            {
+                                "corpus_id": canonical_id,
+                                "source_id": source_id,
+                                "start_pos": chunk.start_pos,
+                                "end_pos": chunk.end_pos,
+                                "deduplicated_alias": deduplicated_alias,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                    chunk_occurrence_count += 1
+                    if deduplicated_alias:
+                        continue
                     new_content_token_lengths.append(new_content_tokens)
                     actual_overlap_token_lengths.append(actual_overlap_tokens)
                     if not first_text:
@@ -398,9 +443,11 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError("input JSONL changed while the corpus was being built")
         os.replace(texts_tmp, texts_path)
         os.replace(chunks_tmp, chunks_path)
+        os.replace(occurrences_tmp, occurrences_path)
     finally:
         texts_tmp.unlink(missing_ok=True)
         chunks_tmp.unlink(missing_ok=True)
+        occurrences_tmp.unlink(missing_ok=True)
 
     histogram = {
         model_id: {
@@ -419,7 +466,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         for model_id, values in token_lengths.items()
     }
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "builder_sha256": _sha256(Path(__file__).resolve()),
         "sdk_chunking_package_sha256": _python_tree_sha256(
             Path(chunking_package.__file__).resolve().parent
@@ -428,8 +475,10 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "input_sha256": input_sha256,
         "texts_sha256": _sha256(texts_path),
         "chunks_sha256": _sha256(chunks_path),
+        "chunk_occurrences_sha256": _sha256(occurrences_path),
         "source_count": source_count,
         "chunk_count": chunk_count,
+        "chunk_occurrence_count": chunk_occurrence_count,
         "max_chunks": args.max_chunks,
         "stopped_at_max_chunks": stopped_at_max_chunks,
         "corpus_scope": (
@@ -440,6 +489,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "split_oversized_source_count": split_sources,
         "dropped_spans": dropped_spans,
         "boundary_strategy": args.strategy,
+        "boundary_char_size": args.boundary_char_size,
+        "source_fields": {"id": args.id_field, "text": args.text_field},
         "token_budget": budget.to_manifest(),
         "input_contract": contracts.to_manifest(),
         "token_histogram": histogram,

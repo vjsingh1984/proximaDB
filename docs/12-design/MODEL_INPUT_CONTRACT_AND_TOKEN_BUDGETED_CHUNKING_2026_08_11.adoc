@@ -257,14 +257,17 @@ configuration from the tokenizer configured by SentenceTransformers. The embeddi
 therefore continues to require the exact resolved runtime fingerprint rather than weakening the
 check to inferred equivalence.
 
-The output includes shared `texts.json`, per-chunk provenance in `chunks.jsonl`, and
-`corpus.manifest.json` with hashes, policies, contract fingerprints, token and packing histograms,
-corpus scope and a zero-truncation assertion. Packing histograms record actual overlap and new
-source-token coverage per stored chunk, making redundant-boundary amplification observable. The
-corpus records both its transport-script SHA-256 and a deterministic digest of the complete loaded
-SDK chunking-strategy source tree; every later stage records its tracked producer SHA-256, and
-embedding shard identity includes that transport digest. `--max-chunks` is a prefix-sampling
-diagnostic: if it would truncate the
+The output includes shared `texts.json`, canonical per-chunk provenance in `chunks.jsonl`, every
+source-span occurrence in `chunk_occurrences.jsonl`, and `corpus.manifest.json` with hashes,
+policies, contract fingerprints, token and packing histograms, corpus scope and a zero-truncation
+assertion. Exact deduplication keeps one canonical text/vector while the occurrence sidecar maps
+every duplicate source span to that canonical `corpus_id`. This is load-bearing for source update
+amplification, source-level ACL/citation analysis and qrels projection; canonical chunks alone
+silently lose those aliases. Packing histograms record actual overlap and new source-token coverage
+per stored chunk, making redundant-boundary amplification observable. The corpus records both its
+transport-script SHA-256 and a deterministic digest of the complete loaded SDK chunking-strategy
+source tree; every later stage records its tracked producer SHA-256, and embedding shard identity
+includes that transport digest. `--max-chunks` is a prefix-sampling diagnostic: if it would truncate the
 source, the builder fails unless `--allow-partial-corpus` is explicit and records
 `corpus_scope=partial_prefix`. A realistic full-corpus build must record
 `corpus_scope=complete_source`.
@@ -340,6 +343,43 @@ This path calls the model's query-role renderer/encoder and records query/qrels 
 quantization bounds keep the base/index stable across evaluation query sets; out-of-range query
 components are clipped and counted in the embedding manifest. A content-hashed query-ID sidecar
 preserves the exact query-binary row order.
+
+Source judgments should be stable across tokenizer and token-budget experiments. Store them as
+source qrels with `query_id`, `source_id`, positive `relevance`, and optional half-open
+`start_pos`/`end_pos`. Project each corpus independently through its occurrence sidecar:
+
+[source,bash]
+----
+python scripts/bench/project_span_qrels.py \
+  --source-qrels eval/source_qrels.jsonl \
+  --occurrences-jsonl corpus/chunk_occurrences.jsonl \
+  --output corpus/qrels.jsonl
+----
+
+A source-level judgment without a span maps to every canonical chunk occurring in that source. A
+span judgment maps only overlapping occurrences. Repeated judgments that converge on the same
+query/corpus pair keep maximum relevance. Unknown sources, invalid spans and judgments matching no
+chunk fail closed. This projection makes qrels comparable across chunk sizes without pretending
+that all chunks from a relevant long document are relevant passages.
+
+Before loading model weights, measure the structural economics of every sealed corpus:
+
+[source,bash]
+----
+python scripts/bench/embedding_context_economics.py \
+  --corpus-manifest corpus/corpus.manifest.json \
+  --dimension 768 --dimension 256 \
+  --fixed-bytes-per-row 0 \
+  --output corpus/context_economics.json
+----
+
+The report separates canonical rows from source occurrences, vector payload from caller-supplied
+fixed row overhead, and context from output dimension. It records rendered token totals,
+`sum(rendered_tokens^2)` as an explicitly labelled full-attention work proxy, chunks/source update
+amplification and f32/f16/SQ8 payload bytes. The proxy is not latency, and the byte model excludes
+model/index-specific overhead unless supplied. Retrieval quality, citation precision and generator
+payload remain qrels-backed gates. Legacy schema-v1 corpora without an occurrence sidecar can still
+be inspected, but the report marks deduplicated alias/update economics as undercounted.
 The example intentionally writes a new root: never overwrite the legacy `bge768`/`bge384` corpus,
 whose hashes remain provenance for the completed TD-IVF-3 geometry study.
 
