@@ -382,10 +382,27 @@ chunk fail closed. The projection manifest binds source qrels, corpus manifest, 
 and output qrels hashes.
 
 Document-level BEIR judgments require source-collapsed retrieval evaluation: score each source by
-the maximum score of any of its chunk occurrences, including deduplicated aliases, then compare
-with the original document qrels. Treating every projected chunk as an independent relevant item
-changes NDCG/Recall semantics as chunk count changes. Span judgments can be evaluated directly at
-chunk level and support citation precision. The two granularities must not be conflated.
+the maximum score of any of its chunk occurrences, then compare with the original document qrels.
+Treating every projected chunk as an independent relevant item changes NDCG/Recall semantics as
+chunk count changes. Span judgments can be evaluated directly at chunk level and support citation
+precision. The two granularities must not be conflated.
+
+Quality corpora use `--deduplicate none`. Exact deduplication is valid for structural economics,
+but one canonical vector can then map to multiple source documents, making source rank and credit
+ambiguous. `evaluate_source_retrieval.py` therefore rejects deduplicated aliases by default; its
+alias-expansion option is diagnostic, not comparable quality evidence. The evaluator binds all
+input digests, collapses by maximum chunk score, uses deterministic source-ID tie breaking, and
+reports macro linear-gain NDCG, binary Recall and MRR over every qrels query.
+
+[source,bash]
+----
+python scripts/bench/evaluate_source_retrieval.py \
+  --run eval/chunk_run.jsonl \
+  --source-qrels eval/source_qrels.jsonl \
+  --occurrences-jsonl corpus/chunk_occurrences.jsonl \
+  --k 1 5 10 20 100 \
+  --output eval/source_metrics.json
+----
 
 Before loading model weights, measure the structural economics of every sealed corpus:
 

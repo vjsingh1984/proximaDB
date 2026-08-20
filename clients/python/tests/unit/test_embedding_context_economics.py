@@ -481,3 +481,115 @@ def test_beir_import_rejects_unknown_qrel_documents(tmp_path: Path):
             dataset_name="fixture",
             source_url="https://example.test/fixture.zip",
         )
+
+
+def _write_source_evaluation_fixture(
+    tmp_path: Path, *, include_alias: bool = False
+) -> tuple[Path, Path, Path]:
+    occurrences = tmp_path / "occurrences.jsonl"
+    occurrence_rows = [
+        {
+            "corpus_id": "c1",
+            "source_id": "doc-a",
+            "start_pos": 0,
+            "end_pos": 5,
+            "deduplicated_alias": False,
+        },
+        {
+            "corpus_id": "c2",
+            "source_id": "doc-a",
+            "start_pos": 5,
+            "end_pos": 10,
+            "deduplicated_alias": False,
+        },
+        {
+            "corpus_id": "c3",
+            "source_id": "doc-b",
+            "start_pos": 0,
+            "end_pos": 5,
+            "deduplicated_alias": False,
+        },
+    ]
+    if include_alias:
+        occurrence_rows.append(
+            {
+                "corpus_id": "c1",
+                "source_id": "doc-alias",
+                "start_pos": 0,
+                "end_pos": 5,
+                "deduplicated_alias": True,
+            }
+        )
+    occurrences.write_text(
+        "\n".join(json.dumps(row) for row in occurrence_rows) + "\n",
+        encoding="utf-8",
+    )
+    run = tmp_path / "run.jsonl"
+    run.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"query_id": "q1", "corpus_id": "c2", "score": 0.8},
+                {"query_id": "q1", "corpus_id": "c1", "score": 0.9},
+                {"query_id": "q1", "corpus_id": "c3", "score": 0.7},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    qrels = tmp_path / "source-qrels.jsonl"
+    qrels.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {
+                    "query_id": "q1",
+                    "source_id": "doc-a",
+                    "relevance": 2,
+                    "judgment_granularity": "document",
+                },
+                {
+                    "query_id": "q1",
+                    "source_id": "doc-b",
+                    "relevance": 1,
+                    "judgment_granularity": "document",
+                },
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return run, qrels, occurrences
+
+
+def test_source_retrieval_collapses_chunk_scores_before_metrics(tmp_path: Path):
+    evaluator = _load_script("evaluate_source_retrieval")
+    run, qrels, occurrences = _write_source_evaluation_fixture(tmp_path)
+
+    result = evaluator.evaluate_source_retrieval(
+        run, qrels, occurrences, k_values=(1, 2)
+    )
+
+    assert result["metrics"] == {
+        "1": {"mrr": 1.0, "ndcg": 1.0, "recall": 0.5},
+        "2": {"mrr": 1.0, "ndcg": 1.0, "recall": 1.0},
+    }
+    assert result["source_candidates_per_query"] == {
+        "min": 2,
+        "p50": 2,
+        "p90": 2,
+        "p99": 2,
+        "max": 2,
+    }
+    assert result["chunk_run_row_count"] == 3
+    assert result["source_run_row_count"] == 2
+
+
+def test_source_retrieval_rejects_deduplicated_aliases_by_default(tmp_path: Path):
+    evaluator = _load_script("evaluate_source_retrieval")
+    run, qrels, occurrences = _write_source_evaluation_fixture(
+        tmp_path, include_alias=True
+    )
+
+    with pytest.raises(ValueError, match="deduplicated aliases"):
+        evaluator.evaluate_source_retrieval(run, qrels, occurrences, k_values=(1, 2))

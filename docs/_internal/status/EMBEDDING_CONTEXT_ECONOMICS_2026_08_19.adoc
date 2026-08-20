@@ -157,7 +157,9 @@ bytes once row count is equal, independent of context ceiling.
 The official 12,334 document relations project to 14,031 BGE chunks, 12,876 Nomic-480 chunks and
 12,288 chunks for each one-chunk-per-source corpus after exact-dedup pair collapse. Those counts
 are deliberately not compared as NDCG/Recall: document-level BEIR quality must collapse retrieval
-scores back to source IDs (and expand deduplicated aliases) before applying the original qrels.
+scores back to source IDs before applying the original qrels. Exact-dedup aliases make document
+credit ambiguous, so comparable neural quality corpora will be rebuilt with `deduplicate=none`;
+alias expansion is retained only as an explicitly labelled diagnostic.
 
 Scenario provenance is recorded as `corpus / economics / qrels-projection` manifest SHA-256:
 
@@ -194,9 +196,13 @@ Scenario provenance is recorded as `corpus / economics / qrels-projection` manif
 . `import_beir_dataset.py` verifies published archive provenance and emits deterministic,
   dependency-free documents, queries and document-level source qrels without inventing license
   rights.
+. `evaluate_source_retrieval.py` computes document metrics only after maximum-score source
+  collapse, binds every input digest, covers every qrels query, and rejects exact-dedup aliases by
+  default. Metric definitions and deterministic tie breaking are persisted in the output.
 
-The new contracts are covered by offline smoke builds. Builder, economics, BEIR-import and qrels
-tests currently pass 25/25 together with the existing corpus/embedding transport suite.
+The new contracts are covered by offline smoke builds. Builder, economics, BEIR-import, qrels and
+source-evaluation tests currently pass 27/27 together with the existing corpus/embedding transport
+suite when `PYTHONPATH=clients/python/src` binds the isolated worktree SDK.
 
 == Long-context results
 
