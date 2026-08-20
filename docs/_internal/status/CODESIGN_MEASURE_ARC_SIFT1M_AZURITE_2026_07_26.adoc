@@ -21,6 +21,19 @@ On the cloud-latency regime that actually bills us, does inter-file search paral
 `PROXIMADB_SEARCH_PARALLEL_FILES`) move the dominant cost term — and is the recall it delivers a recall
 property or a compaction artifact?
 
+== What was measured, in the code
+
+The parallelism under test is the inter-file fan-out in
+`src/storage/engines/sst/search/mod.rs` — the `tokio::spawn` per file, sized by
+`resolve_search_parallelism` from `PROXIMADB_SEARCH_PARALLEL_FILES` (TD-SEARCH-2 S1; `0` means half
+the cores).
+
+That pointer is recorded here because the ledger cannot hold it: `bench_source` is
+existence-checked as a path, so the original entry's
+`"src/storage/engines/sst/search/mod.rs (S2 tokio::spawn + resolve_search_parallelism)"` fails
+validation. Naming the mechanism in prose is the only place it survives — dropping the parenthetical
+to satisfy the schema would otherwise lose the one detail that says *which* code the number is about.
+
 == Setup
 
 [cols="1,3"]
