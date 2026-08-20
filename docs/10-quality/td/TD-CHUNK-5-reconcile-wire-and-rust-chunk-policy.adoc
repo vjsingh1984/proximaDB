@@ -129,7 +129,10 @@ Regenerating also surfaced **pre-existing stub drift**: the checked-in `collecti
 missing `index_policy`, `pax_vector_quant`, the `IndexPolicy` message and the typed-id fields on
 `StorageAssignment`. Proto changes had landed without the Python stubs being regenerated, and nothing
 caught it — the `grpc_drift_baseline` gate compares *services and rpcs*, so a message-only change is
-invisible to it. Worth its own follow-up; recorded here rather than fixed silently.
+invisible to it. **Now filed as TD-PROTO-1**, where it was measured across the whole tree rather than
+inferred from one file: 5 stubs carry real shape drift (25 messages/fields/enums the wire declares and
+the SDK cannot see, including `PredicateShortfall` and fusion `text_query`), 9 carry option drift, and
+the two independently-generated stub trees disagree with each other on 2 files.
 
 **The Rust deletion had broken the server binary.** `apps/proximadb-server/src/main.rs` still
 constructed `proximadb_embedding::config::ChunkConfig::default()` on the startup path — not
