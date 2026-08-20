@@ -368,7 +368,7 @@ impl SystemCatalogState {
     /// hand a NEW table the DEAD table's permissions.
     pub fn max_object_id(&self) -> Option<u64> {
         let guard = self.inner.read();
-        guard
+        let from_tables = guard
             .tables
             .values()
             .flat_map(|schema| {
@@ -378,7 +378,19 @@ impl SystemCatalogState {
                     .chain(schema.columns.iter().filter_map(|c| c.object_id))
                     .chain(schema.indexes.iter().filter_map(|i| i.object_id))
             })
-            .max()
+            .max();
+        // TD-CAT-9: namespaces draw from the SAME sequence, so the floor must
+        // fold them too. This line and the mint in `create_namespace_inner` are
+        // one change: minting without folding recovers a floor BELOW a persisted
+        // namespace id after a restart and re-issues a live identity — the exact
+        // hazard the paragraph above describes, only for namespaces. Neuter this
+        // and `object_ids_are_never_reissued_across_a_restart` fails.
+        let from_namespaces = guard
+            .namespaces
+            .values()
+            .filter_map(|namespace| namespace.object_id)
+            .max();
+        from_tables.max(from_namespaces)
     }
 
     /// The highest WAL sequence number folded in (replay watermark / snapshot
