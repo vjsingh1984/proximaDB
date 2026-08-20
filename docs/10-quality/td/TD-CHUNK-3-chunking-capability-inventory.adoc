@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **In Progress — updated 2026-08-18.** Inventory corrected (the SDP stages are placeholders, not implementations — see the correction below). **Items 1 (heading paths, wired) and 2 (near-duplicate dedup) are done** on `feat/chunk-boundary-port`: `structure.py` (shared detection + `HeadingOutline.path_at`), `HeadingBoundarySource`, `annotate_heading_paths`, the `TextDocumentProcessor` call site so it actually ships, and `dedup.py` — reachable from ingest via `ProcessorConfig.deduplicate_chunks`, **default OFF** per the ship-default-OFF-until-baked rule, since it removes chunks rather than adding metadata. Items 3-5 remain. Gated on TD-CHUNK-2's port existing; each capability lands as a `BoundarySource` or a post-segmentation pass, never as a new "strategy".
+| Status | **Resolved — updated 2026-08-19. All five items done**, items 3/4/5 landing together with the `ChunkPass` seam (ADR-091 **D7**) that unifies them; see "What the last three items taught" at the end. Earlier note follows. — **In Progress — updated 2026-08-18.** Inventory corrected (the SDP stages are placeholders, not implementations — see the correction below). **Items 1 (heading paths, wired) and 2 (near-duplicate dedup) are done** on `feat/chunk-boundary-port`: `structure.py` (shared detection + `HeadingOutline.path_at`), `HeadingBoundarySource`, `annotate_heading_paths`, the `TextDocumentProcessor` call site so it actually ships, and `dedup.py` — reachable from ingest via `ProcessorConfig.deduplicate_chunks`, **default OFF** per the ship-default-OFF-until-baked rule, since it removes chunks rather than adding metadata. Items 3-5 remain. Gated on TD-CHUNK-2's port existing; each capability lands as a `BoundarySource` or a post-segmentation pass, never as a new "strategy".
 | Dim | D4 (compute-per-modality) — secondary D1 (KSU: dedup), D3 (recall via boundary quality)
 | Pillar | PERF — secondary COST
 | Blocks | Nothing. This is the value-delivery TD; the three before it are the enabling work.
@@ -180,3 +180,73 @@ assertion. Gate on **output** (does retrieval return the span that answers the q
 **trajectory** (was the boundary source appropriate to the document's shape), measured as recall@k
 against the f32 baseline on the ADR-091 corpus, threshold-gated in CI, with suites versioned in the PR
 that changes behaviour. Every item above ships default-OFF until its eval clears.
+
+== What the last three items taught (2026-08-19, items 3/4/5 done)
+
+The three remaining capabilities looked unrelated, and the reason they are not is the finding: **each
+is a divergence between two of a chunk's three faces** — the span it is, the text embedded, the text
+returned. That is now ADR-091 D7 and one port (`chunking_strategies/passes.py`) rather than three
+features and two more boolean flags in `TextDocumentProcessor.chunk`.
+
+Sequencing them last was right for a reason that only became visible here: items 1 and 2 had already
+shipped as inline flags, each with a paragraph of comment justifying its position. Four flags have
+twenty-four orderings and no rule. Retrofitting the two shipped ones onto the seam meant the two new
+ones landed on a port with working occupants instead of being its first and only users, and the
+retrofit is provably behaviour-neutral against the golden snapshot.
+
+=== Item 5 — small-to-big is gateable, and the numbers set the default
+
+* **Containment 0.75 -> 0.875 on the returned unit**, with children unchanged, at a parent layer
+  costing **~1.74x KSU**. That is the claim stated as an inequality between two measured numbers, so
+  a regression in either direction is visible rather than absorbed.
+* **The KSU cost is FLAT across parent windows** — the parent layer is a second copy of the covered
+  text either way — while density degrades as the window grows (0.247 -> 0.229 at 8x the child
+  budget). So a larger window is not a cost/benefit trade at all; it is strictly worse. The default
+  is therefore **derived as 2x `chunk_size`**, not a round number, and cannot drift when the budget
+  changes.
+* **Scoring the parent set alone reads 0.38 and looks like a regression.** It is not: parents are
+  deliberately not a total partition, because a lone child gets none (a parent identical to its only
+  child is pure storage). The returned unit is *parent-if-linked-else-child*, and measuring anything
+  else measures an artefact of the construction. This is the same class as the dedup recall ratchet
+  that had to be a delta.
+
+=== Item 4 — enrichment, and the rubric's boundary
+
+Enrichment costs **+4% KEU** and the eval harness **cannot score it**. That is not a gap to fill with
+a proxy: enrichment declares `face=EMBEDDED`, so every span, text and count is identical before and
+after, and every metric in `conformance/evals.py` scores exactly those. A rubric that *did* react
+would have to score a model's output, and then a red gate could no longer be attributed to chunking —
+the property the harness was built to protect. **Its recall gate belongs in the ANN harnesses; this
+harness owns the cost half of the ratio and says so.** Stating the boundary is more useful than
+inventing a metric that would gate it badly.
+
+The implementation is deliberately **structural, not generated**. Per-chunk generated context is the
+well-known form and costs one model call per chunk at ingest; the structural version consumes exactly
+what item 1 already computed, which is the direct payoff of METADATA running before EMBEDDED. A
+generated variant is a different `context_fn`, not a different pass. Chunks whose context would exceed
+half their own length are skipped: a vector dominated by a section title retrieves the section, not
+the chunk.
+
+=== Item 3 — the native splitter is better, not fixed
+
+Testing the *claim* rather than the wiring corrected the census entry twice.
+
+* **Better, not fixed:** 1 broken sentence against the Python source's 2 on an abbreviation-dense
+  fixture. Recorded as both numbers, because "fixed" is how census entries go stale.
+* **It returns stripped text PIECES, not offsets** — the rejoin-versus-span problem axiom 2 exists to
+  remove (3 of 143 characters vanish between pieces). The source wraps it and recovers spans by
+  scanning, so what leaves is spans into the original document.
+* **Its `overlap` defaults to 128 with no clamp against `chunk_size`.** At `chunk_size=40` a
+  143-character input yields **619 characters** across 7 cumulative-prefix chunks — a 4.3x KEU
+  multiplier from accepting the defaults. A boundary source has no budget to pass, so the defect is
+  **unreachable through the port**. That is a concrete payoff of TD-CHUNK-2 separating proposal from
+  budget, not an abstract one.
+
+=== A measurement lesson worth more than the capability
+
+The first metric written to compare the two splitters counted pieces ending in a known abbreviation —
+and could not tell a broken cut from a correct one, because `Washington D.C. | It was cold` ends on an
+abbreviation and is *right*. Both splitters tied at 2 and the comparison said nothing. Replaced with a
+**rule** rather than a table: a sentence never begins with a digit or a lowercase letter, so judge the
+cut by what follows it. Same class as the sabotage that found a hole in the chunking test, and the
+same fix — derive the check from a principle instead of enumerating cases.

@@ -223,6 +223,65 @@ importers), `core/chunking/` (deprecated shim only), `processing/native/chunking
 unbuilt second Rust chunker, and ProximaDB's zero-caller `proximadb-embedding/chunker.rs`. Stop
 persisting a catalog `Heading` policy that silently degrades to paragraph.
 
+=== D7 — A second seam for what happens AFTER the partition: the three faces of a chunk (added 2026-08-19)
+
+D3's grid/measure/budget split covers every capability that decides **where a cut lands**. Executing
+TD-CHUNK-3 showed it covers nothing else, and that three of the five inventory items move no cut at
+all. Forcing them into the grid is what made them look like unrelated features.
+
+They are one shape. A chunk conflates three things, and each remaining capability is a deliberate
+divergence between two of them:
+
+[cols="1,3,2",options="header"]
+|===
+| Face | What it is | Cost term
+| `span` | which part of the document this chunk **is** | -- (axiom 1)
+| `embedded` | the text sent to the model to make the vector | **KEU**, paid once
+| `retrieved` | the text a caller gets back for generation | read cost, recall
+|===
+
+* **heading paths** -- touches neither; pure metadata, which is *why* it is free and why it is the
+  one capability that defaults ON.
+* **dedup** -- decides whether a span is materialised at all (KEU and KSU down).
+* **context enrichment** -- `embedded != span` (KEU up).
+* **small-to-big** -- `retrieved != embedded` (KSU up, read cost down).
+
+**Decision: one `ChunkPass` port, each pass declaring exactly one face.** Ordering follows from the
+faces (`metadata -> selection -> embedded -> retrieved`) and configuration order is *ignored*. Each
+adjacency is forced rather than conventional: a survivor must keep the heading path of the duplicates
+it absorbed; enriching a chunk that is about to be dropped spends KEU on nothing (this is also why
+dedup must be lexical -- the decision has to precede the spend); linkage refers to what survives.
+
+**The face is declared and then checked.** A pass that declares `METADATA` and quietly drops a chunk
+is deleting tenant content, and its own tests would never catch it because they assert what it means
+to do. `run_passes` verifies after every pass, which makes the abstraction load-bearing rather than
+decorative -- the same move `ChunkingStrategyInterface.__init_subclass__` already makes for
+`max_chunk_size`.
+
+**Why this is a seam and not four flags.** The two shipped capabilities were `if` statements inline in
+`TextDocumentProcessor.chunk`, each with a paragraph of comment explaining its position. Four flags
+have twenty-four orderings and no rule; the faces give one.
+
+**Consequence worth stating: the KEU question becomes askable.** With one text per chunk, "what does
+enrichment cost" could only be estimated from the template. `enrichment_tax` (`embedded_chars /
+span_chars`) reports the multiplier actually applied, per document -- the denominator TD-CHUNK-3
+requires enrichment to be gated on.
+
+**Links are emitted as intents, not written.** Small-to-big needs a parent larger than its child.
+Copying the parent's text onto each child is the obvious implementation and multiplies KSU by the
+fan-out. Parents are emitted once, referenced by `parent_id`, and the relationship leaves as a
+`ChunkEdge` for the caller to materialise -- an ORION edge in the server, which is the linkage this
+database can offer that a pure vector store cannot. It also keeps the chunking layer free of any
+client or transport, as its package docstring promises.
+
+**The rubric's boundary is part of the decision.** `conformance/evals.py` can gate small-to-big
+(measured: containment 0.75 -> 0.875 on the returned unit, at ~1.74x KSU) and **structurally cannot
+gate enrichment**, because enrichment leaves every span identical and every metric there scores
+exactly those. A rubric that reacted would have to score a model's output, and a red gate could then
+no longer be attributed to chunking -- the property the harness exists to protect. Enrichment's recall
+gate belongs in the ANN harnesses; this one owns the cost half of the ratio and says so. Stating the
+boundary is better than filling it with a proxy metric.
+
 == Why code chunking leaves the SDK but document chunking stays
 
 This asymmetry against ADR-029 is the crux, and it must be principled rather than convenient.
