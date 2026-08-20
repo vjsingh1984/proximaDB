@@ -378,3 +378,31 @@ def test_dedup_pass_matches_the_function_it_wraps():
     direct = deduplicate(list(chunks), threshold=0.9).kept
     viaPass = run_passes(doc, list(chunks), [DedupPass(threshold=0.9)]).chunks
     assert [c.chunk_id for c in direct] == [c.chunk_id for c in viaPass]
+
+
+def test_context_does_not_repeat_a_title_that_equals_its_heading():
+    """A document whose H1 IS its title produced "Guide > Guide".
+
+    Paying KEU for a word already in the context is small and pure waste, and
+    it is the common case rather than an edge case.
+    """
+    chunk = TextChunk(
+        text="Body text long enough to clear the context-ratio guard easily.",
+        start_pos=0,
+        end_pos=62,
+        chunk_id="c",
+        metadata={"heading_path": ["Guide", "Install"]},
+    )
+    assert structural_context(chunk, source_title="Guide") == "Guide > Install"
+
+
+def test_a_repeated_but_non_consecutive_section_survives():
+    """Only consecutive repeats collapse: `Setup > Windows > Setup` is real."""
+    chunk = TextChunk(
+        text="body",
+        start_pos=0,
+        end_pos=4,
+        chunk_id="c",
+        metadata={"heading_path": ["Setup", "Windows", "Setup"]},
+    )
+    assert structural_context(chunk) == "Setup > Windows > Setup"

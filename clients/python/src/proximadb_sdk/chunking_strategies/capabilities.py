@@ -125,7 +125,16 @@ def structural_context(chunk: Any, *, source_title: str | None = None) -> str:
         heading_path = [heading_path] if heading_path else []
     if isinstance(heading_path, (list, tuple)):
         parts.extend(str(part) for part in heading_path if part)
-    return " > ".join(parts)
+
+    # Drop a part that repeats its predecessor. A document whose H1 IS its
+    # title is the common case, and it produced "Guide > Guide" -- paying KEU
+    # for a word already there. Only CONSECUTIVE repeats are dropped: a real
+    # "Setup > Windows > Setup" is a distinct section and must survive.
+    deduped: list[str] = []
+    for part in parts:
+        if not deduped or deduped[-1].casefold() != part.casefold():
+            deduped.append(part)
+    return " > ".join(deduped)
 
 
 @dataclass
