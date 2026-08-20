@@ -111,6 +111,31 @@ def add_cache_ratios(point: dict) -> dict:
     return point
 
 
+def ratio_with_zero_identity(candidate: float, baseline: float) -> float | None:
+    """Return a ratio where equal zero means no change, not missing evidence."""
+    if baseline:
+        return candidate / baseline
+    return 1.0 if candidate == 0 else None
+
+
+def reduction_with_zero_identity(candidate: float, baseline: float) -> float | None:
+    """Return relative reduction where equal zero means zero reduction."""
+    ratio = ratio_with_zero_identity(candidate, baseline)
+    return 1.0 - ratio if ratio is not None else None
+
+
+def wire_ranges_reconciled(point: dict, tolerance: float = 0.01) -> bool:
+    """Reconcile application reads with ranged wire GETs, including zero I/O."""
+    application_gets = point["physical_gets"]
+    range_gets = point["wire_http"].get("range_get_requests")
+    if range_gets is None:
+        ratio = point.get("wire_range_to_application_get_ratio")
+        return ratio is not None and abs(ratio - 1.0) <= tolerance
+    if application_gets == 0:
+        return range_gets == 0
+    return abs(range_gets / application_gets - 1.0) <= tolerance
+
+
 def compare_points(candidate: dict, baseline: dict, query_count: int) -> dict:
     if query_count <= 0:
         raise RuntimeError("query count must be positive")
@@ -126,15 +151,13 @@ def compare_points(candidate: dict, baseline: dict, query_count: int) -> dict:
     candidate_qps = candidate["load"]["qps"]
     baseline_qps = baseline["load"]["qps"]
     return {
-        "application_get_reduction": (
-            1.0 - candidate_gets / baseline_gets if baseline_gets else None
+        "application_get_reduction": reduction_with_zero_identity(
+            candidate_gets, baseline_gets
         ),
-        "wire_get_reduction": (
-            1.0 - candidate_wire_gets / baseline_wire_gets
-            if baseline_wire_gets
-            else None
+        "wire_get_reduction": reduction_with_zero_identity(
+            candidate_wire_gets, baseline_wire_gets
         ),
-        "bytes_ratio": (candidate_bytes / baseline_bytes if baseline_bytes else None),
+        "bytes_ratio": ratio_with_zero_identity(candidate_bytes, baseline_bytes),
         "p50_ratio": (candidate["latency_ms"]["p50"] / baseline["latency_ms"]["p50"]),
         "p95_ratio": (candidate["latency_ms"]["p95"] / baseline["latency_ms"]["p95"]),
         "rss_ratio": (
@@ -188,9 +211,8 @@ def evaluate_promotion(
             checks[f"{policy}.{phase}.achieved_concurrency"] = (
                 point["load"]["peak_in_flight"] == concurrency
             )
-            range_ratio = point["wire_range_to_application_get_ratio"]
-            checks[f"{policy}.{phase}.wire_range_reconciled"] = (
-                range_ratio is not None and abs(range_ratio - 1.0) <= 0.01
+            checks[f"{policy}.{phase}.wire_range_reconciled"] = wire_ranges_reconciled(
+                point
             )
         disk = phases["disk_warm"]
         checks[f"{policy}.disk_warm.local_disk_hit"] = disk["local_disk"]["hits"] > 0
