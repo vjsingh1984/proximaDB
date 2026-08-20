@@ -49,8 +49,15 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     embedded mode has API parity with REST/gRPC modes.
 
     Embedded is not a network protocol. It shares the adapter interface so the
-    unified client can route operations consistently, but the hot path remains
-    direct in-process calls into the Rust service facade.
+    unified client can route operations consistently. The hot path is direct
+    in-process calls into the Rust service facade ONLY when the
+    ``proximadb_embedded`` PyO3 wheel is importable; otherwise this adapter
+    silently used to fall back to a managed ``proximadb-server`` subprocess
+    reached over UDS+HTTP+JSON — a very different performance envelope (every
+    call pays HTTP framing and JSON both ways). The fallback still exists for
+    availability, but it now logs a WARNING and is visible via
+    ``transport_kind`` so nobody benchmarks the subprocess believing it is
+    in-process (which is exactly how a published comparison went wrong).
 
     Key transformations:
     - insert() returns int (count) -> VectorOperationResponse
@@ -114,7 +121,16 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                         mode=mode,
                         node_id=node_id,
                     )
+                    self._transport_kind = "in-process"
                 except ImportError:
+                    logger.warning(
+                        "proximadb_embedded (in-process PyO3) is not installed; "
+                        "falling back to a managed proximadb-server SUBPROCESS "
+                        "over UDS+HTTP. Every operation pays HTTP framing and "
+                        "JSON serialization. For the in-process engine: "
+                        "pip install proximadb_embedded  (see proximaDB#1675)."
+                    )
+                    self._transport_kind = "subprocess"
                     from ..embedded import EmbeddedConfig, EmbeddedProximaDB
 
                     if hasattr(config, "model_dump"):
@@ -135,6 +151,16 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                 "(canonical package: `proximadb_embedded`; legacy local alias: `proximadb`). "
                 "Install/build the embedded release first."
             ) from e
+
+    @property
+    def transport_kind(self) -> str:
+        """``"in-process"`` (PyO3 wheel) or ``"subprocess"`` (UDS+HTTP fallback).
+
+        ``protocol_name`` stays ``"embedded"`` on both branches because the
+        unified client routes on it; this property exists so callers and
+        benchmarks can tell WHICH embedded they actually got.
+        """
+        return getattr(self, "_transport_kind", "unknown")
 
     @property
     def protocol_name(self) -> str:

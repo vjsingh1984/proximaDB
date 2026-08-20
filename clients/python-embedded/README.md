@@ -42,7 +42,11 @@ Requires Rust toolchain and maturin:
 
 # Build and install
 cd clients/python-embedded
-maturin develop -m ../../Cargo.toml --release --features python,pylib
+# Build from the REPO ROOT — its pyproject.toml points maturin at the
+# binding crate (crates/binding/proximadb-embedded). The old command here
+# passed `--features python,pylib`; `pylib` no longer exists and the build
+# could never work (#1675).
+cd ../.. && maturin develop --release --features python
 ```
 
 Canonical import:

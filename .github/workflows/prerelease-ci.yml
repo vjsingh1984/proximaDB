@@ -297,9 +297,12 @@ jobs:
   # ============================================================================
   # BUILD PYTHON EMBEDDED WHEELS - DISABLED for v0.2.0
   # ============================================================================
-  # NOTE: clients/python-embedded does NOT have Rust bindings yet.
-  # It's a placeholder/stub without actual Rust code or Cargo.toml.
-  # TODO: Re-enable when proper PyO3 bindings are implemented.
+  # NOTE (corrected): this rationale was stale — the PyO3 bindings exist at
+  # crates/binding/proximadb-embedded and the wheel builds from the ROOT
+  # pyproject.toml. The canonical wheel pipeline is release-python.yml
+  # (build → smoke test → publish); do NOT re-enable this block — extend
+  # release-python.yml instead. The stale note here is how the wheel stayed
+  # unshippable for months with nobody noticing (#1675).
   #
   # build-embedded-wheels:
   #   name: Build Embedded Wheels (${{ matrix.os }}, ${{ matrix.target }})

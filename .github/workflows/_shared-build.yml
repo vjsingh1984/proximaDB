@@ -263,8 +263,8 @@ jobs:
   # BUILD WHEELS - Skipped if cache hit
   # ============================================================================
   # build-wheels:
-  # NOTE: Temporarily disabled - clients/python is a pure Python package without
-  # Rust bindings. It does not have Cargo.toml or lib.rs, so maturin-based
+  # NOTE: Superseded — the canonical wheel pipeline is release-python.yml, which builds
+  # proximadb_embedded from the ROOT pyproject (manifest-path = the binding crate).
   # Rust-Python hybrid builds fail. The package is a gRPC client that only needs
   # standard Python wheels built via setup.py/pyproject.toml.
   #
@@ -273,7 +273,7 @@ jobs:
   # - Platform packages (RPM, DEB, DMG, MSI)
   # - Source distribution (sdist)
   #
-  # TODO: Re-enable when proper Rust bindings are added to clients/python
+  # Do NOT re-enable here — extend release-python.yml instead.
   #
   # build-wheels:
   #   name: Build Wheels (${{ matrix.os }}, ${{ matrix.python }})
@@ -421,11 +421,11 @@ jobs:
   # BUILD EMBEDDED WHEELS - Skipped if cache hit
   # ============================================================================
   # build-embedded-wheels:
-  # NOTE: Temporarily disabled - clients/python-embedded is missing Cargo.toml
+  # NOTE: Superseded — this rationale was stale: the bindings live in crates/binding/proximadb-embedded and build via the ROOT pyproject (see release-python.yml). Kept disabled here because release-python.yml is the canonical pipeline.
   # and Rust source code. The package structure exists but the actual embedded
   # Rust bindings haven't been implemented yet. This needs to be added back
   # once the embedded mode is fully implemented.
-  # TODO: Re-enable when clients/python-embedded has proper Rust bindings
+  # Do NOT re-enable here — extend release-python.yml instead.
   #
   # build-embedded-wheels:
   #   name: Build Embedded Wheels (${{ matrix.os }}, ${{ matrix.target }})
@@ -539,7 +539,7 @@ jobs:
       - name: Build sdist (main package)
         run: maturin sdist --out dist
 
-      # NOTE: Temporarily disabled - clients/python-embedded is missing Cargo.toml
+      # NOTE: Superseded — this rationale was stale: the bindings live in crates/binding/proximadb-embedded and build via the ROOT pyproject (see release-python.yml). Kept disabled here because release-python.yml is the canonical pipeline.
       # TODO: Re-enable when embedded package has proper Rust bindings
       # - name: Build sdist (embedded package)
       #   working-directory: clients/python-embedded
