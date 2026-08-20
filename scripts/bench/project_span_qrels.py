@@ -68,9 +68,20 @@ def _span(
 
 
 def project_qrels(
-    source_qrels_path: Path, occurrences_path: Path, output_path: Path
+    source_qrels_path: Path,
+    corpus_manifest_path: Path,
+    occurrences_path: Path,
+    output_path: Path,
 ) -> dict[str, Any]:
     """Project half-open source spans; repeated judgments keep max relevance."""
+
+    corpus_manifest = json.loads(corpus_manifest_path.read_text(encoding="utf-8"))
+    if corpus_manifest.get("corpus_scope") != "complete_source":
+        raise ValueError("qrels projection requires corpus_scope=complete_source")
+    if not corpus_manifest.get("zero_truncation_asserted"):
+        raise ValueError("qrels projection requires zero_truncation_asserted=true")
+    if corpus_manifest.get("chunk_occurrences_sha256") != _sha256(occurrences_path):
+        raise ValueError("chunk_occurrences.jsonl does not match the corpus manifest")
 
     occurrences_by_source: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
     occurrence_count = 0
@@ -155,6 +166,8 @@ def project_qrels(
     return {
         "schema_version": 1,
         "producer_sha256": _sha256(Path(__file__).resolve()),
+        "corpus_manifest_path": str(corpus_manifest_path.resolve()),
+        "corpus_manifest_sha256": _sha256(corpus_manifest_path),
         "source_qrels_path": str(source_qrels_path.resolve()),
         "source_qrels_sha256": _sha256(source_qrels_path),
         "occurrences_path": str(occurrences_path.resolve()),
@@ -173,6 +186,7 @@ def project_qrels(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-qrels", type=Path, required=True)
+    parser.add_argument("--corpus-manifest", type=Path, required=True)
     parser.add_argument("--occurrences-jsonl", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
@@ -182,7 +196,12 @@ def main() -> None:
     args = parse_args()
     print(
         json.dumps(
-            project_qrels(args.source_qrels, args.occurrences_jsonl, args.output),
+            project_qrels(
+                args.source_qrels,
+                args.corpus_manifest,
+                args.occurrences_jsonl,
+                args.output,
+            ),
             indent=2,
             sort_keys=True,
         )

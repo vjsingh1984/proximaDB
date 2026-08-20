@@ -129,6 +129,41 @@ def test_exact_dedup_preserves_every_source_occurrence(
     ]
 
 
+def test_builder_rejects_duplicate_source_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    builder = _load_script("build_token_budget_corpus")
+    source = tmp_path / "source.jsonl"
+    source.write_text(
+        json.dumps({"id": "duplicate", "text": "one two three four five six"})
+        + "\n"
+        + json.dumps({"id": "duplicate", "text": "seven eight nine ten"})
+        + "\n",
+        encoding="utf-8",
+    )
+    args = Namespace(
+        input=source,
+        output_dir=tmp_path / "corpus",
+        contracts=tmp_path / "unused.toml",
+        text_field="text",
+        id_field="id",
+        strategy="fixed_size",
+        target_tokens=7,
+        overlap_tokens=1,
+        min_content_tokens=1,
+        boundary_char_size=10_000,
+        overflow_policy="split",
+        short_chunk_policy="keep",
+        max_chunks=None,
+        allow_partial_corpus=False,
+        deduplicate="exact",
+    )
+    monkeypatch.setattr(builder, "_load_contracts", lambda _path: _contract())
+
+    with pytest.raises(ValueError, match="duplicate source id 'duplicate'"):
+        builder.build(args)
+
+
 def _write_economics_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     chunks = tmp_path / "chunks.jsonl"
     chunks.write_text(
@@ -290,7 +325,7 @@ def test_span_qrels_project_through_deduplicated_occurrences(tmp_path: Path):
     )
     output = tmp_path / "qrels.jsonl"
 
-    summary = projector.project_qrels(source_qrels, occurrences, output)
+    summary = projector.project_qrels(source_qrels, _manifest, occurrences, output)
 
     projected = [
         json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()
@@ -324,7 +359,7 @@ def test_span_qrels_reject_invalid_or_unmatched_spans(tmp_path: Path):
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="end_pos must be greater"):
-        projector.project_qrels(source_qrels, occurrences, output)
+        projector.project_qrels(source_qrels, _manifest, occurrences, output)
 
     source_qrels.write_text(
         json.dumps(
@@ -338,4 +373,22 @@ def test_span_qrels_reject_invalid_or_unmatched_spans(tmp_path: Path):
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="matched no corpus occurrences"):
-        projector.project_qrels(source_qrels, occurrences, output)
+        projector.project_qrels(source_qrels, _manifest, occurrences, output)
+
+
+def test_span_qrels_reject_occurrence_manifest_drift(tmp_path: Path):
+    projector = _load_script("project_span_qrels")
+    manifest, _chunks, occurrences = _write_economics_fixture(tmp_path)
+    source_qrels = tmp_path / "source-qrels.jsonl"
+    source_qrels.write_text(
+        json.dumps({"query_id": "q1", "source_id": "doc-a", "relevance": 1}) + "\n",
+        encoding="utf-8",
+    )
+    occurrences.write_text(
+        occurrences.read_text(encoding="utf-8") + "{}\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="does not match the corpus manifest"):
+        projector.project_qrels(
+            source_qrels, manifest, occurrences, tmp_path / "qrels.jsonl"
+        )

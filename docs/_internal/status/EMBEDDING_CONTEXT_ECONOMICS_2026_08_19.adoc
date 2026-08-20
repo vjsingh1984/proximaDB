@@ -1,0 +1,95 @@
+= Embedding Context Economics Evidence
+:toc:
+
+Status: in progress
+
+== Decision question
+
+Does a larger embedding context reduce canonical vector rows and lifecycle bytes enough to justify
+its ingestion-work, update, citation and retrieval-quality costs on the same 90,302-source corpus?
+The experiment seeks a Pareto frontier; it does not assume that the model's maximum context is the
+right chunk size.
+
+Context and dimension are independent variables. Each scenario therefore reports canonical rows,
+source occurrences, rendered tokens, an explicitly labelled quadratic attention-work proxy,
+source-update amplification, and vector payload at multiple dimensions/dtypes. Wall time is not
+evidence because the host is contended. Absolute quality remains blocked until role-correct queries
+and source/span qrels are projected and evaluated for each corpus.
+
+== Controlled inputs and gates
+
+* Source JSONL: 90,302 documents, SHA-256
+  `8143f3982cfda621c00723bbd15dcaa909c266e3e650fe1bb0f7c3c53b6e2bbd`.
+* Every corpus must be `complete_source`, use `overflow_policy=split`, retain short tails, record
+  exact deduplication, and assert zero truncation.
+* Token budget, overlap, tokenizer/model revision, role renderer, structural strategy and character
+  ceiling are manifest identity. Long-context runs use a 131,072-character ceiling so the token
+  budget is the intended binding constraint.
+* Schema-v2 corpora record every source-span occurrence separately from canonical deduplicated
+  chunks. This preserves update, ACL, citation and qrels lineage.
+* `sum(rendered_tokens^2)` is a full-attention work proxy, not measured compute time. Vector byte
+  estimates exclude ANN/index overhead except an explicit caller-supplied fixed bytes/row term.
+
+Pinned tokenizer-only planning contracts cover Nomic Embed v1.5, Granite R2 97M/311M and Qwen3
+Embedding 0.6B. They are not embedding evidence: a later neural run must resolve the exact runtime
+contract and record backend/device/dtype provenance.
+
+== BGE 480-token baseline
+
+The sealed token-aware BGE corpus has 765,406 canonical rows. Across the 90,302 declared sources,
+88,983 have a retained canonical occurrence in the legacy schema-v1 chunk file. Canonical
+chunks/source are min 1, p50 3, p90 18, p99 83 and max 18,268. Exact deduplication removed 19,270
+chunks, but schema v1 did not retain their source aliases, so update amplification is explicitly
+undercounted for this baseline.
+
+Both BGE contracts total 311,961,937 rendered document tokens; the quadratic attention proxy is
+133,120,200,095. Canonical vector payload is:
+
+[cols="1,3,3,3"]
+|===
+| Dimension | float32 | float16 | SQ8
+
+| 384
+| 1,175,663,616 bytes
+| 587,831,808 bytes
+| 293,915,904 bytes
+
+| 768
+| 2,351,327,232 bytes
+| 1,175,663,616 bytes
+| 587,831,808 bytes
+|===
+
+These are payload bytes before IDs, metadata, centroids, postings, graph edges, alignment or object
+layout. They establish why a long-context row-count experiment is economically meaningful, not
+that larger chunks are already preferable.
+
+== Co-design findings implemented before the sweep
+
+. Exact deduplication previously discarded duplicate source provenance. The builder now emits
+  `chunk_occurrences.jsonl`, mapping every source span to its canonical `corpus_id` and identifying
+  deduplicated aliases without duplicating vectors.
+. The structural character ceiling could silently dominate a large token target but was absent
+  from provenance. Schema v2 records `boundary_char_size` and source field mappings.
+. `embedding_context_economics.py` fails closed on incomplete/truncated corpora and digest drift,
+  then separates canonical storage rows from source occurrences and update amplification.
+. `project_span_qrels.py` projects tokenizer-independent source/span judgments through occurrence
+  lineage. Invalid/unmatched spans fail closed; repeated query/corpus pairs keep maximum relevance.
+
+The new contracts are covered by offline smoke builds. Builder, economics and qrels tests currently
+pass 23/23 together with the existing corpus/embedding transport suite.
+
+== Long-context results
+
+The full Nomic v1.5 7,936-token / 1,190-token-overlap upper-bound corpus is running. Intermediate
+files are not evidence; this section will be populated only after atomic finalization, digest
+validation and structural analysis.
+
+== Quality and adoption gate
+
+No model or chunk size becomes a default from row economics alone. Candidates advance only if a
+shared source/span qrels set demonstrates acceptable Recall@k/NDCG, citation span precision,
+generator input payload and policy granularity. The first full neural embeddings are reserved for
+the Pareto shortlist plus BGE as the forensic control. xCatalog approval should bind the immutable
+model/runtime contract, corpus/evaluation hashes and measured lifecycle envelope; it should not
+encode a mutable model-family default in data-plane code.

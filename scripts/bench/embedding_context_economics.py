@@ -198,6 +198,14 @@ def analyze_corpus(
             raise ValueError(
                 "manifest chunk_occurrence_count does not match the occurrence sidecar"
             )
+        if deduplicated_alias_rows != manifest.get("duplicate_chunk_count", 0):
+            raise ValueError(
+                "manifest duplicate_chunk_count does not match occurrence aliases"
+            )
+        if source_occurrence_rows - deduplicated_alias_rows != canonical_rows:
+            raise ValueError(
+                "non-alias occurrences do not map one-to-one to canonical chunks"
+            )
     else:
         occurrence_basis = "canonical_chunks_fallback"
         occurrence_source_counts.update(canonical_source_counts)

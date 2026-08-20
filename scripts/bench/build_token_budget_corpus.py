@@ -300,6 +300,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     stopped_at_max_chunks = False
     allow_partial_corpus = getattr(args, "allow_partial_corpus", False)
     canonical_chunk_ids: dict[bytes, str] = {}
+    seen_source_ids: set[str] = set()
     duplicate_chunk_count = 0
     chunk_occurrence_count = 0
     try:
@@ -324,6 +325,11 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                         f"line {line_number}: {args.text_field!r} must be a string"
                     )
                 source_id = str(record.get(args.id_field, line_number))
+                if source_id in seen_source_ids:
+                    raise ValueError(
+                        f"line {line_number}: duplicate source id {source_id!r}"
+                    )
+                seen_source_ids.add(source_id)
                 source_count += 1
                 was_oversized = not contracts.fits(
                     text, InputRole.DOCUMENT, budget.target_tokens

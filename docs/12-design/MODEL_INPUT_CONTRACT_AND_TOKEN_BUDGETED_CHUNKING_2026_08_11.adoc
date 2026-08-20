@@ -352,6 +352,7 @@ source qrels with `query_id`, `source_id`, positive `relevance`, and optional ha
 ----
 python scripts/bench/project_span_qrels.py \
   --source-qrels eval/source_qrels.jsonl \
+  --corpus-manifest corpus/corpus.manifest.json \
   --occurrences-jsonl corpus/chunk_occurrences.jsonl \
   --output corpus/qrels.jsonl
 ----
