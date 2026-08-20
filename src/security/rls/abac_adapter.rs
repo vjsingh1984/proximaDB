@@ -46,8 +46,9 @@ use proximadb_records::{ProximaRecord, ProximaTreeNode};
 pub fn abac_scan_predicate(
     refs: &[ObjectId],
     store: &dyn PredicateObjectStore,
+    subject: &proximadb_catalog::fc_metamodel::SubjectAttributes,
 ) -> Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> {
-    let security = compile_security_filter(refs, store)?;
+    let security = compile_security_filter(refs, store, subject)?;
 
     Some(Box::new(move |record: &ProximaRecord| {
         // Resolve each field the security expression references from the record's
@@ -314,7 +315,11 @@ impl AbacEnforcer {
         ) {
             proximadb_abac::ReadDecision::Deny(reason) => AbacScanResult::Denied(reason),
             proximadb_abac::ReadDecision::Admit(ctx) => {
-                match abac_scan_predicate(ctx.row_predicate_refs(), self.store.as_ref()) {
+                match abac_scan_predicate(
+                    ctx.row_predicate_refs(),
+                    self.store.as_ref(),
+                    ctx.subject(),
+                ) {
                     Some(predicate) => AbacScanResult::Restricted(predicate),
                     None => AbacScanResult::Unrestricted,
                 }
@@ -346,9 +351,14 @@ impl AbacEnforcer {
             target,
         ) {
             proximadb_abac::ReadDecision::Deny(reason) => Err(reason),
+            // The subject comes from the ADMITTED context, not the `&SubjectId`
+            // parameter: `ctx.subject()` carries the server-RESOLVED attribute
+            // bag, which is the only source a `$subject.<attr>` placeholder may
+            // read from (ADR-090 L2.1).
             proximadb_abac::ReadDecision::Admit(ctx) => Ok(compile_security_filter(
                 ctx.row_predicate_refs(),
                 self.store.as_ref(),
+                ctx.subject(),
             )),
         }
     }
@@ -366,7 +376,7 @@ impl AbacEnforcer {
         &self,
         ctx: &AuthorizedReadContext,
     ) -> Option<FilterExpression> {
-        compile_security_filter(ctx.row_predicate_refs(), self.store.as_ref())
+        compile_security_filter(ctx.row_predicate_refs(), self.store.as_ref(), ctx.subject())
     }
 
     /// Resolve `subject`'s authorization and **post-filter** vector search
@@ -431,10 +441,16 @@ mod tests {
         FileSystemPolicyBindingStore, InMemoryAttributeAuthority, InMemoryPolicyEpochs,
         InMemoryPredicateObjectStore,
     };
-    use proximadb_catalog::fc_metamodel::{AttrValue, Effect, Scope};
+    use proximadb_catalog::fc_metamodel::{AttrValue, Effect, Scope, SubjectAttributes};
     use proximadb_data_model::ProximaValue;
     use proximadb_records::{ProximaRecord, ProximaTreeNode};
     use serde_json::json;
+
+    /// A subject with no attributes — these tests exercise the ref-resolution
+    /// path, not `$subject.<attr>` substitution (covered in `proximadb-abac`).
+    fn test_subject() -> SubjectAttributes {
+        SubjectAttributes::new("alice", 1)
+    }
 
     fn record_with(dept: &str) -> ProximaRecord {
         let mut rec = ProximaRecord::default();
@@ -457,7 +473,8 @@ mod tests {
             },
         );
 
-        let predicate = abac_scan_predicate(&[42], &store).expect("refs non-empty → predicate");
+        let predicate = abac_scan_predicate(&[42], &store, &test_subject())
+            .expect("refs non-empty → predicate");
 
         assert!(predicate(&record_with("eng")), "dept=eng must be admitted");
         assert!(!predicate(&record_with("hr")), "dept=hr must be denied");
@@ -466,14 +483,14 @@ mod tests {
     #[test]
     fn empty_refs_produce_no_predicate() {
         let store = InMemoryPredicateObjectStore::new();
-        assert!(abac_scan_predicate(&[], &store).is_none());
+        assert!(abac_scan_predicate(&[], &store, &test_subject()).is_none());
     }
 
     #[test]
     fn missing_ref_denies_every_row() {
         let store = InMemoryPredicateObjectStore::new();
-        let predicate =
-            abac_scan_predicate(&[999], &store).expect("non-empty refs → unsatisfiable predicate");
+        let predicate = abac_scan_predicate(&[999], &store, &test_subject())
+            .expect("non-empty refs → unsatisfiable predicate");
         assert!(!predicate(&record_with("eng")), "missing ref denies all");
     }
 
@@ -914,7 +931,7 @@ mod tests {
             search_result("r4", "legal"),
         ];
 
-        let security = compile_security_filter(&[42], &store).expect("compiled");
+        let security = compile_security_filter(&[42], &store, &test_subject()).expect("compiled");
         let filtered = post_filter_search_results(results, &security);
 
         assert_eq!(filtered.len(), 2, "only dept=eng results survive");
