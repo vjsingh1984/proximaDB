@@ -686,3 +686,67 @@ async fn test_concurrent_operations() {
     assert!(stats.total_nodes >= 10);
     assert!(stats.total_edges >= 9);
 }
+
+/// Cross-batch composite uniqueness: a `(from, to, type)` composite that
+/// already exists in the graph must reject a same-composite edge arriving in a
+/// LATER batch, not only within one batch.
+///
+/// This was silently broken: admission probed a service-owned memory pool that
+/// no edge write ever populates, so the probe always answered "absent" and the
+/// docstring's promised cross-batch rejection never happened. The probe now
+/// consults the engine's composite index. This test fails against the old
+/// probe (second batch reports created=1, rejected=0).
+#[tokio::test]
+async fn test_composite_uniqueness_holds_across_batches() {
+    let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
+
+    let node = |id: &str| Node {
+        id: id.to_string(),
+        labels: vec!["CompositeNode".to_string()],
+        properties: HashMap::new(),
+        embedding: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+    };
+    service
+        .batch_create_nodes(TEST_GRAPH_ID, vec![node("comp_a"), node("comp_b")])
+        .await
+        .unwrap();
+
+    let edge = |id: &str| Edge {
+        id: id.to_string(),
+        from_node_id: "comp_a".to_string(),
+        to_node_id: "comp_b".to_string(),
+        edge_type: "DUPLICATES".to_string(),
+        properties: HashMap::new(),
+        weight: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+    };
+
+    let first = service
+        .batch_create_edges(TEST_GRAPH_ID, vec![edge("comp_e1")])
+        .await
+        .unwrap();
+    assert_eq!(first.created.len(), 1);
+    assert!(first.rejected.is_empty());
+
+    // Same (from, to, type) composite, different edge id, later batch.
+    let second = service
+        .batch_create_edges(TEST_GRAPH_ID, vec![edge("comp_e2")])
+        .await
+        .unwrap();
+    assert!(
+        second.created.is_empty(),
+        "cross-batch composite duplicate must not be created"
+    );
+    assert_eq!(second.rejected.len(), 1);
+    assert!(
+        second.rejected[0]
+            .reason
+            .contains("Composite edge already exists"),
+        "rejection must carry the composite reason, got: {}",
+        second.rejected[0].reason
+    );
+}

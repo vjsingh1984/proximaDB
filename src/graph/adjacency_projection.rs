@@ -22,7 +22,7 @@
 //! `edges_by_dst` tables for write-heavy graph paths. The projection is not
 //! durable authority; it can be dropped and rebuilt from canonical records.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::RwLock;
 
 use async_trait::async_trait;
@@ -53,6 +53,15 @@ struct AdjacencyState {
     epoch: TopologyEpoch,
     edges_by_src: BTreeMap<String, BTreeMap<String, AdjacencyProjectionEntry>>,
     edges_by_dst: BTreeMap<String, BTreeMap<String, AdjacencyProjectionEntry>>,
+    /// Reverse index `edge_oid -> (src_node_oid, dst_node_oid)`, maintained by
+    /// `apply_entries` / `remove_edge_oid` (the only two state mutators, which
+    /// every apply/remove/rebuild path funnels through). It exists so removal
+    /// can address exactly two buckets instead of scanning every node key:
+    /// the previous `remove_edge_oid` walked BOTH outer maps per edge, which
+    /// made bulk ingest O(E*V) — measured at 3.5-7 s per 1,000-edge batch on a
+    /// ~90k-node graph, ~1,300 s over a repo-scale index, and the dominant
+    /// term in ProximaDB losing 3.6x to client-side SQLite on the same corpus.
+    edge_endpoints: HashMap<String, (String, String)>,
 }
 
 impl InMemoryGraphAdjacencyProjection {
@@ -134,6 +143,21 @@ impl InMemoryGraphAdjacencyProjection {
     }
 
     fn apply_entries(state: &mut AdjacencyState, entries: [AdjacencyProjectionEntry; 2]) -> usize {
+        // Record the endpoints before the entries move: removal must be able to
+        // name its two buckets without scanning (see `edge_endpoints`).
+        let edge_oid_for_index = entries[0].key.edge_oid.clone();
+        let mut src_oid = None;
+        let mut dst_oid = None;
+        for entry in &entries {
+            match entry.key.kind {
+                AdjacencyIndexKind::EdgesBySrc => src_oid = Some(entry.key.node_oid.clone()),
+                AdjacencyIndexKind::EdgesByDst => dst_oid = Some(entry.key.node_oid.clone()),
+            }
+        }
+        if let (Some(src), Some(dst)) = (src_oid, dst_oid) {
+            state.edge_endpoints.insert(edge_oid_for_index, (src, dst));
+        }
+
         let mut written = 0;
         for entry in entries {
             let edge_oid = entry.key.edge_oid.clone();
@@ -166,17 +190,26 @@ impl InMemoryGraphAdjacencyProjection {
     }
 
     fn remove_edge_oid(state: &mut AdjacencyState, edge_oid: &str) -> bool {
+        // The reverse index names the exact (src, dst) buckets, so this is two
+        // O(log n) map operations. It used to be a full scan of BOTH outer maps
+        // per edge — O(V) per call, O(E*V) for a bulk apply, and the measured
+        // dominant cost of repo-scale graph ingest (see `edge_endpoints`).
+        // An oid absent from the index is absent from the maps by construction:
+        // every insert goes through `apply_entries`, which records it. No
+        // fallback scan — one would silently reintroduce the O(V) behaviour.
+        let Some((src, dst)) = state.edge_endpoints.remove(edge_oid) else {
+            return false;
+        };
         let mut removed = false;
-        for by_node in [&mut state.edges_by_src, &mut state.edges_by_dst] {
-            let empty_nodes = by_node
-                .iter_mut()
-                .filter_map(|(node_oid, edges)| {
-                    removed |= edges.remove(edge_oid).is_some();
-                    edges.is_empty().then(|| node_oid.clone())
-                })
-                .collect::<Vec<_>>();
-            for node_oid in empty_nodes {
-                by_node.remove(&node_oid);
+        for (by_node, node_oid) in [
+            (&mut state.edges_by_src, &src),
+            (&mut state.edges_by_dst, &dst),
+        ] {
+            if let Some(edges) = by_node.get_mut(node_oid) {
+                removed |= edges.remove(edge_oid).is_some();
+                if edges.is_empty() {
+                    by_node.remove(node_oid);
+                }
             }
         }
         removed
@@ -784,6 +817,54 @@ mod tests {
             },
         );
         assert!(projection.apply_edges(&[node]).is_err());
+    }
+
+    #[tokio::test]
+    async fn batch_upsert_relocates_entries_when_endpoints_change() {
+        // The batch path must preserve the same upsert semantics as
+        // `apply_edge`: re-applying an edge whose endpoints CHANGED removes the
+        // stale entries at the old buckets. This is the one case the old
+        // remove-first full scan existed for; after the reverse-index change,
+        // removal addresses exactly the recorded buckets — and this test fails
+        // if the index ever drifts from the maps.
+        let projection = InMemoryGraphAdjacencyProjection::new("g1");
+        let first = edge_record("g1", "e1", "n1", "n2");
+        projection
+            .apply_edges(std::slice::from_ref(&first))
+            .expect("apply first batch");
+
+        let moved = edge_record("g1", "e1", "n3", "n4");
+        projection
+            .apply_edges(std::slice::from_ref(&moved))
+            .expect("apply moved batch");
+
+        assert_eq!(projection.edge_count().expect("edge count"), 1);
+        assert!(
+            projection
+                .edges_by_src("graph/g1/node/n1")
+                .unwrap()
+                .is_empty(),
+            "stale src bucket must be dropped"
+        );
+        assert!(
+            projection
+                .edges_by_dst("graph/g1/node/n2")
+                .unwrap()
+                .is_empty(),
+            "stale dst bucket must be dropped"
+        );
+        assert_eq!(
+            projection.edges_by_src("graph/g1/node/n3").unwrap()[0]
+                .key
+                .edge_oid,
+            "graph/g1/edge/e1"
+        );
+        assert_eq!(
+            projection.edges_by_dst("graph/g1/node/n4").unwrap()[0]
+                .key
+                .edge_oid,
+            "graph/g1/edge/e1"
+        );
     }
 
     #[tokio::test]

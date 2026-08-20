@@ -570,6 +570,24 @@ def runtime_state_is_stale(state: dict[str, Any], now_ms: float) -> bool:
 # =============================================================================
 
 
+class _PooledClientLease:
+    """Async context manager yielding a shared ``httpx.AsyncClient`` without
+    closing it on exit — so ``async with db._http_client() as client:`` keeps
+    working at every call site while the client (and its connection pool)
+    lives for the server instance. Closing happens in ``stop()``."""
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    async def __aenter__(self):
+        return self._client
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
 @dataclass
 class EmbeddedConfig:
     """Configuration for embedded ProximaDB."""
@@ -809,6 +827,8 @@ class EmbeddedProximaDB:
         )
         self._binary_path = binary_path
         self._process: subprocess.Popen | None = None
+        # One pooled HTTP client per server instance (see _http_client).
+        self._shared_http_client = None
         self._started = False
         self._collections: dict[str, EmbeddedCollection] = {}
         self._lock = threading.Lock()
@@ -911,14 +931,41 @@ class EmbeddedProximaDB:
         return self._fallback_socket_dir()
 
     def _http_client(self, **kwargs):
+        """Hand out the shared pooled client wrapped in a non-closing lease.
+
+        Every call site does ``async with self._http_client() as client:``,
+        and this used to construct a fresh ``httpx.AsyncClient`` — transport,
+        connection pool, and all — per operation, then tear it down. Client
+        construction plus a cold UDS connection measured **~13 ms per call**,
+        which was the single largest component of the 35 ms embedded vector
+        search (the server answered the same query in 2-13 ms). A search that
+        LanceDB serves in 4 ms spent three of those milliseconds' worth of
+        budget three times over just building HTTP clients.
+
+        The lease keeps every call site unchanged: ``__aenter__`` returns the
+        shared client, ``__aexit__`` does NOT close it. The shared client is
+        created lazily and closed in :meth:`stop`. Explicit ``kwargs`` still
+        get a dedicated, caller-owned client (old semantics) — the only such
+        caller is the startup health poll.
+        """
         import httpx
 
-        if self._is_uds_transport:
-            return httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=str(self.rest_socket_path)),
-                **kwargs,
-            )
-        return httpx.AsyncClient(**kwargs)
+        if kwargs:
+            if self._is_uds_transport:
+                return httpx.AsyncClient(
+                    transport=httpx.AsyncHTTPTransport(uds=str(self.rest_socket_path)),
+                    **kwargs,
+                )
+            return httpx.AsyncClient(**kwargs)
+
+        if self._shared_http_client is None or self._shared_http_client.is_closed:
+            if self._is_uds_transport:
+                self._shared_http_client = httpx.AsyncClient(
+                    transport=httpx.AsyncHTTPTransport(uds=str(self.rest_socket_path)),
+                )
+            else:
+                self._shared_http_client = httpx.AsyncClient()
+        return _PooledClientLease(self._shared_http_client)
 
     def _sync_http_client(self, **kwargs):
         import httpx
@@ -1244,6 +1291,14 @@ prefetch_budget = 4
             self._kill_process()
             self._started = False
             self._collections.clear()
+
+        # Close the pooled HTTP client outside the (sync) lock.
+        client, self._shared_http_client = self._shared_http_client, None
+        if client is not None and not client.is_closed:
+            try:
+                await client.aclose()
+            except Exception:  # pragma: no cover - teardown best-effort
+                logger.debug("pooled http client close failed", exc_info=True)
 
     async def create_collection(
         self,

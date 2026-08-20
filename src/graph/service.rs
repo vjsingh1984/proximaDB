@@ -2772,7 +2772,10 @@ impl GraphOperationsService {
                 ));
                 continue;
             }
-            if self.memory_pool.edge_composite_index.contains_key(&key) {
+            // Probe the ENGINE's composite index. The service's own pool never
+            // receives edge writes, so the previous probe against it was a
+            // guaranteed miss and cross-batch duplicates sailed through.
+            if engine.has_composite_edge(&key) {
                 rejected.push(BatchEdgeRejection::new(
                     &edge,
                     format!(
