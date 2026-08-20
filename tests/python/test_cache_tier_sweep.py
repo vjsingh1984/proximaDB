@@ -133,11 +133,19 @@ def point(
     concurrency: int = 4,
     disk_hits: float = 0.0,
     identity_suffix: str = "",
+    wire_range_gets: int | None = None,
 ):
+    if wire_range_gets is None:
+        wire_range_gets = int(physical_gets)
     return {
         "physical_gets": physical_gets,
-        "wire_http": {"get_requests": wire_gets},
-        "wire_range_to_application_get_ratio": 1.0,
+        "wire_http": {
+            "get_requests": wire_gets,
+            "range_get_requests": wire_range_gets,
+        },
+        "wire_range_to_application_get_ratio": (
+            wire_range_gets / physical_gets if physical_gets else None
+        ),
         "bytes_read": bytes_read,
         "recall_at_k": recall,
         "latency_ms": {"p50": p50, "p95": p95},
@@ -190,6 +198,38 @@ def test_point_comparison_separates_wire_and_application_economics():
     assert comparison["azure_hot_read_cogs_per_million_queries_usd"] == pytest.approx(
         3.0
     )
+
+
+def test_equal_zero_io_is_equal_and_range_reconciled():
+    baseline = point(
+        physical_gets=0,
+        wire_gets=1,
+        wire_range_gets=0,
+        bytes_read=0,
+    )
+    candidate = point(
+        physical_gets=0,
+        wire_gets=1,
+        wire_range_gets=0,
+        bytes_read=0,
+    )
+
+    comparison = SWEEP.compare_points(candidate, baseline, query_count=5)
+
+    assert comparison["application_get_reduction"] == 0.0
+    assert comparison["bytes_ratio"] == 1.0
+    assert SWEEP.wire_ranges_reconciled(candidate) is True
+
+
+def test_zero_application_gets_fail_reconciliation_if_a_range_reaches_wire():
+    candidate = point(
+        physical_gets=0,
+        wire_gets=1,
+        wire_range_gets=1,
+        bytes_read=0,
+    )
+
+    assert SWEEP.wire_ranges_reconciled(candidate) is False
 
 
 def passing_policy_results():
@@ -283,6 +323,24 @@ def test_paired_promotion_gates_cache_benefit_and_adaptive_safety_by_tier():
     assert evaluation["cache_comparisons"]["adaptive"]["disk_warm"][
         "wire_get_reduction"
     ] == pytest.approx(0.40)
+
+
+def test_paired_promotion_accepts_equal_zero_object_io_in_disk_tier():
+    policy_results = passing_policy_results()
+    for policy_result in policy_results.values():
+        disk = policy_result["phases"]["disk_warm"]
+        disk["physical_gets"] = 0
+        disk["wire_http"] = {"get_requests": 1, "range_get_requests": 0}
+        disk["wire_range_to_application_get_ratio"] = None
+        disk["bytes_read"] = 0
+
+    evaluation = evaluate(policy_results)
+
+    assert evaluation["promotion_eligible"] is True
+    assert evaluation["paired_comparisons"]["disk_warm"]["bytes_ratio"] == 1.0
+    assert not any(
+        "wire_range_reconciled" in item for item in evaluation["gate_failures"]
+    )
 
 
 def test_fixed_only_diagnostic_can_be_valid_without_authorizing_promotion():
