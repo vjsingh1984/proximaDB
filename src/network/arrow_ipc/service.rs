@@ -205,6 +205,9 @@ pub struct ProximaFlightService {
     /// enforced through the ONE shared primitive in
     /// `authenticated_flight_context`. Default `Open` (legacy behavior).
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// TD-TENANT-3 S2 / ADR-0053 W8: the deployment's `x-tenant-tier` claim
+    /// trust policy, the Flight sibling of the REST and gRPC gates.
+    tier_header_trust: proximadb_tenant::HeaderTrustPolicy,
     /// Whether missing request identity may resolve to a configured default.
     tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     catalog_manager: Option<Arc<CatalogManager>>,
@@ -314,6 +317,7 @@ impl ProximaFlightService {
             collection_service,
             security_coordinator: None,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
             catalog_manager: None,
             stable_id_resolver: None,
@@ -407,6 +411,14 @@ impl ProximaFlightService {
     /// resolve seams enforce through the shared primitive.
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
+        self
+    }
+
+    /// Set the deployment's `x-tenant-tier` claim trust policy
+    /// (TD-TENANT-3 S2 / ADR-0053 W8) — the same policy REST, gRPC, and pgwire
+    /// enforce through the shared `resolve_tier_claim` primitive.
+    pub fn with_tier_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tier_header_trust = policy;
         self
     }
 
@@ -570,22 +582,76 @@ impl ProximaFlightService {
             .map(ToOwned::to_owned))
     }
 
+    /// TD-TENANT-3: the shared claim vocabulary. Flight historically accepted
+    /// four tenant spellings while REST and gRPC accepted one, so a claim
+    /// honored here was *silently ignored* there. The alias list now lives in
+    /// `proximadb_tenant::claim_vocabulary`, the canonical name always wins,
+    /// and each legacy alias warns once so the migration is observable before
+    /// the aliases are removed (TD-TENANT-3 S4).
     fn tenant_id_from_metadata(metadata: &tonic::metadata::MetadataMap) -> Option<String> {
-        [
-            "x-proximadb-tenant-id",
-            "x-tenant-id",
-            "tenant-id",
-            "tenant_id",
-        ]
-        .iter()
-        .find_map(|key| {
-            metadata
-                .get(*key)
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+        let hit = proximadb_tenant::tenant_claim_with_legacy_aliases(|name| {
+            metadata.get(name).and_then(|value| value.to_str().ok())
+        })?;
+        if hit.deprecated {
+            Self::warn_deprecated_tenant_alias(hit.name);
+        }
+        Some(hit.value.to_owned())
+    }
+
+    /// Warn once per deprecated alias (not per request) — a per-request warn on
+    /// a bulk Flight path would be its own throughput problem.
+    fn warn_deprecated_tenant_alias(alias: &'static str) {
+        static WARNED: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::HashSet<&'static str>>,
+        > = std::sync::OnceLock::new();
+        let warned = WARNED.get_or_init(Default::default);
+        let Ok(mut seen) = warned.lock() else {
+            return;
+        };
+        if seen.insert(alias) {
+            tracing::warn!(
+                target: "proximadb::tenant_audit",
+                surface = "flight",
+                alias,
+                canonical = proximadb_tenant::TENANT_CLAIM_HEADER,
+                "deprecated tenant-claim alias accepted on Arrow Flight; \
+                 migrate to the canonical header (TD-TENANT-3 S4 removes it)"
+            );
+        }
+    }
+
+    /// Read and gate the Arrow Flight tier entitlement claim (TD-TENANT-3 S2).
+    ///
+    /// Flight previously had no tier surface at all, so a Flight client always
+    /// ran at the default tier — the inverted priority, since Flight is the
+    /// bulk/columnar path and therefore the highest cache-pressure surface in
+    /// the system, exactly where per-tenant floors and weights matter most.
+    ///
+    /// Semantics match REST and gRPC exactly: a rejected claim is DROPPED and
+    /// warned, never an error, and the stamp is insert-only.
+    fn stamp_gated_tier_claim(
+        metadata: &tonic::metadata::MetadataMap,
+        tenant_id: &str,
+        binding: Option<&proximadb_tenant::AuthenticatedTenantBinding>,
+        policy: proximadb_tenant::HeaderTrustPolicy,
+    ) {
+        if tenant_id.is_empty() {
+            return;
+        }
+        let claim = proximadb_tenant::tier_claim(|name| {
+            metadata.get(name).and_then(|value| value.to_str().ok())
+        });
+        match proximadb_tenant::resolve_tier_claim(claim, binding, policy) {
+            Ok(Some(tier)) => {
+                crate::services::record_store::set_tenant_tier(tenant_id, tier);
+            }
+            Ok(None) => {}
+            Err(rejection) => {
+                crate::network::middleware::tenant::warn_tier_claim_dropped(
+                    "flight", tenant_id, &rejection,
+                );
+            }
+        }
     }
 
     fn auth_data_from_metadata(
@@ -682,6 +748,27 @@ impl ProximaFlightService {
         )
         .await
         .map_err(|err| Self::identity_error_to_flight_status(err, self.tenant_header_trust))?;
+
+        // TD-TENANT-3 S2: the tier hook Flight was missing. The binding comes
+        // from the resolved credential (Flight's authenticated principal); the
+        // stamp lands on the ACTING tenant, matching REST and gRPC.
+        let binding = resolved
+            .user_context
+            .as_ref()
+            .and_then(|ctx| ctx.tenant_id.as_ref())
+            .map(|tenant_id| proximadb_tenant::AuthenticatedTenantBinding {
+                tenant_id: tenant_id.clone(),
+                is_gateway_principal: resolved
+                    .user_context
+                    .as_ref()
+                    .is_some_and(|ctx| ctx.is_gateway_principal()),
+            });
+        Self::stamp_gated_tier_claim(
+            metadata,
+            &resolved.identity.tenant,
+            binding.as_ref(),
+            self.tier_header_trust,
+        );
 
         Ok(AuthenticatedFlightContext {
             tenant_id: resolved.identity.tenant,

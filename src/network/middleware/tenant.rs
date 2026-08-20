@@ -50,7 +50,14 @@ use axum::{
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-/// HTTP header name for explicit tenant ID
+/// HTTP header name for explicit tenant ID, in canonical display casing — the
+/// spelling documented in the OpenAPI spec and used by REST clients.
+///
+/// TD-TENANT-3: this is a *display* constant. The wire lookup goes through the
+/// shared claim vocabulary (`proximadb_tenant::TENANT_CLAIM_HEADER`), which is
+/// the same header — `http::HeaderName` compares case-insensitively and HTTP/2
+/// mandates lowercase on the wire. `x_tenant_id_matches_shared_vocabulary`
+/// pins the two together so they cannot drift.
 pub const X_TENANT_ID: &str = "X-Tenant-ID";
 
 /// Tenant context extracted from request
@@ -494,10 +501,14 @@ impl TenantExtractor {
         &self,
         req: &Request,
     ) -> Result<Option<(String, TenantIdSource)>, TenantAssertionError> {
-        let requested_tenant = req
-            .headers()
-            .get(X_TENANT_ID)
-            .and_then(|header_value| header_value.to_str().ok());
+        // TD-TENANT-3: the shared claim vocabulary, not a per-surface literal.
+        // REST reads the canonical name only — Arrow Flight's legacy aliases
+        // are deliberately NOT honored here (narrow, never widen).
+        let headers = req.headers();
+        let requested_tenant = proximadb_tenant::tenant_claim(|name| {
+            headers.get(name).and_then(|value| value.to_str().ok())
+        })
+        .map(|hit| hit.value);
 
         let authenticated = self.authenticated_tenant_binding(req);
         let binding = authenticated
@@ -598,10 +609,10 @@ impl TenantExtractor {
     /// would let any anonymous request strip a legitimately-stamped tenant
     /// (downgrade-DoS).
     fn gated_tier_claim(&self, req: &Request) -> Option<String> {
-        let claim = req
-            .headers()
-            .get("x-tenant-tier")
-            .and_then(|v| v.to_str().ok());
+        let headers = req.headers();
+        let claim = proximadb_tenant::tier_claim(|name| {
+            headers.get(name).and_then(|value| value.to_str().ok())
+        });
 
         let binding = self
             .authenticated_tenant_binding(req)
@@ -1028,6 +1039,39 @@ mod tests {
             header_trust: policy,
             ..TenantExtractorConfig::default()
         })
+    }
+
+    /// TD-TENANT-3: the REST display constant and the shared wire vocabulary
+    /// must name the same header. `HeaderMap` compares case-insensitively, so a
+    /// drift here would be invisible until a surface that does NOT
+    /// case-normalize (tonic `MetadataMap`) silently stopped matching.
+    #[test]
+    fn x_tenant_id_matches_shared_vocabulary() {
+        assert_eq!(
+            X_TENANT_ID.to_ascii_lowercase(),
+            proximadb_tenant::TENANT_CLAIM_HEADER
+        );
+    }
+
+    /// TD-TENANT-3 "narrow, never widen": Arrow Flight's legacy tenant aliases
+    /// must NOT become effective on REST. Honoring them here would make a
+    /// previously-ignored header newly authoritative on a second surface.
+    #[test]
+    fn rest_ignores_arrow_flight_legacy_tenant_aliases() {
+        for alias in proximadb_tenant::DEPRECATED_TENANT_CLAIM_ALIASES {
+            let mut req = trust_request(None, None);
+            req.headers_mut().insert(
+                axum::http::HeaderName::from_static(alias),
+                axum::http::HeaderValue::from_static("smuggled"),
+            );
+            let result = extractor(HeaderTrustPolicy::Open)
+                .extract_tenant_id(&req)
+                .expect("alias must not error, just be ignored");
+            assert!(
+                result.is_none_or(|(tenant, _)| tenant != "smuggled"),
+                "{alias} must not assert a tenant on REST"
+            );
+        }
     }
 
     #[test]

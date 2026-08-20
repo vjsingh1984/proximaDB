@@ -775,10 +775,16 @@ impl SharedServices {
             .map(|policy| {
                 let policy = std::sync::Arc::new(policy);
                 let default_tier = policy.default_tier.clone();
+                // TD-TENANT-3 S3: probe the canonical tier id first, then the
+                // operator's original spelling, so two spellings of one
+                // entitlement cannot land in different cache buckets.
+                let probe_policy = std::sync::Arc::clone(&policy);
                 let tenant_to_tier: std::sync::Arc<dyn Fn(&str) -> String + Send + Sync> =
                     std::sync::Arc::new(move |t: &str| {
-                        crate::services::record_store::tenant_tier(t)
-                            .unwrap_or_else(|| default_tier.clone())
+                        crate::services::record_store::tenant_tier_policy_key(t, |key| {
+                            probe_policy.has_tier(key)
+                        })
+                        .unwrap_or_else(|| default_tier.clone())
                     });
                 policy.resolver(cache_total_bytes, tenant_to_tier)
             });

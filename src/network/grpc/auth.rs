@@ -229,10 +229,14 @@ pub async fn authenticate_http_request<B>(
     // REST / Arrow Flight / pgwire make). This also closes the pre-existing
     // gRPC gap where a NON-capability credential's metadata mismatch was
     // silently ignored instead of rejected.
-    let asserted = request
-        .headers()
-        .get("x-tenant-id")
-        .and_then(|value| value.to_str().ok());
+    // TD-TENANT-3: the shared claim vocabulary, canonical name only.
+    let request_headers = request.headers();
+    let asserted = proximadb_tenant::tenant_claim(|name| {
+        request_headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    })
+    .map(|hit| hit.value);
     let binding = user_context
         .tenant_id
         .as_ref()
@@ -280,10 +284,11 @@ pub async fn authenticate_http_request<B>(
     // The stamp lands on the ACTING tenant (resolved_tenant — the delegated
     // tenant under gateway delegation) falling back to the credential tenant,
     // matching REST's `context.tenant_id` keying.
-    let raw_tier_claim = request
-        .headers()
-        .get("x-tenant-tier")
-        .and_then(|v| v.to_str().ok());
+    let raw_tier_claim = proximadb_tenant::tier_claim(|name| {
+        request_headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    });
     let tenant_for_tier = resolved_tenant
         .clone()
         .or_else(|| user_context.tenant_id.clone());
@@ -502,11 +507,11 @@ fn validate_tenant_metadata(
         .tenant_id
         .as_deref()
         .ok_or_else(|| Status::permission_denied("capability token requires tenant_id"))?;
-    if let Some(header_tenant) = headers
-        .get("x-tenant-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    // TD-TENANT-3: same vocabulary as the assertion path above, so the
+    // capability check and the trust gate can never read different headers.
+    if let Some(header_tenant) =
+        proximadb_tenant::tenant_claim(|name| headers.get(name).and_then(|v| v.to_str().ok()))
+            .map(|hit| hit.value)
         && header_tenant != token_tenant
     {
         return Err(Status::permission_denied(
@@ -581,12 +586,9 @@ fn is_arrow_flight_path(path: &str) -> bool {
 }
 
 fn tenant_id_from_metadata(metadata: &tonic::metadata::MetadataMap) -> Option<String> {
-    metadata
-        .get("x-tenant-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    // TD-TENANT-3: the shared claim vocabulary, canonical name only.
+    proximadb_tenant::tenant_claim(|name| metadata.get(name).and_then(|value| value.to_str().ok()))
+        .map(|hit| hit.value.to_owned())
 }
 
 // `http::Response::Builder::body` only fails if a header is invalid.

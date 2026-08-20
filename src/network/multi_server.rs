@@ -756,6 +756,7 @@ impl MultiServer {
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
             let tenant_header_trust = self.tenant_header_trust;
+            let tier_header_trust = self.tier_header_trust;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
 
             let arrow_handle = tokio::spawn(async move {
@@ -768,9 +769,8 @@ impl MultiServer {
                     arrow_collection,
                     arrow_graph,
                 )
-                // (No tier-claim gate on Arrow Flight: it carries no tier
-                // metadata today — gRPC auth.rs skips arrow paths.)
                 .with_tenant_header_trust(tenant_header_trust)
+                .with_tier_header_trust(tier_header_trust)
                 .with_tenant_deployment_mode(tenant_deployment_mode)
                 .with_stable_id_resolver(Some(Arc::new(
                     crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
@@ -1192,6 +1192,7 @@ impl MultiServer {
                     None
                 })
                 .with_tenant_header_trust(self.tenant_header_trust)
+                .with_tier_header_trust(self.tier_header_trust)
                 .with_tenant_deployment_mode(self.tenant_deployment_mode.clone())
                 .with_catalog_manager(Some(services.catalog_manager.clone()))
                 .with_stable_id_resolver(Some(Arc::new(

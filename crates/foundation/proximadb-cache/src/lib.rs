@@ -290,6 +290,16 @@ impl TierPolicy {
         }
     }
 
+    /// Whether this policy declares an explicit spec for `tier`.
+    ///
+    /// Lets a caller probe several spellings of the same entitlement in its own
+    /// preferred order (e.g. a canonical id, then the operator's original
+    /// alias) while this crate stays free of any tier vocabulary — the key
+    /// space here is deliberately generic and operator-supplied.
+    pub fn has_tier(&self, tier: &str) -> bool {
+        self.tiers.contains_key(tier)
+    }
+
     /// Absolute [`TenantLimits`] for `tier` at a given pool `total_bytes`
     /// (falls back to `default_tier`, then to a permissive default).
     pub fn limits(&self, tier: &str, total_bytes: u64) -> TenantLimits {

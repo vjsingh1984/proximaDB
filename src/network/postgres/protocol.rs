@@ -1053,10 +1053,13 @@ impl PostgresProtocol {
             // authenticated binding (trust auth), so the binding is None and
             // any strict policy drops the claim (warned, never SQLSTATE) —
             // under strict policies the startup parameter is inert.
-            let tier_claim = params
-                .get("proximadb_tier")
-                .map(String::as_str)
-                .filter(|t| !t.is_empty());
+            // TD-TENANT-3: the shared claim vocabulary. pgwire's spelling
+            // differs because the PG startup-parameter grammar forbids `-`, so
+            // the canonical `x-tenant-tier` cannot be spelled here — the
+            // mapping is protocol-forced and owned by the vocabulary module,
+            // not re-derived at this call site.
+            let tier_claim =
+                proximadb_tenant::tier_claim_pg(|name| params.get(name).map(String::as_str));
             let db = session.database.clone();
             if let (false, Some(tier)) = (
                 db.is_empty(),

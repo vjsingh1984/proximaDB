@@ -433,3 +433,16 @@ pub use identity_trust::{
     TenantAssertionError, TenantStableIdResolver, TierClaimRejection, read_enforcement_composition,
     resolve_subject_assertion, resolve_tenant_assertion, resolve_tier_claim,
 };
+
+// ============================================================================
+// Claim vocabulary (TD-TENANT-3): the ONE set of wire names every ingress
+// surface reads before calling the trust primitives above. The decision layer
+// was already shared; the vocabulary was hand-rolled per surface and diverged
+// (Flight accepted four tenant spellings, REST/gRPC one), so a claim honored
+// on one port was silently ignored on another.
+// ============================================================================
+pub mod claim_vocabulary;
+pub use claim_vocabulary::{
+    ClaimHit, DEPRECATED_TENANT_CLAIM_ALIASES, TENANT_CLAIM_HEADER, TIER_CLAIM_HEADER,
+    TIER_CLAIM_PG_PARAM, tenant_claim, tenant_claim_with_legacy_aliases, tier_claim, tier_claim_pg,
+};

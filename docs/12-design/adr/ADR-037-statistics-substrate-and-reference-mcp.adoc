@@ -220,6 +220,17 @@ port access could self-stamp `enterprise`. It is now governed by
 4xx — the request proceeds at the tenant's default tier. Stamps stay insert-only
 (clearing on rejection would let an anonymous request strip a legitimate stamp).
 
+**4b — One claim vocabulary (TD-TENANT-3).** Gating the claim exposed that the
+*names* were never shared: Arrow Flight accepted four tenant spellings while
+REST and gRPC accepted one, so a claim honored on one port was silently ignored
+on another; Flight had no tier claim surface at all; and the stamped claim was
+read in two vocabularies downstream, so `pro` and `tier3` — one entitlement —
+landed in different cache buckets. The wire names now live in one foundation
+module, Flight gained the tier hook, and the claim is normalized to a canonical
+tier id at the stamp (probing canonical-then-operator-spelling, so an
+alias-keyed `cache_tiers.json` needs no flag day). Operators projecting tiers
+per point 2 may therefore key cache policy by either spelling.
+
 **5 — Citation correction.** The co-designed counterpart is AnvaiOps
 **ADR-0027** ("agent-facing catalog statistics semantics boundary"), not
 ADR-0021 (that number in the AnvaiOps repo is the tenant-isolation primitive —
