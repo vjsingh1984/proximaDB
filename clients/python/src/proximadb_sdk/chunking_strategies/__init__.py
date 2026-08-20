@@ -41,6 +41,14 @@ from .boundaries import (
 )
 
 # Code-aware chunking
+from .capabilities import (
+    ContextEnrichmentPass,
+    DedupPass,
+    HeadingPathPass,
+    ParentLinkagePass,
+    PassPipeline,
+    structural_context,
+)
 from .code import (
     COVERED_WITHOUT_SYMBOLS,
     EXTENSION_TO_LANGUAGE,
@@ -87,6 +95,10 @@ from .document_parsers import (  # Enums; Data structures; Tool detection; Parse
     get_available_tools,
 )
 from .factory import ChunkingStrategyFactory, get_chunking_strategy
+from .native_boundaries import (
+    NativeSentenceBoundarySource,
+    native_sentences_available,
+)
 from .paragraph import ParagraphStrategy
 
 # Parser utilities (enhanced design patterns)
@@ -100,6 +112,16 @@ from .parser_utils import (  # Errors; Metrics; Parser base class; Validation
     ValidationResult,
     get_metrics_collector,
     with_metrics,
+)
+from .passes import (
+    FACE_ORDER,
+    ChunkEdge,
+    ChunkPass,
+    Face,
+    PassResult,
+    PassPipelineResult,
+    embedded_text_of,
+    run_passes,
 )
 
 # Unified pipeline (orchestration, batch processing, streaming)
@@ -214,6 +236,23 @@ __all__ = [
     "SYMBOL_EXTRACTING_LANGUAGES",
     "COVERED_WITHOUT_SYMBOLS",
     "WITHDRAWN_LANGUAGES",
+    # Post-partition capability seam (TD-CHUNK-3)
+    "Face",
+    "FACE_ORDER",
+    "ChunkPass",
+    "ChunkEdge",
+    "PassResult",
+    "PassPipelineResult",
+    "run_passes",
+    "embedded_text_of",
+    "PassPipeline",
+    "HeadingPathPass",
+    "DedupPass",
+    "ContextEnrichmentPass",
+    "ParentLinkagePass",
+    "structural_context",
+    "NativeSentenceBoundarySource",
+    "native_sentences_available",
     # Parser utilities - Errors
     "ParserError",
     "ParseError",

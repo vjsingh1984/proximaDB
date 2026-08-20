@@ -219,6 +219,39 @@ class ProcessorConfig:
     #: duplicates), so a conservative threshold gives up very little.
     deduplicate_threshold: float = 0.9
 
+    #: Prefix each chunk's EMBEDDED text with where it sits in the document
+    #: (title > heading path), leaving the stored span and text untouched.
+    #:
+    #: **Default OFF, and this is the only capability that costs money.**
+    #: Enrichment lengthens what is sent to the model, so KEU rises for every
+    #: chunk in the collection. TD-CHUNK-3 requires it to be gated on
+    #: recall-per-KEU rather than recall alone; `_last_pass_stats`
+    #: ["enrichment_tax"] reports the multiplier actually applied per document,
+    #: which is the denominator of that ratio.
+    enrich_context: bool = False
+
+    #: Small-to-big retrieval: group consecutive chunks into larger parent
+    #: spans, so a precise child matches and the roomier parent is returned.
+    #:
+    #: **Default OFF.** It adds parent chunks, so KSU rises; what it buys is
+    #: read cost and answer quality, and that trade has to be measured on the
+    #: caller's corpus rather than assumed. Parents are emitted ONCE and
+    #: referenced by `parent_id`, never copied onto each child.
+    link_parent_chunks: bool = False
+
+    #: Maximum characters a parent may span. ``None`` derives it as **twice
+    #: `chunk_size`**, which is the measured optimum rather than a round
+    #: number: on the eval corpus the containment gain (0.75 -> 0.88) is
+    #: already complete at 2x, while KSU is flat at ~1.74x for every window
+    #: tried (the parent layer is a second copy of the covered text either way)
+    #: and density degrades as the window grows (0.247 -> 0.229 at 8x). So a
+    #: bigger window costs the same and buys less. Derived rather than
+    #: hardcoded so it cannot drift when `chunk_size` changes.
+    #:
+    #: A parent also never crosses a heading-path change, because a parent
+    #: spanning two sections answers as neither.
+    parent_window: int | None = None
+
     # Code-specific settings
     include_docstrings: bool = True
     include_comments: bool = True
@@ -586,7 +619,21 @@ class CodeDocumentProcessor(DocumentProcessor):
     Prepares code-specific embeddings with documentation context.
     """
 
-    # Language detection patterns
+    #: Extensions this processor CLAIMS, for routing only.
+    #:
+    #: Deliberately a literal table and NOT derived from
+    #: `chunking_strategies.code.EXTENSION_TO_LANGUAGE`, even though that map is
+    #: derived and this one is hand-maintained -- which is normally the wrong
+    #: way round, and is exactly the duplication TD-CG2 removed from `code.py`.
+    #:
+    #: The two answer different questions. The derived map answers "which
+    #: languages can we extract symbols for", and it is EMPTY when the optional
+    #: `codegraph` extra is absent. This one answers "which processor should
+    #: claim this file". Deriving it would mean that without the extra no
+    #: processor claims a `.py` file, so it would fall through to the text
+    #: processor and be silently window-chunked -- reintroducing precisely the
+    #: fail-quietly behaviour TD-CG2 replaced with a loud error. Routing must
+    #: stay wide so the capability check can fail loudly.
     LANGUAGE_PATTERNS = {
         "python": [".py"],
         "rust": [".rs"],
@@ -601,8 +648,6 @@ class CodeDocumentProcessor(DocumentProcessor):
         "swift": [".swift"],
         "kotlin": [".kt", ".kts"],
         "scala": [".scala"],
-        "go": [".go"],
-        "rust": [".rs"],
     }
 
     def __init__(self, config: ProcessorConfig | None = None):
@@ -621,7 +666,7 @@ class CodeDocumentProcessor(DocumentProcessor):
         """Check if content looks like source code"""
         if file_path:
             ext = Path(file_path).suffix.lower()
-            for lang, exts in self.LANGUAGE_PATTERNS.items():
+            for exts in self.LANGUAGE_PATTERNS.values():
                 if ext in exts:
                     return True
 
@@ -762,6 +807,11 @@ class TextDocumentProcessor(DocumentProcessor):
     def __init__(self, config: ProcessorConfig | None = None):
         super().__init__(config)
         self._chunker = None
+        #: Per-document cost accounting from the last `chunk()` call, including
+        #: the KEU multiplier enrichment applied. Kept so enabling a pass is a
+        #: decision made against a measured number rather than an intuition.
+        self._last_pass_stats: dict[str, Any] = {}
+        self._last_chunk_edges: tuple[Any, ...] = ()
 
     @property
     def supported_types(self) -> list[DocumentType]:
@@ -821,41 +871,49 @@ class TextDocumentProcessor(DocumentProcessor):
 
         # Imported here, alongside the chunker it complements, to keep
         # `import proximadb_sdk` free of the chunking modules.
-        from .chunking_strategies.boundaries import annotate_heading_paths
+        from .chunking_strategies.capabilities import PassPipeline
+        from .chunking_strategies.passes import embedded_text_of
 
-        # Label each chunk with the heading path it lives under. Done here
-        # because this is the only production text-ingest caller in the SDK --
-        # every .txt/.md/.rst/.adoc goes through it, and anvaiops's connector
-        # SDK delegates here too. A capability with no product caller is the
-        # exact defect the ADR-091 census documented (the Rust chunker and the
-        # SDP pipeline both sit unreachable), so the annotator is wired on the
-        # way in rather than left available-but-unused.
+        # Everything that happens AFTER the partition runs through one seam.
         #
-        # Purely additive: it adds metadata keys, and never changes a chunk's
-        # text, offsets or count -- so no KEU or KSU delta, and it is a total
-        # no-op on documents without headings.
-        if self.config.preserve_structure:
-            annotate_heading_paths(content, text_chunks)
-
-        # Applied AFTER annotation so a surviving representative keeps its
-        # heading path, and after chunking so the partition was total before
-        # anything was dropped -- dedup is a selection over the partition, not
-        # part of forming it.
-        if self.config.deduplicate_chunks:
-            from .chunking_strategies.dedup import deduplicate
-
-            text_chunks = deduplicate(
-                list(text_chunks), threshold=self.config.deduplicate_threshold
-            ).kept
+        # This used to be two `if` flags inline, each with a paragraph
+        # explaining why it ran where it did. Two more capabilities were coming
+        # (context enrichment, small-to-big), and four flags have twenty-four
+        # orderings and no rule. `run_passes` derives the order from the FACE
+        # each pass declares -- metadata, then selection, then embedded, then
+        # retrieved -- and verifies afterwards that each stayed inside it.
+        #
+        # Wired here because this is the SDK's only production text-ingest
+        # caller: every .txt/.md/.rst/.adoc arrives through it, and anvaiops's
+        # connector SDK delegates here too. A capability with no product caller
+        # is the exact defect the ADR-091 census documented.
+        title = (metadata or {}).get("title")
+        pipeline = PassPipeline.from_processor_config(self.config, source_title=title)
+        result = pipeline.run(content, list(text_chunks))
+        self._last_pass_stats = {
+            **result.stats,
+            "enrichment_tax": result.enrichment_tax,
+            "span_chars": result.span_chars,
+            "embedded_chars": result.embedded_chars,
+        }
+        # Parent/child links for a caller to materialise (ORION edges in the
+        # server). Held rather than written: chunking stays free of any client
+        # or transport, as its package docstring promises.
+        self._last_chunk_edges = result.edges
 
         processed = []
-        for chunk in text_chunks:
+        for chunk in result.chunks:
             processed_chunk = ProcessedChunk(
                 chunk_id=chunk.chunk_id,
                 text=chunk.text,
                 start_pos=chunk.start_pos,
                 end_pos=chunk.end_pos,
                 metadata=chunk.metadata,
+                # The one line that makes enrichment reach the model. Without
+                # it the pass would write `embedded_text` and the pipeline
+                # would embed `text` anyway -- built-but-never-called, which is
+                # the finding this whole program keeps re-deriving.
+                embedding_text=embedded_text_of(chunk),
             )
             processed.append(processed_chunk)
 
