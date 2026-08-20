@@ -283,7 +283,20 @@ and instructs readers not to quote "20+ languages" — the claim this TD was fil
 === What remains, and it is not this TD's
 
 * **ADR-029 → Accepted** is recommended in the ADR with its evidence, and deferred to the deciders.
-* **Two upstream bug reports** against `victor-codegraph` 0.9.0 (Rust nested-symbol double emission;
-  JS/TS/Java class-header chunk), both already pinned as strict xfails so a fix cannot land unnoticed.
+* **Two upstream bug reports FILED 2026-08-19** against `victor-codegraph` 0.9.0 — **victor#916**
+  (Rust `impl` overlap) and **victor#917** (class closing brace uncovered) — both pinned here as
+  strict xfails so a fix cannot land unnoticed. Writing them re-measured both at **default** config
+  rather than the tight budget the xfails use, and the defects are materially worse than the pins
+  said: #916 emits **6,122 bytes for a 2,876-byte file (2.13x)** with 98% of bytes in more than one
+  chunk, *and* leaves the struct's own field list in no chunk at all; #917 reproduces in
+  javascript, typescript, tsx **and** java, at **any size** — a 62-byte class that fits the budget
+  loses its brace too, so it is not large-symbol windowing.
++
+Two fixture lessons, both caught before filing. A first Rust fixture carrying trailing `//` comments
+produced **byte-identical duplicate chunks**, which would have been the headline — it was an artifact
+of comment handling, a *different* behaviour, and the claim did not survive a cleaner fixture. The
+same comments made the JS/Java coverage numbers read 891 uncovered bytes instead of 1. **A fixture
+that introduces a second variable produces a confident wrong number**, which is the same failure as
+filing victor#913 with a headline that had to be publicly corrected.
 * **`ruby` symbol extraction** is an upstream node-table gap. It sits in `COVERED_WITHOUT_SYMBOLS`
   honestly rather than being claimed, which was the whole point.
