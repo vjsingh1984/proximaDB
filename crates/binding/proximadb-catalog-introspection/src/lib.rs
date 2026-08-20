@@ -420,10 +420,18 @@ impl CatalogIntrospectionService {
                 // SQL-standard information_schema.tables shape) so control-plane
                 // clients can provision policy without guessing an allocator
                 // result or reaching into catalog persistence.
+                // TD-CAT-7: absence renders as an explicit `NULL`, not `""`.
+                // A blank cell is what made TD-AUTHZ-2 read as "this view does
+                // not populate object_id" rather than "the catalog minted none"
+                // — the diagnosis cost, not a parse failure (consumers parse
+                // this as u64 and fail on either spelling). #1680's
+                // post-condition makes an authority reaching this branch
+                // unreachable, so this is defence-in-depth and only the
+                // identity column is changed.
                 schema
                     .object_id
                     .map(|id| id.to_string())
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|| "NULL".to_string()),
             ]);
         }
 

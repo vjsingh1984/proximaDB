@@ -59,13 +59,32 @@ fn unsatisfiable_filter() -> FilterExpression {
 
 /// Resolves `ObjectId` predicate-refs to their stored `FilterExpression`.
 ///
-/// **Structurally tenant-scoped**: an implementation is built for one tenant and
-/// only sees that tenant's predicate objects. A cross-tenant ref fails to resolve
-/// (returns `None`), and [`compile_security_filter`] turns that into a deny.
+/// # Scope: cluster-global, operator-administered — NOT tenant-partitioned
+///
+/// This doc previously claimed the trait was "structurally tenant-scoped" and
+/// that "a cross-tenant ref fails to resolve." **No implementation has ever
+/// provided that**, and `FileSystemPredicateObjectStore`'s own doc says the
+/// opposite three screens below. Two contradictory guarantees in one file is
+/// worse than a documented limitation: a reader cannot tell which one the code
+/// keeps. The accurate contract is written here instead.
+///
+/// A predicate object is a **cluster-scope** object. Both the write path
+/// (`PUT /api/v2/abac/predicate-objects/{object_id}`) and the binding that
+/// names one (`PUT /api/v2/abac/policy-bindings/{tenant}/{object_id}`) require
+/// `SystemAdmin` ∪ `ConfigureSystem` via `authorize_operator` — verified for
+/// all 14 handlers in `rest/canonical/abac_admin.rs`. So the same id resolving
+/// for two tenants is **not** a cross-tenant escalation: only a cluster
+/// operator, who already administers every tenant, can create one or reference
+/// it. `predicate_objects_are_cluster_scope_not_tenant_scoped` pins that.
+///
+/// If a tenant-facing policy API is ever added, this becomes load-bearing and
+/// the store must be keyed by `(TenantStableId, ObjectId)` **before** that API
+/// ships — tracked in TD-AUTHZ-1 L2.3.
 pub trait PredicateObjectStore {
     /// Look up the predicate object registered under `id`. Returns `None` when
-    /// unknown, revoked, or in another tenant's scope — [`compile_security_filter`]
-    /// treats `None` as fail-closed.
+    /// the id is unknown or revoked — [`compile_security_filter`] treats `None`
+    /// as fail-closed. It does **not** return `None` for another tenant's
+    /// object; see the scope note above.
     ///
     /// Returns an **owned** `FilterExpression` (not a borrow) so a durable
     /// implementation can hold its cache behind a lock — a reference could not
@@ -136,7 +155,8 @@ impl PredicateObjectStore for InMemoryPredicateObjectStore {
 /// Predicate objects are keyed by global catalog `ObjectId` (not tenant-
 /// partitioned), matching [`InMemoryPredicateObjectStore`] and the enforcer's
 /// single shared store — a predicate ref resolves the same `FilterExpression`
-/// regardless of tenant. `Send + Sync` (held by the enforcer behind a shared
+/// regardless of tenant. This is deliberate and operator-gated; see the scope
+/// note on [`PredicateObjectStore`]. `Send + Sync` (held by the enforcer behind a shared
 /// `Arc<dyn PredicateObjectStore + Send + Sync>`). The in-memory cache is behind
 /// a [`RwLock`] so an admin write through a shared `Arc` handle is visible to the
 /// live enforcer without a restart (hot-reload): writes take the write-lock and
@@ -320,6 +340,45 @@ mod tests {
             operator: ComparisonOperator::GreaterThanOrEqual,
             value: serde_json::Value::Number(level.into()),
         }
+    }
+
+    /// TD-AUTHZ-1 L2.3, **corrected by measurement**. The tracker recorded
+    /// "today cross-tenant deref resolves" as an open isolation gap. It does
+    /// resolve — but that is not an escalation, and this test pins why so the
+    /// entry is not re-opened as a security bug.
+    ///
+    /// Both the write path (`PUT /api/v2/abac/predicate-objects/{id}`) and the
+    /// binding that names one (`PUT /api/v2/abac/policy-bindings/{tenant}/{id}`)
+    /// require `SystemAdmin` ∪ `ConfigureSystem` — all 14 handlers in
+    /// `abac_admin.rs` call the fail-closed `authorize_operator` first. Only a
+    /// cluster operator, who already administers every tenant, can create a
+    /// predicate object or point a binding at one. No tenant-facing surface
+    /// writes either.
+    ///
+    /// **Teeth are structural, not behavioural.** A behavioural assertion here
+    /// would be vacuous — with no tenant parameter to vary, "tenant A and
+    /// tenant B get the same answer" is the same call twice. So the pin is on
+    /// the *signature*: add a tenant argument to `get` and this stops
+    /// compiling, which is exactly the moment someone should be re-reading the
+    /// scope note on the trait.
+    #[test]
+    fn predicate_objects_are_cluster_scope_not_tenant_scoped() {
+        let store = InMemoryPredicateObjectStore::new();
+
+        // The pin: `get` takes an ObjectId and NOTHING else, so no
+        // implementation of this trait can scope by tenant. Spelled as a
+        // qualified call so the arity is the assertion — add a tenant argument
+        // and this line stops compiling.
+        let resolved: Option<FilterExpression> = PredicateObjectStore::get(&store, 42);
+        assert_eq!(resolved, None, "an unregistered id is unknown to the store");
+
+        // The fail-closed property that DOES hold, and must keep holding: an id
+        // nobody registered denies rather than waving the read through.
+        assert_eq!(
+            compile_security_filter(&[42], &store),
+            Some(unsatisfiable_filter()),
+            "an unregistered ref must compile to a deny"
+        );
     }
 
     #[test]

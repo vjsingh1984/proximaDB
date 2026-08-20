@@ -834,72 +834,75 @@ impl SharedServices {
             // `NativeCatalog` for the duration of the cutover.
             let disable_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_ok();
             let metadata_url = storage_config.metadata_url.clone();
-            // ANY non-file scheme is an object store — never enumerate schemes
-            // here: `adls://`/`abfs://`/`azure://`/`gcs://` (documented aliases,
-            // ADR-036) used to fall through BOTH branches and land on
-            // NativeCatalog's non-durable temp cache, silently losing catalog
-            // durability on Azure deployments (TD-OBJSTORE-1, #960).
-            let is_objstore = metadata_url.contains("://") && !metadata_url.starts_with("file://");
-            // Phase 5d: object-store deployments use the SystemCatalog too — its
-            // snapshot blob persists to the object store under
-            // `_operator/catalog/…` (real durability, replacing NativeCatalog's
-            // temp-cache fake) while the per-DDL WAL stays on the local working
-            // volume (object-store-native WAL is Phase 6). Needs `opt_config`
-            // for the local `data_dir`; without it (some test/embedded paths) we
-            // fall back to `NativeCatalog`.
-            let objstore_data_dir = if is_objstore && !disable_system_catalog {
-                opt_config.map(|c| c.server.data_dir.clone())
-            } else {
-                None
+            // The backend is DECIDED ONCE, as a value that carries its own
+            // reason — see `catalog_backend_choice`. Scheme handling (ADR-036
+            // aliases) and the Phase-5d object-store rule live there with unit
+            // tests; this site executes the decision and, critically, LOGS every
+            // arm. The fallback used to log nothing at all, so an operator's
+            // only signal that their deployment had dropped off the WAL-backed
+            // catalog was the absence of a line they had no reason to look for.
+            use crate::services::catalog_backend_choice::{
+                DefaultCatalogBackend, resolve_default_catalog_backend,
             };
+            let backend = resolve_default_catalog_backend(
+                &metadata_url,
+                disable_system_catalog,
+                opt_config.map(|c| c.server.data_dir.as_path()),
+            );
+            info!(
+                "🗂️  SharedServices: default catalog backend = {} (metadata_url {})",
+                backend.label(),
+                metadata_url
+            );
 
-            if !disable_system_catalog && metadata_url.starts_with("file://") {
-                let base = metadata_url.trim_start_matches("file://");
-                // Phase 5 (two-tier operator/account): route the system
-                // catalog's own WAL + snapshot under the DrPathBuilder-validated
-                // operator control-plane prefix (`_operator/catalog/…`) so
-                // catalog I/O honours the structural-isolation mandate instead
-                // of a raw `{base}/system-catalog.wal`. Flag-gated + inert by
-                // default (mirrors the warehouse DrPath opt-in pattern): the local path
-                // is unchanged until a deployment opts in, keeping existing
-                // on-disk catalog state in place. The catalog is `Operator`-roled.
-                let wal_path = if std::env::var("PROXIMADB_CATALOG_DRPATH").is_ok() {
-                    std::path::Path::new(base).join(
+            match backend {
+                DefaultCatalogBackend::SystemCatalogLocal { base } => {
+                    // Phase 5 (two-tier operator/account): route the system
+                    // catalog's own WAL + snapshot under the DrPathBuilder-validated
+                    // operator control-plane prefix (`_operator/catalog/…`) so
+                    // catalog I/O honours the structural-isolation mandate instead
+                    // of a raw `{base}/system-catalog.wal`. Flag-gated + inert by
+                    // default (mirrors the warehouse DrPath opt-in pattern): the local path
+                    // is unchanged until a deployment opts in, keeping existing
+                    // on-disk catalog state in place. The catalog is `Operator`-roled.
+                    let wal_path = if std::env::var("PROXIMADB_CATALOG_DRPATH").is_ok() {
+                        base.join(
                         crate::storage::trait_components::path_resolver::DrPathBuilder::system_catalog_wal_relpath(),
                     )
-                } else {
-                    std::path::Path::new(base).join("system-catalog.wal")
-                };
-                if let Some(parent) = wal_path.parent() {
-                    tokio::fs::create_dir_all(parent).await.with_context(|| {
-                        format!("creating system-catalog dir {}", parent.display())
-                    })?;
-                }
-                let system_catalog =
-                    crate::services::system_catalog::SystemCatalog::open("default", &wal_path)
-                        .await
-                        .with_context(|| {
-                            format!("opening SystemCatalog WAL at {}", wal_path.display())
+                    } else {
+                        base.join("system-catalog.wal")
+                    };
+                    if let Some(parent) = wal_path.parent() {
+                        tokio::fs::create_dir_all(parent).await.with_context(|| {
+                            format!("creating system-catalog dir {}", parent.display())
                         })?;
-                catalog_manager
-                    .register(Arc::new(system_catalog))
-                    .await
-                    .context("Failed to register default SystemCatalog backend")?;
-                info!(
-                    "✅ SharedServices: registered WAL-backed SystemCatalog (default) at {}",
-                    wal_path.display()
-                );
-            } else if let Some(data_dir) = objstore_data_dir {
-                use crate::storage::trait_components::path_resolver::DrPathBuilder;
-                // Per-DDL WAL on the local working volume under the operator
-                // control-plane prefix; snapshot blob in the object store.
-                let wal_path = data_dir.join(DrPathBuilder::system_catalog_wal_relpath());
-                if let Some(parent) = wal_path.parent() {
-                    tokio::fs::create_dir_all(parent).await.with_context(|| {
-                        format!("creating system-catalog dir {}", parent.display())
-                    })?;
+                    }
+                    let system_catalog =
+                        crate::services::system_catalog::SystemCatalog::open("default", &wal_path)
+                            .await
+                            .with_context(|| {
+                                format!("opening SystemCatalog WAL at {}", wal_path.display())
+                            })?;
+                    catalog_manager
+                        .register(Arc::new(system_catalog))
+                        .await
+                        .context("Failed to register default SystemCatalog backend")?;
+                    info!(
+                        "✅ SharedServices: registered WAL-backed SystemCatalog (default) at {}",
+                        wal_path.display()
+                    );
                 }
-                let snapshot_store = Arc::new(
+                DefaultCatalogBackend::SystemCatalogObjectStore { data_dir } => {
+                    use crate::storage::trait_components::path_resolver::DrPathBuilder;
+                    // Per-DDL WAL on the local working volume under the operator
+                    // control-plane prefix; snapshot blob in the object store.
+                    let wal_path = data_dir.join(DrPathBuilder::system_catalog_wal_relpath());
+                    if let Some(parent) = wal_path.parent() {
+                        tokio::fs::create_dir_all(parent).await.with_context(|| {
+                            format!("creating system-catalog dir {}", parent.display())
+                        })?;
+                    }
+                    let snapshot_store = Arc::new(
                     crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore::from_url(
                         &metadata_url,
                         DrPathBuilder::system_catalog_manifests_subprefix(),
@@ -908,56 +911,68 @@ impl SharedServices {
                         format!("opening object-store catalog snapshot at {metadata_url}")
                     })?,
                 );
-                let system_catalog = Arc::new(
-                    crate::services::system_catalog::SystemCatalog::open_with_snapshot_store(
-                        "default",
-                        &wal_path,
-                        snapshot_store,
-                    )
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "opening object-store SystemCatalog (WAL {})",
-                            wal_path.display()
+                    let system_catalog = Arc::new(
+                        crate::services::system_catalog::SystemCatalog::open_with_snapshot_store(
+                            "default",
+                            &wal_path,
+                            snapshot_store,
                         )
-                    })?,
-                );
-                // Phase 6b: in a multi-pod deployment, tail the object-store
-                // snapshot so this pod's relcache stays coherent with DDL another
-                // pod commits (sinval-style lazy reload), and so a superseded
-                // owner steps down to read-only promptly. Inert by default
-                // (single-pod): gated behind `PROXIMADB_CATALOG_FOLLOWER_POLL_SECS`
-                // (> 0 to enable). The handle is detached — the loop is a
-                // cooperative tokio task that does no work when nothing changed.
-                if let Some(secs) = std::env::var("PROXIMADB_CATALOG_FOLLOWER_POLL_SECS")
-                    .ok()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .filter(|n| *n > 0)
-                {
-                    system_catalog
-                        .clone()
-                        .spawn_follower_poll(std::time::Duration::from_secs(secs));
-                    info!(
-                        "✅ SharedServices: catalog follower poll enabled (every {}s) — \
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "opening object-store SystemCatalog (WAL {})",
+                                wal_path.display()
+                            )
+                        })?,
+                    );
+                    // Phase 6b: in a multi-pod deployment, tail the object-store
+                    // snapshot so this pod's relcache stays coherent with DDL another
+                    // pod commits (sinval-style lazy reload), and so a superseded
+                    // owner steps down to read-only promptly. Inert by default
+                    // (single-pod): gated behind `PROXIMADB_CATALOG_FOLLOWER_POLL_SECS`
+                    // (> 0 to enable). The handle is detached — the loop is a
+                    // cooperative tokio task that does no work when nothing changed.
+                    if let Some(secs) = std::env::var("PROXIMADB_CATALOG_FOLLOWER_POLL_SECS")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .filter(|n| *n > 0)
+                    {
+                        system_catalog
+                            .clone()
+                            .spawn_follower_poll(std::time::Duration::from_secs(secs));
+                        info!(
+                            "✅ SharedServices: catalog follower poll enabled (every {}s) — \
                          tailing object-store snapshot for cross-pod coherence",
-                        secs
+                            secs
+                        );
+                    }
+                    catalog_manager
+                        .register(system_catalog)
+                        .await
+                        .context("Failed to register object-store SystemCatalog backend")?;
+                    info!(
+                        "✅ SharedServices: registered object-store-backed SystemCatalog (default); \
+                     local WAL at {}, snapshot in {}",
+                        wal_path.display(),
+                        metadata_url
                     );
                 }
-                catalog_manager
-                    .register(system_catalog)
-                    .await
-                    .context("Failed to register object-store SystemCatalog backend")?;
-                info!(
-                    "✅ SharedServices: registered object-store-backed SystemCatalog (default); \
-                     local WAL at {}, snapshot in {}",
-                    wal_path.display(),
-                    metadata_url
-                );
-            } else {
-                catalog_manager
-                    .create_native_catalog("default", &metadata_url)
-                    .await
-                    .context("Failed to initialize default xCatalog backend")?;
+                DefaultCatalogBackend::NativeFallback { reason } => {
+                    // Loud, and it names what to change. `NativeCatalog` is
+                    // file-per-object (a `read_dir` per `list_tables`) where the
+                    // SystemCatalog serves from RAM, so this is a per-request
+                    // round-trip class the operator did not choose — they must be
+                    // able to see that they are on it.
+                    warn!(
+                        "⚠️  SharedServices: falling back to NativeCatalog for the default \
+                     catalog — {}",
+                        reason.explain()
+                    );
+                    catalog_manager
+                        .create_native_catalog("default", &metadata_url)
+                        .await
+                        .context("Failed to initialize default xCatalog backend")?;
+                }
             }
         }
         // TD-080 (2026-05-28 round 2): explicitly designate the "default"

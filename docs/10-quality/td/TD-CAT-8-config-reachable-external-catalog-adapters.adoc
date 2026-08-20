@@ -39,7 +39,54 @@ So the accurate statement is: **unreachable from the running server, but reachab
 configuration and part of the crate's public + proto surface.** That is a different category from
 dead code, and it makes this a design decision rather than housekeeping.
 
-== The decision to make
+== 🔴 Second correction: "config-reachable" was itself too generous
+
+The reachability map above is right about the *Rust* surface and wrong about the
+*configuration* surface. The one config path — `POST /api/v1/catalogs` — calls
+`convert_proto_catalog_config` (`src/network/rest/canonical/catalog.rs:450`), whose parameter is
+`_proto_config` and whose body is an unconditional
+`Err(ApiError::NotImplemented("Catalog config conversion not yet implemented"))`. **Every**
+`CatalogConfig` arm 501s, `Native` included. So the accurate statement is: reachable from Rust as
+public API, **not** reachable by deployment configuration.
+
+== ⭐ The finding that decides this: the target already exists
+
+`ExternalCatalog` — the narrow, read-mostly, identity-free trait [[TD-CAT-7]] proposed *creating* —
+is **already in the tree**: `federation/external/mod.rs:110`, 18 methods, string-keyed namespaces,
+no identity, no minting. So is a `FederatedCatalog` struct with `register_external` /
+`resolve_table` / `list_all_tables` / `get_constraint_support`
+(`federation/federated_catalog.rs:213`).
+
+[cols="2,1"]
+|===
+| Fact | Count
+| Implementations of `ExternalCatalog` | **0**
+| Construction sites of `FederatedCatalog` | **0**
+| External adapters implementing the *internal* `Catalog` trait instead | **5**
+|===
+
+Two halves of a federation feature, neither connected to the other, neither reachable — under a
+module header that said "PRODUCTION READY" (corrected). Building a new trait for these adapters
+would have duplicated an existing primitive, the failure mode CLAUDE.md mandate #12 names
+explicitly.
+
+== Decision (2026-08-20): option 3 — keep and finish
+
+Federated metastore support is wanted, so the adapters become `ExternalCatalog` implementations.
+The work is *connecting two existing halves*, not designing anything:
+
+. Implement `ExternalCatalog` for Hive/Glue/Unity/Polaris/Iceberg by **moving** their existing
+  HTTP/thrift/SDK bodies across — they already perform exactly these operations.
+. **Delete their `impl Catalog`.** This is the substance: identity obligations they cannot honour
+  become *structurally absent* rather than silently defaulted. `Catalog` impls drop 9 → 4, which is
+  also most of [[TD-CAT-7]] item 4's available win.
+. Construct a `FederatedCatalog`, register adapters from config, and replace the blanket 501 with
+  real dispatch — plus an **explicit** unsupported error for arms the build does not carry.
+. Feature-gate behind `external-catalogs` (default-off) so five never-executed adapters stop
+  compiling into every binary. Build cost is a dimension this repo pays (cold builds ~30 min,
+  `CARGO_BUILD_JOBS` capped at 3 for OOM). **Measure the delta; do not assert it.**
+
+== The decision that was to be made
 
 . **Gate** behind a cargo feature (e.g. `external-catalogs`, default-off). Requires gating
   `manager.rs`'s `create_*` fns and the affected tests together, and answering what happens when a
