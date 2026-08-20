@@ -266,7 +266,11 @@ impl SystemCatalog {
         existing_namespace: Option<u16>,
         existing_collection: Option<u32>,
     ) -> Result<Option<(u32, u16, u32)>> {
-        let Some(account_id) = self.account_id_u32(account).await? else {
+        // TD-CAT-7: both `Catalog` and `CatalogAuthority` expose this now (the
+        // former delegates to the latter), so name the authority explicitly.
+        let Some(account_id) =
+            proximadb_catalog::CatalogAuthority::account_id_u32(self, account).await?
+        else {
             return Ok(None);
         };
         let key = (account.to_string(), namespace_key.to_string());
@@ -815,8 +819,129 @@ impl SystemCatalog {
     }
 }
 
+/// TD-CAT-7: `SystemCatalog` is the DEFAULT backend and the production identity
+/// authority — it owns the WAL-backed allocator and the account registry. Every
+/// method below is required by the trait, so the silent `Ok(None)` inheritance
+/// that left relational ABAC structurally inert (TD-AUTHZ-2) cannot recur here.
+// Referenced by full path, deliberately NOT imported — see the identical note on
+// `NativeCatalog`: both traits declare these names, so importing this one makes
+// every concrete-type call site ambiguous.
+#[async_trait]
+impl proximadb_catalog::CatalogAuthority for SystemCatalog {
+    async fn max_object_id(&self) -> Result<Option<u64>> {
+        Ok(self.state.max_object_id())
+    }
+    async fn allocate_object_id(&self) -> Result<u64> {
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' is read-only; object ids must be allocated on the owning pod",
+                self.name
+            ));
+        }
+        // Reserve from the exact sequence create_table uses. The later create
+        // adopts this caller-supplied id, so collection lifecycle cannot race a
+        // relational DDL path through an independent process-global allocator.
+        self.mint_object_id(None)
+    }
+    async fn mint_collection_typed_identity(
+        &self,
+        account: &str,
+        namespace_key: &str,
+    ) -> Result<Option<(u32, u16, u32)>> {
+        let account = account.trim();
+        if account.is_empty() {
+            return Ok(None);
+        }
+        self.resolve_typed_triple(account, namespace_key, None, None)
+            .await
+    }
+    /// Mint-or-return the durable tenant/account stable id through the same
+    /// canonical WAL as every other SystemCatalog mutation. This is the normal
+    /// server path (SystemCatalog is the default backend), so inheriting the
+    /// trait's `None` implementation would leave ABAC silently unkeyed.
+    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
+        let account = account.trim();
+        if account.is_empty() {
+            return Ok(None);
+        }
+        if let Some(id) = self.state.account_id_u32(account) {
+            if self
+                .snapshot
+                .as_ref()
+                .is_some_and(|cfg| cfg.store.requires_snapshot_on_commit())
+                && self.commits_since_snapshot.load(Ordering::SeqCst) > 0
+                && !self.read_only.load(Ordering::SeqCst)
+            {
+                let _guard = self.write_lock.lock().await;
+                self.publish_pending_snapshot_locked().await?;
+                // A fencing reload can replace the state while repairing the
+                // publication, so never return the pre-lock value blindly.
+                return Ok(self.state.account_id_u32(account));
+            }
+            return Ok(Some(id));
+        }
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "tenant '{account}' has no stable id and system catalog '{}' is read-only; \
+                 mint it on the owning pod",
+                self.name
+            ));
+        }
+
+        // Check + allocate + durable append are one writer critical section.
+        // Without the second check, concurrent first requests could return two
+        // different policy keys for the same tenant.
+        let _guard = self.write_lock.lock().await;
+        if let Some(id) = self.state.account_id_u32(account) {
+            self.publish_pending_snapshot_locked().await?;
+            if self.read_only.load(Ordering::SeqCst) {
+                return Ok(self.state.account_id_u32(account));
+            }
+            return Ok(Some(id));
+        }
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "tenant '{account}' has no stable id and system catalog '{}' became read-only; \
+                 mint it on the owning pod",
+                self.name
+            ));
+        }
+        let next = self.account_floor.fetch_add(1, Ordering::SeqCst);
+        let stable_id = u32::try_from(next)
+            .map_err(|_| anyhow!("tenant stable-id space exhausted at {next}"))?;
+        self.commit_batch_locked(vec![CatalogDelta::UpsertAccount {
+            account: account.to_string(),
+            stable_id,
+        }])
+        .await?;
+        Ok(Some(stable_id))
+    }
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        let account = account.trim();
+        if account.is_empty() {
+            return None;
+        }
+        self.state.account_id_u32(account)
+    }
+    async fn get_table_by_object_id(&self, object_id: u64) -> Result<Option<TableIdentifier>> {
+        Ok(self.state.get_table_by_object_id(object_id))
+    }
+    async fn get_namespace_by_object_id(&self, object_id: u64) -> Result<Option<Vec<String>>> {
+        // TD-CAT-7: this override did not exist before the split — `SystemCatalog`
+        // is the DEFAULT backend and had been silently inheriting the trait's
+        // `Ok(None)`, so a namespace object_id resolved to "not found" rather
+        // than to its namespace. No production caller had noticed yet; the
+        // compiler now requires an answer, which is the point of the split.
+        Ok(self.state.get_namespace_by_object_id(object_id))
+    }
+}
+
 #[async_trait]
 impl Catalog for SystemCatalog {
+    fn identity_authority(&self) -> Option<&dyn proximadb_catalog::CatalogAuthority> {
+        Some(self)
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -889,106 +1014,6 @@ impl Catalog for SystemCatalog {
             .ok_or_else(|| anyhow!("Namespace '{}' not found", namespace.join(".")))
     }
 
-    /// Mint-or-return the durable tenant/account stable id through the same
-    /// canonical WAL as every other SystemCatalog mutation. This is the normal
-    /// server path (SystemCatalog is the default backend), so inheriting the
-    /// trait's `None` implementation would leave ABAC silently unkeyed.
-    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
-        let account = account.trim();
-        if account.is_empty() {
-            return Ok(None);
-        }
-        if let Some(id) = self.state.account_id_u32(account) {
-            if self
-                .snapshot
-                .as_ref()
-                .is_some_and(|cfg| cfg.store.requires_snapshot_on_commit())
-                && self.commits_since_snapshot.load(Ordering::SeqCst) > 0
-                && !self.read_only.load(Ordering::SeqCst)
-            {
-                let _guard = self.write_lock.lock().await;
-                self.publish_pending_snapshot_locked().await?;
-                // A fencing reload can replace the state while repairing the
-                // publication, so never return the pre-lock value blindly.
-                return Ok(self.state.account_id_u32(account));
-            }
-            return Ok(Some(id));
-        }
-        if self.read_only.load(Ordering::SeqCst) {
-            return Err(anyhow!(
-                "tenant '{account}' has no stable id and system catalog '{}' is read-only; \
-                 mint it on the owning pod",
-                self.name
-            ));
-        }
-
-        // Check + allocate + durable append are one writer critical section.
-        // Without the second check, concurrent first requests could return two
-        // different policy keys for the same tenant.
-        let _guard = self.write_lock.lock().await;
-        if let Some(id) = self.state.account_id_u32(account) {
-            self.publish_pending_snapshot_locked().await?;
-            if self.read_only.load(Ordering::SeqCst) {
-                return Ok(self.state.account_id_u32(account));
-            }
-            return Ok(Some(id));
-        }
-        if self.read_only.load(Ordering::SeqCst) {
-            return Err(anyhow!(
-                "tenant '{account}' has no stable id and system catalog '{}' became read-only; \
-                 mint it on the owning pod",
-                self.name
-            ));
-        }
-        let next = self.account_floor.fetch_add(1, Ordering::SeqCst);
-        let stable_id = u32::try_from(next)
-            .map_err(|_| anyhow!("tenant stable-id space exhausted at {next}"))?;
-        self.commit_batch_locked(vec![CatalogDelta::UpsertAccount {
-            account: account.to_string(),
-            stable_id,
-        }])
-        .await?;
-        Ok(Some(stable_id))
-    }
-
-    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
-        let account = account.trim();
-        if account.is_empty() {
-            return None;
-        }
-        self.state.account_id_u32(account)
-    }
-
-    async fn max_object_id(&self) -> Result<Option<u64>> {
-        Ok(self.state.max_object_id())
-    }
-
-    async fn allocate_object_id(&self) -> Result<Option<u64>> {
-        if self.read_only.load(Ordering::SeqCst) {
-            return Err(anyhow!(
-                "system catalog '{}' is read-only; object ids must be allocated on the owning pod",
-                self.name
-            ));
-        }
-        // Reserve from the exact sequence create_table uses. The later create
-        // adopts this caller-supplied id, so collection lifecycle cannot race a
-        // relational DDL path through an independent process-global allocator.
-        Ok(Some(self.mint_object_id(None)?))
-    }
-
-    async fn mint_collection_typed_identity(
-        &self,
-        account: &str,
-        namespace_key: &str,
-    ) -> Result<Option<(u32, u16, u32)>> {
-        let account = account.trim();
-        if account.is_empty() {
-            return Ok(None);
-        }
-        self.resolve_typed_triple(account, namespace_key, None, None)
-            .await
-    }
-
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
@@ -1014,7 +1039,7 @@ impl Catalog for SystemCatalog {
 
     // ── Table operations ──────────────────────────────────────────────────
 
-    async fn create_table(
+    async fn create_table_inner(
         &self,
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
@@ -1119,10 +1144,6 @@ impl Catalog for SystemCatalog {
 
     async fn get_table(&self, identifier: &TableIdentifier) -> Result<CatalogTableSchema> {
         self.require_table(identifier)
-    }
-
-    async fn get_table_by_object_id(&self, object_id: u64) -> Result<Option<TableIdentifier>> {
-        Ok(self.state.get_table_by_object_id(object_id))
     }
 
     async fn rename_table(&self, from: &TableIdentifier, to: &TableIdentifier) -> Result<()> {
@@ -1387,6 +1408,69 @@ mod tests {
             "../../clients/python/tests/fixtures/embedding_model_xcatalog_asset.json"
         ))?;
         CatalogTableSchema::new("search-embedding").with_mlops_asset(asset)
+    }
+
+    /// TD-CAT-7: the DEFAULT backend must declare itself an identity authority.
+    /// The probe is what lets a caller tell "this catalog cannot mint" from
+    /// "the catalog that can, didn't" — the conflation that left relational
+    /// ABAC structurally inert (TD-AUTHZ-2) without anything failing.
+    #[tokio::test]
+    async fn system_catalog_declares_itself_an_identity_authority() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cat = catalog(dir.path()).await;
+        assert!(
+            cat.identity_authority().is_some(),
+            "SystemCatalog owns the WAL-backed allocator and the account registry"
+        );
+        Ok(())
+    }
+
+    /// TD-CAT-7 / TD-CAT-9: `SystemCatalog::create_namespace` does **not** mint
+    /// a namespace `object_id`, while `NativeCatalog::create_namespace_inner`
+    /// does (ADR-031 / TD-181 P0). Two internal backends reporting the same
+    /// `catalog_type` disagree about whether namespaces carry a catalog
+    /// surrogate — pinned here so the divergence is a stated fact rather than a
+    /// surprise for the first consumer that keys on it. Closing it is TD-CAT-9:
+    /// it changes what draws from the shared id sequence, and the recovery floor
+    /// folds tables only, so it needs its own no-reissue-across-restart proof.
+    #[tokio::test]
+    async fn system_catalog_namespaces_carry_no_object_id_yet() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cat = catalog(dir.path()).await;
+        let levels = nslevels(&["cat7_ns"]);
+        let created = cat.create_namespace(&levels, HashMap::new()).await?;
+
+        assert_eq!(
+            created.object_id, None,
+            "if this starts minting, TD-CAT-9 landed — fold namespace ids into \
+             SystemCatalogState::max_object_id in the same change or a restart \
+             can re-issue a live namespace's id"
+        );
+        assert_eq!(
+            cat.get_namespace_by_object_id(1).await?,
+            None,
+            "nothing to resolve while no namespace carries an id"
+        );
+        Ok(())
+    }
+
+    /// TD-CAT-7 post-condition, end to end on the real backend: a table created
+    /// through the sealed `create_table` carries the id authorization keys on.
+    #[tokio::test]
+    async fn created_tables_always_carry_an_object_id() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cat = catalog(dir.path()).await;
+        let levels = nslevels(&["cat7_oid"]);
+        cat.create_namespace(&levels, HashMap::new()).await?;
+
+        let created = cat
+            .create_table(&TableIdentifier::new(levels, "t"), vec_schema("t"))
+            .await?;
+        assert!(
+            created.object_id.is_some(),
+            "the sealed create_table must not return an unminted row"
+        );
+        Ok(())
     }
 
     #[tokio::test]

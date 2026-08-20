@@ -1056,7 +1056,32 @@ impl SharedServices {
                 .filter_map(|c| c.id.parse::<u64>().ok())
                 .max();
             let max_schema_oid = match catalog_manager.default_catalog().await {
-                Ok(cat) => cat.max_object_id().await.unwrap_or(None),
+                // TD-CAT-7: `unwrap_or(None)` used to collapse three different
+                // outcomes into one — no authority, an authority with nothing
+                // minted, and an authority that FAILED — so a broken floor
+                // recovery was indistinguishable from a federated catalog and
+                // this collision guard silently did nothing. Name them apart.
+                Ok(cat) if cat.identity_authority().is_none() => {
+                    debug!(
+                        "collection-id floor recovery: catalog '{}' is not an identity \
+                         authority; no object_id floor to raise",
+                        cat.name()
+                    );
+                    None
+                }
+                Ok(cat) => match cat.max_object_id().await {
+                    Ok(max) => max,
+                    Err(e) => {
+                        warn!(
+                            "collection-id floor recovery: catalog '{}' is an identity \
+                             authority but failed to report its max object_id ({e}); \
+                             a freshly minted collection id could collide with a legacy \
+                             schema.object_id",
+                            cat.name()
+                        );
+                        None
+                    }
+                },
                 Err(e) => {
                     warn!("collection-id floor recovery: default catalog unavailable: {e}");
                     None

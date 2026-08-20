@@ -301,6 +301,22 @@ impl SystemCatalogState {
         self.inner.read().namespaces.get(levels).cloned()
     }
 
+    /// Resolve a namespace's `levels` from its stable catalog `object_id` —
+    /// the namespace analogue of [`Self::get_table_by_object_id`].
+    ///
+    /// TD-CAT-7: a linear scan, not an index. Namespaces are few and this has
+    /// no hot caller; the alternative that was in force until now — inheriting
+    /// the trait's silent `Ok(None)` — answered "no such namespace" for every
+    /// id, which is worse than an O(n) answer.
+    pub fn get_namespace_by_object_id(&self, object_id: u64) -> Option<Vec<String>> {
+        self.inner
+            .read()
+            .namespaces
+            .values()
+            .find(|ns| ns.object_id == Some(object_id))
+            .map(|ns| ns.levels.clone())
+    }
+
     /// List all namespace paths.
     pub fn list_namespaces(&self) -> Vec<Vec<String>> {
         self.inner.read().namespaces.keys().cloned().collect()
@@ -461,6 +477,49 @@ mod tests {
 
     fn tid(namespace: &[&str], name: &str) -> TableIdentifier {
         TableIdentifier::new(namespace.iter().map(|s| s.to_string()).collect(), name)
+    }
+
+    /// TD-CAT-7: `SystemCatalog` had no `get_namespace_by_object_id` override at
+    /// all — the DEFAULT backend silently inherited the trait's `Ok(None)`, so a
+    /// namespace object_id resolved to "no such namespace". Splitting the trait
+    /// turned the omission into a compile error; this pins the answer.
+    ///
+    /// Teeth: make the accessor return `None` unconditionally and the `Some`
+    /// arm fails.
+    #[test]
+    fn namespaces_resolve_from_their_object_id() {
+        let state = SystemCatalogState::new();
+        let mut sales = ns(&["sales"]);
+        sales.object_id = Some(11);
+        let mut returns = ns(&["returns"]);
+        returns.object_id = Some(12);
+
+        state.apply_committed(
+            1,
+            CatalogDelta::UpsertNamespace {
+                namespace: Box::new(sales),
+            },
+        );
+        state.apply_committed(
+            2,
+            CatalogDelta::UpsertNamespace {
+                namespace: Box::new(returns),
+            },
+        );
+
+        assert_eq!(
+            state.get_namespace_by_object_id(11),
+            Some(vec!["sales".to_string()])
+        );
+        assert_eq!(
+            state.get_namespace_by_object_id(12),
+            Some(vec!["returns".to_string()])
+        );
+        assert_eq!(
+            state.get_namespace_by_object_id(13),
+            None,
+            "an unminted id stays None — the honest one"
+        );
     }
 
     fn upsert_table_op(namespace: &[&str], name: &str) -> CanonicalOperation {
