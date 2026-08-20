@@ -246,9 +246,9 @@ For an embedding evidence corpus, each model table sets
 `runtime_provider = "open-weights"`. The builder then loads the pinned SentenceTransformers
 runtime on CPU and derives the counter, runtime context cap, templates and output contract from
 that exact adapter. `local_files_only = true` is forwarded to the runtime and participates in its
-model-cache identity. Loading on CPU here does not perform neural inference: tokenizer fitting
-remains native CPU work, while the later embedding transport explicitly uses MPS/CUDA/another
-approved accelerator.
+model-cache identity. This establishes the runtime contract but may load weights; it does not run
+embedding inference. Tokenizer fitting remains native CPU work, while the later embedding
+transport explicitly uses MPS/CUDA/another approved accelerator.
 
 Omitting `runtime_provider` retains a tokenizer-only contract for cheap planning experiments, but
 that artifact is not sufficient provenance for an embedding evidence run. A tokenizer loaded
@@ -256,6 +256,15 @@ directly by `AutoTokenizer` can have byte-identical token IDs yet a different ba
 configuration from the tokenizer configured by SentenceTransformers. The embedding transport
 therefore continues to require the exact resolved runtime fingerprint rather than weakening the
 check to inferred equivalence.
+
+After one full runtime resolution, repeated corpus variants may add
+`sealed_runtime_contract_fingerprint` while retaining `runtime_provider = "open-weights"`. The
+builder then loads only the pinned tokenizer/config, requires the resolved contract to reproduce
+that exact 64-hex fingerprint, and records the contract TOML digest plus
+`sealed_runtime_fingerprint` resolution mode. The embedding transport still loads the pinned
+weights and independently requires the runtime contract to match before emitting vectors. This
+removes repeated weight initialization without treating a tokenizer-only planning declaration as
+embedding provenance.
 
 The output includes shared `texts.json`, canonical per-chunk provenance in `chunks.jsonl`, every
 source-span occurrence in `chunk_occurrences.jsonl`, and `corpus.manifest.json` with hashes,

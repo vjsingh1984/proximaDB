@@ -204,7 +204,7 @@ Scenario provenance is recorded as `corpus / economics / qrels-projection` manif
   float32 inner-product runs before ANN or quantization is introduced.
 
 The new contracts are covered by offline smoke builds. Builder, economics, BEIR-import, qrels and
-source-evaluation tests currently pass 28/28 together with the existing corpus/embedding transport
+source-evaluation tests currently pass 30/30 together with the existing corpus/embedding transport
 suite when `PYTHONPATH=clients/python/src` binds the isolated worktree SDK.
 
 == Full-source long-context upper bound
@@ -234,6 +234,53 @@ storage cost, especially together with a smaller Matryoshka output, but filling 
 increase naive full-attention ingestion work by almost an order of magnitude. The proxy is not
 measured MPS/CUDA latency, and neither corpus proves retrieval quality. Runtime-resolved,
 `deduplicate=none` NFCorpus comparisons are the next gate.
+
+== NFCorpus neural quality gate
+
+The official NFCorpus test split (3,633 documents, 323 queries and 12,334 positive document
+relations) was rebuilt with `deduplicate=none`. Every corpus is complete-source and asserts zero
+truncation. Passages and role-correct queries were embedded serially with pinned weights on
+PyTorch/MPS (`device=mps:0`, float32 shards), then scored by exact normalized float32 inner
+product. Metrics are macro source-collapsed document metrics over every qrels query; ANN and uint8
+transport effects are excluded.
+
+[cols="2,1,1,1,1,1",options="header"]
+|===
+|Candidate |Rows |f32 vector payload |NDCG@10 |Recall@10 |MRR@10
+|BGE base v1.5, 480/72, 768-d |4,145 |12,733,440 B |0.3757 |0.1778 |0.5758
+|Nomic v1.5, 480/72, 256-d |4,180 |4,280,320 B |0.3260 |0.1527 |0.5207
+|Nomic v1.5, 2,048/307, 256-d |3,647 |3,734,528 B |0.3239 |0.1488 |0.5150
+|===
+
+Nomic-480 saves 66.4% of raw vector payload versus BGE but is 13.2% lower in NDCG@10 and
+14.1% lower in Recall@10. Increasing Nomic to 2,048 tokens removes 12.8% of its rows but slightly
+reduces every reported @10 quality metric. Its maximum rendered document is 1,259 tokens, so 2,048
+already reaches the one-document-per-source floor; a 7,936-token NFCorpus neural run is redundant.
+The evidence rejects a default switch to Nomic-256 and rejects context capacity as a chunk target.
+Nomic remains a storage-oriented candidate where workload-specific qrels meet the quality gate.
+
+Artifact SHA-256 provenance is corpus / qrels projection / embedding / exact scoring / source
+metrics:
+
+* BGE-480: `cbdb1087c611ab9492db77d0c2d78235dedbc1f0a241ffe188684c97946314d4` /
+  `1acc5a482edb7d730b8fb6a571dd47848c6fbadf40f8ee05c62cc4963b7b3072` /
+  `79ce996cc57496727bec0e710ed46cc79e6220c7ef465554d3035e7c1dca8582` /
+  `515b098b89ba17c455542194c17bb5883e5e6f2147bcc69a0f9984d4a47274d4` /
+  `6cbf9e4446db8f4bf348e3c8872944420ad9f852a76a1b799d1b41ec74707fce`.
+* Nomic-480: `6e8280554484bc77964caf216638bbc5029a06250c7aaf0938aa12c8fd6f3391` /
+  `664fd6056f13a9d05dcb8aef7e09486b43c5a1e9a48f6b18e1e44e6e5f25102e` /
+  `e26bdc12a25538f9dee777d3e9092dcc304eaf10789fb3b1e72a5272db866f44` /
+  `9234f9914c8e55d4e4dd38dad6170afced425b88e584ffbb268659cb258a8dc2` /
+  `48083f643bf5d4d2d76e6a3e71d1359fe5f7049b9c9a6ec62b02043b2be52571`.
+* Nomic-2,048: `f4103cd9f2f524ea341161accfb2508ac5d77166899cd4cde093d53a651560ff` /
+  `695bf477130ce0f471764ae3cdf004dcd9271758227bc33a77c4f45f611e3d5c` /
+  `092d45cdcfd2660be5c52acc21002925e68428fe9b95f3aa216f597430573cd5` /
+  `6dd16201aec51f5777a8a08c092291af6567149393dd0b5b4baf347a727553ac` /
+  `e3499e6c10732ac69e4c3832ef90a2745b96467024746b20d699ba48a8473071`.
+
+Embedding latency is not yet claimed. This transport version printed shard timings but did not
+persist them, and filesystem timestamps are not promoted to evidence. Resumable timing sidecars
+plus quiet-machine repeated runs remain the latency/electricity gate.
 
 == Quality and adoption gate
 
