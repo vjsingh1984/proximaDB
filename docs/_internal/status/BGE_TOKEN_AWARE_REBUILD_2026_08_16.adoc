@@ -1,7 +1,7 @@
 = BGE Token-Aware Corpus Rebuild Evidence
 :toc:
 
-Status: in progress
+Status: complete
 
 == Scope
 
@@ -55,7 +55,7 @@ with max 480 on both. The discovered mismatch was therefore provenance/configura
 this corpus, not a boundary or stored-text change. PR #1662 made runtime resolution authoritative;
 PR #1663 shares counts only when the exact tokenizer fingerprint and role-rendered input match.
 
-== Embedding checkpoint
+== Embedding evidence
 
 The 384-d control is complete over all 765,406 shared texts. The final manifest is
 `bge384/bge384.embedding.manifest.json`, SHA-256
@@ -84,11 +84,54 @@ Wall-clock shard durations are operational telemetry only. Other repository buil
 contended for CPU and unified memory during embedding, while shard identity, vectors and PCA are
 contention-invariant. No throughput comparison is derived from those durations.
 
-Checkpoint state: the pinned 768-d BGE-base MPS embedding is in progress against the same shared
-`texts.json`. Its final manifest and the paired 768-d PCA comparison remain pending. Multi-gigabyte
-vector binaries and resumable `.npy` shards remain in benchmark storage; Git records their
-reproducible contracts, hashes and findings rather than copying generated vectors into the source
-repository.
+The paired 768-d control is also complete over all 765,406 shared texts. The final manifest is
+`bge768/bge768.embedding.manifest.json`, SHA-256
+`59fd7158536d260df02653f1c17046226f22d7e34d95475377d201a691d83c88`. It binds the
+same sealed corpus SHA-256 and base-model contract fingerprint above to pinned model revision
+`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`, dimension 768, normalized embeddings, backend
+`torch`, resolved device `mps:0`, compute/artifact dtype `float32`, and 20,000-row resumable
+shards. The 1,000-row query split is again a `geometry_probe`; quantization clipped zero query
+values at either bound.
+
+The complete 768-d corpus PCA spectrum is:
+
+* `T=.70 -> 113`
+* `T=.79 -> 164`
+* `T=.85 -> 213`
+* `T=.90 -> 270`
+* `T=.95 -> 359`
+
+The comparable legacy truncated-corpus values were `T=.70 -> 112` and `T=.79 -> 163`. As for the
+384-d control, the token-aware corpus moved both legacy comparison thresholds by only one
+component. The paired result therefore does not support a material full-corpus PCA-diversity shift
+from removing truncation. It does not establish retrieval-quality equivalence: both outputs remain
+qrels-free geometry probes.
+
+Host contention exposed an MPS execution-stability seam during the long 768-d pass. The first 12
+canonical shards used provider batch size 64. Offsets 240,000 through 580,000 used batch size 16,
+and offsets 600,000 through 760,000 used the same batch size with fresh-process, 1,000-row micro
+checkpoints before atomic assembly into the canonical 20,000-row shards. Every path used the same
+pinned model revision, document role, contract fingerprint, normalization, `torch`/`mps:0`
+runtime and float32 artifact dtype. The authoritative transport subsequently revalidated all 39
+canonical shard shapes and dtypes before emitting the final binaries, manifest and spectrum.
+
+This execution change was pressure-tested rather than assumed. Across identical 512-text batches,
+batch sizes 16, 32 and 64 had maximum elementwise drift `2.1141022443771362e-07`, minimum cosine
+`0.9999998807907104`, and mean cosine `1.0`. Re-embedding the actual offset-220,000 shard sample
+at batch size 16 and comparing it with its stored batch-64 output found maximum absolute drift
+`1.564621925354004e-07`, mean absolute drift `1.980869912543426e-10`, minimum cosine
+`0.9999998807907104`, and mean cosine `1.0`. These are numerically equivalent float32 execution
+partitions for the present geometry evidence; they are not byte-identical outputs.
+
+The canonical shard identity currently records model, revision, contract, role, runtime, dtype and
+transport but not execution batch size or process partitioning. That omission did not change this
+result because equivalence was measured, but it is an operational-provenance follow-up: future
+transports should record execution parameters separately from semantic artifact identity. Timing
+remains excluded because the host was not quiet.
+
+Multi-gigabyte vector binaries and resumable `.npy` shards remain in benchmark storage. Git records
+their reproducible contracts, hashes and findings rather than copying generated vectors into the
+source repository.
 
 == Interpretation and bounded follow-up
 
