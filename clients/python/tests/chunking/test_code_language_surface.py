@@ -19,6 +19,7 @@ from proximadb_sdk.chunking_strategies.code import (
     COVERED_WITHOUT_SYMBOLS,
     EXTENSION_TO_LANGUAGE,
     SYMBOL_EXTRACTING_LANGUAGES,
+    WITHDRAWN_LANGUAGES,
     CodeChunkingConfig,
     CodeChunkingStrategy,
 )
@@ -110,8 +111,10 @@ def test_r1_advertised_languages_extract_symbols(language):
     )
 
 
-@pytest.mark.parametrize("language", sorted(COVERED_WITHOUT_SYMBOLS))
-def test_unsupported_languages_are_still_covered(language):
+@pytest.mark.parametrize(
+    "language", sorted(COVERED_WITHOUT_SYMBOLS | WITHDRAWN_LANGUAGES)
+)
+def test_symbol_less_languages_are_still_covered(language):
     """No symbols is acceptable; losing the file is not.
 
     This is the assertion that makes the honest split safe to state. A language
@@ -126,7 +129,9 @@ def test_unsupported_languages_are_still_covered(language):
     ), f"{language} covered only {covered} of {len(source)} characters"
 
 
-@pytest.mark.parametrize("language", sorted(COVERED_WITHOUT_SYMBOLS))
+@pytest.mark.parametrize(
+    "language", sorted(COVERED_WITHOUT_SYMBOLS | WITHDRAWN_LANGUAGES)
+)
 def test_r8_non_symbol_chunks_are_distinguishable(language):
     """A window over unparsed text must not masquerade as a symbol chunk.
 
@@ -143,17 +148,37 @@ def test_r8_non_symbol_chunks_are_distinguishable(language):
 
 
 def test_the_two_sets_partition_the_advertised_map():
-    """The claim and the gap together must account for everything advertised.
+    """The claim and the gap together must equal the advertised map, EXACTLY.
 
-    Otherwise a language can be dropped from both and vanish from the record --
-    which is how an overclaim becomes invisible rather than false.
+    Both directions, because each catches a different way the record rots. A
+    language advertised but in neither set has escaped classification -- an
+    overclaim that is invisible rather than false. A language in a set but not
+    advertised is the opposite: a claim about something we no longer ship, which
+    is what S4's narrowing of the extension map silently created and this
+    assertion now prevents. Equality is the only form with no third state.
     """
     advertised = set(EXTENSION_TO_LANGUAGE.values())
     accounted = SYMBOL_EXTRACTING_LANGUAGES | COVERED_WITHOUT_SYMBOLS
-    assert (
-        not advertised - accounted
-    ), f"unaccounted languages: {advertised - accounted}"
+    assert accounted == advertised, (
+        f"unaccounted: {advertised - accounted}; "
+        f"claimed but not advertised: {accounted - advertised}"
+    )
     assert not SYMBOL_EXTRACTING_LANGUAGES & COVERED_WITHOUT_SYMBOLS
+
+
+def test_withdrawn_languages_are_not_advertised():
+    """Withdrawn means withdrawn: absent from the map, still chunked.
+
+    The set exists to keep S3's decision legible and its fallback behaviour
+    under test. If one is ever restored to EXTENSION_TO_LANGUAGE it must leave
+    this set in the same commit, or the record says two contradictory things.
+    """
+    advertised = set(EXTENSION_TO_LANGUAGE.values())
+    assert not WITHDRAWN_LANGUAGES & advertised, (
+        "withdrawn languages back in the advertised map: "
+        f"{sorted(WITHDRAWN_LANGUAGES & advertised)}"
+    )
+    assert not WITHDRAWN_LANGUAGES & SYMBOL_EXTRACTING_LANGUAGES
 
 
 def test_every_advertised_language_has_a_sample():

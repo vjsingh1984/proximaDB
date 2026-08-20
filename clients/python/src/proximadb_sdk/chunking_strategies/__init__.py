@@ -8,16 +8,18 @@ This package provides a clean interface for text chunking with proper separation
 - Extensible interface for custom strategies
 
 For code-aware chunking, use the CodeChunkingStrategy which provides:
-- AST-based symbol extraction for the languages in
-  `code.SYMBOL_EXTRACTING_LANGUAGES` (16, measured and asserted in CI), delegated
-  to the shared `victor-codegraph` package. Other detected languages are still
-  chunked and covered, but carry no symbol metadata -- see
-  `code.COVERED_WITHOUT_SYMBOLS`.
-- Symbol extraction (functions, classes, methods, etc.)
-- Relationship extraction (calls, imports, inheritance)
-- Pluggable architecture for adding new language support
-- Parser caching and performance metrics
-- Robust error handling with fallback strategies
+- AST-based symbol and relation extraction, delegated to the shared
+  `victor-codegraph` package (ADR-029). Language support is not asserted here
+  but measured, and the three states are named separately so none can hide in
+  another: `code.SYMBOL_EXTRACTING_LANGUAGES` (16) genuinely yields symbols;
+  `code.COVERED_WITHOUT_SYMBOLS` (2) is detected and chunked but symbol-less;
+  `code.WITHDRAWN_LANGUAGES` (6) is no longer advertised at all, yet still
+  chunks through the text fallback rather than being dropped.
+- Byte-basis offsets, declared via `offset_basis` rather than inferred.
+- `max_chunk_size` honoured, so an oversized symbol splits instead of being
+  truncated or rejected by the embedding provider.
+- Requires the `codegraph` extra; without it, code chunking fails loudly naming
+  it rather than degrading to unlabelled text windows.
 """
 
 from .base import (
@@ -43,6 +45,7 @@ from .code import (
     COVERED_WITHOUT_SYMBOLS,
     EXTENSION_TO_LANGUAGE,
     SYMBOL_EXTRACTING_LANGUAGES,
+    WITHDRAWN_LANGUAGES,
     CodeChunkingConfig,
     CodeChunkingStrategy,
     CodeRelation,
@@ -210,6 +213,7 @@ __all__ = [
     "EXTENSION_TO_LANGUAGE",
     "SYMBOL_EXTRACTING_LANGUAGES",
     "COVERED_WITHOUT_SYMBOLS",
+    "WITHDRAWN_LANGUAGES",
     # Parser utilities - Errors
     "ParserError",
     "ParseError",

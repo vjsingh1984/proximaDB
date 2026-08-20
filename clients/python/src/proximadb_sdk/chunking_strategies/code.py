@@ -1,27 +1,32 @@
-"""
-Code-aware chunking strategy using Tree-sitter for AST parsing.
+"""Code chunking: a thin, honest adapter over the shared ``victor-codegraph`` package.
 
-.. deprecated:: TD-CG2 (ADR-029)
-    This in-SDK code chunker duplicates the tree-sitter symbol+relation chunker that
-    now lives in the shared, neutral ``victor-codegraph`` package (Victor owns it; the
-    ProximaDB SDK, Victor, and AnvaiOps all consume it). When ``victor_codegraph`` is
-    installed (``pip install 'proximadb[codegraph]'``), ``CodeChunkingStrategy``
-    **delegates** to it; otherwise it falls back to the legacy in-file implementation
-    below. The legacy implementation is slated for deletion one minor release after
-    ``victor-codegraph`` is published — prefer ``from victor_codegraph import chunk``.
+This module owns no parser. Symbol and relation extraction lives in
+``victor-codegraph`` (ADR-029 D1/D2: one chunker, three consumers, zero
+duplication), and TD-CG2 S4 deleted the 21 in-SDK tree-sitter parser classes
+that duplicated it — non-functionally, which is why the deletion was net
+positive rather than a trade.
 
-This module provides AST-based code chunking that produces semantic code units
-(functions, classes, methods) with full structural awareness and relationship extraction.
+What the SDK still owes a caller, and therefore what remains here:
 
-Unlike text-based chunking, this:
-- Respects code structure (never splits a function mid-statement)
-- Extracts symbols with fully qualified names
-- Identifies relationships (calls, imports, inheritance)
-- Preserves documentation and type annotations
+* the ``TextChunk`` shape and its **declared offset contract** — this path
+  publishes UTF-8 **byte** offsets (``offset_basis="byte"``), unlike every text
+  strategy, which publishes character offsets. One type, two units, so the unit
+  is stated rather than inferred.
+* ``max_chunk_size`` enforcement, forwarded to a package that honours it (the
+  deleted path measured 10.6x over a 400-character budget).
+* the neutral ``CodeSymbol``/``CodeRelation`` model, kept in-tree so importing
+  this module never depends on an optional extra.
+
+Without the extra, code chunking **fails loudly** naming it. It previously fell
+through to the broken in-SDK parsers, and silently returning text windows looks
+like working code chunking while extracting no symbols at all.
+
+Callers wanting the raw Code Property Graph rather than ``TextChunk`` objects should
+import ``victor_codegraph`` directly; this adapter exists for callers already
+holding a ProximaDB chunking config.
 """
 
 import os
-import warnings
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
@@ -40,19 +45,6 @@ try:  # pragma: no cover - availability depends on the optional extra
     import victor_codegraph as _victor_codegraph
 except Exception:  # ImportError, or a partial/native load failure
     _victor_codegraph = None
-
-
-def _warn_code_chunker_deprecated() -> None:
-    """Steer callers toward the shared ``victor-codegraph`` package (ADR-029 / TD-CG2)."""
-
-    warnings.warn(
-        "proximadb_sdk.chunking_strategies.code is deprecated (TD-CG2): the tree-sitter "
-        "code chunker now lives in the shared 'victor-codegraph' package. Install "
-        "`proximadb[codegraph]` and prefer `from victor_codegraph import chunk`. The "
-        "legacy in-SDK implementation will be removed in a future minor release.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
 
 
 class CodeSymbolType(IntEnum):
@@ -307,13 +299,32 @@ SYMBOL_EXTRACTING_LANGUAGES: frozenset[str] = frozenset(
     }
 )
 
-#: Detected and chunked, but yielding no symbols today. Named explicitly so the
-#: gap is visible in code rather than discovered by a user. `ruby` and `perl`
-#: are upstream gaps in the shared package's node tables; `haskell` and `elixir`
-#: have no grammar entry there at all; `json`, `xml` and `yaml` are data
-#: formats, for which "symbol" is not a meaningful notion.
-COVERED_WITHOUT_SYMBOLS: frozenset[str] = frozenset(
-    {"ruby", "perl", "haskell", "elixir", "sql", "json", "xml", "yaml"}
+#: ADVERTISED, detected and chunked, but yielding no symbols today. Named
+#: explicitly so the gap is visible in code rather than discovered by a user:
+#: `ruby` is an upstream gap in the shared package's node tables (its `class` /
+#: `module` / `method` node types are missing from the walker), and `sql` has a
+#: grammar but no symbol notion the walker recognises.
+#:
+#: Together with SYMBOL_EXTRACTING_LANGUAGES this **exactly** partitions
+#: EXTENSION_TO_LANGUAGE -- asserted in both directions, so neither a widened
+#: upstream map nor a withdrawn language can slip through unclassified.
+COVERED_WITHOUT_SYMBOLS: frozenset[str] = frozenset({"ruby", "sql"})
+
+#: Advertised once, withdrawn by TD-CG2 S3/S4, and kept here as the record of
+#: that decision. `perl` is an upstream node-table gap; `haskell` and `elixir`
+#: have no grammar entry in the shared package at all; `json`, `xml` and `yaml`
+#: are data formats, for which "symbol" is not a meaningful notion.
+#:
+#: Withdrawn is not discarded. A file with one of these extensions still chunks,
+#: through the text fallback, labelled `chunk_type="code_fallback"` so a
+#: consumer building a code graph can tell it apart from a symbol -- and a test
+#: holds that line, because "unsupported" quietly meaning "dropped" is the
+#: defect S0 found hiding behind the red suite.
+#:
+#: They are deliberately NOT in EXTENSION_TO_LANGUAGE: claiming a language whose
+#: parser returns nothing is the overclaim this whole slice removed.
+WITHDRAWN_LANGUAGES: frozenset[str] = frozenset(
+    {"perl", "haskell", "elixir", "json", "xml", "yaml"}
 )
 
 
@@ -328,7 +339,6 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
     """
 
     def __init__(self, config: CodeChunkingConfig | None = None):
-        _warn_code_chunker_deprecated()
         self.config = config or CodeChunkingConfig()
         # Languages this strategy is allowed to parse (config-scoped). The set
         # comes from the installed parser package, so it cannot claim a language

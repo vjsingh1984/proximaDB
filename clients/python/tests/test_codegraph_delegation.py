@@ -1,9 +1,9 @@
-"""TD-CG2 (ADR-029): the in-SDK code chunker is deprecated and delegates to the shared
-``victor-codegraph`` package when the ``codegraph`` extra is installed.
+"""TD-CG2 (ADR-029): the in-SDK code chunker delegates to the shared
+``victor-codegraph`` package, which is now its only implementation.
 
-The deprecation-warning test runs always. The delegation tests are guarded with
-``importorskip`` so the suite stays green where the optional extra isn't installed
-(e.g. ProximaDB CI), and assert real delegation where it is.
+The delegation tests are guarded with ``importorskip`` so the suite stays green
+where the optional extra isn't installed (e.g. ProximaDB CI), and assert real
+delegation where it is.
 """
 
 from __future__ import annotations
@@ -20,9 +20,24 @@ from proximadb_sdk.chunking_strategies.code import (
 SAMPLE = "def a():\n    return b()\n\n\ndef b():\n    return 1\n"
 
 
-def test_code_chunker_emits_deprecation_warning():
-    with pytest.warns(DeprecationWarning, match="victor-codegraph"):
+def test_code_chunker_no_longer_warns_deprecated():
+    """The deprecation was retired with the thing it deprecated (TD-CG2 S5).
+
+    The warning was ADR-029's steer off a duplicate parser toward the shared
+    package. S4 deleted that parser, so this class IS the consumption ADR-029
+    asked for -- and a DeprecationWarning means "this will be removed", which is
+    now false for the only supported code-chunking entry point in the SDK.
+    A warning nobody can act on trains callers to filter warnings.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         CodeChunkingStrategy()
+    assert not [
+        w
+        for w in caught
+        if issubclass(w.category, DeprecationWarning)
+        and "victor-codegraph" in str(w.message)
+    ]
 
 
 def test_chunk_still_returns_textchunks():
