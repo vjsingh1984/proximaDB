@@ -139,6 +139,47 @@ pub struct ProximaObjectStore {
     backend: ObjectBackendKind,
 }
 
+/// Process-global observer for reads issued through [`ProximaObjectStore`].
+///
+/// **Why this exists.** ProximaDB has two object-storage stacks. The
+/// `FileSystem` stack records every ranged read into the per-query `IoTrace` at
+/// its leaf backends. This one — `ProximaObjectStore` over upstream
+/// `object_store` — records **nothing**, so graph cold payloads, graph cold
+/// segments, the Iceberg bridge and `RangedSegmentReader` are all invisible to
+/// the trace. Every per-query I/O claim the system makes today therefore covers
+/// only the vector and relational paths.
+///
+/// **Why a process-global rather than constructor injection.** `from_url` is
+/// called from a dozen scattered sites (graph stores, cluster leases, tests).
+/// Threading a recorder through each one would leave any missed site silently
+/// untraced — which is the same failure shape as the gap being closed. A single
+/// install point cannot be partially applied. This mirrors
+/// `counting::global_counters()` and `init_coarse_probe_settings`.
+///
+/// **Layering.** [`IoRecorder`] lives in `proximadb-storage-filesystem-types`,
+/// a leaf this crate already depends on, so the root can inject an impl that
+/// writes into its own `io_trace` without this storage-layer crate ever
+/// depending up into `crates/modalities`.
+static IO_RECORDER: std::sync::OnceLock<
+    std::sync::Arc<dyn proximadb_storage_filesystem_types::counting::IoRecorder>,
+> = std::sync::OnceLock::new();
+
+/// Install the process-wide read observer. First call wins; later calls are
+/// ignored so a test cannot silently displace the server's recorder.
+///
+/// Unset (the default) means no recording at all — byte-identical to the
+/// behaviour before this hook existed.
+pub fn install_io_recorder(
+    recorder: std::sync::Arc<dyn proximadb_storage_filesystem_types::counting::IoRecorder>,
+) {
+    let _ = IO_RECORDER.set(recorder);
+}
+
+fn io_recorder()
+-> Option<&'static std::sync::Arc<dyn proximadb_storage_filesystem_types::counting::IoRecorder>> {
+    IO_RECORDER.get()
+}
+
 impl ProximaObjectStore {
     /// Open a store from a URL (see [`store_for_url`]).
     pub fn from_url(url: &str) -> Result<Self, StorageError> {
@@ -285,15 +326,24 @@ impl ProximaObjectStore {
             .get(&self.full_path(path))
             .await
             .map_err(|e| os_err("get", e))?;
-        result.bytes().await.map_err(|e| os_err("get(bytes)", e))
+        let bytes = result.bytes().await.map_err(|e| os_err("get(bytes)", e))?;
+        if let Some(recorder) = io_recorder() {
+            recorder.record_full_read(bytes.len() as u64);
+        }
+        Ok(bytes)
     }
 
     /// Read a byte range of the object at `path` (the warehouse footer/row-group read path).
     pub async fn get_range(&self, path: &Path, range: Range<u64>) -> Result<Bytes, StorageError> {
-        self.store
+        let bytes = self
+            .store
             .get_range(&self.full_path(path), range)
             .await
-            .map_err(|e| os_err("get_range", e))
+            .map_err(|e| os_err("get_range", e))?;
+        if let Some(recorder) = io_recorder() {
+            recorder.record_range_read(bytes.len() as u64);
+        }
+        Ok(bytes)
     }
 
     /// Read **multiple** byte ranges of the object at `path` in one batched call.
@@ -305,10 +355,22 @@ impl ProximaObjectStore {
         path: &Path,
         ranges: &[Range<u64>],
     ) -> Result<Vec<Bytes>, StorageError> {
-        self.store
+        let buffers = self
+            .store
             .get_ranges(&self.full_path(path), ranges)
             .await
-            .map_err(|e| os_err("get_ranges", e))
+            .map_err(|e| os_err("get_ranges", e))?;
+        if let Some(recorder) = io_recorder() {
+            // Upstream `object_store::get_ranges` coalesces internally at a
+            // hard-coded 1 MiB gap and does not report how many HTTP requests it
+            // actually issued, so the physical count is NOT observable here.
+            // Reporting `ranges.len()` is the honest upper bound: it can only
+            // over-state requests, never hide them. Recorded as such rather than
+            // silently presented as measured truth.
+            let bytes: u64 = buffers.iter().map(|b| b.len() as u64).sum();
+            recorder.record_batched_ranges(ranges.len() as u64, bytes);
+        }
+        Ok(buffers)
     }
 
     /// Fetch object metadata (size, last-modified, e-tag) for `path` WITHOUT
@@ -714,5 +776,98 @@ mod tests {
         }
         assert_eq!(&os.get(&p).await.expect("get")[..], b"cool-gcs");
         let _ = os.delete(&p).await;
+    }
+}
+
+#[cfg(test)]
+mod io_recorder_tests {
+    //! Stack B was invisible: `ProximaObjectStore` goes straight to upstream
+    //! `object_store` and recorded nothing, so graph cold storage, the Iceberg
+    //! bridge and `RangedSegmentReader` contributed no bytes and no ranged GETs
+    //! to any per-query trace.
+    use super::{ProximaObjectStore, install_io_recorder};
+    use proximadb_storage_filesystem_types::counting::IoRecorder;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Debug, Default)]
+    struct SpyRecorder {
+        full_reads: AtomicU64,
+        range_reads: AtomicU64,
+        batched_calls: AtomicU64,
+        reported_gets: AtomicU64,
+        bytes: AtomicU64,
+    }
+
+    impl IoRecorder for SpyRecorder {
+        fn record_full_read(&self, bytes: u64) {
+            self.full_reads.fetch_add(1, Ordering::Relaxed);
+            self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        }
+        fn record_range_read(&self, bytes: u64) {
+            self.range_reads.fetch_add(1, Ordering::Relaxed);
+            self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        }
+        fn record_batched_ranges(&self, physical_gets: u64, bytes: u64) {
+            self.batched_calls.fetch_add(1, Ordering::Relaxed);
+            self.reported_gets
+                .fetch_add(physical_gets, Ordering::Relaxed);
+            self.bytes.fetch_add(bytes, Ordering::Relaxed);
+        }
+    }
+
+    /// Reads through this stack must reach the recorder at all — the whole point
+    /// of the hook. Covers the three read shapes graph/Iceberg actually use:
+    /// whole-object, single range, and batched ranges.
+    #[tokio::test]
+    async fn reads_through_the_object_store_reach_the_recorder() {
+        let spy = Arc::new(SpyRecorder::default());
+        // First install wins process-wide; if another test installed first this
+        // assertion tells us plainly rather than failing somewhere confusing.
+        install_io_recorder(spy.clone());
+        if !Arc::ptr_eq(
+            &(super::io_recorder()
+                .expect("a recorder is installed")
+                .clone()),
+            &(spy.clone() as Arc<dyn IoRecorder>),
+        ) {
+            eprintln!("another recorder already owns the process slot; skipping");
+            return;
+        }
+
+        let store = ProximaObjectStore::from_url("memory://").expect("memory store");
+        let path = object_store::path::Path::from("probe");
+        store
+            .put(&path, bytes::Bytes::from_static(&[7u8; 512]))
+            .await
+            .expect("put");
+
+        store.get(&path).await.expect("whole-object read");
+        assert_eq!(spy.full_reads.load(Ordering::Relaxed), 1);
+
+        store.get_range(&path, 0..64).await.expect("ranged read");
+        assert_eq!(spy.range_reads.load(Ordering::Relaxed), 1);
+
+        store
+            .get_ranges(&path, &[0..16, 32..48, 400..416])
+            .await
+            .expect("batched read");
+        assert_eq!(spy.batched_calls.load(Ordering::Relaxed), 1);
+
+        // The reported request count is an UPPER BOUND, not a measurement:
+        // upstream coalesces internally at a hard-coded 1 MiB gap and never says
+        // how many HTTP requests it issued. Three logical ranges 400 bytes apart
+        // certainly became ONE upstream request, yet we report 3 — over-stating
+        // cost, never hiding it. Pinned so nobody later mistakes it for measured
+        // truth or "fixes" it into silence.
+        assert_eq!(
+            spy.reported_gets.load(Ordering::Relaxed),
+            3,
+            "batched ranges are reported as an upper bound of one per logical range"
+        );
+        assert!(
+            spy.bytes.load(Ordering::Relaxed) > 0,
+            "bytes must be recorded"
+        );
     }
 }

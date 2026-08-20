@@ -315,6 +315,55 @@ impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceFsRecor
     }
 }
 
+/// Records `ProximaObjectStore` reads into the per-query `IoTrace`.
+///
+/// **Deliberately different from [`IoTraceFsRecorder`], and the difference is
+/// the whole point.** That one records only the op verb, because the leaf
+/// `FileSystem` backends already accounted `range_gets` and `bytes_read` before
+/// it runs — recording again would double-count.
+///
+/// Nothing accounts for the `ProximaObjectStore` stack. It goes straight to
+/// upstream `object_store`, bypassing our leaf backends entirely, so this
+/// recorder is the **sole** source and must record the physical counters in
+/// full. Copying the FileSystem recorder's "verb only" behaviour here would
+/// leave graph cold storage, the Iceberg bridge and `RangedSegmentReader`
+/// counted as operations that moved zero bytes and issued zero ranged GETs.
+#[derive(Debug)]
+pub struct IoTraceObjectStoreRecorder;
+
+impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceObjectStoreRecorder {
+    fn record_full_read(&self, bytes: u64) {
+        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+
+    fn record_range_read(&self, bytes: u64) {
+        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        crate::observability::io_trace::record_range_gets(1);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+
+    fn record_batched_ranges(&self, physical_gets: u64, bytes: u64) {
+        // `physical_gets` here is an UPPER BOUND, not a measurement: upstream
+        // `object_store::get_ranges` coalesces internally at a hard-coded 1 MiB
+        // gap and never reports how many HTTP requests it issued. Over-stating
+        // requests is the safe direction — it can never hide cost — but this
+        // number must not be compared naively against the FileSystem stack's
+        // measured counts.
+        for _ in 0..physical_gets {
+            crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        }
+        crate::observability::io_trace::record_range_gets(physical_gets);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
+    }
+}
+
 impl FilesystemFactory {
     fn maybe_wrap_with_encryption(
         &self,
