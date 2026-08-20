@@ -134,7 +134,7 @@ jobs:
           # Full history so dorny/paths-filter can reach the merge-base across a
           # large develop→main gap (shallow --deepen fails: "shallow file has changed").
           fetch-depth: 0
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -1244,7 +1244,7 @@ jobs:
 
       - name: Upload Python Trivy Results
         if: needs.changes.outputs.python == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'python-trivy-results.sarif'
           category: 'python-sdk-security'
@@ -1252,7 +1252,7 @@ jobs:
 
       - name: Upload Go Trivy Results
         if: needs.changes.outputs.go_sdk == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'go-trivy-results.sarif'
           category: 'go-sdk-security'
@@ -1260,7 +1260,7 @@ jobs:
 
       - name: Upload Node.js Trivy Results
         if: needs.changes.outputs.nodejs_sdk == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'nodejs-trivy-results.sarif'
           category: 'nodejs-sdk-security'
@@ -1268,7 +1268,7 @@ jobs:
 
       - name: Upload Rust Trivy Results
         if: needs.changes.outputs.rust_sdk == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'rust-trivy-results.sarif'
           category: 'rust-sdk-security'
