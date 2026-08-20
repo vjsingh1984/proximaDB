@@ -29,7 +29,7 @@ use axum::{
 use proximadb_catalog::{CatalogColumn, CatalogNamespace, CatalogTableSchema};
 use proximadb_data_model::ProximaType;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::catalog::{Catalog, CatalogManager, TableIdentifier};
 use crate::errors::{ApiError, ApiResult};
@@ -41,6 +41,8 @@ use crate::proto::proximadb_v1::{
     GetCatalogRequest, GetCatalogResponse, GetTableRequest, GetTableResponse, ListCatalogsRequest,
     ListCatalogsResponse, ListTablesRequest, ListTablesResponse, Namespace, TableSchema,
 };
+use crate::security::rbac_service::{UnifiedPermission, UnifiedUserContext};
+use axum::Extension;
 
 // =============================================================================
 // State for Catalog API
@@ -61,6 +63,47 @@ impl CatalogApiState {
 }
 
 // =============================================================================
+// Authorization
+// =============================================================================
+
+/// Require cluster-operator authority for the external-catalog API.
+///
+/// TD-CAT-8: every handler in this module does real work — `drop_catalog`
+/// unregisters, `create_namespace`/`create_table` mutate the target catalog —
+/// and **none of them checked authorization**. The unified auth middleware
+/// (`rest/server.rs:919`) authenticates the request, but authentication is not
+/// authorization: any authenticated principal could have dropped a catalog.
+///
+/// It has not bitten only because the router was unreachable — see the path fix
+/// in `configure_routes` — and gated behind `enterprise-catalogs`. Fixing the
+/// path without this would have turned a latent bug into a live one.
+///
+/// Same permission set and fail-closed shape as
+/// [`abac_admin::authorize_operator`](super::abac_admin::authorize_operator),
+/// returning this module's `ApiError` rather than the operator error envelope.
+fn require_catalog_operator(user_context: Option<&UnifiedUserContext>) -> ApiResult<String> {
+    let Some(ctx) = user_context else {
+        return Err(ApiError::Unauthorized(
+            "auth context not present — middleware misconfigured".to_string(),
+        ));
+    };
+    if ctx
+        .effective_permissions
+        .contains(&UnifiedPermission::SystemAdmin)
+        || ctx
+            .effective_permissions
+            .contains(&UnifiedPermission::ConfigureSystem)
+    {
+        Ok(ctx.user_id.clone())
+    } else {
+        Err(ApiError::Forbidden(
+            "external catalog endpoints require SystemAdmin or ConfigureSystem permission"
+                .to_string(),
+        ))
+    }
+}
+
+// =============================================================================
 // Catalog Management Endpoints
 // =============================================================================
 
@@ -68,9 +111,11 @@ impl CatalogApiState {
 ///
 /// POST /api/v1/catalogs
 pub async fn create_catalog(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Json(req): Json<CreateCatalogRequest>,
 ) -> ApiResult<Json<CreateCatalogResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     info!(
         "Creating catalog: {}",
         req.config
@@ -98,7 +143,7 @@ pub async fn create_catalog(
     }
 
     // Convert proto config to ProximaDB catalog config
-    convert_proto_catalog_config(&config)?;
+    create_configured_catalog(&state.catalog_manager, &config).await?;
 
     // Catalog registration: config validated, manager notified.
     // Full catalog persistence handled by the CatalogManager backend.
@@ -112,9 +157,11 @@ pub async fn create_catalog(
 ///
 /// GET /api/v1/catalogs/{name}
 pub async fn get_catalog(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path(name): Path<String>,
 ) -> ApiResult<Json<GetCatalogResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     debug!("Getting catalog: {}", name);
 
     let _catalog = state
@@ -134,8 +181,10 @@ pub async fn get_catalog(
 ///
 /// GET /api/v1/catalogs
 pub async fn list_catalogs(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
 ) -> ApiResult<Json<ListCatalogsResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     debug!("Listing catalogs");
 
     // List catalogs from the manager. Currently returns default catalog.
@@ -155,9 +204,11 @@ pub async fn list_catalogs(
 ///
 /// DELETE /api/v1/catalogs/{name}
 pub async fn drop_catalog(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path(name): Path<String>,
 ) -> ApiResult<Json<DropCatalogResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     info!("Dropping catalog: {}", name);
 
     let dropped = state
@@ -177,10 +228,12 @@ pub async fn drop_catalog(
 ///
 /// POST /api/v1/catalogs/{catalog}/namespaces
 pub async fn create_namespace(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path(catalog): Path<String>,
     Json(req): Json<CreateNamespaceRequest>,
 ) -> ApiResult<Json<CreateNamespaceResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     info!(
         "Creating namespace: {}.{}",
         catalog,
@@ -210,9 +263,11 @@ pub async fn create_namespace(
 ///
 /// GET /api/v1/catalogs/{catalog}/namespaces
 pub async fn list_namespaces(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path(catalog): Path<String>,
 ) -> ApiResult<Json<CatalogListNamespacesResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     debug!("Listing namespaces for catalog: {}", catalog);
 
     let catalog = state
@@ -245,9 +300,11 @@ pub async fn list_namespaces(
 ///
 /// DELETE /api/v1/catalogs/{catalog}/namespaces/{namespace}
 pub async fn drop_namespace(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path((catalog, namespace_str)): Path<(String, String)>,
 ) -> ApiResult<Json<DropNamespaceResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     info!("Dropping namespace: {}.{}", catalog, namespace_str);
 
     let namespace: Vec<String> = namespace_str.split('.').map(String::from).collect();
@@ -274,10 +331,12 @@ pub async fn drop_namespace(
 ///
 /// POST /api/v1/catalogs/{catalog}/tables
 pub async fn create_table(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path(catalog): Path<String>,
     Json(req): Json<CreateTableRequest>,
 ) -> ApiResult<Json<CreateTableResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     info!(
         "Creating table: {}.{}.{}",
         catalog,
@@ -313,9 +372,11 @@ pub async fn create_table(
 ///
 /// GET /api/v1/catalogs/{catalog}/tables
 pub async fn list_tables(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path(catalog): Path<String>,
 ) -> ApiResult<Json<ListTablesResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     debug!("Listing tables for catalog: {}", catalog);
 
     let catalog = state
@@ -340,9 +401,11 @@ pub async fn list_tables(
 ///
 /// GET /api/v1/catalogs/{catalog}/tables/{table}
 pub async fn get_table(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path((catalog, table_str)): Path<(String, String)>,
 ) -> ApiResult<Json<GetTableResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     debug!("Getting table: {}.{}", catalog, table_str);
 
     // Parse namespace.table format
@@ -378,9 +441,11 @@ pub async fn get_table(
 ///
 /// DELETE /api/v1/catalogs/{catalog}/tables/{table}
 pub async fn drop_table(
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<CatalogApiState>,
     Path((catalog, table_str)): Path<(String, String)>,
 ) -> ApiResult<Json<DropTableResponse>> {
+    let _operator = require_catalog_operator(user_context.as_ref().map(|e| &e.0))?;
     info!("Dropping table: {}.{}", catalog, table_str);
 
     // Parse namespace.table format
@@ -416,28 +481,26 @@ pub async fn drop_table(
 pub fn configure_routes() -> Router<CatalogApiState> {
     Router::new()
         // Catalog operations
-        .route("/api/v1/catalogs", axum::routing::post(create_catalog))
-        .route("/api/v1/catalogs", axum::routing::get(list_catalogs))
-        .route(
-            "/api/v1/catalogs/{name}",
-            get(get_catalog).delete(drop_catalog),
-        )
+        // Paths are relative: this router is nested under `/api/v1/catalogs`
+        // in `handlers.rs`. They used to repeat the prefix, which nested to
+        // `/api/v1/catalogs/api/v1/catalogs/...` — the documented endpoints did
+        // not exist at their documented paths. Two `.route("/")` calls would
+        // also panic on duplicate registration, so the pair is merged.
+        .route("/", axum::routing::post(create_catalog).get(list_catalogs))
+        .route("/{name}", get(get_catalog).delete(drop_catalog))
         // Namespace operations
         .route(
-            "/api/v1/catalogs/{catalog}/namespaces",
+            "/{catalog}/namespaces",
             post(create_namespace).get(list_namespaces),
         )
         .route(
-            "/api/v1/catalogs/{catalog}/namespaces/{namespace}",
+            "/{catalog}/namespaces/{namespace}",
             axum::routing::delete(drop_namespace),
         )
         // Table operations
+        .route("/{catalog}/tables", post(create_table).get(list_tables))
         .route(
-            "/api/v1/catalogs/{catalog}/tables",
-            post(create_table).get(list_tables),
-        )
-        .route(
-            "/api/v1/catalogs/{catalog}/tables/{table}",
+            "/{catalog}/tables/{table}",
             get(get_table).delete(drop_table),
         )
 }
@@ -446,40 +509,79 @@ pub fn configure_routes() -> Router<CatalogApiState> {
 // Conversion Helpers
 // =============================================================================
 
-/// Validate a proto catalog config.
+/// Construct and register the catalog a proto config describes.
 ///
-/// Runtime catalog creation is not wired: this endpoint has always returned
-/// `501` for **every** arm, `Native` included. TD-CAT-8 keeps that, but stops
-/// the response from being the same sentence regardless of what was asked for —
-/// an operator who configures `Hive` deserves to be told that backend is gone,
-/// not that "conversion" is unimplemented.
-fn convert_proto_catalog_config(proto_config: &CatalogConfig) -> ApiResult<()> {
+/// TD-CAT-8: this used to be `convert_proto_catalog_config`, whose parameter was
+/// `_proto_config` and whose body returned `NotImplemented` for **every** arm,
+/// `Native` included — so the only configuration path to an external metastore
+/// was a constant error. The adapters themselves work and already register with
+/// `CatalogManager`, which is this system's real cross-catalog layer; nothing
+/// constructed them from a request.
+///
+/// Each arm calls the existing `CatalogManager::create_*_catalog` factory. Those
+/// factories already carry explicit feature-off variants that name the cargo
+/// feature to build with, so an unsupported backend fails loudly and
+/// specifically rather than silently doing nothing.
+///
+/// Credentials (`UnityCatalogConfig::token`, `PolarisCatalogConfig::credential`)
+/// are passed straight to the factory and **never logged** — the caller logs the
+/// catalog name only.
+async fn create_configured_catalog(
+    manager: &CatalogManager,
+    proto_config: &CatalogConfig,
+) -> ApiResult<()> {
     use crate::proto::proximadb_v1::catalog_config::Config;
 
-    let detail = match &proto_config.config {
+    let name = proto_config.name.as_str();
+    let unsupported =
+        |what: &str| ApiError::NotImplemented(format!("cannot create catalog '{name}': {what}"));
+
+    let result = match &proto_config.config {
+        Some(Config::Glue(cfg)) => {
+            manager
+                .create_glue_catalog(name, &cfg.region, &cfg.catalog_id)
+                .await
+        }
+        Some(Config::Unity(cfg)) => {
+            manager
+                .create_unity_catalog(name, &cfg.workspace_url, &cfg.token, &cfg.catalog_name)
+                .await
+        }
+        Some(Config::Polaris(cfg)) => {
+            manager
+                .create_polaris_catalog(name, &cfg.uri, &cfg.warehouse, &cfg.credential)
+                .await
+        }
         // TD-CAT-8: the Hive adapter was an in-memory mock — `thrift_uri` was
         // stored and never connected to. It was deleted rather than left to
-        // answer as though it had federated anything. The wire arm is retired
-        // with it; say so instead of implying it might work later.
+        // answer as though it had federated anything.
         Some(Config::Hive(_)) => {
-            "the Hive Metastore backend has been removed (it never connected to a metastore);              this catalog type is no longer supported"
+            return Err(unsupported(
+                "the Hive Metastore backend has been removed (it never connected to a \
+                 metastore); this catalog type is no longer supported",
+            ));
         }
         Some(Config::Native(_)) => {
-            "the native catalog is configured at startup (server.metadata_url), not through              this endpoint"
-        }
-        Some(Config::Glue(_) | Config::Unity(_) | Config::Polaris(_)) => {
-            "external metastore federation is not wired to this endpoint yet (TD-CAT-8); the              adapter exists but nothing constructs it from a request"
+            return Err(unsupported(
+                "the native catalog is configured at startup (server.metadata_url), not \
+                 through this endpoint",
+            ));
         }
         Some(Config::Iceberg(_) | Config::Delta(_)) => {
-            "this catalog type is constructed programmatically, not through this endpoint"
+            return Err(unsupported(
+                "this catalog type is constructed programmatically, not through this endpoint",
+            ));
         }
-        None => "no catalog config was supplied",
+        None => {
+            return Err(ApiError::InvalidArgument(
+                "no catalog config was supplied".into(),
+            ));
+        }
     };
 
-    Err(ApiError::NotImplemented(format!(
-        "cannot create catalog '{}': {detail}",
-        proto_config.name
-    )))
+    result
+        .map(|_| ())
+        .map_err(|e| ApiError::InvalidArgument(format!("cannot create catalog '{name}': {e}")))
 }
 
 /// Convert ProximaDB namespace to proto namespace
@@ -619,6 +721,70 @@ fn convert_data_type_to_proto(data_type: &ProximaType) -> crate::proto::proximad
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::rbac_service::UnifiedAuthMethod;
+    use std::collections::HashSet;
+
+    fn ctx_with_permissions(perms: Vec<UnifiedPermission>) -> UnifiedUserContext {
+        UnifiedUserContext {
+            user_id: "test-user".to_string(),
+            tenant_id: Some("tenant-x".to_string()),
+            roles: vec!["test".to_string()],
+            effective_permissions: perms.into_iter().collect::<HashSet<_>>(),
+            auth_method: UnifiedAuthMethod::ApiKey,
+            session_id: "test-session".to_string(),
+            expires_at: None,
+            created_at: chrono::Utc::now(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// TD-CAT-8: every handler in this module does real work — `drop_catalog`
+    /// unregisters a catalog, `create_namespace`/`create_table` mutate the
+    /// target — and none of them checked authorization. Authentication was in
+    /// place (`auth_middleware_unified`), but authentication is not
+    /// authorization: any authenticated principal could have dropped a catalog.
+    ///
+    /// It had not bitten because the router was mounted at the wrong path (the
+    /// nested prefix was repeated) and gated behind `enterprise-catalogs`.
+    /// Fixing the path without this gate would have turned a latent bug live.
+    #[test]
+    fn an_ordinary_principal_cannot_reach_the_external_catalog_api() {
+        let err = require_catalog_operator(Some(&ctx_with_permissions(vec![
+            UnifiedPermission::ReadCollection,
+        ])))
+        .expect_err("a non-operator must be refused");
+        assert!(
+            matches!(err, ApiError::Forbidden(_)),
+            "expected Forbidden, got {err:?}"
+        );
+    }
+
+    /// Fail closed when the middleware did not attach a context at all —
+    /// "no identity" must never read as "no restriction".
+    #[test]
+    fn a_missing_auth_context_is_refused_not_waved_through() {
+        let err = require_catalog_operator(None).expect_err("absent context must be refused");
+        assert!(
+            matches!(err, ApiError::Unauthorized(_)),
+            "expected Unauthorized, got {err:?}"
+        );
+    }
+
+    /// The positive control: both operator permissions are accepted. Without it
+    /// a gate that refused everyone would look correct.
+    #[test]
+    fn either_operator_permission_is_accepted() {
+        for perm in [
+            UnifiedPermission::SystemAdmin,
+            UnifiedPermission::ConfigureSystem,
+        ] {
+            assert_eq!(
+                require_catalog_operator(Some(&ctx_with_permissions(vec![perm.clone()])))
+                    .expect("an operator is admitted"),
+                "test-user"
+            );
+        }
+    }
 
     #[test]
     fn test_convert_namespace_to_proto() {

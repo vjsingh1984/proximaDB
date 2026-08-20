@@ -51,7 +51,6 @@ pub mod model_registry_service;
 // Catalog federation (Slice 3) — unified view across internal + external
 // catalogs, moved from root src/catalog/federation (now that CatalogManager is
 // in this crate).
-pub mod federation;
 // Collection-level DR / CRR engine contract (P1 of
 // COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc).
 pub mod collection_dr_policy;
