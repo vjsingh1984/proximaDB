@@ -1,23 +1,29 @@
 """
 Offline unit tests for proximadb_sdk.chunking_strategies.code.
 
-Strategy:
-- The real `tree_sitter_language_pack` module is NOT installed in this env, but
-  the lower-level `tree_sitter` runtime and several individual grammar modules
-  (tree_sitter_python / _rust / _go / _java / _javascript / _bash) ARE. We build
-  a fake `tree_sitter_language_pack` that returns real tree_sitter Parser/Language
-  objects backed by those grammars and inject it into sys.modules. This drives the
-  rich AST-extraction code paths (the largest coverage gap) fully offline -- no
-  network, no downloads.
-- For the regex-fallback paths we construct parsers WITHOUT the fake module
-  installed (parser stays None), then call .parse().
-- All inputs are tiny in-memory strings; nothing blocks.
+Requires the optional ``codegraph`` extra. TD-CG2 S4 deleted the in-SDK
+tree-sitter parsers, so this module no longer fakes a grammar pack -- the
+surviving tests exercise the delegating adapter, and without the extra
+``CodeChunkingStrategy`` fails loudly by design rather than degrading.
+
+The module skips itself when the extra is absent so the file is honest in both
+environments. It was previously excluded by NAME in ci.yml's SKIP_RE with the
+reason "needs tree-sitter grammars not installed in CI" -- true when written,
+false since S4, and a stale skip reason is how a red suite hides in plain sight
+(the exact defect TD-CG2 S0 was filed to stop).
+
+All inputs are tiny in-memory strings; nothing blocks.
 """
 
 import sys
 import types
 
 import pytest
+
+pytest.importorskip(
+    "victor_codegraph",
+    reason="code chunking delegates to the optional `codegraph` extra (TD-CG2)",
+)
 
 from proximadb_sdk.chunking_strategies.code import (
     CodeChunkingConfig,

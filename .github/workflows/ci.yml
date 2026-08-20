@@ -2216,10 +2216,16 @@ jobs:
           # process. Parallelized for speed; failures print with ::error::.
           #
           # Permanently skipped (not isolation-related):
-          #   victor_cov     -> imports the internal, unpublished `victor` package
-          #   chunking_code  -> needs tree-sitter grammars not installed in CI
+          #   victor_cov -> imports the internal, unpublished `victor` package
+          #
+          # `chunking_code` used to be listed here as "needs tree-sitter grammars
+          # not installed in CI". TD-CG2 S4 deleted the in-SDK grammars, so that
+          # reason became false while the exclusion stayed -- and the file was
+          # silently red outside the gate. It now skips ITSELF via importorskip
+          # on the optional `codegraph` extra, so it is honest in both
+          # environments and needs no name-based exclusion here.
           set -u
-          SKIP_RE='test_integrations_victor_cov|test_chunking_code_cov'
+          SKIP_RE='test_integrations_victor_cov'
           # Run one file in its own process. exit 0 = ok, 5 = no tests collected
           # (e.g. a whole module importorskip-skipped) -> ok; anything else fails.
           test_one() {
