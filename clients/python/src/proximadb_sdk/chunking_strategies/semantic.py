@@ -28,7 +28,6 @@ now means "a code block is indivisible" rather than "a code block is temporarily
 replaced by a placeholder".
 """
 
-import bisect
 import re
 from typing import Any
 
@@ -39,6 +38,14 @@ from .base import (
     TextChunk,
 )
 from .spans import Span, hard_split, is_empty, merge_spans, strip_span
+from .structure import (
+    CODE_BLOCK,
+    HTML_HEADING,
+    MARKDOWN_HEADING,
+    TABLE,
+    protected_spans,
+    protecting_span,
+)
 
 #: A section: raw span plus the metadata it contributes to its chunks.
 Section = tuple[int, int, dict[str, Any]]
@@ -66,21 +73,16 @@ class SemanticStrategy(ChunkingStrategyInterface):
 
     def _compile_patterns(self):
         """Compile regex patterns for semantic analysis"""
-        # Markdown headers
-        self.markdown_header_pattern = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
-
-        # HTML headers. The old `<h([1-6])>` required a BARE tag, so ordinary
-        # markup like `<h2 class="hdr">` never matched and real HTML was never
-        # split by headers at all.
-        self.html_header_pattern = re.compile(
-            r"<h([1-6])\b[^>]*>(.*?)</h\1>", re.IGNORECASE | re.DOTALL
-        )
-
-        # Code blocks
-        self.code_block_pattern = re.compile(r"```[\s\S]*?```|~~~[\s\S]*?~~~")
-
-        # Tables (simple markdown)
-        self.table_pattern = re.compile(r"^\|.*\|$[\s\S]*?(?=\n\n|\Z)", re.MULTILINE)
+        # Structural patterns come from `structure.py`, which owns the single
+        # implementation. This module had the only correct one and kept it
+        # private, which is exactly how the ADR-091 census's five forks
+        # happened; a heading source needed the same rules, so they moved out
+        # rather than being copied. Bound as attributes because they are part of
+        # this class's existing surface.
+        self.markdown_header_pattern = MARKDOWN_HEADING
+        self.html_header_pattern = HTML_HEADING
+        self.code_block_pattern = CODE_BLOCK
+        self.table_pattern = TABLE
 
         # Paragraph boundaries within a section
         self.paragraph_pattern = re.compile(r"\n\s*\n+")
@@ -116,34 +118,16 @@ class SemanticStrategy(ChunkingStrategyInterface):
         Replaces the substitute-then-restore round trip entirely: the text is
         never rewritten, so offsets stay native and nothing can be spliced away.
         """
-        raw: list[Span] = []
-        if self.config.preserve_code_blocks:
-            raw += [
-                (m.start(), m.end()) for m in self.code_block_pattern.finditer(text)
-            ]
-        if self.config.preserve_tables:
-            raw += [(m.start(), m.end()) for m in self.table_pattern.finditer(text)]
-        if not raw:
-            return []
-        raw.sort()
-        merged: list[Span] = [raw[0]]
-        for start, end in raw[1:]:
-            if start <= merged[-1][1]:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-            else:
-                merged.append((start, end))
-        return merged
+        return protected_spans(
+            text,
+            code_blocks=self.config.preserve_code_blocks,
+            tables=self.config.preserve_tables,
+        )
 
     @staticmethod
     def _protects(barriers: list[Span], position: int) -> Span | None:
         """The barrier strictly containing ``position``, if any."""
-        if not barriers:
-            return None
-        index = bisect.bisect_right([b[0] for b in barriers], position) - 1
-        if index < 0:
-            return None
-        start, end = barriers[index]
-        return (start, end) if start < position < end else None
+        return protecting_span(barriers, position)
 
     # ------------------------------------------------------------------
     # Sections — a contiguous partition of [0, len(text))

@@ -8,12 +8,18 @@ This package provides a clean interface for text chunking with proper separation
 - Extensible interface for custom strategies
 
 For code-aware chunking, use the CodeChunkingStrategy which provides:
-- AST-based parsing using tree-sitter for 20+ languages
-- Symbol extraction (functions, classes, methods, etc.)
-- Relationship extraction (calls, imports, inheritance)
-- Pluggable architecture for adding new language support
-- Parser caching and performance metrics
-- Robust error handling with fallback strategies
+- AST-based symbol and relation extraction, delegated to the shared
+  `victor-codegraph` package (ADR-029). Language support is not asserted here
+  but measured, and the three states are named separately so none can hide in
+  another: `code.SYMBOL_EXTRACTING_LANGUAGES` (16) genuinely yields symbols;
+  `code.COVERED_WITHOUT_SYMBOLS` (2) is detected and chunked but symbol-less;
+  `code.WITHDRAWN_LANGUAGES` (6) is no longer advertised at all, yet still
+  chunks through the text fallback rather than being dropped.
+- Byte-basis offsets, declared via `offset_basis` rather than inferred.
+- `max_chunk_size` honoured, so an oversized symbol splits instead of being
+  truncated or rejected by the embedding provider.
+- Requires the `codegraph` extra; without it, code chunking fails loudly naming
+  it rather than degrading to unlabelled text windows.
 """
 
 from .base import (
@@ -23,46 +29,42 @@ from .base import (
     TextChunk,
     config_kwargs,
 )
+from .boundaries import (
+    Boundary,
+    BoundaryKind,
+    BoundarySource,
+    CompositeBoundarySource,
+    HeadingBoundarySource,
+    StrategyBoundarySource,
+    annotate_heading_paths,
+    merge_boundaries,
+)
 
 # Code-aware chunking
-from .code import (  # Parser classes - Primary languages; Parser classes - Additional languages; Registry functions; Constants
+from .capabilities import (
+    ContextEnrichmentPass,
+    DedupPass,
+    HeadingPathPass,
+    ParentLinkagePass,
+    PassPipeline,
+    structural_context,
+)
+from .code import (
+    COVERED_WITHOUT_SYMBOLS,
     EXTENSION_TO_LANGUAGE,
-    LANGUAGE_PARSERS,
-    BashParser,
+    SYMBOL_EXTRACTING_LANGUAGES,
+    WITHDRAWN_LANGUAGES,
     CodeChunkingConfig,
     CodeChunkingStrategy,
     CodeRelation,
     CodeRelationType,
     CodeSymbol,
     CodeSymbolType,
-    CppParser,
-    CSharpParser,
-    ElixirParser,
-    GoParser,
-    HaskellParser,
-    JavaParser,
-    JavaScriptParser,
-    JsonParser,
-    KotlinParser,
-    LanguageParser,
-    LuaParser,
     ParsedCode,
-    PerlParser,
-    PhpParser,
-    PythonParser,
-    RubyParser,
-    RustParser,
-    ScalaParser,
     SourceLocation,
-    SqlParser,
-    SwiftParser,
-    XmlParser,
-    YamlParser,
     create_code_chunker,
     get_supported_extensions,
     get_supported_languages,
-    register_file_extension,
-    register_language_parser,
 )
 from .contracts import (
     CompositeInputContract,
@@ -74,6 +76,7 @@ from .contracts import (
     TokenBudget,
     TokenCounter,
 )
+from .dedup import DedupResult, deduplicate, jaccard, shingles
 
 # Document and binary parsers (OCR, reverse engineering)
 from .document_parsers import (  # Enums; Data structures; Tool detection; Parsers; Factory functions
@@ -92,6 +95,10 @@ from .document_parsers import (  # Enums; Data structures; Tool detection; Parse
     get_available_tools,
 )
 from .factory import ChunkingStrategyFactory, get_chunking_strategy
+from .native_boundaries import (
+    NativeSentenceBoundarySource,
+    native_sentences_available,
+)
 from .paragraph import ParagraphStrategy
 
 # Parser utilities (enhanced design patterns)
@@ -105,6 +112,16 @@ from .parser_utils import (  # Errors; Metrics; Parser base class; Validation
     ValidationResult,
     get_metrics_collector,
     with_metrics,
+)
+from .passes import (
+    FACE_ORDER,
+    ChunkEdge,
+    ChunkPass,
+    Face,
+    PassPipelineResult,
+    PassResult,
+    embedded_text_of,
+    run_passes,
 )
 
 # Unified pipeline (orchestration, batch processing, streaming)
@@ -139,6 +156,12 @@ from .sizing import (
     SizingPolicy,
 )
 from .sliding_window import SlidingWindowStrategy
+from .structure import (
+    Heading,
+    HeadingOutline,
+    find_headings,
+    protected_spans,
+)
 from .token_budget import TokenBudgetStrategy
 from .tokenizers import HuggingFaceTokenCounter
 
@@ -161,6 +184,25 @@ __all__ = [
     # Text chunking strategies
     "SlidingWindowStrategy",
     "SentenceStrategy",
+    # Deduplication (TD-CHUNK-3 item 2)
+    "deduplicate",
+    "DedupResult",
+    "shingles",
+    "jaccard",
+    # Boundary sources (ADR-091 D2)
+    "Boundary",
+    "BoundaryKind",
+    "BoundarySource",
+    "StrategyBoundarySource",
+    "CompositeBoundarySource",
+    "HeadingBoundarySource",
+    "annotate_heading_paths",
+    "merge_boundaries",
+    # Document structure (shared detection)
+    "Heading",
+    "HeadingOutline",
+    "find_headings",
+    "protected_spans",
     # Sizing (declarative budget)
     "SizingPolicy",
     "ResolvedSizing",
@@ -183,39 +225,34 @@ __all__ = [
     "CodeRelationType",
     "ParsedCode",
     "SourceLocation",
-    "LanguageParser",
     # Language parsers - Primary
-    "PythonParser",
-    "RustParser",
-    "GoParser",
-    "JavaParser",
-    "JavaScriptParser",
-    "CppParser",
-    "RubyParser",
     # Language parsers - Additional
-    "CSharpParser",
-    "PhpParser",
-    "SwiftParser",
-    "KotlinParser",
-    "ScalaParser",
-    "BashParser",
-    "SqlParser",
-    "YamlParser",
-    "JsonParser",
-    "XmlParser",
-    "PerlParser",
-    "LuaParser",
-    "HaskellParser",
-    "ElixirParser",
     # Plugin functions
-    "register_language_parser",
-    "register_file_extension",
     "get_supported_languages",
     "get_supported_extensions",
     "create_code_chunker",
     # Registry constants
-    "LANGUAGE_PARSERS",
     "EXTENSION_TO_LANGUAGE",
+    "SYMBOL_EXTRACTING_LANGUAGES",
+    "COVERED_WITHOUT_SYMBOLS",
+    "WITHDRAWN_LANGUAGES",
+    # Post-partition capability seam (TD-CHUNK-3)
+    "Face",
+    "FACE_ORDER",
+    "ChunkPass",
+    "ChunkEdge",
+    "PassResult",
+    "PassPipelineResult",
+    "run_passes",
+    "embedded_text_of",
+    "PassPipeline",
+    "HeadingPathPass",
+    "DedupPass",
+    "ContextEnrichmentPass",
+    "ParentLinkagePass",
+    "structural_context",
+    "NativeSentenceBoundarySource",
+    "native_sentences_available",
     # Parser utilities - Errors
     "ParserError",
     "ParseError",

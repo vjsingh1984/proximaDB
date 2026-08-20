@@ -8,7 +8,7 @@
 
 use proximadb_embedding::{
     EmbeddingError,
-    config::{ChunkConfig, EmbedRoute, EmbeddingConfig},
+    config::{EmbedRoute, EmbeddingConfig},
     scheduler::{EmbedSchedulerConfig, IngestMode},
     service::{EmbedBatch, EmbedRecord, EmbeddingService},
 };
@@ -30,7 +30,6 @@ async fn bge_clusters_cats_apart_from_finance() {
         EmbeddingService::initialize(
             EmbeddingConfig {
                 route: EmbedRoute::BgeSmall,
-                chunk: ChunkConfig::default(),
             },
             EmbedSchedulerConfig::default(),
         )

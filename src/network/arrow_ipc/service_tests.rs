@@ -542,7 +542,7 @@ fn test_arrow_file_request_ticket_creation() {
 fn init_embedding_singleton() {
     use proximadb_embedding::{
         EmbeddingService,
-        config::{ChunkConfig, EmbedRoute, EmbeddingConfig},
+        config::{EmbedRoute, EmbeddingConfig},
         scheduler::EmbedSchedulerConfig,
     };
 
@@ -553,7 +553,6 @@ fn init_embedding_singleton() {
     let _ = EmbeddingService::initialize(
         EmbeddingConfig {
             route: EmbedRoute::BgeSmall,
-            chunk: ChunkConfig::default(),
         },
         EmbedSchedulerConfig::default(),
     );

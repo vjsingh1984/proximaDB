@@ -425,50 +425,17 @@ pub enum ByoAuth {
     None,
 }
 
-/// Chunking strategy applied server-side before embedding.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChunkConfig {
-    pub size_tokens: usize,
-    pub overlap_pct: f32,
-    pub strategy: ChunkStrategy,
-}
-
-impl Default for ChunkConfig {
-    fn default() -> Self {
-        Self {
-            size_tokens: 256,
-            overlap_pct: 0.10,
-            strategy: ChunkStrategy::Paragraph,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ChunkStrategy {
-    /// Fixed-size token windows.
-    FixedWindow,
-    /// Sliding window with overlap_pct.
-    SlidingWindow,
-    /// Split at paragraph boundaries; respect size_tokens cap.
-    Paragraph,
-    /// Heading-aware (Markdown / HTML) — for runbooks and KB articles.
-    Heading,
-}
-
 /// Per-collection embedding configuration. Persisted in the ProximaDB catalog,
 /// surfaced via `GET/PUT /api/v3/collections/{name}/embedding-config`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingConfig {
     pub route: EmbedRoute,
-    pub chunk: ChunkConfig,
 }
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
             route: EmbedRoute::BgeSmall,
-            chunk: ChunkConfig::default(),
         }
     }
 }

@@ -311,10 +311,7 @@ async fn run() -> anyhow::Result<()> {
         "selected BGE variant from PROXIMADB_EMBED_VARIANT"
     );
     proximadb_embedding::EmbeddingService::initialize(
-        proximadb_embedding::config::EmbeddingConfig {
-            route,
-            chunk: proximadb_embedding::config::ChunkConfig::default(),
-        },
+        proximadb_embedding::config::EmbeddingConfig { route },
         proximadb_embedding::scheduler::EmbedSchedulerConfig::from_env(),
     )
     .map_err(|e| anyhow::anyhow!("embedding service init: {}", e))?;

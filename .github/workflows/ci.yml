@@ -2216,10 +2216,16 @@ jobs:
           # process. Parallelized for speed; failures print with ::error::.
           #
           # Permanently skipped (not isolation-related):
-          #   victor_cov     -> imports the internal, unpublished `victor` package
-          #   chunking_code  -> needs tree-sitter grammars not installed in CI
+          #   victor_cov -> imports the internal, unpublished `victor` package
+          #
+          # `chunking_code` used to be listed here as "needs tree-sitter grammars
+          # not installed in CI". TD-CG2 S4 deleted the in-SDK grammars, so that
+          # reason became false while the exclusion stayed -- and the file was
+          # silently red outside the gate. It now skips ITSELF via importorskip
+          # on the optional `codegraph` extra, so it is honest in both
+          # environments and needs no name-based exclusion here.
           set -u
-          SKIP_RE='test_integrations_victor_cov|test_chunking_code_cov'
+          SKIP_RE='test_integrations_victor_cov'
           # Run one file in its own process. exit 0 = ok, 5 = no tests collected
           # (e.g. a whole module importorskip-skipped) -> ok; anything else fails.
           test_one() {
@@ -2298,7 +2304,7 @@ jobs:
   # tests/chunking/, whose pre-existing failures are TD-CG2's business. Widening
   # it to the whole directory is a step in TD-CG2, not here.
   chunking-conformance:
-    name: Chunking Conformance Ratchet (TD-CHUNK-1)
+    name: Chunking Conformance + Quality Evals (TD-CHUNK-1/3)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: changes
@@ -2313,10 +2319,25 @@ jobs:
       - name: Install SDK
         working-directory: clients/python
         run: pip install -e ".[test]"
-      - name: Run the chunking invariant sweep against the recorded baseline
+      # Runs the whole file, so this covers BOTH gates: the deterministic
+      # invariant ratchet and the rubric-scored quality evals. Tests cover what
+      # has a right answer; evals cover boundary quality, which does not.
+      - name: Run the chunking invariant sweep and the quality evals
         working-directory: clients/python
+        # The capability suites are listed explicitly rather than by running
+        # tests/chunking/ wholesale: that directory also holds the code-path
+        # suites, which need the optional `codegraph` extra this job does not
+        # install. Naming them keeps the gate narrow AND keeps it able to SEE
+        # the thing it is named for -- the eval floors for TD-CHUNK-3's
+        # capabilities were unreachable from this job while it ran only the
+        # conformance file.
         run: |
-          pytest tests/chunking/test_chunking_conformance.py \
+          pytest \
+            tests/chunking/test_chunking_conformance.py \
+            tests/chunking/test_chunk_passes.py \
+            tests/chunking/test_capability_evals.py \
+            tests/chunking/test_processor_pass_wiring.py \
+            tests/chunking/test_native_boundaries.py \
             -q -p no:cacheprovider --timeout=300 -o addopts=""
 
   # ============================================================================

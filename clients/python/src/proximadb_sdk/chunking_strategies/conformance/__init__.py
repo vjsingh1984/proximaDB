@@ -27,6 +27,14 @@ Tracked by TD-CHUNK-1; the defects it measures are ADR-091's evidence base.
 
 from ..measures import CHAR_MEASURE, CharMeasure, Measure, TokenMeasure
 from .corpus import CorpusEntry, by_name, scale_corpus, standard_corpus
+from .evals import (
+    STANDARD_CASES,
+    CaseScore,
+    EvalCase,
+    EvalReport,
+    run_eval,
+    score_case,
+)
 from .golden import (
     DIGEST_RECIPE_VERSION,
     case_digest,
@@ -64,6 +72,13 @@ __all__ = [
     "CharMeasure",
     "CHAR_MEASURE",
     "TokenMeasure",
+    # Evals (boundary QUALITY, rubric-scored)
+    "EvalCase",
+    "CaseScore",
+    "EvalReport",
+    "STANDARD_CASES",
+    "run_eval",
+    "score_case",
     # Corpus
     "CorpusEntry",
     "standard_corpus",

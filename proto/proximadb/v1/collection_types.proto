@@ -124,26 +124,29 @@ message EmbeddingConfig {
   // Embedding model + transport selection.
   EmbeddingRoute route = 1;
 
-  // Optional override for the chunker. Server-side chunking is enabled per-collection.
-  optional ChunkConfig chunk = 2;
+  // Field 2 held `optional ChunkConfig chunk`, retired by TD-CHUNK-5. It was
+  // accepted on the wire and converted by nothing: no Rust code ever read the
+  // generated type, so a tenant could set `size_tokens: 512` and observe no
+  // error and no effect. Server-side chunking is not a shipped capability, and
+  // carrying a contract for one — in three disagreeing spellings — was pure
+  // liability. Reserved, never reused: if server-side chunking ships, it gets
+  // a new field whose semantics are decided rather than inherited.
+  reserved 2;
+  reserved "chunk";
 
   // BYO endpoint metadata (only when route == EMBEDDING_ROUTE_BYO).
   optional ByoEndpoint byo_endpoint = 3;
 }
 
-message ChunkConfig {
-  uint32 size_tokens = 1;     // Default: 256
-  float overlap_pct = 2;      // Default: 0.10
-  ChunkStrategy strategy = 3; // Default: PARAGRAPH
-}
-
-enum ChunkStrategy {
-  CHUNK_STRATEGY_UNSPECIFIED = 0;
-  CHUNK_STRATEGY_FIXED_WINDOW = 1;
-  CHUNK_STRATEGY_SLIDING_WINDOW = 2;
-  CHUNK_STRATEGY_PARAGRAPH = 3;
-  CHUNK_STRATEGY_HEADING = 4;
-}
+// `ChunkConfig` and `ChunkStrategy` were removed here by TD-CHUNK-5 together
+// with the field above. Their names did not mean what they said in the only
+// implementation that ever existed: `size_tokens` counted CHARACTERS at a
+// hardcoded 4x ratio for two of the four strategies, `overlap_pct` was a
+// fraction of that character window, and `HEADING` silently fell back to
+// paragraph. Chunking policy is configured through the SDK
+// (`proximadb_sdk.chunking_strategies`), which is the only implementation that
+// chunks anything. See ADR-091 for the grid/measure/budget split that replaces
+// this shape.
 
 message ByoEndpoint {
   string url = 1;

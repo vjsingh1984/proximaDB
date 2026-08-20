@@ -554,7 +554,7 @@ fn record_embedding_consumption(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_embedding::config::{ByoAuth, ChunkConfig, EmbeddingConfig};
+    use proximadb_embedding::config::{ByoAuth, EmbeddingConfig};
     use proximadb_embedding::scheduler::EmbedSchedulerConfig;
     use proximadb_queue::{Message, QueueConfig, TopicConfig};
     use std::collections::HashMap;
@@ -591,7 +591,6 @@ mod tests {
         let _ = proximadb_embedding::EmbeddingService::initialize(
             EmbeddingConfig {
                 route: EmbedRoute::BgeSmall,
-                chunk: ChunkConfig::default(),
             },
             EmbedSchedulerConfig::default(),
         );

@@ -723,7 +723,7 @@ fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {
 mod tests {
     use super::*;
     use crate::services::operations::BatchOperationResult;
-    use proximadb_embedding::config::{ChunkConfig, EmbedRoute, EmbeddingConfig};
+    use proximadb_embedding::config::{EmbedRoute, EmbeddingConfig};
     use proximadb_embedding::scheduler::EmbedSchedulerConfig;
 
     fn record_with_props(entries: &[(&str, ProximaValue)]) -> ProximaRecord {
@@ -803,7 +803,6 @@ mod tests {
         let _ = proximadb_embedding::EmbeddingService::initialize(
             EmbeddingConfig {
                 route: EmbedRoute::BgeSmall,
-                chunk: ChunkConfig::default(),
             },
             EmbedSchedulerConfig::default(),
         );

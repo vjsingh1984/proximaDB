@@ -52,9 +52,25 @@ from proximadb_sdk.chunking_strategies import (
     ChunkingConfig,
     ChunkingStrategy,
     ChunkingStrategyFactory,
+    ChunkingStrategyInterface,
     ResolvedSizing,
     SizingPolicy,
     config_kwargs,
+)
+from proximadb_sdk.chunking_strategies.base import (
+    OFFSET_CONTRACT_EXACT,
+    OFFSET_CONTRACT_LEGACY,
+    TextChunk,
+)
+from proximadb_sdk.chunking_strategies.boundaries import (
+    Boundary,
+    BoundaryKind,
+    BoundarySource,
+    CompositeBoundarySource,
+    HeadingBoundarySource,
+    StrategyBoundarySource,
+    annotate_heading_paths,
+    merge_boundaries,
 )
 from proximadb_sdk.chunking_strategies.conformance import (
     BASIS_BYTE,
@@ -78,11 +94,27 @@ from proximadb_sdk.chunking_strategies.conformance import (
     standard_corpus,
     sweep_digests,
 )
+from proximadb_sdk.chunking_strategies.conformance.evals import (
+    STANDARD_CASES,
+    run_eval,
+    score_case,
+)
 from proximadb_sdk.chunking_strategies.conformance.invariants import (
     _wall_clock_budget,
 )
+from proximadb_sdk.chunking_strategies.contracts import (
+    ResolvedInputContract,
+    TokenBudget,
+)
+from proximadb_sdk.chunking_strategies.dedup import deduplicate
 from proximadb_sdk.chunking_strategies.sizing import Absolute, Fraction
 from proximadb_sdk.chunking_strategies.spans import TextSlicer
+from proximadb_sdk.chunking_strategies.structure import (
+    MARKDOWN_HEADING,
+    HeadingOutline,
+    protected_spans,
+)
+from proximadb_sdk.chunking_strategies.token_budget import TokenBudgetStrategy
 
 BUDGET = 2048
 DEFAULTS = {
@@ -1037,6 +1069,1094 @@ class TestDocumentedNonInvariants:
         text = "alpha beta gamma"
         assert counter.count(text) != len(counter.content_offsets(text))
         assert counter.count(text) == len(counter.content_offsets(text)) + 2
+
+
+class TestCapPostCondition:
+    """`max_chunk_size` must hold for chunks a strategy has ALREADY emitted.
+
+    Per-strategy discipline was sufficient while there were seven strategies
+    maintained together. TD-CHUNK-2 makes boundary sources plural and
+    composable, so the number of places that could forget is about to grow --
+    and a forgotten cap is invisible in production (the provider truncates
+    silently). Hence a structural guarantee rather than a convention.
+    """
+
+    class _OverCapStrategy(ChunkingStrategyInterface):
+        """A deliberately non-compliant source: one chunk, whole document."""
+
+        _offset_contract = OFFSET_CONTRACT_EXACT
+
+        def chunk(self, text, source_id, base_metadata=None):
+            return [
+                TextChunk(
+                    text=text,
+                    start_pos=0,
+                    end_pos=len(text),
+                    chunk_id=f"{source_id}_chunk_0",
+                    metadata={"source_id": source_id, "total_chunks": 1},
+                )
+            ]
+
+    class _LegacyOverCapStrategy(_OverCapStrategy):
+        """Same violation, but its offsets do not index the source."""
+
+        _offset_contract = OFFSET_CONTRACT_LEGACY
+
+    @staticmethod
+    def _config(cap):
+        return ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=cap,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=cap,
+        )
+
+    def test_an_over_cap_chunk_is_split(self):
+        text = "word " * 400
+        cap = 100
+        chunks = self._OverCapStrategy(self._config(cap)).chunk(text, "doc")
+
+        assert len(chunks) > 1, "the guard did not engage"
+        for chunk in chunks:
+            assert chunk.end_pos - chunk.start_pos <= cap, chunk.text[:40]
+            assert chunk.metadata.get("cap_enforced") is True
+
+    def test_splitting_preserves_content_and_exactness(self):
+        # Splitting must not become its own data-loss bug.
+        text = "word " * 400
+        chunks = self._OverCapStrategy(self._config(100)).chunk(text, "doc")
+        assert check_totality(text, chunks) is None
+        assert check_exactness(text, chunks) is None
+        assert "".join(c.text for c in chunks) == text
+
+    def test_ids_are_restated_so_none_collide(self):
+        # Ids encode POSITION; leaving them after a count change emits duplicate
+        # ids -- the exact collision this program already found in anvaiops.
+        text = "word " * 400
+        chunks = self._OverCapStrategy(self._config(100)).chunk(text, "doc")
+        ids = [c.chunk_id for c in chunks]
+        assert len(set(ids)) == len(ids)
+        assert ids[0] == "doc_chunk_0" and ids[1] == "doc_chunk_1"
+        assert all(c.metadata["total_chunks"] == len(chunks) for c in chunks)
+
+    def test_a_compliant_strategy_is_returned_untouched(self):
+        # The guard must be a genuine no-op on the common path -- same objects,
+        # not merely equal ones -- or it would rewrite every chunk in the SDK.
+        config = ChunkingConfig(strategy=ChunkingStrategy.FIXED_SIZE, **DEFAULTS)
+        strat = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        text = by_name("prose").text
+        first = strat.chunk(text, "doc")
+        assert all(not c.metadata.get("cap_enforced") for c in first)
+
+    def test_legacy_offsets_are_left_alone(self):
+        # Re-cutting means indexing the source with the chunk's own offsets. A
+        # legacy strategy's offsets do not index the source, so splitting on
+        # them would produce confidently wrong text. Refusing is the honest act.
+        text = "word " * 400
+        chunks = self._LegacyOverCapStrategy(self._config(100)).chunk(text, "doc")
+        assert len(chunks) == 1
+        assert not chunks[0].metadata.get("cap_enforced")
+
+    def test_the_guard_does_not_narrow_the_signature_it_guards(self):
+        """A guard that changes the API it guards is worse than no guard.
+
+        `CodeChunkingStrategy.chunk` takes `metadata=` where the base class
+        takes `base_metadata=` -- a real interface divergence in this codebase.
+        A wrapper that restates the common signature silently rejects the
+        divergent one with a TypeError, which is how this first shipped.
+        """
+
+        class DivergentSignature(ChunkingStrategyInterface):
+            _offset_contract = OFFSET_CONTRACT_EXACT
+
+            def chunk(self, text, source_id, metadata=None, *, extra=None):
+                return [
+                    TextChunk(
+                        text=text,
+                        start_pos=0,
+                        end_pos=len(text),
+                        chunk_id=f"{source_id}_chunk_0",
+                        metadata={"seen": metadata, "extra": extra},
+                    )
+                ]
+
+        strategy = DivergentSignature(self._config(10_000))
+        chunks = strategy.chunk("abc", "doc", {"a": 1}, extra="x")
+        assert chunks[0].metadata["seen"] == {"a": 1}
+        assert chunks[0].metadata["extra"] == "x"
+
+    def test_the_guard_is_measure_aware(self):
+        # A char-arithmetic cut would mis-split under a token measure. The cap
+        # here is 8 WORDS, so a character reading would produce ~50 chunks.
+        text = " ".join(f"word{i}" for i in range(80))
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=8,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=8,
+            measure=TokenMeasure(WordTokenCounter()),
+        )
+        chunks = self._OverCapStrategy(config).chunk(text, "doc")
+        assert len(chunks) <= 12, f"{len(chunks)} chunks: cut in characters"
+        for chunk in chunks:
+            assert len(re.findall(r"\S+", chunk.text)) <= 8
+        assert check_totality(text, chunks) is None
+
+
+class TestBoundarySources:
+    """Proposing cuts, separately from choosing them (ADR-091 D2).
+
+    The claim under test is not that the abstraction exists, but that it buys
+    something: several kinds of structure informing ONE segmentation, which is
+    impossible while a strategy both proposes and segments.
+    """
+
+    @staticmethod
+    def _strategy(kind):
+        config = ChunkingConfig(strategy=kind, **DEFAULTS)
+        return ChunkingStrategyFactory.create_strategy(kind, config)
+
+    def test_a_strategy_becomes_a_source_without_being_rewritten(self):
+        # The compatibility facade: every strategy already answers
+        # preferred_boundaries, so it is already a source.
+        strategy = self._strategy(ChunkingStrategy.SENTENCE)
+        source = StrategyBoundarySource(strategy, kind=BoundaryKind.SENTENCE)
+        assert isinstance(source, BoundarySource)
+
+        text = by_name("prose").text
+        found = source.boundaries(text)
+        assert found
+        assert [b.end for b in found] == sorted(b.end for b in found)
+        assert all(0 < b.end <= len(text) for b in found)
+        assert all(b.kind is BoundaryKind.SENTENCE for b in found)
+
+    def test_a_composite_is_the_union_of_its_sources(self):
+        text = by_name("header_dense_markdown").text
+        sentences = StrategyBoundarySource(
+            self._strategy(ChunkingStrategy.SENTENCE), kind=BoundaryKind.SENTENCE
+        )
+        paragraphs = StrategyBoundarySource(
+            self._strategy(ChunkingStrategy.PARAGRAPH), kind=BoundaryKind.PARAGRAPH
+        )
+        composite = CompositeBoundarySource(sentences, paragraphs)
+
+        merged = {b.end for b in composite.boundaries(text)}
+        individually = {b.end for b in sentences.boundaries(text)} | {
+            b.end for b in paragraphs.boundaries(text)
+        }
+        assert merged == individually
+
+    def test_nested_structures_compose_to_nothing(self):
+        """Composition pays only when sources propose positions others cannot.
+
+        Measured, not assumed: on the header-dense corpus entry, paragraph ends
+        are a STRICT SUBSET of sentence ends (80 of 81), because a paragraph
+        break is also a sentence break. So composing SENTENCE with PARAGRAPH
+        adds exactly nothing.
+
+        Recorded because the natural first demo of a composite is "sentences
+        plus paragraphs", and it would look like the abstraction works while
+        proving nothing. The sources worth composing are the ones whose
+        positions are structurally independent -- a heading's START is not a
+        sentence END, which is why the heading case below does move the cuts.
+        """
+        text = by_name("header_dense_markdown").text
+        sentence_ends = {
+            b.end
+            for b in StrategyBoundarySource(
+                self._strategy(ChunkingStrategy.SENTENCE)
+            ).boundaries(text)
+        }
+        paragraph_ends = {
+            b.end
+            for b in StrategyBoundarySource(
+                self._strategy(ChunkingStrategy.PARAGRAPH)
+            ).boundaries(text)
+        }
+        assert paragraph_ends < sentence_ends
+
+    def test_merging_keeps_the_strongest_meaning_at_a_shared_offset(self):
+        # Sources agreeing is the COMMON case (a heading is also a paragraph
+        # break). Keeping the strongest preserves the informative meaning;
+        # keeping whichever came first would make segmentation depend on
+        # argument order.
+        weak = [Boundary(end=10, kind=BoundaryKind.SENTENCE, meaning={"who": "weak"})]
+        strong = [
+            Boundary(
+                end=10,
+                kind=BoundaryKind.HEADING,
+                meaning={"who": "strong", "path": "A"},
+            )
+        ]
+        assert merge_boundaries([weak, strong])[0].meaning["who"] == "strong"
+        # Order must not matter.
+        assert merge_boundaries([strong, weak])[0].meaning["who"] == "strong"
+
+    def test_merge_is_ordered_and_deduplicated(self):
+        merged = merge_boundaries(
+            [
+                [Boundary(end=30), Boundary(end=10)],
+                [Boundary(end=10), Boundary(end=20)],
+            ]
+        )
+        assert [b.end for b in merged] == [10, 20, 30]
+
+    def test_a_source_need_not_be_total_or_respect_a_budget(self):
+        # The whole point of the split: a source author knows about markdown,
+        # not about token budgets. Proposing two cuts in a long document is a
+        # legal source, and the segmenter still owns coverage.
+        class SparseSource:
+            name = "sparse"
+
+            def boundaries(self, text, *, source_id="doc", base_metadata=None):
+                return (
+                    Boundary(end=len(text) // 2, kind=BoundaryKind.SECTION),
+                    Boundary(end=len(text), kind=BoundaryKind.DOCUMENT),
+                )
+
+        assert isinstance(SparseSource(), BoundarySource)
+
+
+class TestSegmenterConsumesSources:
+    """`TokenBudgetStrategy` is the segmenter; it must take candidates from any source."""
+
+    @staticmethod
+    def _contract():
+        counter = WordTokenCounter()
+        return ResolvedInputContract(
+            model_id="m",
+            model_revision="r",
+            counter=counter,
+            effective_context_limit=512,
+        )
+
+    def _segmenter(self, source=None, target=12):
+        base = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.SENTENCE,
+            ChunkingConfig(
+                strategy=ChunkingStrategy.SENTENCE,
+                chunk_size=10_000,
+                min_chunk_size=1,
+                max_chunk_size=100_000,
+            ),
+        )
+        return TokenBudgetStrategy(
+            base,
+            TokenBudget(target_tokens=target, overlap_tokens=0, min_content_tokens=1),
+            self._contract(),
+            boundary_source=source,
+        )
+
+    def test_the_single_strategy_path_is_the_degenerate_general_one(self):
+        # Passing no source must be identical to adapting the wrapped strategy,
+        # or the compat path is a second implementation waiting to diverge.
+        text = by_name("prose").text
+        implicit = self._segmenter().chunk(text, "doc")
+        explicit = self._segmenter(
+            StrategyBoundarySource(
+                ChunkingStrategyFactory.create_strategy(
+                    ChunkingStrategy.SENTENCE,
+                    ChunkingConfig(
+                        strategy=ChunkingStrategy.SENTENCE,
+                        chunk_size=10_000,
+                        min_chunk_size=1,
+                        max_chunk_size=100_000,
+                    ),
+                )
+            )
+        ).chunk(text, "doc")
+        assert [(c.text, c.start_pos, c.end_pos) for c in implicit] == [
+            (c.text, c.start_pos, c.end_pos) for c in explicit
+        ]
+
+    def test_a_composite_source_changes_where_cuts_land(self):
+        """The load-bearing claim: composing sources is not decorative.
+
+        Uses `prose`, where the two structures genuinely diverge (522 sentence
+        ends against 61 paragraph ends). On `header_dense_markdown` they nearly
+        coincide, so the same test there would pass vacuously -- see
+        `test_nested_structures_compose_to_nothing`.
+        """
+        text = by_name("prose").text
+
+        def strat(kind):
+            return ChunkingStrategyFactory.create_strategy(
+                kind,
+                ChunkingConfig(
+                    strategy=kind,
+                    chunk_size=10_000,
+                    min_chunk_size=1,
+                    max_chunk_size=100_000,
+                ),
+            )
+
+        only_paragraph = StrategyBoundarySource(
+            strat(ChunkingStrategy.PARAGRAPH), kind=BoundaryKind.PARAGRAPH
+        )
+        composite = CompositeBoundarySource(
+            only_paragraph,
+            StrategyBoundarySource(
+                strat(ChunkingStrategy.SENTENCE), kind=BoundaryKind.SENTENCE
+            ),
+        )
+        one = self._segmenter(only_paragraph).chunk(text, "doc")
+        many = self._segmenter(composite).chunk(text, "doc")
+
+        assert [c.end_pos for c in one] != [c.end_pos for c in many]
+        # Coverage must survive the extra freedom -- more candidates must never
+        # mean less document.
+        for chunks in (one, many):
+            assert check_totality(text, chunks) is None
+            assert check_exactness(text, chunks) is None
+
+    def test_the_segmenter_resolves_candidates_at_token_granularity(self):
+        """Candidates closer together than one token are indistinguishable.
+
+        Measured while building this: on `header_dense_markdown` a heading START
+        at offset 49 and a paragraph END at 47 map to the SAME token index, so
+        adding the heading source moved no cut at all. That is correct -- the
+        segmenter cuts on the token grid, and there is no cut position between
+        two adjacent tokens -- but it is deeply counter-intuitive when a source
+        is visibly contributing offsets and nothing changes.
+
+        Recorded so the next person debugging "my boundary source does nothing"
+        checks token distance before suspecting the plumbing. Note the MEANING
+        still propagates, because it attaches to the token index either way.
+        """
+        text = by_name("header_dense_markdown").text
+
+        class NearMiss:
+            name = "near_miss"
+
+            def boundaries(self, text, *, source_id="doc", base_metadata=None):
+                # Two characters off a real paragraph end: a different offset,
+                # the same token.
+                return (Boundary(end=49, kind=BoundaryKind.HEADING),)
+
+        paragraph = StrategyBoundarySource(
+            ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategy.PARAGRAPH,
+                ChunkingConfig(
+                    strategy=ChunkingStrategy.PARAGRAPH,
+                    chunk_size=10_000,
+                    min_chunk_size=1,
+                    max_chunk_size=100_000,
+                ),
+            ),
+            kind=BoundaryKind.PARAGRAPH,
+        )
+        alone = self._segmenter(paragraph).chunk(text, "doc")
+        with_near_miss = self._segmenter(
+            CompositeBoundarySource(paragraph, NearMiss())
+        ).chunk(text, "doc")
+        assert [c.end_pos for c in alone] == [c.end_pos for c in with_near_miss]
+
+    def test_boundary_meaning_reaches_the_emitted_chunk(self):
+        # A cut position alone is lossy; `meaning` is the part retrieval wants,
+        # and every implementation in the ADR-091 census threw it away.
+        text = by_name("header_dense_markdown").text
+
+        class Headingish:
+            name = "headingish"
+
+            def boundaries(self, text, *, source_id="doc", base_metadata=None):
+                return tuple(
+                    Boundary(
+                        end=m.start(),
+                        kind=BoundaryKind.HEADING,
+                        meaning={"path": m.group(0).strip()},
+                    )
+                    for m in re.finditer(r"^#{1,6} .+$", text, re.MULTILINE)
+                    if m.start() > 0
+                ) + (Boundary(end=len(text), kind=BoundaryKind.DOCUMENT),)
+
+        chunks = self._segmenter(Headingish(), target=40).chunk(text, "doc")
+        carried = [c.metadata.get("boundary_meaning") for c in chunks]
+        assert any(m and "path" in m for m in carried), carried
+        assert any(
+            c.metadata.get("boundary_kind") == BoundaryKind.HEADING.value
+            for c in chunks
+        )
+
+
+NESTED_DOC = """# Install
+
+intro text here
+
+## Docker
+
+docker text here
+
+### Compose
+
+compose text here
+
+## Native
+
+native text here
+
+# Usage
+
+usage text here
+"""
+
+
+class TestHeadingOutline:
+    """The hierarchy, which is the part every implementation threw away.
+
+    Heading *detection* was never the gap -- `semantic.py` already found
+    markdown and HTML headings and already excluded a `#` inside a fenced code
+    block. What it discarded was the ancestor chain: it recorded "level 2,
+    titled Docker" but not "Installation > Docker". Level and title alone do not
+    identify a section (half a dozen documents have a "Configuration" heading);
+    the path does.
+    """
+
+    def test_ancestors_nest_and_pop(self):
+        outline = HeadingOutline.build(NESTED_DOC)
+        assert [h.title for h in outline.headings] == [
+            "Install",
+            "Docker",
+            "Compose",
+            "Native",
+            "Usage",
+        ]
+        assert outline.paths == [
+            ("Install",),
+            ("Install", "Docker"),
+            ("Install", "Docker", "Compose"),
+            # Back up a level: a sibling must not inherit its predecessor's
+            # children, and must not become its own ancestor.
+            ("Install", "Native"),
+            ("Usage",),
+        ]
+
+    def test_a_level_jump_does_not_invent_ancestors(self):
+        # `#` then `###` skips level 2. The honest path names what is actually
+        # there rather than fabricating an intermediate section.
+        outline = HeadingOutline.build("# A\n\ntext\n\n### C\n\ntext\n")
+        assert outline.paths == [("A",), ("A", "C")]
+
+    def test_path_at_resolves_any_offset(self):
+        outline = HeadingOutline.build(NESTED_DOC)
+        offset = NESTED_DOC.index("compose text here")
+        assert outline.path_at(offset) == ("Install", "Docker", "Compose")
+
+    def test_content_before_the_first_heading_has_no_path(self):
+        # Inventing "Introduction" would put a title in the index that the
+        # document never contained.
+        text = "preamble\n\n# First\n\nbody\n"
+        outline = HeadingOutline.build(text)
+        assert outline.path_at(0) == ()
+        assert outline.meaning_at(0) == {}
+
+    def test_a_hash_inside_a_fenced_block_is_not_a_heading(self):
+        text = "# Real\n\n```bash\n# not a heading\necho hi\n```\n\nbody\n"
+        outline = HeadingOutline.build(text)
+        assert [h.title for h in outline.headings] == ["Real"]
+
+    def test_html_headings_with_attributes_are_found(self):
+        # A bare `<h2>` pattern never matched real markup, so HTML documents
+        # were never split by heading at all.
+        outline = HeadingOutline.build('<h1>Top</h1>\n<h2 class="x">Sub</h2>\n')
+        assert [h.title for h in outline.headings] == ["Top", "Sub"]
+        assert outline.paths[-1] == ("Top", "Sub")
+
+    def test_documents_without_headings_are_not_an_error(self):
+        outline = HeadingOutline.build("just prose, no structure at all")
+        assert outline.headings == []
+        assert outline.path_at(5) == ()
+
+
+class TestHeadingSourceAndAnnotation:
+    def test_the_source_carries_the_path_of_the_section_it_closes(self):
+        # The segmenter attaches a boundary's meaning to the chunk that ENDS
+        # there, so a heading boundary must describe the section being closed,
+        # not the one beginning.
+        found = HeadingBoundarySource().boundaries(NESTED_DOC)
+        assert isinstance(HeadingBoundarySource(), BoundarySource)
+        by_end = {b.end: b for b in found}
+        docker_start = NESTED_DOC.index("## Docker")
+        assert by_end[docker_start].meaning["heading_path"] == ["Install"]
+        compose_start = NESTED_DOC.index("### Compose")
+        assert by_end[compose_start].meaning["heading_path"] == ["Install", "Docker"]
+
+    def test_annotation_labels_every_chunk_not_just_lucky_ones(self):
+        """The reason this is a post-pass and not only a source.
+
+        A source can describe only chunks that happen to END on one of its
+        proposals. A chunk that ended mid-section because the budget ran out
+        gets nothing -- and most chunks are that kind. Labelling by LOOKUP works
+        for every chunk under every strategy, including ones with no structural
+        awareness at all.
+        """
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=40,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=80,
+        )
+        strategy = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        chunks = strategy.chunk(NESTED_DOC, "doc")
+        assert len(chunks) > 3
+
+        before = [c.metadata.get("heading_path") for c in chunks]
+        assert not any(before), "precondition: fixed_size knows nothing of headings"
+
+        annotate_heading_paths(NESTED_DOC, chunks)
+        labelled = [c.metadata.get("heading_path") for c in chunks]
+        assert all(labelled), "every chunk after the first heading must be labelled"
+        assert ["Install", "Docker", "Compose"] in labelled
+
+    def test_annotation_is_a_no_op_without_headings(self):
+        config = ChunkingConfig(strategy=ChunkingStrategy.FIXED_SIZE, **DEFAULTS)
+        strategy = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        text = "prose with no headings at all. " * 40
+        chunks = strategy.chunk(text, "doc")
+        annotate_heading_paths(text, chunks)
+        assert not any(c.metadata.get("heading_path") for c in chunks)
+
+    def test_annotation_adds_no_vectors(self):
+        # Co-design: metadata on an existing chunk. No extra chunks means no KEU
+        # and no KSU delta -- which is why TD-CHUNK-3 sequences this first as
+        # "strictly free quality".
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.FIXED_SIZE,
+            chunk_size=40,
+            chunk_overlap=0,
+            min_chunk_size=1,
+            max_chunk_size=80,
+        )
+        strategy = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE, config
+        )
+        chunks = strategy.chunk(NESTED_DOC, "doc")
+        before = [(c.text, c.start_pos, c.end_pos) for c in chunks]
+        annotate_heading_paths(NESTED_DOC, chunks)
+        after = [(c.text, c.start_pos, c.end_pos) for c in chunks]
+        assert before == after, "annotation must not move or add a single chunk"
+
+    def test_semantic_and_the_shared_module_agree(self):
+        # One implementation, asserted rather than assumed: semantic.py now
+        # shares structure.py instead of owning a private copy, and a private
+        # copy drifting back is exactly what this program exists to prevent.
+        text = by_name("header_dense_markdown").text
+        strategy = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.SEMANTIC,
+            ChunkingConfig(strategy=ChunkingStrategy.SEMANTIC, **DEFAULTS),
+        )
+        assert strategy._protected_spans(text) == protected_spans(text)
+        assert strategy.markdown_header_pattern is MARKDOWN_HEADING
+
+
+#: Module scope, not class scope: a comprehension in a class body cannot see
+#: names bound in that same body (only the outermost iterable is evaluated
+#: there). Same trap as TOKEN_MEASURED_STRATEGIES above.
+BOILERPLATE_LINE = (
+    "Copyright 2026 Example Corp. All rights reserved worldwide everywhere."
+)
+BOILERPLATE_DOC = "".join(
+    f"Unique body paragraph number {i} with its own distinct wording written.\n\n"
+    f"{BOILERPLATE_LINE}\n\n"
+    for i in range(6)
+)
+
+
+class TestIngestCarriesHeadingPaths:
+    """The capability must reach the product, not merely exist.
+
+    The ADR-091 census's central finding was capabilities built and never
+    called -- the Rust chunker with zero callers, the SDP pipeline behind a flag
+    nothing sets. Shipping a heading annotator that no ingest path invokes would
+    have reproduced that exactly, so this pins the wiring, not just the feature.
+
+    `TextDocumentProcessor` is the only production text-ingest caller in the
+    SDK: every .txt/.md/.rst/.adoc goes through it, and anvaiops's connector SDK
+    delegates here.
+    """
+
+    DOC = (
+        "# Install\n\nSome intro prose long enough to matter.\n\n"
+        "## Docker\n\nDocker instructions continue for a while here.\n\n"
+        "### Compose\n\nCompose details, nested two levels deep.\n\n"
+        "# Usage\n\nUsage text back at the top level.\n"
+    )
+
+    @staticmethod
+    def _processor(**overrides):
+        from proximadb_sdk.document_processor import (
+            ProcessorConfig,
+            TextDocumentProcessor,
+        )
+
+        settings = {
+            "chunk_size": 60,
+            "chunk_overlap": 0,
+            "min_chunk_size": 1,
+            "max_chunk_size": 200,
+        }
+        settings.update(overrides)
+        return TextDocumentProcessor(ProcessorConfig(**settings))
+
+    def test_every_chunk_reaches_ingest_with_its_path(self):
+        chunks = self._processor().chunk(self.DOC, "readme.md")
+        paths = [c.metadata.get("heading_path") for c in chunks]
+        assert all(paths), paths
+        assert ["Install", "Docker", "Compose"] in paths
+        assert ["Usage"] in paths
+
+    def test_preserve_structure_false_disables_it(self):
+        chunks = self._processor(preserve_structure=False).chunk(self.DOC, "readme.md")
+        assert not any(c.metadata.get("heading_path") for c in chunks)
+
+    def test_annotation_changes_no_chunk(self):
+        # The co-design claim at the product boundary: additive metadata only,
+        # so no KEU (embedding) and no KSU (storage) delta.
+        on = self._processor().chunk(self.DOC, "readme.md")
+        off = self._processor(preserve_structure=False).chunk(self.DOC, "readme.md")
+        assert [(c.text, c.start_pos, c.end_pos) for c in on] == [
+            (c.text, c.start_pos, c.end_pos) for c in off
+        ]
+
+    @staticmethod
+    def _dedup_processor(**overrides):
+        from proximadb_sdk.document_processor import (
+            ProcessorConfig,
+            TextDocumentProcessor,
+        )
+
+        settings = {
+            "chunk_size": 80,
+            "chunk_overlap": 0,
+            "min_chunk_size": 1,
+            "max_chunk_size": 160,
+        }
+        settings.update(overrides)
+        return TextDocumentProcessor(ProcessorConfig(**settings))
+
+    def test_dedup_is_off_by_default(self):
+        """Default OFF, unlike heading annotation, and the difference matters.
+
+        Annotation only ADDS metadata; dedup REMOVES chunks, so enabling it
+        changes what a tenant has stored. That is a product decision, and the
+        repo's rule for anything in that class is to ship default-off until
+        baked.
+        """
+        chunks = self._dedup_processor().chunk(BOILERPLATE_DOC, "doc.md")
+        assert not any(c.metadata.get("duplicates_absorbed") for c in chunks)
+        assert len(chunks) == 12
+
+    def test_dedup_engages_when_opted_in(self):
+        plain = self._dedup_processor().chunk(BOILERPLATE_DOC, "doc.md")
+        deduped = self._dedup_processor(deduplicate_chunks=True).chunk(
+            BOILERPLATE_DOC, "doc.md"
+        )
+        assert len(deduped) < len(plain)
+        absorbed = [
+            c.metadata.get("duplicates_absorbed")
+            for c in deduped
+            if c.metadata.get("duplicates_absorbed")
+        ]
+        assert absorbed, "removal must be recorded, never silent"
+
+    def test_opting_in_keeps_every_distinct_body(self):
+        # The safety property at the product boundary: only the repeated
+        # boilerplate may go, never a body paragraph.
+        deduped = self._dedup_processor(deduplicate_chunks=True).chunk(
+            BOILERPLATE_DOC, "doc.md"
+        )
+        text = " ".join(c.text for c in deduped)
+        for i in range(6):
+            assert f"number {i}" in text, f"body paragraph {i} was dropped"
+
+    def test_dedup_runs_after_annotation_so_survivors_keep_their_path(self):
+        # Order matters: a representative that loses its heading path would
+        # trade a cost saving for a retrieval regression.
+        document = "# Guide\n\n" + BOILERPLATE_DOC
+        deduped = self._dedup_processor(
+            deduplicate_chunks=True, preserve_structure=True
+        ).chunk(document, "doc.md")
+        assert all(c.metadata.get("heading_path") for c in deduped)
+
+    def test_a_document_without_headings_is_untouched(self):
+        plain = "Just prose with no structure whatsoever. " * 20
+        chunks = self._processor().chunk(plain, "notes.txt")
+        assert chunks
+        assert not any(c.metadata.get("heading_path") for c in chunks)
+
+
+EVAL_BUDGET = {
+    "chunk_size": 200,
+    "chunk_overlap": 20,
+    "min_chunk_size": 1,
+    "max_chunk_size": 400,
+}
+
+#: Recorded floors, GENERATED from a real sweep, never hand-picked. Each is the
+#: measured score at the commit that introduced it, so the gate is a ratchet:
+#: a drop fails, and an improvement must be recorded deliberately (which is what
+#: keeps a raised bar from silently rotting back down).
+#:
+#: Scored at a TIGHT budget on purpose. At the default 512 every answer in the
+#: corpus fits comfortably and every chunker scores 1.00 containment -- a
+#: saturated metric measures nothing. The regime where chunking decides anything
+#: is the one where answers are comparable in size to the budget.
+#: Written as EXACT fractions of the 8 cases, not as the rounded values the
+#: report prints. Transcribing a displayed "0.38" into a threshold sets the bar
+#: at 0.38 when the measurement is 3/8 = 0.375, so the gate fails against the
+#: very run that produced it. Fractions cannot drift that way.
+EVAL_BASELINE: dict[str, dict[str, float]] = {
+    "sliding_window": {"containment": 3 / 4, "structure": 3 / 4, "attributable": 0},
+    "fixed_size": {"containment": 3 / 4, "structure": 3 / 4, "attributable": 3 / 8},
+    "sentence": {"containment": 7 / 8, "structure": 7 / 8, "attributable": 3 / 8},
+    "paragraph": {"containment": 3 / 4, "structure": 7 / 8, "attributable": 3 / 8},
+    "semantic": {"containment": 1, "structure": 1, "attributable": 5 / 8},
+    "recursive": {"containment": 3 / 4, "structure": 7 / 8, "attributable": 3 / 8},
+}
+
+
+def _eval_chunker(strategy):
+    config = ChunkingConfig(
+        strategy=strategy,
+        embedding_provider=_deterministic_provider,
+        **EVAL_BUDGET,
+    )
+    built = ChunkingStrategyFactory.create_strategy(strategy, config)
+
+    def chunk(text):
+        chunks = built.chunk(text, "doc")
+        annotate_heading_paths(text, chunks)
+        return chunks
+
+    return chunk
+
+
+class TestChunkingEvals:
+    """The non-deterministic half: boundary QUALITY, scored against a rubric.
+
+    Tests cover what has a right answer. Whether a cut lands in a *good* place
+    does not, so it is gated on thresholds rather than asserted -- the
+    tests-vs-evals split the repo mandates for any ranked or generated surface.
+    """
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [
+            pytest.param(s, id=s.value)
+            for s in SWEPT_STRATEGIES
+            if s.value in EVAL_BASELINE
+        ],
+    )
+    def test_quality_does_not_regress(self, strategy):
+        report = run_eval(strategy.value, _eval_chunker(strategy))
+        floor = EVAL_BASELINE[strategy.value]
+        assert report.containment >= floor["containment"] - 1e-9, report.render()
+        assert report.structural_integrity >= floor["structure"] - 1e-9, report.render()
+        assert report.attributability >= floor["attributable"] - 1e-9, report.render()
+
+    def test_the_rubric_discriminates(self):
+        """A rubric where everything scores the same is not measuring anything.
+
+        This is the guard on the eval itself. The first version of this suite
+        scored 1.00 containment for every strategy, because the corpus answers
+        were all far smaller than the budget -- it looked like a clean pass and
+        told us nothing. If a future change flattens the scores again, that is a
+        problem with the eval, not a triumph of the chunkers.
+        """
+        scores = {
+            s.value: run_eval(s.value, _eval_chunker(s)).containment
+            for s in SWEPT_STRATEGIES
+            if s.value in EVAL_BASELINE
+        }
+        assert len(set(scores.values())) > 1, f"rubric is saturated: {scores}"
+
+    def test_output_cannot_be_gamed_by_one_huge_chunk(self):
+        """Containment alone is gameable: emit the whole document as one chunk.
+
+        That scores a perfect 1.00 and is useless -- the embedding is about the
+        entire document, so nothing is retrievable. Density is what catches it,
+        which is why the rubric scores both.
+        """
+
+        class WholeDocument(ChunkingStrategyInterface):
+            _offset_contract = OFFSET_CONTRACT_EXACT
+
+            def chunk(self, text, source_id, base_metadata=None):
+                return [
+                    TextChunk(
+                        text=text,
+                        start_pos=0,
+                        end_pos=len(text),
+                        chunk_id=f"{source_id}_chunk_0",
+                        metadata={},
+                    )
+                ]
+
+        cheat = WholeDocument(
+            ChunkingConfig(
+                strategy=ChunkingStrategy.FIXED_SIZE,
+                chunk_size=10**9,
+                min_chunk_size=1,
+                max_chunk_size=10**9,
+            )
+        )
+        report = run_eval("whole_document", lambda t: cheat.chunk(t, "doc"))
+        assert report.containment == 1.0, "precondition: the cheat does contain all"
+        best = max(
+            run_eval(s.value, _eval_chunker(s)).mean_density
+            for s in SWEPT_STRATEGIES
+            if s.value in EVAL_BASELINE
+        )
+        assert report.mean_density < best, (
+            "density must punish the degenerate chunker that wins containment "
+            "by emitting the whole document"
+        )
+
+    def test_the_gate_rejects_a_structurally_blind_chunker(self):
+        """Teeth: a chunker that ignores structure must fail the recorded floor.
+
+        Written as a permanent test rather than a one-off sabotage, because the
+        thing worth pinning is that the FLOOR mechanism fires -- a rubric whose
+        thresholds cannot fail is a dashboard, not a gate.
+
+        Cuts blindly every 50 characters, which slices fences and table rows
+        apart. It respects the offset contract, so this is a quality failure and
+        not a correctness one: the invariant suite would pass it.
+        """
+
+        class BlindCutter(ChunkingStrategyInterface):
+            _offset_contract = OFFSET_CONTRACT_EXACT
+
+            def chunk(self, text, source_id, base_metadata=None):
+                return [
+                    TextChunk(
+                        text=text[i : i + 50],
+                        start_pos=i,
+                        end_pos=min(i + 50, len(text)),
+                        chunk_id=f"{source_id}_chunk_{i // 50}",
+                        metadata={},
+                    )
+                    for i in range(0, len(text), 50)
+                ]
+
+        blind = BlindCutter(
+            ChunkingConfig(
+                strategy=ChunkingStrategy.FIXED_SIZE,
+                chunk_size=50,
+                chunk_overlap=0,
+                min_chunk_size=1,
+                max_chunk_size=50,
+            )
+        )
+        report = run_eval("blind", lambda t: blind.chunk(t, "doc"))
+        best = EVAL_BASELINE["semantic"]
+        assert report.structural_integrity < best["structure"]
+        assert report.containment < best["containment"]
+
+    def test_every_case_locates_its_answer(self):
+        # A needle that no longer matches would silently score 0 forever. Fail
+        # loudly instead, naming the case.
+        for case in STANDARD_CASES:
+            start, end = case.span()
+            assert end > start
+            assert by_name(case.corpus).text[start:end] == case.needle
+
+    def test_cases_state_what_they_test(self):
+        # An eval nobody can read is an eval nobody trusts.
+        for case in STANDARD_CASES:
+            assert case.question.strip()
+            assert case.tests.strip(), f"{case.name} does not say what it tests"
+
+
+class TestDeduplication:
+    """The only item in TD-CHUNK-3 that REDUCES cost (KEU once, KSU forever).
+
+    Every safety property here exists because the asymmetry is severe: keeping a
+    duplicate costs a little money, while dropping a distinct chunk removes
+    content that no downstream layer can detect is missing.
+    """
+
+    @staticmethod
+    def _chunk(text, index, start=0):
+        return TextChunk(
+            text=text,
+            start_pos=start,
+            end_pos=start + len(text),
+            chunk_id=f"doc_chunk_{index}",
+            metadata={},
+        )
+
+    def test_exact_duplicates_collapse_to_one(self):
+        boiler = "Copyright 2026 Example Corp. All rights reserved worldwide."
+        chunks = [
+            self._chunk(boiler, 0, 0),
+            self._chunk("Genuinely distinct content about vector indexes.", 1, 100),
+            self._chunk(boiler, 2, 200),
+            self._chunk(boiler, 3, 300),
+        ]
+        result = deduplicate(chunks)
+        assert len(result.kept) == 2
+        assert result.removed_count == 2
+        assert result.reduction == 0.5
+
+    def test_distinct_content_is_never_removed(self):
+        # The property that matters most. Dropping distinct content is
+        # unrecoverable and invisible.
+        chunks = [
+            self._chunk(
+                f"Section {i} discusses a completely different topic "
+                f"with its own vocabulary and specifics {i}.",
+                i,
+                i * 100,
+            )
+            for i in range(12)
+        ]
+        result = deduplicate(chunks)
+        assert result.removed_count == 0
+        assert len(result.kept) == 12
+
+    def test_first_occurrence_is_the_representative(self):
+        boiler = "Shared boilerplate footer text repeated across the document."
+        chunks = [self._chunk(boiler, i, i * 100) for i in range(3)]
+        result = deduplicate(chunks)
+        assert [c.chunk_id for c in result.kept] == ["doc_chunk_0"]
+
+    def test_removal_is_recorded_never_silent(self):
+        # A removal that leaves no trace is indistinguishable from data loss.
+        boiler = "Shared boilerplate footer text repeated across the document."
+        chunks = [self._chunk(boiler, i, i * 100) for i in range(3)]
+        result = deduplicate(chunks)
+        keeper = result.kept[0]
+        assert keeper.metadata["duplicates_absorbed"] == 2
+        assert keeper.metadata["duplicate_spans"] == [(100, 160), (200, 260)]
+
+    def test_similarity_does_not_chain_transitively(self):
+        """A~B and B~C must not collapse A, B and C together.
+
+        Chaining is how a dedup pass quietly eats a document: each step looks
+        like a small merge, and the composition chews through content that is
+        not similar at all. Only comparisons against a surviving representative
+        may remove anything.
+        """
+        base = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
+        drifted = "beta gamma delta epsilon zeta eta theta iota kappa lambda"
+        far = "lambda mu nu xi omicron pi rho sigma tau upsilon phi chi"
+        chunks = [
+            self._chunk(base, 0, 0),
+            self._chunk(drifted, 1, 100),
+            self._chunk(far, 2, 200),
+        ]
+        result = deduplicate(chunks, threshold=0.3)
+        kept = {c.text for c in result.kept}
+        assert far in kept, "a dissimilar chunk was chained away"
+
+    def test_the_result_is_deterministic(self):
+        """Same input, same decision -- across processes.
+
+        Python salts `hash()` for str per process, so a dedup built on it would
+        make the chunk count -- and therefore the bill -- differ between two runs
+        on identical input.
+        """
+        texts = ["repeated boilerplate line here"] * 3 + [
+            "unique line %d" % i for i in range(5)
+        ]
+        chunks = [self._chunk(t, i, i * 100) for i, t in enumerate(texts)]
+        first = deduplicate(list(chunks))
+        second = deduplicate([self._chunk(t, i, i * 100) for i, t in enumerate(texts)])
+        assert [c.chunk_id for c in first.kept] == [c.chunk_id for c in second.kept]
+
+    def test_stable_hash_survives_a_different_hash_seed(self):
+        """The determinism guard, tested the only way it can be.
+
+        `PYTHONHASHSEED` salts `hash()` per PROCESS, so an in-process assertion
+        cannot see the bug at all -- the value is stable within one run and
+        differs between runs. This spawns two interpreters with different seeds
+        and requires the same answer, and confirms the built-in really does
+        differ under them (otherwise the test would pass on a platform where
+        there is nothing to defend against).
+        """
+        import os
+        import subprocess
+        import sys
+
+        program = (
+            "from proximadb_sdk.chunking_strategies.dedup import _stable_hash;"
+            "print(_stable_hash('boilerplate'), hash('boilerplate'))"
+        )
+        outputs = []
+        for seed in ("0", "1"):
+            environment = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": "src"}
+            completed = subprocess.run(
+                [sys.executable, "-c", program],
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=True,
+            )
+            outputs.append(completed.stdout.split())
+
+        assert outputs[0][0] == outputs[1][0], "_stable_hash changed with the seed"
+        assert outputs[0][1] != outputs[1][1], (
+            "built-in hash() did not vary, so this platform cannot demonstrate "
+            "the hazard and the guard is untested"
+        )
+
+    @pytest.mark.parametrize(
+        "strategy", [ChunkingStrategy.PARAGRAPH, ChunkingStrategy.SEMANTIC]
+    )
+    def test_recall_ratchet_no_answer_is_lost(self, strategy):
+        """Dedup must never reduce the number of retrievable answers.
+
+        Stated as a DELTA, not an absolute. A strategy's own containment
+        limitations are not dedup's fault, and an absolute floor would blame it
+        for them -- which is what the first version of this measurement did.
+        """
+        config = ChunkingConfig(
+            strategy=strategy,
+            embedding_provider=_deterministic_provider,
+            **EVAL_BUDGET,
+        )
+        built = ChunkingStrategyFactory.create_strategy(strategy, config)
+        for case in STANDARD_CASES:
+            text = by_name(case.corpus).text
+            chunks = list(built.chunk(text, "doc"))
+            before = score_case(case, chunks).contained
+            kept = deduplicate(list(chunks)).kept
+            after = any(case.needle in c.text for c in kept)
+            assert (
+                after >= before
+            ), f"{strategy.value}/{case.name}: dedup lost the answer"
+
+    def test_reduction_is_real_on_the_corpus(self):
+        # The cost claim, measured rather than asserted. Most of the saving is
+        # EXACT duplicates: loosening the threshold from 1.0 to 0.4 adds only a
+        # few points while taking on all the risk of dropping distinct content,
+        # which is why the default stays conservative.
+        config = ChunkingConfig(
+            strategy=ChunkingStrategy.PARAGRAPH,
+            embedding_provider=_deterministic_provider,
+            **EVAL_BUDGET,
+        )
+        built = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.PARAGRAPH, config
+        )
+        total = kept = 0
+        for entry in standard_corpus():
+            chunks = list(built.chunk(entry.text, "doc"))
+            total += len(chunks)
+            kept += len(deduplicate(list(chunks)).kept)
+        assert total > 0
+        reduction = 1 - kept / total
+        assert reduction > 0.15, f"expected a real saving, got {reduction:.1%}"
 
 
 class TestGoldenOutput:

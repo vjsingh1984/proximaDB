@@ -4,6 +4,7 @@ Base interfaces and data structures for chunking strategies
 Defines the core abstractions for text chunking without any embedding concerns.
 """
 
+import functools
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, fields
@@ -267,6 +268,114 @@ class ChunkingStrategyInterface(ABC):
             List of TextChunk objects
         """
         pass
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Wrap each subclass's ``chunk`` so the size cap cannot be opted out of.
+
+        TD-CHUNK-2 S1 asks for ``max_chunk_size`` as a hard post-condition "so no
+        source can violate it". A helper the strategy must remember to call is
+        exactly the shape that gets forgotten -- and the whole point of
+        TD-CHUNK-2 is that boundary sources become PLURAL and composable, so the
+        number of places that could forget is about to grow. Wrapping at class
+        definition makes the guarantee structural: a new source inherits it
+        without knowing it exists.
+        """
+        super().__init_subclass__(**kwargs)
+        implementation = cls.__dict__.get("chunk")
+        if implementation is None or getattr(implementation, "_cap_guarded", False):
+            return
+
+        @functools.wraps(implementation)
+        def guarded(
+            self: "ChunkingStrategyInterface", *args: Any, **kwargs: Any
+        ) -> list[TextChunk]:
+            # Fully signature-transparent. Restating the common
+            # (text, source_id, base_metadata) shape here would silently NARROW
+            # any implementation that differs -- `CodeChunkingStrategy.chunk`
+            # takes `metadata=`, and hardcoding the usual signature dropped it
+            # with a TypeError. A guard that changes the API it guards is worse
+            # than no guard.
+            text = args[0] if args else kwargs.get("text", "")
+            return self._enforce_cap(
+                implementation(self, *args, **kwargs),
+                text if isinstance(text, str) else "",
+            )
+
+        guarded._cap_guarded = True  # type: ignore[attr-defined]
+        cls.chunk = guarded  # type: ignore[method-assign]
+
+    def _enforce_cap(self, chunks: list[TextChunk], text: str) -> list[TextChunk]:
+        """Split any emitted chunk that exceeds ``max_chunk_size``.
+
+        Splitting, not raising, and not passing it through:
+
+        * passing it through is the worst option -- the provider either rejects
+          the call or SILENTLY TRUNCATES, and truncation loses the tail with no
+          signal, which is the exact defect class ADR-091 exists to remove;
+        * raising would make a legal document permanently unindexable over a
+          boundary the user did not choose and cannot fix.
+
+        This mirrors the reasoning already written on ``spans.hard_split``; what
+        is new is that it now applies to chunks a strategy has already emitted,
+        so no source can route around it.
+
+        Two deliberate limits:
+
+        * It is skipped when the strategy's offsets are not ``exact``. Re-cutting
+          requires indexing the source with the chunk's own offsets, and a
+          ``legacy`` strategy's offsets do not index the source -- splitting on
+          them would produce confidently wrong text. Refusing to act on
+          unreliable offsets is the same rule the offset contract exists to
+          state.
+        * It cuts with :meth:`_fit_end` rather than ``hard_split`` because the
+          latter's ``start + cap`` arithmetic is characters by construction,
+          which would silently mis-cut under a token measure.
+        """
+        cap = self.config.max_chunk_size
+        if cap <= 0 or self._offset_contract != OFFSET_CONTRACT_EXACT:
+            return chunks
+
+        rebuilt: list[TextChunk] = []
+        split_any = False
+        for chunk in chunks:
+            start, end = chunk.start_pos, chunk.end_pos
+            if end <= start or self._size(text, start, end) <= cap:
+                rebuilt.append(chunk)
+                continue
+            split_any = True
+            cursor = start
+            while cursor < end:
+                cut = self._fit_end(text, cursor, cap, end)
+                if cut <= cursor:  # a cap that fits nothing must still advance
+                    cut = min(cursor + 1, end)
+                piece = TextChunk(
+                    text=text[cursor:cut],
+                    start_pos=cursor,
+                    end_pos=cut,
+                    chunk_id=chunk.chunk_id,
+                    metadata={**chunk.metadata, "cap_enforced": True},
+                )
+                rebuilt.append(piece)
+                cursor = cut
+
+        if not split_any:
+            # The overwhelmingly common path: nothing violated the cap, so the
+            # list is returned untouched -- same objects, same ids, same order.
+            return chunks
+
+        # Ids and indices encode POSITION, so they have to be restated once the
+        # count changes; leaving them would emit duplicate ids, which is the
+        # collision bug this program already found in anvaiops.
+        for index, chunk in enumerate(rebuilt):
+            base_id = chunk.chunk_id.rsplit("_chunk_", 1)[0]
+            chunk.chunk_id = f"{base_id}_chunk_{index}"
+            chunk.metadata["chunk_id"] = chunk.chunk_id
+            chunk.metadata["chunk_index"] = index
+            chunk.metadata["chunk_length"] = len(chunk.text)
+        for chunk in rebuilt:
+            if chunk.metadata.get("total_chunks", -1) != -1:
+                chunk.metadata["total_chunks"] = len(rebuilt)
+        return rebuilt
 
     def preferred_boundaries(
         self,

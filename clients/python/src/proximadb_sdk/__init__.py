@@ -298,7 +298,6 @@ _CODE_CHUNKING_EXPORTS = {
         "create_code_chunker",
         "get_supported_extensions",
         "get_supported_languages",
-        "register_language_parser",
     )
 }
 _CODE_KNOWLEDGE_EXPORTS = {
@@ -494,7 +493,6 @@ if _code_chunking_available:
             "create_code_chunker",
             "get_supported_languages",
             "get_supported_extensions",
-            "register_language_parser",
         ]
     )
 
