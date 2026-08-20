@@ -118,8 +118,8 @@ from .passes import (
     ChunkEdge,
     ChunkPass,
     Face,
-    PassResult,
     PassPipelineResult,
+    PassResult,
     embedded_text_of,
     run_passes,
 )

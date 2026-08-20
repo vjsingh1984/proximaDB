@@ -2318,8 +2318,20 @@ jobs:
       # has a right answer; evals cover boundary quality, which does not.
       - name: Run the chunking invariant sweep and the quality evals
         working-directory: clients/python
+        # The capability suites are listed explicitly rather than by running
+        # tests/chunking/ wholesale: that directory also holds the code-path
+        # suites, which need the optional `codegraph` extra this job does not
+        # install. Naming them keeps the gate narrow AND keeps it able to SEE
+        # the thing it is named for -- the eval floors for TD-CHUNK-3's
+        # capabilities were unreachable from this job while it ran only the
+        # conformance file.
         run: |
-          pytest tests/chunking/test_chunking_conformance.py \
+          pytest \
+            tests/chunking/test_chunking_conformance.py \
+            tests/chunking/test_chunk_passes.py \
+            tests/chunking/test_capability_evals.py \
+            tests/chunking/test_processor_pass_wiring.py \
+            tests/chunking/test_native_boundaries.py \
             -q -p no:cacheprovider --timeout=300 -o addopts=""
 
   # ============================================================================
