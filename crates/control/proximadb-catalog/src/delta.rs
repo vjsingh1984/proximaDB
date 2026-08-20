@@ -46,6 +46,12 @@
 //! - Requires Delta log for all operations
 //! - Partitioned tables use Hive-style layout
 
+// TD-CAT-8: module-level gate, matching `unity.rs` / `polaris.rs`. The
+// `delta-lake` feature already existed and is off by default, but this module
+// compiled into EVERY build anyway — `lib.rs`'s `pub mod` line does not show a
+// module's own inner attribute, which is how that went unnoticed.
+#![cfg(feature = "delta-lake")]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

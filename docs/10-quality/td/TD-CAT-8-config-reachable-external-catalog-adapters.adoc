@@ -32,7 +32,7 @@ removed a configuration surface.
 | They have **wire** config variants | `proximadb.v1.rs`: `IcebergCatalogConfig`, `HiveCatalogConfig`, `GlueCatalogConfig` as `CatalogConfig` enum arms
 | The manager entry points have ONLY test callers | `create_iceberg_catalog` / `create_glue_catalog` are called solely from `src/catalog/mod.rs` `#[cfg(test)]` (lines 371/432/438/461/619)
 | `HiveCatalog` is used by a WAL test helper | `src/storage/persistence/write_ahead_log/mod.rs:4002`
-| None are feature-gated | `proximadb-catalog/src/lib.rs:73-75` declares `pub mod glue; pub mod hive; pub mod iceberg;` unconditionally — they compile into EVERY build
+| Some are feature-gated | `lib.rs` declares `pub mod glue; pub mod hive; pub mod iceberg;` unconditionally — **but see the correction below: `unity` and `polaris` carry a module-level `#![cfg(...)]` the `pub mod` line does not reveal**
 |===
 
 So the accurate statement is: **unreachable from the running server, but reachable by
@@ -156,6 +156,76 @@ correct without that positive control.
 
 Iceberg stays on the internal `Catalog` trait: it is a local Iceberg-format store, not an external
 metastore, so `ExternalCatalog` would misdescribe it.
+
+== 🔴 Fourth correction: "they all compile into every build" was wrong, and so was my compile-cost argument
+
+This TD said "None are feature-gated … they compile into EVERY build", and I repeated it as the
+co-design justification for gating: *five adapters compiling into every binary and never running*.
+Both claims came from reading `lib.rs`'s `pub mod` lines, which do not show a module's own inner
+attribute.
+
+Measured (`head -12` of each module, plus the root default feature set):
+
+[cols="2,1,2", options="header"]
+|===
+| Module | In a default build? | Why
+
+| `unity.rs` | **No** | `#![cfg(feature = "unity-catalog")]` at line 8; not in `default`
+| `polaris.rs` | **No** | `#![cfg(feature = "polaris-catalog")]`; not in `default`
+| `glue.rs` (1036 lines) | **Yes** | no module gate; 27 inline `#[cfg(feature = "aws")]` blocks, so it compiles with its AWS calls stripped
+| `iceberg.rs` (1466) | Yes | no gate — but it is a real local catalog, not dead weight
+| `delta.rs` (1863) | Yes | no gate, despite a `delta-lake` feature existing
+| `oltp.rs` (1010) | Yes | no gate, despite an `oltp-catalog` feature existing
+|===
+
+The re-exports in `src/catalog/mod.rs:106-114` are correctly `#[cfg]`-gated already, and the
+`create_*` factories have explicit feature-off variants that return an actionable error. So the
+gating story was in better shape than this TD claimed.
+
+**What survives of the compile-cost argument**: `delta.rs` and `oltp.rs` compiled into every build
+while their features (`delta-lake`, `oltp-catalog`) existed and were off — the same one-line
+module-level `#![cfg]` that `unity`/`polaris` already carry.
+
+* **`delta.rs` (1863 lines) is now gated.** Clean: zero call sites broke.
+* **`oltp.rs` (1010 lines) is NOT, deliberately.** Gating it compiles, but breaks three root-crate
+  test sites that use `OltpCatalog` incidentally — as *a* catalog with a convenient
+  `sqlite::memory:` backing — rather than to test OLTP:
+  `src/services/embedding_drainer.rs:969`, `src/storage/engines/sst/compaction_tests.rs:899` and
+  `:983`, plus `canonical_precision.rs`'s own test module.
++
+Gating them off would silently drop that coverage from default builds, and the honest fix — moving
+those three to an always-available backend — changes what they exercise, so it needs its own
+verification rather than riding along here. Blast radius is measured and listed above; the change
+is ready to make deliberately.
+
+`glue.rs` is a judgement call and was left alone (it is only inert without `aws`, not absent).
+
+=== 🔴 Found while measuring: `OltpCatalog` is unusable in BOTH configurations
+
+Trying to gate `oltp.rs` surfaced this, and it is not caused by the gate — `oltp.rs` and both
+`Cargo.toml`s are byte-identical to `develop`:
+
+* **Feature OFF (the default).** 15 inline `#[cfg(feature = "oltp-catalog")]` gates strip the sqlx
+  paths, and the `not(...)` arm logs `"OLTP catalog: no feature enabled, skipping DDL"` and returns
+  `Ok(())`. The catalog is in-memory, persists nothing, and **reports success**.
+* **Feature ON.** `cargo check -p proximadb-catalog --features oltp-catalog-sqlite` **does not
+  compile** — sqlx's compile-time lint rejects `sqlx::query(&stmt)` at `oltp.rs:291` and `:317`
+  ("dynamic SQL strings should be audited for possible injections").
+
+So the feature has rotted without anyone noticing, which means **CI's feature matrix does not cover
+it** — a green build is not evidence the feature works.
+
+This also explains why gating `oltp.rs` is messier than it looks: the three root-crate tests that
+construct an `OltpCatalog` with `sqlite::memory:` are exercising the **in-memory no-op path**, not
+SQL persistence. They read as coverage of a SQL-backed catalog and are not.
+
+Material for [[TD-CAT-7]] item 4 (collapsing the internal impls): an implementation that cannot
+compile with its feature on, and silently persists nothing with it off, is a retirement candidate
+rather than a persistence strategy to preserve.
+
+**What does not**: "five adapters compile into every binary and never run." Two never compiled;
+one was deleted; the remaining two that do compile are a local catalog and an inert Glue shim.
+Do not cite the original claim.
 
 == Still to do
 
