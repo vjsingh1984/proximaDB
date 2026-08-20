@@ -226,11 +226,16 @@ def test_r6_include_tests_is_forwarded():
 #: fixes one, the xpass FAILS and forces the marker off, so a fix cannot land
 #: unnoticed and the exception cannot outlive its cause.
 #:
-#: R3/rust: the package emits a window chunk for `impl Beta { ... }` AND a
-#: nested symbol chunk for the `fn gamma` inside it, so the method body is
-#: embedded twice -- paid once at ingest and stored forever.
-#: R4/js,ts,java: a class yields a HEADER chunk rather than a whole-class chunk,
-#: leaving the closing brace covered by nothing.
+#: R3/rust -- filed upstream as victor#916. The package emits a window chunk for
+#: the `impl` AND a nested symbol chunk for the `fn` inside it, so the body is
+#: embedded twice: measured at DEFAULT config, 6,122 bytes emitted for a 2,876
+#: byte file (2.13x), with 98% of bytes inside more than one chunk. The same run
+#: leaves 9 non-whitespace bytes -- the struct's own field list -- in NO chunk.
+#: R4/js,ts,tsx,java -- filed upstream as victor#917. A class yields a HEADER
+#: chunk rather than a whole-class chunk, leaving the closing brace covered by
+#: nothing: exactly one non-whitespace byte lost per class, in all four
+#: languages, at ANY size (a 62-byte class that fits the budget loses it too, so
+#: it is not large-symbol windowing).
 _R3_UPSTREAM_NESTING = {"rust"}
 _R4_UPSTREAM_COVERAGE = {"javascript", "typescript", "java"}
 
