@@ -338,6 +338,8 @@ def test_span_qrels_project_through_deduplicated_occurrences(tmp_path: Path):
     assert summary["source_relation_count"] == 2
     assert summary["projected_relation_count"] == 3
     assert summary["query_count"] == 2
+    projection_manifest = tmp_path / "qrels.projection.manifest.json"
+    assert json.loads(projection_manifest.read_text(encoding="utf-8")) == summary
 
 
 def test_span_qrels_reject_invalid_or_unmatched_spans(tmp_path: Path):
@@ -391,4 +393,91 @@ def test_span_qrels_reject_occurrence_manifest_drift(tmp_path: Path):
     with pytest.raises(ValueError, match="does not match the corpus manifest"):
         projector.project_qrels(
             source_qrels, manifest, occurrences, tmp_path / "qrels.jsonl"
+        )
+
+
+def _write_beir_fixture(tmp_path: Path, *, corpus_id: str = "doc-1") -> Path:
+    root = tmp_path / "beir"
+    (root / "qrels").mkdir(parents=True)
+    (root / "corpus.jsonl").write_text(
+        json.dumps({"_id": "doc-2", "title": "", "text": "second"})
+        + "\n"
+        + json.dumps({"_id": "doc-1", "title": "First title", "text": "first body"})
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "queries.jsonl").write_text(
+        json.dumps({"_id": "q-unused", "text": "unused"})
+        + "\n"
+        + json.dumps({"_id": "q1", "text": "first query"})
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "qrels" / "test.tsv").write_text(
+        "query-id\tcorpus-id\tscore\n" + f"q1\t{corpus_id}\t2\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_beir_import_preserves_document_level_judgment_semantics(tmp_path: Path):
+    importer = _load_script("import_beir_dataset")
+    root = _write_beir_fixture(tmp_path)
+    output = tmp_path / "normalized"
+
+    manifest = importer.import_dataset(
+        root,
+        split="test",
+        output_dir=output,
+        dataset_name="fixture",
+        source_url="https://example.test/fixture.zip",
+    )
+
+    documents = [
+        json.loads(line)
+        for line in (output / "documents.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    queries = [
+        json.loads(line)
+        for line in (output / "queries.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    source_qrels = [
+        json.loads(line)
+        for line in (output / "source_qrels.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert documents == [
+        {"id": "doc-1", "text": "First title\n\nfirst body"},
+        {"id": "doc-2", "text": "second"},
+    ]
+    assert queries == [{"id": "q1", "text": "first query"}]
+    assert source_qrels == [
+        {
+            "judgment_granularity": "document",
+            "query_id": "q1",
+            "relevance": 2.0,
+            "source_id": "doc-1",
+        }
+    ]
+    assert manifest["judgment_granularity"] == "document"
+    assert manifest["document_count"] == 2
+    assert manifest["query_count"] == 1
+    assert manifest["relation_count"] == 1
+    assert manifest["license_review_required"] is True
+
+
+def test_beir_import_rejects_unknown_qrel_documents(tmp_path: Path):
+    importer = _load_script("import_beir_dataset")
+    root = _write_beir_fixture(tmp_path, corpus_id="missing")
+
+    with pytest.raises(ValueError, match="unknown corpus id 'missing'"):
+        importer.import_dataset(
+            root,
+            split="test",
+            output_dir=tmp_path / "normalized",
+            dataset_name="fixture",
+            source_url="https://example.test/fixture.zip",
         )

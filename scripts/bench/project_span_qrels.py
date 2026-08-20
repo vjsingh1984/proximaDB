@@ -45,6 +45,22 @@ def _required_text(record: dict[str, Any], name: str, context: str) -> str:
     return value
 
 
+def _atomic_json(value: Any, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        with temporary.open("w", encoding="utf-8") as output:
+            json.dump(value, output, indent=2, sort_keys=True)
+            output.write("\n")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _span(
     record: dict[str, Any], *, context: str, optional: bool
 ) -> tuple[int, int] | None:
@@ -72,6 +88,7 @@ def project_qrels(
     corpus_manifest_path: Path,
     occurrences_path: Path,
     output_path: Path,
+    summary_path: Path | None = None,
 ) -> dict[str, Any]:
     """Project half-open source spans; repeated judgments keep max relevance."""
 
@@ -163,7 +180,10 @@ def project_qrels(
     finally:
         temporary.unlink(missing_ok=True)
 
-    return {
+    summary_path = summary_path or output_path.with_name(
+        f"{output_path.stem}.projection.manifest.json"
+    )
+    summary = {
         "schema_version": 1,
         "producer_sha256": _sha256(Path(__file__).resolve()),
         "corpus_manifest_path": str(corpus_manifest_path.resolve()),
@@ -180,7 +200,10 @@ def project_qrels(
         "source_level_relation_count": source_level_relation_count,
         "projected_relation_count": len(projected),
         "query_count": len(query_ids),
+        "projection_manifest_path": str(summary_path.resolve()),
     }
+    _atomic_json(summary, summary_path)
+    return summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -189,6 +212,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corpus-manifest", type=Path, required=True)
     parser.add_argument("--occurrences-jsonl", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--projection-manifest", type=Path)
     return parser.parse_args()
 
 
@@ -201,6 +225,7 @@ def main() -> None:
                 args.corpus_manifest,
                 args.occurrences_jsonl,
                 args.output,
+                args.projection_manifest,
             ),
             indent=2,
             sort_keys=True,

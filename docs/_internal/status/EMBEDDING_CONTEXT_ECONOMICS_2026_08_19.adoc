@@ -65,6 +65,121 @@ These are payload bytes before IDs, metadata, centroids, postings, graph edges, 
 layout. They establish why a long-context row-count experiment is economically meaningful, not
 that larger chunks are already preferable.
 
+== BEIR fixture provenance
+
+The public BEIR SciFact and NFCorpus archives were downloaded from the official UKP endpoint and
+matched the MD5 values published by the BEIR project:
+
+* SciFact: published/observed MD5 `5f7d1de60b170fc8027bb7898e2efca1`; archive SHA-256
+  `536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165`; 5,183
+  documents, 300 test queries and 339 positive test relations.
+* NFCorpus: published/observed MD5 `a89dba18a62ef92f7d323ec890a0d38d`; archive SHA-256
+  `efe5be03f8c5b86a5870102d0599d227c8c6e2484328e68c6522560385671b0b`; 3,633
+  documents, 323 test queries and 12,334 positive test relations.
+
+The normalized import-manifest SHA-256 values are respectively
+`4255aa7b0f5dd9f38bda84cd01e10f725ae0cc7bf7b580e7a85b3388ad3a67f0` and
+`20dab06b9f434c036d434b8b4c6d10ff26915cefd1274ffcaca603ef99864c00`.
+Judgments are document-level. They support source-collapsed retrieval quality, not citation-span
+precision, and both imports retain `license_review_required=true`.
+
+== NFCorpus token-only pressure test
+
+All six NFCorpus scenarios are complete-source, exact-deduplicated schema-v2 corpora with zero
+truncation and a 1,048,576-character ceiling. Bytes below are canonical float32 vector payload;
+attention is the token-squared proxy, not measured runtime.
+
+[cols="2,1,1,1,1,1,1"]
+|===
+| Model/scenario | Target / overlap | Dimension | Rows | Rendered tokens | Attention proxy | f32 bytes
+
+| BGE base v1.5
+| 480 / 72
+| 768
+| 4,100
+| 1,320,708
+| 475,699,120
+| 12,595,200
+
+| Nomic v1.5
+| 480 / 72
+| 256
+| 3,785
+| 1,115,797
+| 365,630,895
+| 3,875,840
+
+| Nomic v1.5
+| 2,048 / 307
+| 256
+| 3,593
+| 1,100,821
+| 387,040,767
+| 3,679,232
+
+| Nomic v1.5
+| 7,936 / 1,190
+| 256
+| 3,593
+| 1,100,821
+| 387,040,767
+| 3,679,232
+
+| Granite R2 97M
+| 7,936 / 1,190
+| 384
+| 3,593
+| 1,217,516
+| 475,476,378
+| 5,518,848
+
+| Qwen3 Embedding 0.6B
+| 7,936 / 1,190
+| 256
+| 3,593
+| 1,277,838
+| 529,043,810
+| 3,679,232
+|===
+
+Within one pinned Nomic tokenizer/model contract, 480 -> 2,048 tokens reduces canonical rows by
+192 (5.1%) and rendered tokens by 1.3%, while increasing the attention proxy by 5.9%. Increasing
+2,048 -> 7,936 changes no row, token or byte metric because NFCorpus' maximum rendered document is
+1,852 tokens. Maximum model context is therefore not an economically justified chunk target for
+this workload.
+
+At the same one-chunk-per-source floor, tokenizer efficiency still differs: relative to Nomic,
+Granite emits 10.6% more rendered tokens and a 22.9% larger attention proxy; Qwen emits 16.1% more
+tokens and a 36.7% larger proxy. These are ingestion-work proxies only, not model-quality or
+latency rankings. The 256-d Nomic/Qwen payload equality demonstrates that dimension fixes vector
+bytes once row count is equal, independent of context ceiling.
+
+The official 12,334 document relations project to 14,031 BGE chunks, 12,876 Nomic-480 chunks and
+12,288 chunks for each one-chunk-per-source corpus after exact-dedup pair collapse. Those counts
+are deliberately not compared as NDCG/Recall: document-level BEIR quality must collapse retrieval
+scores back to source IDs (and expand deduplicated aliases) before applying the original qrels.
+
+Scenario provenance is recorded as `corpus / economics / qrels-projection` manifest SHA-256:
+
+* BGE-480: `963444652b7d31e92cbf5f46bee78c419c563916379bceddab0076263fea4a76` /
+  `1b53213554de219b17e34f9096b78147ea420582a5949064444cca111dbcb034` /
+  `321bb1bfa07b5b50fc8516a1d6c92c1127190c7389a852c92765c120a7ad6000`.
+* Nomic-480: `24074568be3ee1bcc1af712843a9d3794ea62ed574d8f66607ad58c007c62271` /
+  `5c2e92ea070bba988f84d91ebeeaf8a9cf4327089ff4457f52d84675088eed27` /
+  `74a899cc8dc994195545a8576b42b3caf71f807259cf1fc83590b72f2d6cd235`.
+* Nomic-2048: `cc21b5e651c089baf8fb9d35262306e39ba136346d6001734ee93f4bc28c02c5` /
+  `aa0ae61d80e6ba36958044cbdb872e8bc0d55c5a9ed58fa5ff3422db09d723f2` /
+  `ba026d45b861c03e110b8b35c8584da449648343dbec3c74c58012c82c43ebd3`.
+* Nomic-7936: `b35d7c582cb8c91967c3f18515a6611467c6c3ab0252ecdf71192c44f3ad5106` /
+  `197cc9c3749432b6fc1dc4d40496679891ff78267c2c4d2677e0e53b0af603df` /
+  `e7f49688e2db06e75a1fb9e53e51a03975001c90ba1a2848e8ad90419449f5ea`.
+* Granite-7936: `7f308a0923bce5aba9f2b0b0bf60acf6c314d7989208a530936aaf32da2ae219` /
+  `19594aaccc68693d4ee9d227f12f4094398170726bfd2fa7bd19e4e7228ace4e` /
+  `20d9c501586a04ed4342b8119faacb218c5760678be87fb490ae61960e9e5774`.
+* Qwen-7936: `5fbc223f16d4e87c04d0317eef48ea32d65cc7798a7c7f4b9bdaea20b8cf0e46` /
+  `32b03225e67a46aaabeedda386e3a60bb55d3d56d03904480a9a2af6f6020e9c` /
+  `a9f3011cc380035d6825ea40e4b7c8edb61f6e35d6233d6deacb3ebfe723a696`.
+
 == Co-design findings implemented before the sweep
 
 . Exact deduplication previously discarded duplicate source provenance. The builder now emits
@@ -76,9 +191,12 @@ that larger chunks are already preferable.
   then separates canonical storage rows from source occurrences and update amplification.
 . `project_span_qrels.py` projects tokenizer-independent source/span judgments through occurrence
   lineage. Invalid/unmatched spans fail closed; repeated query/corpus pairs keep maximum relevance.
+. `import_beir_dataset.py` verifies published archive provenance and emits deterministic,
+  dependency-free documents, queries and document-level source qrels without inventing license
+  rights.
 
-The new contracts are covered by offline smoke builds. Builder, economics and qrels tests currently
-pass 23/23 together with the existing corpus/embedding transport suite.
+The new contracts are covered by offline smoke builds. Builder, economics, BEIR-import and qrels
+tests currently pass 25/25 together with the existing corpus/embedding transport suite.
 
 == Long-context results
 
