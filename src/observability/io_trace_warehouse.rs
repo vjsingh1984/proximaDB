@@ -12,6 +12,7 @@
 //!  trace_relational   one row per relational record — plan geometry
 //!  trace_exec         one row per operator (relational `exec[]` flattened)
 //!  trace_vector       one row per vector-ANN record — prune / striped-read
+//!  trace_vector_access one row per physical vector operator access
 //!  trace_embedding    one row per embedding record — KEU token counts
 //! ```
 //!
@@ -56,6 +57,7 @@ const T_HEADER: &str = "trace_header";
 const T_RELATIONAL: &str = "trace_relational";
 const T_EXEC: &str = "trace_exec";
 const T_VECTOR: &str = "trace_vector";
+const T_VECTOR_ACCESS: &str = "trace_vector_access";
 const T_EMBEDDING: &str = "trace_embedding";
 
 /// Outcome of one [`IoTraceWarehouse::compact`] run.
@@ -72,6 +74,7 @@ pub struct CompactionSummary {
     pub relational_rows: usize,
     pub exec_rows: usize,
     pub vector_rows: usize,
+    pub vector_access_rows: usize,
     pub embedding_rows: usize,
 }
 
@@ -162,6 +165,14 @@ impl IoTraceWarehouse {
                 .await?;
             summary.vector_rows += self
                 .write_segment_parquet(T_VECTOR, &stem, build_vector_batch(&deduped)?, &mut touched)
+                .await?;
+            summary.vector_access_rows += self
+                .write_segment_parquet(
+                    T_VECTOR_ACCESS,
+                    &stem,
+                    build_vector_access_batch(&deduped)?,
+                    &mut touched,
+                )
                 .await?;
             summary.embedding_rows += self
                 .write_segment_parquet(
@@ -496,6 +507,7 @@ fn schema_for(table: &str) -> Option<SchemaRef> {
         T_RELATIONAL => Some(relational_schema()),
         T_EXEC => Some(exec_schema()),
         T_VECTOR => Some(vector_schema()),
+        T_VECTOR_ACCESS => Some(vector_access_schema()),
         T_EMBEDDING => Some(embedding_schema()),
         _ => None,
     }
@@ -596,6 +608,21 @@ fn vector_schema() -> SchemaRef {
         req("ivf_region_b_bytes", DataType::Int64),
         req("ivf_fetch_rounds", DataType::Int64),
         req("ivf_whole_region_fallback", DataType::Int64),
+    ]))
+}
+
+fn vector_access_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        req("writer_uuid", DataType::Utf8),
+        req("sequence", DataType::Int64),
+        opt("query_id", DataType::Utf8),
+        req("access_index", DataType::Int64),
+        req("engine", DataType::Utf8),
+        req("dimensions", DataType::Int64),
+        req("top_k", DataType::Int64),
+        req("has_filter", DataType::Boolean),
+        req("requested_mode", DataType::Utf8),
+        req("actual_path", DataType::Utf8),
     ]))
 }
 
@@ -892,6 +919,55 @@ fn build_vector_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
         .map_err(|e| StorageError::Serialization(format!("io_trace warehouse: vector batch: {e}")))
 }
 
+fn build_vector_access_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, StorageError> {
+    let mut writer_uuid = Vec::new();
+    let mut sequence = Vec::new();
+    let mut query_id = Vec::new();
+    let mut access_index = Vec::new();
+    let mut engine = Vec::new();
+    let mut dimensions = Vec::new();
+    let mut top_k = Vec::new();
+    let mut has_filter = Vec::new();
+    let mut requested_mode = Vec::new();
+    let mut actual_path = Vec::new();
+    for envelope in envs {
+        if let TracePayload::VectorAnn(payload) = &envelope.payload {
+            for (index, access) in payload.access_paths.iter().enumerate() {
+                writer_uuid.push(envelope.writer_uuid.clone());
+                sequence.push(envelope.sequence as i64);
+                query_id.push(envelope.header.query_id.clone());
+                access_index.push(index as i64);
+                engine.push(access.engine.clone());
+                dimensions.push(access.dimensions as i64);
+                top_k.push(access.top_k as i64);
+                has_filter.push(access.has_filter);
+                requested_mode.push(access.requested_mode.as_str().to_string());
+                actual_path.push(access.actual_path.as_str().to_string());
+            }
+        }
+    }
+    if writer_uuid.is_empty() {
+        return Ok(None);
+    }
+    let cols: Vec<ArrayRef> = vec![
+        str_arr(writer_uuid),
+        i64_arr(sequence),
+        opt_str_arr(query_id),
+        i64_arr(access_index),
+        str_arr(engine),
+        i64_arr(dimensions),
+        i64_arr(top_k),
+        Arc::new(BooleanArray::from(has_filter)),
+        str_arr(requested_mode),
+        str_arr(actual_path),
+    ];
+    RecordBatch::try_new(vector_access_schema(), cols)
+        .map(Some)
+        .map_err(|e| {
+            StorageError::Serialization(format!("io_trace warehouse: vector access batch: {e}"))
+        })
+}
+
 fn build_embedding_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, StorageError> {
     let mut writer_uuid = Vec::new();
     let mut sequence = Vec::new();
@@ -934,7 +1010,9 @@ mod tests {
         EmbeddingPayload, RelationalPayload, TraceHeader, VectorAnnPayload,
     };
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-    use proximadb_observability_engine::io_trace::ExecOpTrace;
+    use proximadb_observability_engine::io_trace::{
+        ExecOpTrace, VectorAccessPath, VectorAccessTrace, VectorSearchIntent,
+    };
 
     fn store_url(dir: &std::path::Path) -> (ProximaObjectStore, String) {
         let url = format!("file://{}", dir.display());
@@ -1076,6 +1154,24 @@ mod tests {
                     "w1",
                     1,
                     TracePayload::VectorAnn(VectorAnnPayload {
+                        access_paths: vec![
+                            VectorAccessTrace {
+                                engine: "sst".to_string(),
+                                dimensions: 384,
+                                top_k: 10,
+                                has_filter: false,
+                                requested_mode: VectorSearchIntent::Exact,
+                                actual_path: VectorAccessPath::Exact,
+                            },
+                            VectorAccessTrace {
+                                engine: "sst".to_string(),
+                                dimensions: 768,
+                                top_k: 25,
+                                has_filter: true,
+                                requested_mode: VectorSearchIntent::Approximate,
+                                actual_path: VectorAccessPath::Ann,
+                            },
+                        ],
                         centroid_total_blocks: 64,
                         centroid_pruned_blocks: 50,
                         ..Default::default()
@@ -1102,12 +1198,18 @@ mod tests {
         assert_eq!(summary.relational_rows, 1);
         assert_eq!(summary.exec_rows, 2, "exec[] flattened to one row per op");
         assert_eq!(summary.vector_rows, 1);
+        assert_eq!(summary.vector_access_rows, 2);
         assert_eq!(summary.embedding_rows, 1);
 
         // Read the tables back from Parquet.
         assert_eq!(total_rows(&read_table(&store, T_HEADER).await), 4);
         assert_eq!(total_rows(&read_table(&store, T_EXEC).await), 2);
         assert_eq!(total_rows(&read_table(&store, T_VECTOR).await), 1);
+        assert_eq!(
+            total_rows(&read_table(&store, T_VECTOR_ACCESS).await),
+            2,
+            "one normalized row per vector operator"
+        );
         assert_eq!(total_rows(&read_table(&store, T_EMBEDDING).await), 1);
         assert_eq!(total_rows(&read_table(&store, T_RELATIONAL).await), 1);
 

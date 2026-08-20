@@ -265,6 +265,17 @@ pub struct IoTrace {
     /// engine* — without io_trace depending on any query-layer type. `None` until
     /// a route is chosen.
     route: Mutex<Option<(String, String)>>,
+    /// Physical vector access methods completed inside this query. Unlike the
+    /// containing compute route, a SQL query may contain multiple vector
+    /// sources, so this is an ordered list rather than a last-write-wins slot.
+    /// Samples are bounded primitives/labels only — never vectors, predicates,
+    /// collection names, or user data.
+    vector_accesses: Mutex<Vec<VectorAccessTrace>>,
+    /// Query-local proof counter used by a physical engine to distinguish an
+    /// ANN path that actually engaged from a non-exact request that fell back
+    /// to exact execution. Internal coordination only; the durable fact is the
+    /// resulting `VectorAccessTrace`, not this counter.
+    vector_ann_proofs: AtomicU64,
     /// The resolved per-collection storage profile (`append_bulk`/`churn`) this
     /// query read under (ADR-061 D6 / TD-WLP-6), stamped at the search boundary
     /// so a query's projection strategy is observable per-tenant. `None` until
@@ -327,6 +338,57 @@ pub struct ExecOpTrace {
     pub spill: bool,
 }
 
+/// Caller intent presented to a physical vector engine. This is deliberately
+/// independent of the query-layer `SearchMode` type so the observability layer
+/// remains dependency-inverted and the durable labels stay bounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorSearchIntent {
+    Exact,
+    Approximate,
+    Adaptive,
+}
+
+impl VectorSearchIntent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Approximate => "approximate",
+            Self::Adaptive => "adaptive",
+        }
+    }
+}
+
+/// Physical access method that actually served a successful vector operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorAccessPath {
+    Exact,
+    Ann,
+}
+
+impl VectorAccessPath {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Ann => "ann",
+        }
+    }
+}
+
+/// One successfully completed physical vector access. Exact numeric geometry
+/// is retained for offline analysis; it is not emitted as a metrics label.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VectorAccessTrace {
+    /// Stable physical engine label (for example `sst`).
+    pub engine: String,
+    pub dimensions: u64,
+    pub top_k: u64,
+    pub has_filter: bool,
+    pub requested_mode: VectorSearchIntent,
+    pub actual_path: VectorAccessPath,
+}
+
 impl IoTrace {
     /// Create an empty trace.
     pub fn new() -> Self {
@@ -380,6 +442,24 @@ impl IoTrace {
     pub fn record_route(&self, shape_class: &str, backend_label: &str) {
         *self.route.lock().unwrap_or_else(|p| p.into_inner()) =
             Some((shape_class.to_string(), backend_label.to_string()));
+    }
+
+    /// Append one successfully completed physical vector operator access.
+    pub fn record_vector_access(&self, sample: VectorAccessTrace) {
+        self.vector_accesses
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(sample);
+    }
+
+    /// Mark one physical ANN mechanism as successfully engaged.
+    pub fn record_vector_ann_proof(&self) {
+        self.vector_ann_proofs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current number of physical ANN engagement proofs in this query.
+    pub fn vector_ann_proofs(&self) -> u64 {
+        self.vector_ann_proofs.load(Ordering::Relaxed)
     }
 
     /// The stamped route, if any.
@@ -719,6 +799,11 @@ impl IoTrace {
                 .clone(),
             stack_hwm_bytes: self.stack_hwm_bytes.load(Ordering::Relaxed),
             route: self.route(),
+            vector_accesses: self
+                .vector_accesses
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone(),
             storage_profile: self.storage_profile(),
             exec_ops: self
                 .exec_ops
@@ -813,6 +898,10 @@ pub struct IoTraceSnapshot {
     /// top dispatch dimension (which engine). `None` if no route was stamped.
     #[serde(default)]
     pub route: Option<(String, String)>,
+    /// Successfully completed vector accesses in execution order. Additive and
+    /// defaulted so snapshots emitted before TD-XMODAL-4 S2 remain readable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vector_accesses: Vec<VectorAccessTrace>,
     /// The resolved per-collection storage profile (`append_bulk`/`churn`) this
     /// query read under (ADR-061 D6 / TD-WLP-6). `None` if unstamped.
     #[serde(default)]
@@ -924,6 +1013,7 @@ impl IoTraceSnapshot {
             && self.embedding_input_tokens == 0
             && self.embedding_output_tokens == 0
             && self.compute_ms.is_empty()
+            && self.vector_accesses.is_empty()
     }
 
     /// Total embedding tokens (input + output).
@@ -1184,6 +1274,26 @@ pub fn record_route(shape_class: &str, backend_label: &str) {
     let _ = IO_TRACE.try_with(|t| t.record_route(shape_class, backend_label));
 }
 
+/// Append one successfully completed physical vector access to the active
+/// query trace. Silently no-ops outside an active scope.
+pub fn record_vector_access(sample: VectorAccessTrace) {
+    let _ = IO_TRACE.try_with(|t| t.record_vector_access(sample));
+}
+
+/// Mark physical ANN engagement in the active query. This is an internal
+/// attribution signal; callers emit the durable access sample only after the
+/// enclosing vector operation succeeds.
+pub fn record_vector_ann_proof() {
+    let _ = IO_TRACE.try_with(|t| t.record_vector_ann_proof());
+}
+
+/// Read the active query's physical ANN proof count, or zero outside a scope.
+pub fn vector_ann_proof_count() -> u64 {
+    IO_TRACE
+        .try_with(|t| t.vector_ann_proofs())
+        .unwrap_or_default()
+}
+
 /// Stamp the resolved storage profile (`append_bulk`/`churn`) onto the active
 /// query trace (ADR-061 D6 / TD-WLP-6). Silently no-ops outside an active
 /// scope. Neutral label string — io_trace never depends on `StorageProfile`.
@@ -1249,6 +1359,31 @@ fn notify_route_observer(snap: &IoTraceSnapshot, shape_class: &str, backend_labe
         .as_ref()
     {
         obs(snap, shape_class, backend_label);
+    }
+}
+
+/// Observer invoked once at query completion when at least one physical vector
+/// access was recorded. Separate from `RouteObserver`: the latter is the one
+/// containing compute backend, while this dimension may repeat per query.
+type VectorAccessObserver = dyn Fn(&IoTraceSnapshot) + Send + Sync;
+
+static VECTOR_ACCESS_OBSERVER: Mutex<Option<Box<VectorAccessObserver>>> = Mutex::new(None);
+
+/// Install or clear the vector-access observer. The query layer uses this
+/// dependency-inversion seam to feed observe-only access-path cost cells.
+pub fn set_vector_access_observer(observer: Option<Box<VectorAccessObserver>>) {
+    *VECTOR_ACCESS_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = observer;
+}
+
+fn notify_vector_access_observer(snap: &IoTraceSnapshot) {
+    if let Some(observer) = VECTOR_ACCESS_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        observer(snap);
     }
 }
 
@@ -1347,6 +1482,17 @@ pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
     IO_TRACE.scope(Arc::new(IoTrace::new()), future).await
 }
 
+/// Bind an existing query trace to a child future. `tokio::task_local!` does
+/// not cross `tokio::spawn`; engine schedulers capture [`current_handle`] before
+/// spawning and rebind it with this function so child I/O remains attributable
+/// to the owning query rather than disappearing from its cost cell.
+pub async fn scope_with_handle<F: std::future::Future>(
+    trace: Arc<IoTrace>,
+    future: F,
+) -> F::Output {
+    IO_TRACE.scope(trace, future).await
+}
+
 /// Wrap a query future in a fresh trace, run it, then emit the captured
 /// snapshot as a [`TARGET`] event labelled by `tenant_id`/`route`. This is the
 /// one call a request handler adds at the query boundary — co-locate it with
@@ -1408,6 +1554,9 @@ where
                     && let Some((shape_class, backend_label)) = stamped_route
                 {
                     notify_route_observer(&snap, &shape_class, &backend_label);
+                }
+                if !snap.vector_accesses.is_empty() {
+                    notify_vector_access_observer(&snap);
                 }
                 // T2.2 ingestion: feed the cache orchestrator for trace-driven sizing.
                 // Skip empty traces to avoid wasteful cache budget updates.
@@ -1635,6 +1784,94 @@ mod tests {
             r,
             Some(("olap/parquet".to_string(), "DataFusionLocal".to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn vector_accesses_preserve_every_physical_operator_in_order() {
+        record_vector_access(VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: VectorSearchIntent::Adaptive,
+            actual_path: VectorAccessPath::Exact,
+        }); // outside scope: no-op
+
+        let snap = scope(async {
+            record_vector_access(VectorAccessTrace {
+                engine: "sst".to_string(),
+                dimensions: 384,
+                top_k: 10,
+                has_filter: false,
+                requested_mode: VectorSearchIntent::Adaptive,
+                actual_path: VectorAccessPath::Exact,
+            });
+            record_vector_access(VectorAccessTrace {
+                engine: "sst".to_string(),
+                dimensions: 768,
+                top_k: 25,
+                has_filter: true,
+                requested_mode: VectorSearchIntent::Approximate,
+                actual_path: VectorAccessPath::Ann,
+            });
+            IO_TRACE.try_with(|t| t.snapshot()).unwrap()
+        })
+        .await;
+
+        assert_eq!(snap.vector_accesses.len(), 2);
+        assert_eq!(snap.vector_accesses[0].actual_path, VectorAccessPath::Exact);
+        assert_eq!(snap.vector_accesses[1].dimensions, 768);
+        assert_eq!(snap.vector_accesses[1].actual_path, VectorAccessPath::Ann);
+        assert!(!snap.is_empty(), "an access-only trace is durable evidence");
+    }
+
+    #[tokio::test]
+    async fn flush_feeds_vector_observer_without_a_compute_route_stamp() {
+        use std::sync::Arc;
+
+        let seen: Arc<Mutex<Vec<IoTraceSnapshot>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        set_vector_access_observer(Some(Box::new(move |snap| {
+            sink.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(snap.clone());
+        })));
+
+        instrument(None, "rest.v2.records.search", async {
+            record_vector_access(VectorAccessTrace {
+                engine: "sst".to_string(),
+                dimensions: 384,
+                top_k: 10,
+                has_filter: false,
+                requested_mode: VectorSearchIntent::Exact,
+                actual_path: VectorAccessPath::Exact,
+            });
+        })
+        .await;
+        set_vector_access_observer(None);
+
+        let got = seen.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].vector_accesses.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn existing_handle_rebinds_trace_across_spawn() {
+        let snap = scope(async {
+            let trace = current_handle().expect("active trace handle");
+            tokio::spawn(scope_with_handle(trace, async {
+                record_range_gets(1);
+                record_bytes_read(4096);
+                record_vector_ann_proof();
+            }))
+            .await
+            .expect("child task");
+            snapshot().expect("outer snapshot")
+        })
+        .await;
+
+        assert_eq!(snap.range_gets, 1);
+        assert_eq!(snap.bytes_read, 4096);
     }
 
     #[tokio::test]

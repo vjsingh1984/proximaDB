@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` now exposes a distinct vector *access-path* decision (exact/approximate/adaptive) without conflating it with the containing SQL plan's compute backend. Measured cost-cell selection and cross-surface parity gates remain open.
+| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision, and successful SST exact/ANN executions now land attributable trace/warehouse samples plus observe-only cost cells. Automatic cost selection, paired evidence, and cross-surface parity gates remain open.
 | Severity | Medium-High (surface consistency + moat: one internal vector-search intent behind every SQL surface; removes the hardcoded pgwire `<->` bypass and the pgwire/UDTF reachability gap)
 | Component | pgwire (`src/network/postgres/relational_pipeline.rs`, `pgvector_params.rs`) ; router (`src/query/compute_scheduler.rs` `VectorQueryShape`/`route_vector_search`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
 | Governs / derives from | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — "no new DSL; reuse SQL + table functions") ; the reserved TD-XMODAL-4 forward-reference therein.
@@ -95,6 +95,20 @@ The first S2 increment closes the policy-loss boundary without claiming an unmea
 * routed the production port and multimodel executor through the same scheduler decision and removed the hard-coded `SearchMode::Exact` overwrite for explicit caller intent.
 
 This is deliberately **observe/static**, not a claimed completion of cost selection. The current route cost model ranks whole-plan `ComputeBackend` candidates and its one trace route slot cannot honestly compare nested vector access methods. The next S2 increment must add a distinct access-path trace dimension and warm comparable `(vector shape, exact|ANN)` cells before any default or live override can flip. Reusing the backend label for ANN would poison the existing engine cells; adding arbitrary dimension/top-k buckets before trace-density evidence would repeat ADR-058's warned failure mode.
+
+== Implemented measured-access slice (2026-08-19)
+
+The second S2 increment adds the evidence substrate without enabling an automatic route flip:
+
+* added a repeated, typed `vector_accesses[]` dimension to `IoTraceSnapshot`, separate from the single containing-compute route. Each successful access retains physical engine, exact numeric dimensions/top-k, filter presence, requested mode, and the actual exact/ANN path; no vector, predicate, collection name, or user data is captured;
+* projected those samples into normalized `trace_vector_access` warehouse rows keyed by the existing writer/sequence/query identity and access ordinal. Multi-vector SQL therefore remains queryable instead of being overwritten by a last-write-wins slot;
+* reused the existing `RouteCostModel` EWMA/persistence store for `(vector engine + exact geometry, actual path)` cells. Exact dimensions/top-k are not Prometheus labels and are not forced into unmeasured buckets. Caller intent remains durable evidence but is intentionally not part of the cost key, because partitioning by intent would make exact-vs-ANN comparison impossible;
+* made online attribution fail closed: only a trace with exactly one vector access can fold aggregate query I/O/compute into a cost cell. Multi-access traces stay durable but do not train the model until operator-local cost accounting exists;
+* record ANN only after positive physical engagement proof (non-empty AXIS result, PAX cascade result, or file-centroid pruning). An Approximate/Adaptive request that falls back without such proof does not poison the ANN cell. Exact is recorded only after successful exact execution;
+* rebind the owning `IoTrace` handle across SST's per-file `tokio::spawn` boundary, so multi-core PAX I/O and ANN engagement contribute to the same query sample instead of disappearing with the task-local context;
+* fixed an exactness defect exposed by that attribution audit: `execute_exact_segment_scan` previously set only `block_prune.force_exact`, leaving Adaptive file pruning enabled, while every direct-scan implementation attempted the RaBitQ cascade before consulting that flag. The effective mode is now forced to `Exact`, and one shared cascade gate makes `force_exact` dominate sequential and multi-core PAX scans.
+
+This remains observe-only. The scheduler's absent-intent default is still Exact, persisted vector cells are not admitted to the whole-plan backend recommendation table, and no gate can flip vector access automatically. The next increment requires paired exact/ANN observations at identical geometry, the existing SIFT/PAX recall ratchet, and a density review before defining any stable geometry buckets or live policy.
 
 == Constraints
 
