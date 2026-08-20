@@ -947,10 +947,19 @@ impl GraphEngine for OrionGraphEngine {
             return Ok(Vec::new());
         }
 
-        // WAL durability: single batch entry to reduce WAL overhead
-        // IMPORTANT: Synchronous WAL write for data durability and acknowledgement
-        // Server mode: MUST wait for WAL before acknowledging insert
-        // Embedded mode: Configurable via PersistenceConfig (default: sync)
+        // WAL: one batch frame per request to bound WAL overhead.
+        //
+        // DURABILITY CONTRACT (what actually happens, not what earlier comments
+        // claimed): the frame is appended to the writer's buffer and is fsynced
+        // only when the entry sets `requires_fsync` — which no graph write path
+        // currently does — or when the segment rotates at its size cap. An
+        // acknowledged batch therefore survives a process CRASH only after
+        // rotation or a later flush; it always survives a clean shutdown. The
+        // earlier comment here ("Synchronous WAL write... MUST wait for WAL
+        // before acknowledging") described intent, not behaviour; fixing the
+        // comment rather than silently flipping every graph write to fsync,
+        // because per-batch fsync is a throughput/durability trade needing its
+        // own decision (and a config surface), not a drive-by.
         // TEST MODE: Set PROXIMADB_DISABLE_WAL=1 to skip WAL writes for benchmarking
         let disable_wal = std::env::var("PROXIMADB_DISABLE_WAL").unwrap_or_default() == "1";
         if !disable_wal {
@@ -1068,10 +1077,19 @@ impl GraphEngine for OrionGraphEngine {
         }
         let validate_time = validate_start.elapsed();
 
-        // WAL durability: single batch entry to reduce WAL overhead
-        // IMPORTANT: Synchronous WAL write for data durability and acknowledgement
-        // Server mode: MUST wait for WAL before acknowledging insert
-        // Embedded mode: Configurable via PersistenceConfig (default: sync)
+        // WAL: one batch frame per request to bound WAL overhead.
+        //
+        // DURABILITY CONTRACT (what actually happens, not what earlier comments
+        // claimed): the frame is appended to the writer's buffer and is fsynced
+        // only when the entry sets `requires_fsync` — which no graph write path
+        // currently does — or when the segment rotates at its size cap. An
+        // acknowledged batch therefore survives a process CRASH only after
+        // rotation or a later flush; it always survives a clean shutdown. The
+        // earlier comment here ("Synchronous WAL write... MUST wait for WAL
+        // before acknowledging") described intent, not behaviour; fixing the
+        // comment rather than silently flipping every graph write to fsync,
+        // because per-batch fsync is a throughput/durability trade needing its
+        // own decision (and a config surface), not a drive-by.
         // TEST MODE: Set PROXIMADB_DISABLE_WAL=1 to skip WAL writes for benchmarking
         let wal_start = std::time::Instant::now();
         let disable_wal = std::env::var("PROXIMADB_DISABLE_WAL").unwrap_or_default() == "1";
