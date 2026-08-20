@@ -232,6 +232,22 @@ def pending_shards(
     return pending
 
 
+def shard_manifest_reference(paths: Sequence[Path]) -> dict[str, str]:
+    """Bind the identity manifest shared by one ordered shard set."""
+    if not paths:
+        raise ValueError("embedding shard set cannot be empty")
+    parent = paths[0].parent
+    if any(path.parent != parent for path in paths):
+        raise ValueError("embedding shard paths do not share one identity directory")
+    manifest_path = parent / "manifest.json"
+    if not manifest_path.exists():
+        raise RuntimeError(f"embedding shard identity is missing: {manifest_path}")
+    return {
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest_sha256": _sha256(manifest_path),
+    }
+
+
 def _atomic_numpy(array: np.ndarray, path: Path) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
     try:
@@ -556,7 +572,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         query_shard_paths=query_shard_paths,
     )
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "transport_sha256": _sha256(Path(__file__).resolve()),
         "model_id": args.model,
         "model_revision": args.revision,
@@ -568,6 +584,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "artifact_dtype": "float32",
         "qrels": qrels_summary,
         "query_ids": query_ids_manifest,
+        "shards": {
+            "passage": shard_manifest_reference(shard_paths),
+            "query": (
+                shard_manifest_reference(query_shard_paths)
+                if query_shard_paths is not None
+                else None
+            ),
+        },
         **result,
     }
     _atomic_json(manifest, args.output_dir / f"{args.prefix}.embedding.manifest.json")

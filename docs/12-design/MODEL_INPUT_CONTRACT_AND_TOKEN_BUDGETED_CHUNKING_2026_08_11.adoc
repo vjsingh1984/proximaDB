@@ -342,7 +342,26 @@ corpus row. Every `corpus_id` must exist as a `chunk_id` in the digest-matched c
 This path calls the model's query-role renderer/encoder and records query/qrels hashes. Passage-only
 quantization bounds keep the base/index stable across evaluation query sets; out-of-range query
 components are clipped and counted in the embedding manifest. A content-hashed query-ID sidecar
-preserves the exact query-binary row order.
+preserves the exact query-binary row order. Schema-v2 embedding manifests additionally bind the
+passage- and query-shard identity manifests, including model contract, role, resolved runtime,
+dimension, row count and stored dtype.
+
+Embedding/chunking quality is measured before ANN or quantization effects:
+
+[source,bash]
+----
+python scripts/bench/score_embedding_shards.py \
+  --embedding-manifest embeddings/eval.embedding.manifest.json \
+  --corpus-manifest corpus/corpus.manifest.json \
+  --chunks-jsonl corpus/chunks.jsonl \
+  --top-k 100 --output eval/exact_run.jsonl
+----
+
+The scorer validates all corpus, row-order, query-ID and shard lineage, then computes exact
+normalized float32 inner product with deterministic corpus-ID tie breaking. Its run feeds
+`evaluate_source_retrieval.py`. ANN recall, quantization and serving latency are separate gates;
+mixing them into this first quality comparison would make a model/chunking regression impossible
+to distinguish from an index approximation regression.
 
 Source judgments should be stable across tokenizer and token-budget experiments. Store them as
 source qrels with `query_id`, `source_id`, positive `relevance`, and optional half-open

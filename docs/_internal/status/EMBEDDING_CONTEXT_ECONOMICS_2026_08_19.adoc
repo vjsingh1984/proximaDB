@@ -199,16 +199,41 @@ Scenario provenance is recorded as `corpus / economics / qrels-projection` manif
 . `evaluate_source_retrieval.py` computes document metrics only after maximum-score source
   collapse, binds every input digest, covers every qrels query, and rejects exact-dedup aliases by
   default. Metric definitions and deterministic tie breaking are persisted in the output.
+. Schema-v2 embedding manifests bind both role-specific shard identities;
+  `score_embedding_shards.py` validates exact row lineage and emits deterministic normalized
+  float32 inner-product runs before ANN or quantization is introduced.
 
 The new contracts are covered by offline smoke builds. Builder, economics, BEIR-import, qrels and
-source-evaluation tests currently pass 27/27 together with the existing corpus/embedding transport
+source-evaluation tests currently pass 28/28 together with the existing corpus/embedding transport
 suite when `PYTHONPATH=clients/python/src` binds the isolated worktree SDK.
 
-== Long-context results
+== Full-source long-context upper bound
 
-The full Nomic v1.5 7,936-token / 1,190-token-overlap upper-bound corpus is running. Intermediate
-files are not evidence; this section will be populated only after atomic finalization, digest
-validation and structural analysis.
+The Nomic v1.5 7,936-token / 1,190-token-overlap corpus atomically finalized over the same
+90,302-source input as the realistic BGE rebuild (`input_sha256`
+`8143f3982cfda621c00723bbd15dcaa909c266e3e650fe1bb0f7c3c53b6e2bbd`). It records complete-source
+scope, zero truncation, 100,875 canonical rows, 101,203 source occurrences and 328 exact-dedup
+aliases. Its corpus manifest SHA-256 is
+`82c3b846bccf732a8b78affe45c7f872244367b35810fe8fd7e936530e55c087`; the recorded builder digest
+was verified byte-for-byte before branch rebase. The economics report uses producer
+`b97753bcea1ee0bfbda76690a7ba2d0060adeda27a2e84a5c1f27a10b7167035`.
+
+Compared with BGE-480 on that identical input:
+
+[cols="2,1,1,1",options="header"]
+|===
+|Metric |BGE-480 / 768-d |Nomic-7,936 / 256-d |Nomic delta
+|Canonical rows |765,406 |100,875 |-86.8%
+|Rendered tokens |311,961,937 |221,826,070 |-28.9%
+|Float32 vector payload |2,351,327,232 B |103,296,000 B |-95.6%
+|Quadratic attention proxy |133,120,200,095 |1,155,353,002,868 |+767.9% (8.68x)
+|===
+
+This falsifies either one-dimensional conclusion. Longer context can greatly reduce row and vector
+storage cost, especially together with a smaller Matryoshka output, but filling that context can
+increase naive full-attention ingestion work by almost an order of magnitude. The proxy is not
+measured MPS/CUDA latency, and neither corpus proves retrieval quality. Runtime-resolved,
+`deduplicate=none` NFCorpus comparisons are the next gate.
 
 == Quality and adoption gate
 

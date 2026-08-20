@@ -80,10 +80,16 @@ def test_exact_dedup_preserves_every_source_occurrence(
         + "\n",
         encoding="utf-8",
     )
+    contracts = tmp_path / "unused.toml"
+    contracts.write_text(
+        f"[[models]]\nmodel_id = \"test/model\"\nrevision = \"{'a' * 40}\"\n"
+        "effective_context_limit = 32\n",
+        encoding="utf-8",
+    )
     args = Namespace(
         input=source,
         output_dir=tmp_path / "corpus",
-        contracts=tmp_path / "unused.toml",
+        contracts=contracts,
         text_field="text",
         id_field="id",
         strategy="fixed_size",
@@ -141,10 +147,16 @@ def test_builder_rejects_duplicate_source_ids(
         + "\n",
         encoding="utf-8",
     )
+    contracts = tmp_path / "unused.toml"
+    contracts.write_text(
+        f"[[models]]\nmodel_id = \"test/model\"\nrevision = \"{'a' * 40}\"\n"
+        "effective_context_limit = 32\n",
+        encoding="utf-8",
+    )
     args = Namespace(
         input=source,
         output_dir=tmp_path / "corpus",
-        contracts=tmp_path / "unused.toml",
+        contracts=contracts,
         text_field="text",
         id_field="id",
         strategy="fixed_size",

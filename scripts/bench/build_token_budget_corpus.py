@@ -129,12 +129,96 @@ def _runtime_contract(model: dict[str, Any], index: int) -> ResolvedInputContrac
     return contract
 
 
-def _load_contracts(path: Path) -> CompositeInputContract:
+def _declared_contract(model: dict[str, Any], index: int) -> ResolvedInputContract:
+    tokenizer_id = str(model.get("tokenizer_id", model["model_id"]))
+    tokenizer_revision = str(model.get("tokenizer_revision", model["revision"]))
+    counter = HuggingFaceTokenCounter.from_pretrained(
+        tokenizer_id,
+        revision=tokenizer_revision,
+        trust_remote_code=bool(model.get("trust_remote_code", False)),
+        local_files_only=bool(model.get("local_files_only", False)),
+    )
+    resolved_revision = getattr(counter, "resolved_revision", None)
+    if resolved_revision is not None and resolved_revision != tokenizer_revision:
+        raise ValueError(
+            f"models[{index}] tokenizer resolved revision {resolved_revision!r} "
+            f"does not match {tokenizer_revision!r}"
+        )
+    dimensions = tuple(int(value) for value in model.get("output_dimensions", ()))
+    document_parameters = tuple(
+        sorted(
+            (str(key), str(value))
+            for key, value in model.get("document_encode_parameters", {}).items()
+        )
+    )
+    query_parameters = tuple(
+        sorted(
+            (str(key), str(value))
+            for key, value in model.get("query_encode_parameters", {}).items()
+        )
+    )
+    return ResolvedInputContract(
+        model_id=str(model["model_id"]),
+        model_revision=str(model["revision"]),
+        counter=counter,
+        effective_context_limit=int(model["effective_context_limit"]),
+        renderer=InputRenderer(
+            document_template=str(model.get("document_template", "{text}")),
+            query_template=str(model.get("query_template", "{text}")),
+        ),
+        native_dimension=(
+            int(model["native_dimension"]) if "native_dimension" in model else None
+        ),
+        output_dimension=(
+            int(model["output_dimension"]) if "output_dimension" in model else None
+        ),
+        supported_output_dimensions=dimensions,
+        minimum_output_dimension=(
+            int(model["minimum_output_dimension"])
+            if "minimum_output_dimension" in model
+            else None
+        ),
+        document_encode_parameters=document_parameters,
+        query_encode_parameters=query_parameters,
+    )
+
+
+def _read_models(path: Path) -> list[dict[str, Any]]:
     with path.open("rb") as handle:
         config = tomllib.load(handle)
     models = config.get("models")
     if not isinstance(models, list) or not models:
         raise ValueError("contract TOML must contain at least one [[models]] table")
+    if not all(isinstance(model, dict) for model in models):
+        raise ValueError("every [[models]] entry must be a table")
+    return models
+
+
+def _contract_resolution_manifest(path: Path) -> dict[str, Any]:
+    models = _read_models(path)
+    resolved: dict[str, dict[str, str]] = {}
+    for model in models:
+        model_id = str(model.get("model_id", ""))
+        sealed = model.get("sealed_runtime_contract_fingerprint")
+        if sealed is not None:
+            detail = {
+                "mode": "sealed_runtime_fingerprint",
+                "sealed_runtime_contract_fingerprint": str(sealed),
+            }
+        elif "runtime_provider" in model:
+            detail = {"mode": "full_runtime"}
+        else:
+            detail = {"mode": "tokenizer_only"}
+        resolved[model_id] = detail
+    return {
+        "path": str(path.resolve()),
+        "contracts_sha256": _sha256(path),
+        "models": resolved,
+    }
+
+
+def _load_contracts(path: Path) -> CompositeInputContract:
+    models = _read_models(path)
 
     contracts = []
     for index, model in enumerate(models):
@@ -153,58 +237,30 @@ def _load_contracts(path: Path) -> CompositeInputContract:
                 f"models[{index}].tokenizer_revision must be an immutable "
                 "40-character Hugging Face commit SHA"
             )
+        sealed = model.get("sealed_runtime_contract_fingerprint")
+        if sealed is not None:
+            if model.get("runtime_provider") != "open-weights":
+                raise ValueError(
+                    f"models[{index}].sealed_runtime_contract_fingerprint requires "
+                    "runtime_provider='open-weights'"
+                )
+            if re.fullmatch(r"[0-9a-f]{64}", str(sealed)) is None:
+                raise ValueError(
+                    f"models[{index}].sealed_runtime_contract_fingerprint must be "
+                    "a 64-character SHA-256"
+                )
+            contract = _declared_contract(model, index)
+            if contract.fingerprint != sealed:
+                raise ValueError(
+                    f"models[{index}] sealed runtime contract fingerprint drift: "
+                    f"expected {sealed}, resolved {contract.fingerprint}"
+                )
+            contracts.append(contract)
+            continue
         if "runtime_provider" in model:
             contracts.append(_runtime_contract(model, index))
             continue
-        counter = HuggingFaceTokenCounter.from_pretrained(
-            tokenizer_id,
-            revision=tokenizer_revision,
-            trust_remote_code=bool(model.get("trust_remote_code", False)),
-            local_files_only=bool(model.get("local_files_only", False)),
-        )
-        dimensions = tuple(int(value) for value in model.get("output_dimensions", ()))
-        document_parameters = tuple(
-            sorted(
-                (str(key), str(value))
-                for key, value in model.get("document_encode_parameters", {}).items()
-            )
-        )
-        query_parameters = tuple(
-            sorted(
-                (str(key), str(value))
-                for key, value in model.get("query_encode_parameters", {}).items()
-            )
-        )
-        contracts.append(
-            ResolvedInputContract(
-                model_id=str(model["model_id"]),
-                model_revision=str(model["revision"]),
-                counter=counter,
-                effective_context_limit=int(model["effective_context_limit"]),
-                renderer=InputRenderer(
-                    document_template=str(model.get("document_template", "{text}")),
-                    query_template=str(model.get("query_template", "{text}")),
-                ),
-                native_dimension=(
-                    int(model["native_dimension"])
-                    if "native_dimension" in model
-                    else None
-                ),
-                output_dimension=(
-                    int(model["output_dimension"])
-                    if "output_dimension" in model
-                    else None
-                ),
-                supported_output_dimensions=dimensions,
-                minimum_output_dimension=(
-                    int(model["minimum_output_dimension"])
-                    if "minimum_output_dimension" in model
-                    else None
-                ),
-                document_encode_parameters=document_parameters,
-                query_encode_parameters=query_parameters,
-            )
-        )
+        contracts.append(_declared_contract(model, index))
     return CompositeInputContract(tuple(contracts))
 
 
@@ -499,6 +555,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "source_fields": {"id": args.id_field, "text": args.text_field},
         "token_budget": budget.to_manifest(),
         "input_contract": contracts.to_manifest(),
+        "contract_resolution": _contract_resolution_manifest(args.contracts),
         "token_histogram": histogram,
         "packing_histogram": {
             "new_content_tokens": _histogram(new_content_token_lengths),
