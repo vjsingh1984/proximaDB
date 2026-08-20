@@ -75,7 +75,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_DISABLE_GRAPH_FUSION_CALIBRATION` | Kill-switch: skip PIT calibration in graph fusion search, return raw seed+expand union. | calibration ON (unset) | kill-switch; TD-131 | src/services/fusion_service.rs
 | `PROXIMADB_DISABLE_PAX_RANGE_COALESCE` | Kill-switch: fall back to per-block reads instead of coalesced PAX range reads. | coalesce ON (unset) | kill-switch; TD-151 | src/storage/engines/core/formats/proximablocks/sst_io_layer.rs
 | `PROXIMADB_DISABLE_SST_SCAN_COALESCE` | Kill-switch: disable coalesced SST scan block reads. | coalesce ON (unset) | kill-switch; — | src/storage/engines/sst/readers/sst_query_engine.rs
-| `PROXIMADB_DISABLE_SYSTEM_CATALOG` | Kill-switch: revert default catalog from WAL-backed SystemCatalog to file-per-object NativeCatalog. | SystemCatalog ON (unset) | kill-switch; — | src/network/shared_services.rs
+| `PROXIMADB_DISABLE_SYSTEM_CATALOG` | Kill-switch: revert default catalog from WAL-backed SystemCatalog to file-per-object NativeCatalog. **Exit criterion below.** | SystemCatalog ON (unset) | kill-switch; TD-CAT-7 | src/network/shared_services.rs
 | `PROXIMADB_DISABLE_WAL` | Kill-switch (TEST MODE): skip WAL writes in the orion engine for benchmarking. | WAL ON (unset; only `=1` disables) | kill-switch (test-only); — | crates/modalities/proximadb-orion-engine/src/lib.rs
 | `PROXIMADB_DISK_CACHE_MAX_GB` | Byte cap (GB) for the local disk cache (whole-file read-through). | 10 | config-mirror; ADR-073 | crates/storage/proximadb-storage-common/src/unified_cache_config.rs
 | `PROXIMADB_DISK_CACHE_PATH` | Local disk-cache directory (point at instance NVMe). Overrides the TOML/default. | `/tmp/proximadb_cache` | config-mirror; ADR-073 | crates/storage/proximadb-storage-common/src/unified_cache_config.rs
@@ -295,6 +295,29 @@ Intentionally KEPT in the dead section: template-emitted names (deployment
 manifests may feed container entrypoints), test-asserted-unwired vars (the
 tests deliberately prove env does NOT leak into config), and compile-time
 consts that merely share the prefix.
+
+== Exit criteria for cutover kill-switches
+
+A kill-switch with no stated exit criterion never retires — it becomes a second
+supported configuration nobody chose to support. Each one here names what must
+be true before it is removed.
+
+`PROXIMADB_DISABLE_SYSTEM_CATALOG`::
+Retire once `SystemCatalog` reaches parity with `NativeCatalog` on the two
+behaviours that still differ, each demonstrated by a test rather than asserted:
++
+. **Namespace object_ids.** `NativeCatalog` mints them and folds them into its
+  allocator floor recovery; `SystemCatalog` does neither, and both report the
+  same `catalog_type`. Tracked as TD-CAT-9 and pinned today by
+  `system_catalog_namespaces_carry_no_object_id_yet`.
+. **Object-store deployments without a local `data_dir`.** These still fall back
+  (`NativeFallbackReason::ObjectStoreWithoutDataDir`) because the per-DDL WAL
+  needs a local working volume. Object-store-native WAL is Phase 6; until it
+  lands, the fallback is load-bearing and the switch cannot be removed.
++
+Until both hold, removing the switch would strand a working deployment shape.
+The `catalog_backend_choice` decision makes which shape a deployment is in
+visible at boot, which is the prerequisite for ever measuring parity.
 
 == Retired names (reserved — never repurpose)
 

@@ -176,8 +176,26 @@ slices file as TD-AUTHZ-2, -3, … referencing this tracker.
   `rest/canonical/analytics.rs:170`, `query/unified/executor.rs:447`,
   `services/search/streaming.rs:345`, `vectors/legacy.rs:6512` (port impl),
   `fusion_service.rs:775` (graph leg).
-. **L2.3** Tenant-partition the predicate-object store (honor the trait contract at
-  `compile.rs:62-64`; today cross-tenant deref resolves).
+. **L2.3** ~~Tenant-partition the predicate-object store~~ — **RE-RANKED, not a security gap.**
+  The original entry ("honor the trait contract at `compile.rs:62-64`; today cross-tenant deref
+  resolves") is accurate about the *code* and wrong about the *risk*. Cross-tenant deref does
+  resolve, but predicate objects are **cluster-scope, operator-administered**: both the write
+  (`PUT /api/v2/abac/predicate-objects/{id}`) and the binding that names one
+  (`PUT /api/v2/abac/policy-bindings/{tenant}/{id}`) require `SystemAdmin` ∪ `ConfigureSystem`, and
+  **all 14** handlers in `rest/canonical/abac_admin.rs` call the fail-closed `authorize_operator`
+  first — audited, not assumed. No tenant-facing surface writes either. So only a cluster operator,
+  who already administers every tenant, can create a predicate object or point a binding at one:
+  there is no escalation to close.
++
+The real defect was a **documentation contradiction**: the trait doc promised "structurally
+tenant-scoped… a cross-tenant ref fails to resolve" while `FileSystemPredicateObjectStore`'s doc,
+in the same file, said "not tenant-partitioned… resolves the same regardless of tenant." A reader
+could not tell which guarantee the code kept. Both now state the operator-gated reality, and
+`predicate_objects_are_cluster_scope_not_tenant_scoped` pins the arity of `get` so a tenant
+dimension cannot be added without someone re-reading the scope note.
++
+**Reopen only if a tenant-facing policy API is added** — then the store must be keyed by
+`(TenantStableId, ObjectId)` *before* that API ships.
 . **L2.4** Vector path passes the real namespace (`legacy.rs:683` hardcoded `0`) so
   `Scope::Namespace` applies uniformly.
 . **L2.5** Retire the parallel channels: `permitted_principals` enforcement
