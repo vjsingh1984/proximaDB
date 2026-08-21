@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import re
 from argparse import Namespace
 from pathlib import Path
@@ -577,14 +578,54 @@ def _write_source_evaluation_fixture(
 def test_source_retrieval_collapses_chunk_scores_before_metrics(tmp_path: Path):
     evaluator = _load_script("evaluate_source_retrieval")
     run, qrels, occurrences = _write_source_evaluation_fixture(tmp_path)
+    per_query = tmp_path / "per-query.jsonl"
 
     result = evaluator.evaluate_source_retrieval(
-        run, qrels, occurrences, k_values=(1, 2)
+        run, qrels, occurrences, k_values=(1, 2), per_query_output=per_query
     )
 
-    assert result["metrics"] == {
-        "1": {"mrr": 1.0, "ndcg": 1.0, "recall": 0.5},
-        "2": {"mrr": 1.0, "ndcg": 1.0, "recall": 1.0},
+    assert result["metrics"]["1"] == {
+        "average_precision": 1.0,
+        "capped_recall": 1.0,
+        "ceiling_normalized_recall": 1.0,
+        "hit_rate": 1.0,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "perfect_recall_ceiling": 0.5,
+        "precision": 1.0,
+        "recall": 0.5,
+    }
+    assert result["metrics"]["2"] == {
+        "average_precision": 1.0,
+        "capped_recall": 1.0,
+        "ceiling_normalized_recall": 1.0,
+        "hit_rate": 1.0,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "perfect_recall_ceiling": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+    }
+    assert result["relevant_documents_per_query"] == {
+        "min": 2,
+        "p50": 2,
+        "p90": 2,
+        "p99": 2,
+        "max": 2,
+    }
+    assert result["candidate_completeness"] == {
+        "1": {
+            "complete": True,
+            "complete_queries": 1,
+            "incomplete_queries": 0,
+            "required_candidates_per_query": 1,
+        },
+        "2": {
+            "complete": True,
+            "complete_queries": 1,
+            "incomplete_queries": 0,
+            "required_candidates_per_query": 2,
+        },
     }
     assert result["source_candidates_per_query"] == {
         "min": 2,
@@ -593,8 +634,36 @@ def test_source_retrieval_collapses_chunk_scores_before_metrics(tmp_path: Path):
         "p99": 2,
         "max": 2,
     }
-    assert result["chunk_run_row_count"] == 3
+    assert result["input_run_row_count"] == 3
     assert result["source_run_row_count"] == 2
+    assert result["per_query_diagnostics"]["sha256"] == _sha256(per_query)
+    assert json.loads(per_query.read_text(encoding="utf-8")) == {
+        "candidate_count": 2,
+        "metrics": {
+            "1": {
+                "average_precision": 1.0,
+                "capped_recall": 1.0,
+                "hit_rate": 1.0,
+                "mrr": 1.0,
+                "ndcg": 1.0,
+                "perfect_recall_ceiling": 0.5,
+                "precision": 1.0,
+                "recall": 0.5,
+            },
+            "2": {
+                "average_precision": 1.0,
+                "capped_recall": 1.0,
+                "hit_rate": 1.0,
+                "mrr": 1.0,
+                "ndcg": 1.0,
+                "perfect_recall_ceiling": 1.0,
+                "precision": 1.0,
+                "recall": 1.0,
+            },
+        },
+        "query_id": "q1",
+        "relevant_document_count": 2,
+    }
 
 
 def test_source_retrieval_rejects_deduplicated_aliases_by_default(tmp_path: Path):
@@ -605,3 +674,249 @@ def test_source_retrieval_rejects_deduplicated_aliases_by_default(tmp_path: Path
 
     with pytest.raises(ValueError, match="deduplicated aliases"):
         evaluator.evaluate_source_retrieval(run, qrels, occurrences, k_values=(1, 2))
+
+
+def test_source_metric_golden_values_cover_rank_aware_diagnostics():
+    evaluator = _load_script("evaluate_source_retrieval")
+
+    metrics = evaluator._metrics_at_k(
+        ["relevant-high", "not-relevant", "relevant-low"],
+        {"relevant-high": 2.0, "relevant-low": 1.0},
+        3,
+    )
+
+    assert metrics["precision"] == pytest.approx(2 / 3)
+    assert metrics["recall"] == 1.0
+    assert metrics["capped_recall"] == 1.0
+    assert metrics["hit_rate"] == 1.0
+    assert metrics["mrr"] == 1.0
+    assert metrics["average_precision"] == pytest.approx((1.0 + 2 / 3) / 2)
+    assert metrics["ndcg"] == pytest.approx(
+        (2.0 + 1.0 / math.log2(4)) / (2.0 + 1.0 / math.log2(3))
+    )
+
+
+def test_source_retrieval_marks_and_can_reject_incomplete_candidate_depth(
+    tmp_path: Path,
+):
+    evaluator = _load_script("evaluate_source_retrieval")
+    run, qrels, occurrences = _write_source_evaluation_fixture(tmp_path)
+    occurrences.write_text(
+        occurrences.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "corpus_id": "c-unretrieved",
+                "source_id": "doc-unretrieved",
+                "start_pos": 0,
+                "end_pos": 5,
+                "deduplicated_alias": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = evaluator.evaluate_source_retrieval(
+        run, qrels, occurrences, k_values=(2, 3)
+    )
+    assert result["candidate_completeness"]["2"]["complete"] is True
+    assert result["candidate_completeness"]["3"] == {
+        "complete": False,
+        "complete_queries": 0,
+        "incomplete_queries": 1,
+        "required_candidates_per_query": 3,
+    }
+    assert any("@3" in item for item in result["limitations"])
+
+    with pytest.raises(ValueError, match="complete source candidates at k=3"):
+        evaluator.evaluate_source_retrieval(
+            run,
+            qrels,
+            occurrences,
+            k_values=(2, 3),
+            require_complete_k=(3,),
+        )
+
+
+def test_source_retrieval_accepts_source_level_runs(tmp_path: Path):
+    evaluator = _load_script("evaluate_source_retrieval")
+    _chunk_run, qrels, occurrences = _write_source_evaluation_fixture(tmp_path)
+    source_run = tmp_path / "source-run.jsonl"
+    source_run.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"query_id": "q1", "source_id": "doc-b", "score": 0.9},
+                {"query_id": "q1", "source_id": "doc-a", "score": 0.8},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = evaluator.evaluate_source_retrieval(
+        source_run,
+        qrels,
+        occurrences,
+        k_values=(1, 2),
+        run_granularity="source",
+    )
+
+    assert result["run_granularity"] == "source"
+    assert result["metrics"]["2"]["recall"] == 1.0
+
+
+def test_reference_bm25_scores_normalized_jsonl_deterministically(tmp_path: Path):
+    bm25 = _load_script("score_bm25_corpus")
+    documents = tmp_path / "documents.jsonl"
+    documents.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"id": "doc-b", "text": "beta beta unrelated"},
+                {"id": "doc-a", "text": "alpha beta"},
+                {"id": "doc-c", "text": "alpha alpha alpha"},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    queries = tmp_path / "queries.jsonl"
+    queries.write_text(
+        json.dumps({"id": "q1", "text": "alpha"}) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "bm25.jsonl"
+
+    manifest = bm25.score_bm25_corpus(
+        documents, queries, output, top_k=3, k1=0.9, b=0.4
+    )
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [row["source_id"] for row in rows] == ["doc-c", "doc-a", "doc-b"]
+    assert rows[-1]["score"] == 0.0
+    assert manifest["analyzer"] == "unicode_word_casefold_v1"
+    assert manifest["scoring"] == "Okapi BM25"
+    assert manifest["run_sha256"] == _sha256(output)
+
+
+def test_rrf_fuses_source_runs_with_deterministic_ties(tmp_path: Path):
+    fusion = _load_script("fuse_source_runs")
+    dense = tmp_path / "dense.jsonl"
+    lexical = tmp_path / "lexical.jsonl"
+    dense.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "query_id": "q1",
+                    "source_id": source_id,
+                    "rank": rank,
+                    "score": 1 / rank,
+                }
+            )
+            for rank, source_id in enumerate(("doc-a", "doc-b", "doc-c"), 1)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    lexical.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "query_id": "q1",
+                    "source_id": source_id,
+                    "rank": rank,
+                    "score": 1 / rank,
+                }
+            )
+            for rank, source_id in enumerate(("doc-b", "doc-c", "doc-a"), 1)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "rrf.jsonl"
+
+    manifest = fusion.fuse_source_runs(
+        (dense, lexical), output, labels=("dense", "lexical"), top_k=3, rrf_k=60
+    )
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [row["source_id"] for row in rows] == ["doc-b", "doc-a", "doc-c"]
+    assert manifest["fusion"] == "reciprocal_rank_fusion"
+    assert manifest["run_sha256"] == _sha256(output)
+
+
+def test_paired_bootstrap_comparison_is_query_aligned_and_deterministic(
+    tmp_path: Path,
+):
+    comparison = _load_script("compare_retrieval_runs")
+    baseline = tmp_path / "baseline.jsonl"
+    candidate = tmp_path / "candidate.jsonl"
+
+    def write(path: Path, values: tuple[float, float]) -> None:
+        path.write_text(
+            "\n".join(
+                json.dumps(
+                    {
+                        "query_id": query_id,
+                        "metrics": {"10": {"recall": value}},
+                    }
+                )
+                for query_id, value in zip(("q1", "q2"), values, strict=True)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    write(baseline, (0.1, 0.4))
+    write(candidate, (0.2, 0.3))
+
+    first = comparison.compare_runs(
+        baseline,
+        candidate,
+        k=10,
+        metric="recall",
+        bootstrap_samples=200,
+        seed=7,
+    )
+    second = comparison.compare_runs(
+        baseline,
+        candidate,
+        k=10,
+        metric="recall",
+        bootstrap_samples=200,
+        seed=7,
+    )
+
+    assert first == second
+    assert first["query_count"] == 2
+    assert first["baseline_mean"] == pytest.approx(0.25)
+    assert first["candidate_mean"] == pytest.approx(0.25)
+    assert first["mean_delta"] == pytest.approx(0.0)
+    assert first["paired_outcomes"] == {"candidate_wins": 1, "ties": 0, "losses": 1}
+    assert first["confidence_interval"]["low"] <= 0
+    assert first["confidence_interval"]["high"] >= 0
+
+
+def test_paired_bootstrap_rejects_different_query_sets(tmp_path: Path):
+    comparison = _load_script("compare_retrieval_runs")
+    baseline = tmp_path / "baseline.jsonl"
+    candidate = tmp_path / "candidate.jsonl"
+    baseline.write_text(
+        json.dumps({"query_id": "q1", "metrics": {"10": {"recall": 1.0}}}) + "\n",
+        encoding="utf-8",
+    )
+    candidate.write_text(
+        json.dumps({"query_id": "q2", "metrics": {"10": {"recall": 1.0}}}) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="query coverage differs"):
+        comparison.compare_runs(
+            baseline,
+            candidate,
+            k=10,
+            metric="recall",
+            bootstrap_samples=20,
+            seed=1,
+        )

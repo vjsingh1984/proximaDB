@@ -30,6 +30,23 @@ header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_202
 # ---------------------------------------------------------------------------
 
 [[claims]]
+id = "embedding_retrieval_quality_nfc_types"
+claim = "On the official NFCorpus test split with exact BGE-base-v1.5 source-collapsed retrieval, 128/19 token chunks improved raw Recall@10 by 0.008894 (+5.00% relative; paired 95% query-bootstrap interval +0.000502 to +0.018948) versus 480/72, but required 3.67x vectors and did not demonstrate a general NDCG/MRR/Hit/AP gain. The 256/38 and 384/58 recall intervals included zero. Equal-weight RRF with a sealed custom reference BM25 leg reduced NDCG by 0.018991 (95% interval -0.032766 to -0.005340) and AP by 0.020192. The evaluator also exposed that top-100 chunks produced 100 distinct sources for only 8/323 control queries, so that historical source Recall@100 is a lower bound."
+metric = "vector rows and f32 payload + NDCG/Recall/MRR/Hit/AP@10 + paired query-bootstrap intervals + source-candidate completeness"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/EMBEDDING_RETRIEVAL_QUALITY_DIAGNOSTICS_2026_08_20.adoc",
+  "docs/12-design/MODEL_INPUT_CONTRACT_AND_TOKEN_BUDGETED_CHUNKING_2026_08_11.adoc",
+]
+bench_source = "scripts/bench/evaluate_source_retrieval.py"
+bench_command = "Build zero-truncation NFCorpus corpora at target/overlap 128/19, 256/38, 384/58 and 480/72; embed with BAAI/bge-base-en-v1.5 revision a5beb1e3e68b9ab74eb54cfd186867f64f240e1a; exact-score at >=200 chunks/query for candidates; evaluate source qrels with --require-complete-k 10 --collapsed-run-output --per-query-output; score the sealed custom BM25 reference; fuse source runs with weighted RRF k=60; compare per-query metrics with 10,000 bootstrap samples and seed 17"
+artifact = "docs/_internal/status/EMBEDDING_RETRIEVAL_QUALITY_DIAGNOSTICS_2026_08_20.adoc"
+hardware = "Local macOS arm64 Apple Silicon, PyTorch/MPS float32 normalized embedding and exact float32 scoring; host load was not isolated, so no latency or throughput claim"
+date = "2026-08-20"
+version = "source base aaab497528795e76ac771748438e5f8efe91b494; producer and artifact hashes sealed in the checked-in status artifact"
+notes = "Durable external root /Users/vijaysingh/proximadb-bench-data/retrieval-quality-diagnostics-v1/nfcorpus/. The BM25 leg uses the recorded unicode_word_casefold_v1 analyzer with k1=0.9/b=0.4; it is not a production Tantivy/Lucene implementation or official BEIR baseline. Intervals are exploratory test-set evidence without multiple-comparison correction. Metric manifest hashes: BGE-480 7a2acc79b2c378e2422223859752e1319cf546061db7e64e1079a7a6ec6e3c9d; BM25 f3affb37ecbb0c4949bece4f55c7bc4c67d446c610f4fa070cde827e39e37041; equal RRF 0f0fa0708119d61bc04c0f3ccba33d7673fea86e5e09b7b80f7fb843296b37f6; 128 Recall comparison 4aed1fc412ac9d154e7e88837017d73cf84baaa968af40dbeac21f1c17c6598b."
+
+[[claims]]
 id = "warmtier_flushfloor_1m_e2e"
 claim = "The #1179 warm-tier/flush-floor package, measured REST-e2e at SIFT 1M on one box across three builds: the TD-FLUSH-3 predicted-bytes floor (128MB) cuts L0 segments 10 -> 2 with ZERO compactions needed and recall@10 0.9865; armed warm-tier caches serve the invariants control plane at 99.9% hit (1,838/2); cold c=16 ceiling 18.2 -> 38.6 QPS (+112%); hot repeats 4,085 QPS p50 3.8ms; operational counters (proximadb_queries_total et al.) live on the serving path. Interim 4-segment datapoint: cold c=16 59.4 QPS — file count trades inter-file parallelism against GETs; 2 segments optimizes the billed GET dimension (TD-SEARCH-2 S2 is the latency answer)."
 metric = "L0 segment count + recall@10 + cold c1/c8/c16 QPS + hot QPS + invariants-cache hit rate"
