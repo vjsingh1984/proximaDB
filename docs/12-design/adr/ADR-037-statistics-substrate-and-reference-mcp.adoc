@@ -4,12 +4,12 @@
 
 [cols="1,3"]
 |===
-|Status|Proposed
+|Status|Proposed (amended 2026-08-19 — tier-config delivery ladder, minimal-projection rule, tier-claim trust gate; see the amendment section)
 |Date|2026-06-26
 |Deciders|Vijaykumar Singh
 |Relates to|ADR-004 (Unified Explain Contract — the `estimated_selectivity`/`estimated_rows`/`FilterDiagnostics` slots this ADR *fills*), ADR-027 (Unified Storage + Metering — PAX zone maps + coalesced write path + "OSS=mechanism, $=AnvaiOps policy"), ADR-030 (Hot-path trace+meter seam — "one seam, N readers" co-design; KSU write-path sibling), ADR-003 (MultiModelPlanV1 — the plan stats annotate), ADR-009/024 (schema + canonical type — the surface stats hang off), ADR-022 (agent memory layer — the agentic primitives the reference MCP projects), `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (vertical-inside/standard-outside)
 |Supersedes|—
-|Co-designed with|**AnvaiOps ADR-0021** (the commercial semantics/governance/economics layer that *consumes* the statistics envelope this ADR produces). The two ADRs share one boundary object (the statistics envelope) and must agree on it.
+|Co-designed with|**AnvaiOps ADR-0027** (the commercial semantics/governance/economics layer that *consumes* the statistics envelope this ADR produces). The two ADRs share one boundary object (the statistics envelope) and must agree on it.
 |Tracked under|TD-174 (statistics envelope + zone-map aggregation), TD-175 (per-modality stat extractors), TD-176 (reference MCP surface); depends on the ADR-027 zone-map + coalesced-writer substrate. Frozen v1 contract: `docs/12-design/contracts/statistics-envelope.v1.schema.json` (+ golden example); producer type `src/core/statistics/mod.rs`
 |===
 
@@ -34,7 +34,7 @@ A reconnaissance pass (2026-06-26) found the engine is **most of the way there a
 
 What is missing: (1) **column/field-level distribution statistics** (cardinality, null rate, value histogram, example values) aggregated from the zone maps into a collection-level summary; (2) **per-modality corpus statistics** surfaced uniformly (BM25 term/IDF, vector centroid/spread/cluster, graph degree/centrality, trace span/service distribution, time-series range/point-count); (3) a wiring of those into **ADR-004's empty selectivity/rows slots**; and (4) a **reference MCP surface** so an agent can `list → describe → stats → explain → search` without bespoke client code. None of these is a new storage path, a new scan, or a new authority.
 
-This ADR sits **exactly on the open-core seam** — the same seam ADR-027/030 already drew for metering. It produces **neutral statistics (units and distributions), never meaning and never dollars**. Turning a statistic into a business glossary entry, a data-quality grade, or a per-account governed answer is **AnvaiOps policy** (AnvaiOps ADR-0021), exactly as turning a metered unit into a bill is.
+This ADR sits **exactly on the open-core seam** — the same seam ADR-027/030 already drew for metering. It produces **neutral statistics (units and distributions), never meaning and never dollars**. Turning a statistic into a business glossary entry, a data-quality grade, or a per-account governed answer is **AnvaiOps policy** (AnvaiOps ADR-0027), exactly as turning a metered unit into a bill is.
 
 == Decision 1 — Statistics is "measured once at the write boundary, read many"; never a scan-to-answer `ANALYZE`
 
@@ -63,7 +63,7 @@ The engine emits one **versioned, modality-neutral statistics envelope** per col
 * `fields[]` — per field: `name`, canonical `data_type` (ADR-024), `null_rate`, `distinct_estimate`, `quantiles`/`histogram`, `examples[]`, `indexed`/`filterable`;
 * `modality[]` — a tagged union of the per-modality blocks from Decision 3.
 
-**Invariant — the envelope carries units and distributions, never meaning and never money.** No field description text, no business glossary, no data-quality grade, no PII classification, no per-account scoping, no `$`. Those are AnvaiOps ADR-0021's to add. This is the same non-entanglement law ADR-027/030 enforce for billing-vs-perf and units-vs-pricing; violating it here would refork the wire contract the way the AnvaiOps runtime contract was once forked across call-sites.
+**Invariant — the envelope carries units and distributions, never meaning and never money.** No field description text, no business glossary, no data-quality grade, no PII classification, no per-account scoping, no `$`. Those are AnvaiOps ADR-0027's to add. This is the same non-entanglement law ADR-027/030 enforce for billing-vs-perf and units-vs-pricing; violating it here would refork the wire contract the way the AnvaiOps runtime contract was once forked across call-sites.
 
 == Decision 3 — Per-modality extractors reuse the existing modality engines
 
@@ -101,7 +101,7 @@ Ship a **reference MCP server** in OSS that projects what the engine already exp
 | `memory` / `checkpoint` / `event` | ADR-022 agentic services
 |===
 
-It is **generic and unprivileged**: no `$`, no rate card, no per-account entitlement, no PII redaction, no multi-tenant policy projection — those belong to AnvaiOps ADR-0021's governed gateway, which *composes* this reference surface. The reference server is adoption fuel (every database now ships an MCP server) and the conformance target for the boundary object; it is the lower half of the agent surface, deliberately stopping at the open-core line. MCP itself is treated as one *projection* of the engine's affordances, not a new authority — if a different agent protocol displaces it, the projection is re-skinned; the envelope, EXPLAIN, and introspection underneath do not move.
+It is **generic and unprivileged**: no `$`, no rate card, no per-account entitlement, no PII redaction, no multi-tenant policy projection — those belong to AnvaiOps ADR-0027's governed gateway, which *composes* this reference surface. The reference server is adoption fuel (every database now ships an MCP server) and the conformance target for the boundary object; it is the lower half of the agent surface, deliberately stopping at the open-core line. MCP itself is treated as one *projection* of the engine's affordances, not a new authority — if a different agent protocol displaces it, the projection is re-skinned; the envelope, EXPLAIN, and introspection underneath do not move.
 
 == Open-core boundary: what stays OSS (proximaDB) vs moves to AnvaiOps
 
@@ -120,7 +120,7 @@ Consistent with ADR-027/030 ("OSS = mechanism; the $ rate card is AnvaiOps polic
 
 **Net:** statistics keeps *mechanism* in OSS (it has nowhere else to live — it is bound to the data and the write boundary) and emits a **neutral envelope**; turning that envelope into *meaning, governance, and a bill* is AnvaiOps reading the OSS surface and applying its policy. A freely-adopted, self-describing OSS engine is the top of the funnel; the curated/governed/priced agent data-plane monetizes on top.
 
-== Co-design seam with AnvaiOps ADR-0021 (the boundary object contract)
+== Co-design seam with AnvaiOps ADR-0027 (the boundary object contract)
 
 The two ADRs are designed against **one boundary object — the statistics envelope (Decision 2)** — and must agree on it. Stated identically on both sides:
 
@@ -129,7 +129,7 @@ The two ADRs are designed against **one boundary object — the statistics envel
 | Property | Contract
 | **Owner / producer** | proximaDB (OSS). The engine defines the envelope shape and `envelope_version`, and is the *only* writer.
 | **Consumer** | AnvaiOps (commercial). Reads the tiny envelope, never the data; enriches, governs, prices.
-| **Flow direction** | Stats flow **up** (engine → AnvaiOps), like the durable per-tenant metering sink (ADR-027/030). Pricing/entitlement flow **down** (AnvaiOps → engine config, the existing `sync_pricing_to_proximadb.sh`). Status flows as a **ceiling** down (engine surface status caps the AnvaiOps capability status, the existing `sync_proximadb_status.py` / ADR-0014 inheritance). Semantics **stay in AnvaiOps** — never pushed into `xcatalog`.
+| **Flow direction** | Stats flow **up** (engine → AnvaiOps), like the durable per-tenant metering sink (ADR-027/030). Pricing/entitlement flow **down** (AnvaiOps → engine config — the tier-config delivery ladder recorded in the 2026-08-19 amendment below; the former `sync_pricing_to_proximadb.sh` mechanism was retired). Status flows as a **ceiling** down (engine surface status caps the AnvaiOps capability status, the existing `sync_proximadb_status.py` / ADR-0014 inheritance). Semantics **stay in AnvaiOps** — never pushed into `xcatalog`.
 | **Must not cross (engine side)** | The envelope carries no `$`, no descriptions, no per-account scope, no quality grade. The engine attests freshness as a *fact* (a watermark), never an *SLA*.
 | **Must not cross (consumer side)** | AnvaiOps must not push semantic/pricing concerns into the engine stats path (that reforks the wire contract), and cannot surface a statistic the engine does not emit, nor a capability status above the engine's surface status.
 | **Versioning** | `envelope_version` is engine-owned; the consumer pins + validates (mirror of ADR-016 digest pinning + the status-sync guard).
@@ -165,9 +165,76 @@ Per the route-declaration mandate (`RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026
 
 * **A scan-to-answer `ANALYZE` command.** Rejected: charges KRU to scan the corpus to produce the artifact whose purpose is to let agents *avoid* scanning; violates Decision 1. Stats must ride the write boundary, not a read scan.
 * **A bespoke statistics storage engine / new authority.** Rejected: reuse-first (CLAUDE.md). Zone maps + the coalesced PAX writer already exist; statistics is an aggregation over them, not a new durable path.
-* **Baking semantics (descriptions/glossary/quality/PII) into `xcatalog`.** Rejected: that is meaning, not mechanism — it is AnvaiOps ADR-0021's half, and putting it in the engine forks the open-core boundary and the wire contract.
+* **Baking semantics (descriptions/glossary/quality/PII) into `xcatalog`.** Rejected: that is meaning, not mechanism — it is AnvaiOps ADR-0027's half, and putting it in the engine forks the open-core boundary and the wire contract.
 * **An agent-specific cost/explain surface separate from ADR-004.** Rejected: ADR-004 Contract Rule 5 — one explain, mechanically derived; a parallel agent explain would drift from execution.
 * **A full, governed MCP *product* in OSS.** Rejected: per-account entitlement, pricing, and PII redaction are policy; the OSS server stops at the open-core line and AnvaiOps composes it (Decision 5 / boundary table).
+
+== Amendment (2026-08-19, ADR-0053 co-design review): tier-config delivery, minimal projection, and claim trust
+
+Pressure-tested against AnvaiOps `REVIEW-commercial-image-overlay.md` (outcome:
+AnvaiOps ADR-0053). Three corrections and two additions to this ADR's seam:
+
+**1 — Tier-config delivery is a three-layer ladder, not the (retired) sync script.**
+The "pricing flows down" clause above originally named
+`anvaiops/scripts/sync_pricing_to_proximadb.sh`, which has since been replaced by
+a hard-error stub. The engine's actual contract (`config/TIER_CONFIG.md`,
+`tenant_tier_types.rs resolve_tier_config_source`) is, first-hit-wins:
+
+. A file at `PROXIMADB_TIER_CONFIG_PATH` (default `/config/tier-config.json`) —
+  satisfied by a mounted file (k8s ConfigMap / bind mount) or a build-time COPY.
+. `PROXIMADB_TIER_CONFIG_URL` — the container entrypoint curl-fetches at boot,
+  atomic-replaces, sanity-checks, and falls back to the baked file on failure.
+. The compile-time baked OSS baseline (air-gapped fallback).
+
+`TIER_CONFIG` is a `OnceLock` resolved once at process start: **a restart is
+required under every mechanism** — no hot reload exists (by design). Mount/URL
+delivery makes a tier change a config update + rolling restart (no image
+rebuild); baking remains correct for appliance/air-gapped substrates.
+
+**2 — Minimal-projection rule (normative for commercial operators).** The engine
+deserializes exactly: `schema_version`, `default_tier`, and per tier `id`,
+`prom_label`, `soft_caps{scan_budget_gb, ef_search_cap, freshness_sla_seconds}`,
+`cost_multiplier`. Everything else in an operator's pricing file (currency,
+`unit_rates`, `platform_fee_usd`, display/marketing blocks, margin policy) is
+inert to the engine and — per AnvaiOps ADR-0053 D1 — commercially confidential.
+An operator projecting tiers into engine config MUST ship only the listed
+fields (a ~20-line projector); **never bake a full rate card**. The tier ids
+themselves may be the operator's own (`free_trial`/`team`/… deserialize via
+serde aliases onto `Tier::Tier1..Tier5` — alias-aware startup validation).
+
+**3 — Enforcement truth.** Hard `allowances` (storage/ingest/scan caps) are NOT
+enforced by the engine today: `catalog::budget_guard::enforce` has no callers
+(ADR-0015 Phase 3a is observe-only; pod-level gating was explicitly rejected as
+an AnvaiOps concern). What a tier actually buys today: cache floors/ceilings/
+weight (via `PROXIMADB_CACHE_TIERS_PATH` + the LimitsResolver), the C5 route
+cost multiplier (observability; routing-neutral), and boot-warm priority.
+Nobody should believe a baked tier config buys data-plane quota protection.
+
+**4 — Tier claims are trust-gated (this repo, ADR-0053 W8).** The entitlement
+claim (`X-Tenant-Tier` REST, `x-tenant-tier` gRPC, `proximadb_tier` pgwire
+startup param) was previously honored from ANY client — a client with direct
+port access could self-stamp `enterprise`. It is now governed by
+`PROXIMADB_TIER_HEADER_TRUST` (`[security.tenant] tier_header_trust`), the same
+`open | authenticated-only | gateway-only` ladder as `PROXIMADB_TENANT_HEADER_TRUST`
+(TD-TENANT-1). A rejected claim is **dropped** (warned once per tenant), never a
+4xx — the request proceeds at the tenant's default tier. Stamps stay insert-only
+(clearing on rejection would let an anonymous request strip a legitimate stamp).
+
+**4b — One claim vocabulary (TD-TENANT-3).** Gating the claim exposed that the
+*names* were never shared: Arrow Flight accepted four tenant spellings while
+REST and gRPC accepted one, so a claim honored on one port was silently ignored
+on another; Flight had no tier claim surface at all; and the stamped claim was
+read in two vocabularies downstream, so `pro` and `tier3` — one entitlement —
+landed in different cache buckets. The wire names now live in one foundation
+module, Flight gained the tier hook, and the claim is normalized to a canonical
+tier id at the stamp (probing canonical-then-operator-spelling, so an
+alias-keyed `cache_tiers.json` needs no flag day). Operators projecting tiers
+per point 2 may therefore key cache policy by either spelling.
+
+**5 — Citation correction.** The co-designed counterpart is AnvaiOps
+**ADR-0027** ("agent-facing catalog statistics semantics boundary"), not
+ADR-0021 (that number in the AnvaiOps repo is the tenant-isolation primitive —
+a cross-repo numbering collision). All citations corrected above.
 
 == References
 
@@ -176,5 +243,5 @@ Per the route-declaration mandate (`RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026
 * ADR-030 (Hot-path trace+meter seam — "one seam, N readers"; KSU write-path sibling; open-core boundary table)
 * ADR-003 (MultiModelPlanV1), ADR-009/024 (schema + canonical type), ADR-022 (agent memory layer)
 * `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` (vertical-inside/standard-outside co-design)
-* **AnvaiOps ADR-0021** (the commercial consumer of the statistics envelope — the co-designed other half)
-* Cross-repo sync seam: `anvaiops/scripts/sync_pricing_to_proximadb.sh` (pricing down), `anvaiops/scripts/sync_proximadb_status.py` (status ceiling down); stats flow up via the envelope (this ADR)
+* **AnvaiOps ADR-0027** (the commercial consumer of the statistics envelope — the co-designed other half)
+* Cross-repo sync seam: tier/entitlement config flows down via the tier-config delivery ladder (2026-08-19 amendment — the former `anvaiops/scripts/sync_pricing_to_proximadb.sh` is retired), `anvaiops/scripts/sync_proximadb_status.py` (status ceiling down); stats flow up via the envelope (this ADR)

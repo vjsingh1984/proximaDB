@@ -110,6 +110,12 @@ pub struct PostgresProtocol {
     /// policies reject it at the assertion point (SQLSTATE 28000) through the
     /// same shared primitive REST/gRPC/Arrow Flight use. Default `Open`.
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// ADR-0053 W8: trust policy for the `proximadb_tier` startup-parameter
+    /// claim. pgwire runs trust auth — there is structurally NO authenticated
+    /// binding (the same fact the tenant gate above states) — so any strict
+    /// policy makes the tier claim inert (dropped, connection proceeds at the
+    /// default tier). Default `Open`.
+    tier_header_trust: proximadb_tenant::HeaderTrustPolicy,
     /// Request-tenant presence/defaulting contract for this deployment.
     tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     /// TD-ABAC-10 (ADR-087): resolver stamping `tenant_stable_id` on the
@@ -457,6 +463,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
@@ -515,6 +522,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
@@ -565,6 +573,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
@@ -592,6 +601,13 @@ impl PostgresProtocol {
     /// the same `HeaderTrustPolicy` REST/gRPC/Arrow Flight enforce.
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
+        self
+    }
+
+    /// ADR-0053 W8: set the tier-claim trust policy (same gate the REST
+    /// `X-Tenant-Tier` and gRPC `x-tenant-tier` paths enforce).
+    pub fn with_tier_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tier_header_trust = policy;
         self
     }
 
@@ -1033,11 +1049,25 @@ impl PostgresProtocol {
             // Open-core cache tier hook: a `proximadb_tier` startup parameter
             // (control-plane supplied) records the connection tenant's tier for
             // the cache policy. database == tenant/catalog (TD-064). Opaque id.
-            if let (Some(tier), db) = (params.get("proximadb_tier"), session.database.clone())
-                && !tier.is_empty()
-                && !db.is_empty()
-            {
-                crate::services::record_store::set_tenant_tier(db, tier.clone());
+            // ADR-0053 W8: gated by tier_header_trust. pgwire has no
+            // authenticated binding (trust auth), so the binding is None and
+            // any strict policy drops the claim (warned, never SQLSTATE) —
+            // under strict policies the startup parameter is inert.
+            // TD-TENANT-3: the shared claim vocabulary. pgwire's spelling
+            // differs because the PG startup-parameter grammar forbids `-`, so
+            // the canonical `x-tenant-tier` cannot be spelled here — the
+            // mapping is protocol-forced and owned by the vocabulary module,
+            // not re-derived at this call site.
+            let tier_claim =
+                proximadb_tenant::tier_claim_pg(|name| params.get(name).map(String::as_str));
+            let db = session.database.clone();
+            if let (false, Some(tier)) = (
+                db.is_empty(),
+                proximadb_tenant::resolve_tier_claim(tier_claim, None, self.tier_header_trust)
+                    .ok()
+                    .flatten(),
+            ) {
+                crate::services::record_store::set_tenant_tier(db, tier);
             }
         }
 

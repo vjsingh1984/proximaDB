@@ -4547,18 +4547,70 @@ fn segment_caches() -> (
 /// plane populates it from a request tier claim via [`set_tenant_tier`], and the
 /// cache `LimitsResolver` (built from an operator `cache_tiers.json`) reads it.
 /// Commercial tier *data* stays out of OSS — this only carries opaque tier ids.
-static TENANT_TIERS: std::sync::LazyLock<dashmap::DashMap<String, String>> =
+static TENANT_TIERS: std::sync::LazyLock<dashmap::DashMap<String, StampedTier>> =
     std::sync::LazyLock::new(dashmap::DashMap::new);
+
+/// A stamped tier claim held in **both** vocabularies (TD-TENANT-3 S3).
+///
+/// Before this, the registry held only the raw client string, and the four
+/// consumers read it two incompatible ways: three matched it as a literal key
+/// against the operator's `cache_tiers.json`, while the cost path parsed it
+/// alias-aware via [`Tier::from_claim`]. So `pro` and `tier3` — the *same*
+/// entitlement — resolved identically for cost multipliers but landed in
+/// different cache buckets, and one of them silently missed.
+#[derive(Debug, Clone)]
+pub struct StampedTier {
+    /// The claim resolved to a canonical tier. Normalizing here (rather than at
+    /// each read) also bounds the registry's value space to the known tier set,
+    /// so an unrecognized client claim no longer persists verbatim.
+    pub canonical: crate::catalog::tenant_tier::Tier,
+    /// The operator's original spelling, preserved so an alias-keyed
+    /// `cache_tiers.json` keeps binding without a flag day.
+    pub raw: String,
+}
 
 /// Record (or update) a tenant's tier id — called by the auth layer from a
 /// request claim/header. No-op semantics for unknown tenants (just inserts).
+///
+/// TD-TENANT-3 S3: normalization happens **once, here**, so every downstream
+/// reader sees one vocabulary. An unrecognized claim resolves to the default
+/// tier (fail-safe, unchanged in effect — it previously missed every policy
+/// key and fell back to `default_tier` anyway).
 pub fn set_tenant_tier(tenant_id: impl Into<String>, tier: impl Into<String>) {
-    TENANT_TIERS.insert(tenant_id.into(), tier.into());
+    let raw = tier.into();
+    let canonical = crate::catalog::tenant_tier::Tier::from_claim(&raw)
+        .unwrap_or_else(crate::catalog::tenant_tier::default_tier);
+    TENANT_TIERS.insert(tenant_id.into(), StampedTier { canonical, raw });
 }
 
-/// The recorded tier id for a tenant, if the control plane has stamped one.
+/// The tier id as the control plane spelled it, if one was stamped.
+///
+/// This is the *operator* vocabulary — use [`tenant_tier_policy_key`] to look a
+/// tenant up in a `cache_tiers.json`, or [`tenant_tier_resolved`] for the
+/// canonical [`Tier`].
 pub fn tenant_tier(tenant_id: &str) -> Option<String> {
-    TENANT_TIERS.get(tenant_id).map(|r| r.clone())
+    TENANT_TIERS.get(tenant_id).map(|r| r.raw.clone())
+}
+
+/// The key to use for a tenant against an operator tier policy, probing the
+/// **canonical id first** and falling back to the operator's original spelling
+/// (TD-TENANT-3 S3).
+///
+/// `declares` reports whether the policy has an explicit spec for a key (e.g.
+/// `|k| policy.has_tier(k)`). The two-probe order is what makes the
+/// normalization mixed-read-safe: a `cache_tiers.json` keyed by canonical ids
+/// and one keyed by commercial aliases both bind, so no operator config has to
+/// change in lockstep with this engine change.
+///
+/// `None` when the tenant has no stamp or the policy declares neither
+/// spelling — the caller then applies the policy's own default tier.
+pub fn tenant_tier_policy_key(tenant_id: &str, declares: impl Fn(&str) -> bool) -> Option<String> {
+    let stamped = TENANT_TIERS.get(tenant_id)?;
+    let canonical = stamped.canonical.id();
+    if declares(canonical) {
+        return Some(canonical.to_string());
+    }
+    declares(&stamped.raw).then(|| stamped.raw.clone())
 }
 
 /// Resolve a tenant to its [`Tier`] from the header-fed registry above — the
@@ -4569,8 +4621,12 @@ pub fn tenant_tier(tenant_id: &str) -> Option<String> {
 /// model's tier multiplier — one tier registry, not two. Installed at startup
 /// into `tenant_tier::set_tenant_tier_resolver` (see `database.rs`).
 pub fn tenant_tier_resolved(tenant_id: &str) -> crate::catalog::tenant_tier::Tier {
-    tenant_tier(tenant_id)
-        .and_then(|claim| crate::catalog::tenant_tier::Tier::from_claim(&claim))
+    // TD-TENANT-3 S3: the claim was already parsed at the stamp, so this is a
+    // read, not a re-parse — and it can no longer disagree with what the cache
+    // path resolves for the same tenant.
+    TENANT_TIERS
+        .get(tenant_id)
+        .map(|stamped| stamped.canonical)
         .unwrap_or_else(crate::catalog::tenant_tier::default_tier)
 }
 
@@ -4593,6 +4649,80 @@ mod tenant_tier_bridge_tests {
         let bad = "bridge-test-bad-claim-tenant";
         set_tenant_tier(bad, "not-a-tier");
         assert_eq!(tenant_tier_resolved(bad), default_tier());
+    }
+
+    /// TD-TENANT-3 S3: the defect this workstream closes — two spellings of one
+    /// entitlement must resolve to the SAME cache bucket, not two.
+    #[test]
+    fn alias_and_canonical_spellings_converge_on_one_policy_key() {
+        let alias_tenant = "vocab-test-alias-tenant";
+        let canonical_tenant = "vocab-test-canonical-tenant";
+        set_tenant_tier(alias_tenant, "pro"); // commercial alias
+        set_tenant_tier(canonical_tenant, "tier3"); // canonical id
+
+        // Both stamps resolve to the same tier...
+        assert_eq!(tenant_tier_resolved(alias_tenant), Tier::Tier3);
+        assert_eq!(tenant_tier_resolved(canonical_tenant), Tier::Tier3);
+
+        // ...and against a canonically-keyed policy they now agree, where
+        // before the fix `pro` missed every key and fell back to the default.
+        let canonical_policy = |key: &str| key == "tier3";
+        assert_eq!(
+            tenant_tier_policy_key(alias_tenant, canonical_policy),
+            Some("tier3".to_string())
+        );
+        assert_eq!(
+            tenant_tier_policy_key(canonical_tenant, canonical_policy),
+            Some("tier3".to_string())
+        );
+    }
+
+    /// Mixed-read safety: an operator `cache_tiers.json` keyed by commercial
+    /// aliases must keep binding, so normalization needs no config flag day.
+    #[test]
+    fn alias_keyed_operator_policy_still_binds_via_the_raw_probe() {
+        let tenant = "vocab-test-alias-keyed-policy-tenant";
+        set_tenant_tier(tenant, "pro");
+
+        // Policy declares ONLY the alias — the canonical probe misses, the raw
+        // probe hits.
+        let alias_policy = |key: &str| key == "pro";
+        assert_eq!(
+            tenant_tier_policy_key(tenant, alias_policy),
+            Some("pro".to_string())
+        );
+
+        // A policy declaring neither yields None, so the caller applies its own
+        // default tier (unchanged behavior).
+        assert_eq!(tenant_tier_policy_key(tenant, |_| false), None);
+    }
+
+    /// The canonical probe is preferred when a policy declares BOTH spellings,
+    /// so two tenants on one entitlement can never split across buckets.
+    #[test]
+    fn canonical_probe_wins_when_a_policy_declares_both_spellings() {
+        let tenant = "vocab-test-both-spellings-tenant";
+        set_tenant_tier(tenant, "enterprise");
+        let both = |key: &str| key == "tier5" || key == "enterprise";
+        assert_eq!(
+            tenant_tier_policy_key(tenant, both),
+            Some("tier5".to_string())
+        );
+    }
+
+    /// An unrecognized claim must not persist verbatim as a policy key — it
+    /// normalizes to the default tier at the stamp.
+    #[test]
+    fn unrecognized_claim_does_not_reach_the_policy_as_a_raw_key() {
+        let tenant = "vocab-test-garbage-claim-tenant";
+        set_tenant_tier(tenant, "wat-is-this");
+        assert_eq!(tenant_tier_resolved(tenant), default_tier());
+        // The garbage string is retained for diagnostics but only binds if the
+        // operator literally declared it.
+        assert_eq!(
+            tenant_tier_policy_key(tenant, |key| key == default_tier().id()),
+            Some(default_tier().id().to_string())
+        );
     }
 }
 

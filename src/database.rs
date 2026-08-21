@@ -671,6 +671,31 @@ impl ProximaDB {
         }
         tracing::info!(policy = %tenant_header_trust, "🔐 tenant header-trust policy (TD-TENANT-1)");
 
+        // ADR-0053 W8: resolve the tier-claim gate identically (env
+        // PROXIMADB_TIER_HEADER_TRUST > [security.tenant] tier_header_trust >
+        // deployment-mode preset). The gates are separate because a
+        // deployment may trust its gateway's tenant ids without (yet)
+        // trusting its tier stamps.
+        let (tier_header_trust, tier_trust_warning) =
+            proximadb_tenant::HeaderTrustPolicy::effective_tier(
+                match &tenant_deployment_mode {
+                    proximadb_tenant::TenantDeploymentMode::MultiTenant => {
+                        proximadb_tenant::HeaderTrustPolicy::AuthenticatedOnly
+                    }
+                    proximadb_tenant::TenantDeploymentMode::SingleTenant { .. } => {
+                        proximadb_tenant::HeaderTrustPolicy::Open
+                    }
+                },
+                config
+                    .security
+                    .as_ref()
+                    .and_then(|security| security.tenant.tier_header_trust),
+            );
+        if let Some(warning) = tier_trust_warning {
+            tracing::warn!("{warning}");
+        }
+        tracing::info!(policy = %tier_header_trust, "🔐 tier-claim trust policy (ADR-0053 W8)");
+
         let multi_server = network::MultiServer::new_with_queue_client(
             multi_config,
             shared_services,
@@ -680,7 +705,8 @@ impl ProximaDB {
             llm_engine,
             queue_client.clone(),
         )
-        .with_tenant_header_trust(tenant_header_trust);
+        .with_tenant_header_trust(tenant_header_trust)
+        .with_tier_header_trust(tier_header_trust);
         tracing::debug!("✅ ProximaDB::new - MultiServer created");
 
         // Phase 2H wiring (drainer half): spawn the drainer only when

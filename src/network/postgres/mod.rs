@@ -126,6 +126,9 @@ pub struct PostgresServer {
     /// TD-TENANT-1: the deployment's bare tenant-assertion trust policy,
     /// threaded into every per-connection `PostgresProtocol`. Default `Open`.
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// ADR-0053 W8: tier-claim trust policy for the `proximadb_tier` startup
+    /// parameter (the pgwire sibling of REST's X-Tenant-Tier gate).
+    tier_header_trust: proximadb_tenant::HeaderTrustPolicy,
     /// Whether startup may omit the tenant/catalog and use a default.
     tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     /// The exact composition-root enforcer used by REST/gRPC and mutated by the
@@ -175,6 +178,7 @@ impl PostgresServer {
             warehouse_root_url: None,
             rate_limiter: None,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
             #[cfg(feature = "abac-policy")]
             abac_enforcer: None,
@@ -186,6 +190,12 @@ impl PostgresServer {
     /// the same `HeaderTrustPolicy` the REST/gRPC/Arrow Flight surfaces hold.
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
+        self
+    }
+
+    /// ADR-0053 W8: set the tier-claim trust policy.
+    pub fn with_tier_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tier_header_trust = policy;
         self
     }
 
@@ -331,6 +341,7 @@ impl PostgresServer {
                     let warehouse_root_url = self.warehouse_root_url.clone();
                     let rate_limiter = self.rate_limiter.clone();
                     let tenant_header_trust = self.tenant_header_trust;
+                    let tier_header_trust = self.tier_header_trust;
                     let tenant_deployment_mode = self.tenant_deployment_mode.clone();
                     #[cfg(feature = "abac-policy")]
                     let abac_enforcer = self.abac_enforcer.clone();
@@ -354,6 +365,7 @@ impl PostgresServer {
                             warehouse_root_url,
                             rate_limiter,
                             tenant_header_trust,
+                            tier_header_trust,
                             tenant_deployment_mode,
                             #[cfg(feature = "abac-policy")]
                             abac_enforcer,
@@ -401,6 +413,7 @@ impl PostgresServer {
         warehouse_root_url: Option<String>,
         rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
         tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+        tier_header_trust: proximadb_tenant::HeaderTrustPolicy,
         tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
         #[cfg(feature = "abac-policy")] abac_enforcer: Option<
             Arc<crate::security::rls::AbacEnforcer>,
@@ -469,6 +482,8 @@ impl PostgresServer {
         // TD-TENANT-1: same bare-assertion trust policy as REST/gRPC/Flight,
         // enforced at the startup handshake and the tenant session vars.
         protocol = protocol.with_tenant_header_trust(tenant_header_trust);
+        // ADR-0053 W8: tier-claim gate, same shape as the tenant gate above.
+        protocol = protocol.with_tier_header_trust(tier_header_trust);
         protocol = protocol.with_tenant_deployment_mode(tenant_deployment_mode);
 
         // Run protocol loop

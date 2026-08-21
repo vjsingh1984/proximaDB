@@ -206,16 +206,45 @@ fn test_bulk_completion_metadata_is_operation_tagged() {
     assert!(value.get("total_vectors").is_none());
 }
 
+/// TD-TENANT-3 **behaviour change**: the canonical header now wins.
+///
+/// This test previously asserted the opposite — that `x-proximadb-tenant-id`
+/// took precedence over `x-tenant-id`. That precedence pointed away from the
+/// standard spelling, so a client sending both would converge on the alias
+/// slated for removal (S4). Inverting it converges on the canonical name
+/// instead. Only a client sending *both* headers with *different* tenant
+/// values is affected, and the resolved tenant remains subject to the same
+/// `HeaderTrustPolicy` gate either way.
 #[test]
-fn test_tenant_id_from_flight_metadata_prefers_proximadb_header() {
+fn test_tenant_id_from_flight_metadata_prefers_canonical_header() {
     let mut metadata = tonic::metadata::MetadataMap::new();
     metadata.insert("x-tenant-id", "tenant-b".parse().unwrap());
     metadata.insert("x-proximadb-tenant-id", "tenant-a".parse().unwrap());
 
     assert_eq!(
         ProximaFlightService::tenant_id_from_metadata(&metadata),
-        Some("tenant-a".to_string())
+        Some("tenant-b".to_string())
     );
+}
+
+/// The legacy aliases stay accepted until TD-TENANT-3 S4 retires them — this
+/// is the compatibility half of "narrow, never widen": Flight clients are not
+/// broken, they are warned.
+#[test]
+fn test_tenant_id_from_flight_metadata_still_accepts_legacy_aliases() {
+    for alias in proximadb_tenant::DEPRECATED_TENANT_CLAIM_ALIASES {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert(
+            tonic::metadata::MetadataKey::from_static(alias),
+            "tenant-a".parse().unwrap(),
+        );
+
+        assert_eq!(
+            ProximaFlightService::tenant_id_from_metadata(&metadata),
+            Some("tenant-a".to_string()),
+            "{alias} must keep working until S4 removes it"
+        );
+    }
 }
 
 #[test]
@@ -227,6 +256,61 @@ fn test_tenant_id_from_flight_metadata_ignores_empty_header() {
         ProximaFlightService::tenant_id_from_metadata(&metadata),
         None
     );
+}
+
+/// TD-TENANT-3 S2: Arrow Flight had no tier surface at all, so a Flight client
+/// always ran at the default tier — on the highest cache-pressure path in the
+/// system. These pin the gate's two outcomes with the same drop-not-error
+/// semantics REST and gRPC use.
+#[test]
+fn test_flight_tier_claim_is_stamped_when_the_policy_trusts_it() {
+    let tenant = "flight-tier-open-tenant";
+    let mut metadata = tonic::metadata::MetadataMap::new();
+    metadata.insert("x-tenant-tier", "enterprise".parse().unwrap());
+
+    ProximaFlightService::stamp_gated_tier_claim(
+        &metadata,
+        tenant,
+        None,
+        proximadb_tenant::HeaderTrustPolicy::Open,
+    );
+
+    assert_eq!(
+        crate::services::record_store::tenant_tier(tenant).as_deref(),
+        Some("enterprise")
+    );
+}
+
+#[test]
+fn test_flight_tier_claim_is_dropped_for_an_unauthenticated_caller() {
+    let tenant = "flight-tier-strict-tenant";
+    let mut metadata = tonic::metadata::MetadataMap::new();
+    metadata.insert("x-tenant-tier", "enterprise".parse().unwrap());
+
+    // No binding + a strict policy = the escalation vector ADR-0053 W8 closed.
+    ProximaFlightService::stamp_gated_tier_claim(
+        &metadata,
+        tenant,
+        None,
+        proximadb_tenant::HeaderTrustPolicy::AuthenticatedOnly,
+    );
+
+    assert_eq!(crate::services::record_store::tenant_tier(tenant), None);
+}
+
+#[test]
+fn test_flight_absent_tier_claim_stamps_nothing() {
+    let tenant = "flight-tier-absent-tenant";
+    let metadata = tonic::metadata::MetadataMap::new();
+
+    ProximaFlightService::stamp_gated_tier_claim(
+        &metadata,
+        tenant,
+        None,
+        proximadb_tenant::HeaderTrustPolicy::Open,
+    );
+
+    assert_eq!(crate::services::record_store::tenant_tier(tenant), None);
 }
 
 #[test]

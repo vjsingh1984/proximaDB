@@ -13,6 +13,9 @@ description = "Canonical tenant-attribution primitives for ProximaDB: the single
 name = "proximadb_tenant"
 path = "src/lib.rs"
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [dependencies]
 proximadb-proto.workspace = true
 serde.workspace = true

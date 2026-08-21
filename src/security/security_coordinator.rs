@@ -54,6 +54,14 @@ pub struct TenantTrustConfig {
     /// The `PROXIMADB_TENANT_HEADER_TRUST` env override wins over both.
     #[serde(default)]
     pub header_trust: Option<proximadb_tenant::HeaderTrustPolicy>,
+    /// Tier-claim trust policy (ADR-0053 W8) for the entitlement claim every
+    /// network surface reads (REST `X-Tenant-Tier`, gRPC `x-tenant-tier`
+    /// metadata, pgwire `proximadb_tier` startup parameter). Unset ⇒ the
+    /// deployment-mode preset (same ladder as `header_trust`). The
+    /// `PROXIMADB_TIER_HEADER_TRUST` env override wins over both. A rejected
+    /// claim is dropped (never a 4xx) — the tenant resolves its default tier.
+    #[serde(default)]
+    pub tier_header_trust: Option<proximadb_tenant::HeaderTrustPolicy>,
 }
 
 /// Security mode for different deployment scenarios
