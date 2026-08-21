@@ -425,23 +425,36 @@ mod tests {
 
     #[test]
     fn test_graph_node_with_property() {
+        use proximadb::graph::model::PropertyValue;
         let node = GraphNode::new("user_1").with_property("name", "Alice");
-        assert_eq!(node.properties.get("name"), Some(&"Alice".to_string()));
+        assert_eq!(
+            node.properties.get("name"),
+            Some(&PropertyValue::from("Alice"))
+        );
     }
 
     #[test]
     fn test_graph_node_multiple_properties() {
+        use proximadb::graph::model::PropertyValue;
+        // `age` is an i64 now — the typed boundary (#1698) is the point:
+        // it must NOT come back as "30".
         let node = GraphNode::new("user_1")
             .with_property("name", "Alice")
             .with_property("email", "alice@example.com")
-            .with_property("age", "30");
+            .with_property("age", 30i64);
         assert_eq!(node.properties.len(), 3);
-        assert_eq!(node.properties.get("name"), Some(&"Alice".to_string()));
+        assert_eq!(
+            node.properties.get("name"),
+            Some(&PropertyValue::from("Alice"))
+        );
         assert_eq!(
             node.properties.get("email"),
-            Some(&"alice@example.com".to_string())
+            Some(&PropertyValue::from("alice@example.com"))
         );
-        assert_eq!(node.properties.get("age"), Some(&"30".to_string()));
+        assert_eq!(
+            node.properties.get("age"),
+            Some(&PropertyValue::from(30i64))
+        );
     }
 
     #[test]
@@ -451,7 +464,7 @@ mod tests {
             .with_label("public")
             .with_property("name", "main")
             .with_property("file", "main.rs")
-            .with_property("line", "10");
+            .with_property("line", 10i64);
 
         assert_eq!(node.id, "func_main");
         assert_eq!(node.labels.len(), 2);
@@ -512,7 +525,10 @@ mod tests {
     #[test]
     fn test_graph_edge_with_property() {
         let edge = GraphEdge::new("a", "b", "RELATIONSHIP").with_property("since", "2024");
-        assert_eq!(edge.properties.get("since"), Some(&"2024".to_string()));
+        assert_eq!(
+            edge.properties.get("since"),
+            Some(&proximadb::graph::model::PropertyValue::from("2024"))
+        );
     }
 
     #[test]
