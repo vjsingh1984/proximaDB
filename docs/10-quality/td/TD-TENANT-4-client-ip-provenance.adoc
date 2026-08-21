@@ -94,10 +94,21 @@ load-bearing:
 * **TCP** (`multi_server.rs`, `rest/server.rs`) — `ConnectInfo<SocketAddr>`
   carries the true remote address.
 * **UDS** (`rest/server.rs`, portless/embedded mode) — a Unix socket has no
-  `SocketAddr`. A UDS peer is by construction on the same host, so it resolves
-  to loopback, which is the *correct* classification rather than a fallback.
-  `ConnectInfo<SocketAddr>` must not be demanded there; doing so is the trap
-  that makes this look like a one-line change.
+  `SocketAddr`. `ConnectInfo<SocketAddr>` must not be demanded there; doing so
+  is the trap that makes this look like a one-line change.
++
+A UDS peer is by construction on the same host, so it resolves to loopback —
+the *correct* classification, not a fallback. But "no `ConnectInfo`" is also
+what a TCP surface that forgot the wiring looks like, so the two must not
+collapse into one state. The UDS serve path therefore inserts a
+`LocalSocketPeer` marker extension, and the resolver checks it first. That
+keeps `ClientAddrSource::Unobserved` meaning *"a wiring regression"*, which is
+the only thing that variant is good for.
++
+This is deliberate: an earlier cut of this change had a `local_socket_client_addr`
+helper that nothing called, so the `LocalSocket` state was unreachable and UDS
+requests read as `Unobserved`. A variant nothing can produce is indistinguishable
+from one left unimplemented — wiring it is part of the item, not a follow-up.
 
 === S2 — gate the forwarded headers (closes D1)
 

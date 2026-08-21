@@ -7959,6 +7959,7 @@ name = "proximadb-network-middleware"
 version = "0.2.0"
 dependencies = [
  "axum",
+ "ipnet",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
