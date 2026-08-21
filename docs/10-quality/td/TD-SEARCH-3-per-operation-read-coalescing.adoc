@@ -803,6 +803,81 @@ follow-up is a ladder (4/8/16/24) on this bed at nprobe=25 to find the largest
 cap that holds RSS ≤ 1.10, which is what `read_range_cap_candidates` (#1671) was
 built to express.
 
+=== S3d: the cap ladder (2026-08-21) — the knee is 16 MiB, and RSS is what binds
+
+S3c established that 24 MiB fails only on RSS (1.1019 against the 1.10 bound) at
+production geometry. The obvious follow-up is not "is the win real" — it is
+"which cap is the largest that holds RSS", so the ladder was run on the same
+immutable bed (`bge768-ncomp32`, `k_c=90`, `n_comp=32`), same operating point
+(`nprobe=25`, top-10, 1000 queries, 1 MiB gap), binary `6bec1fde8`.
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| cap | recall | GET/q | GET reduction | bytes ratio | RSS ratio
+| 4 MiB (baseline) | 0.9821 | 41.03 | — | — | 1.000
+| **8 MiB** | 0.9823 | 29.63 | **−27.8%** | 1.037 | **1.035**
+| **16 MiB** | 0.9819 | 25.24 | **−38.5%** | 1.039 | **1.055**
+| 24 MiB (S3c run) | 0.9825 | 24.28 | −40.8% | 1.041 | **1.1019 ✗**
+|===
+
+**The knee is 16 MiB.** What each step actually buys:
+
+* 4 → 8: −27.8% requests for +3.5% RSS
+* 8 → 16: a further −10.7 points for **+2.0** points RSS
+* 16 → 24: only **−2.3** more points, for **+4.7** points RSS — and that step is
+  the one that breaches the bound
+
+16 MiB captures **94% of the total available reduction at 55% of the memory
+cost**. Expressed as the ratio that matters — request-reduction points per RSS
+point — it is 8.0 at 4→8, 5.4 at 8→16, and **0.5** at 16→24. The economics
+collapse an order of magnitude past 16 MiB.
+
+==== The tension, named
+
+The four quantities do not trade off symmetrically, and only one of them binds:
+
+* **Recall is flat in the cap** — 0.9819–0.9825 across a 6× range, delta ±0.0002.
+  Coalescing changes which bytes are fetched, never which rows rank. Recall is a
+  constraint to satisfy, not a dimension to optimise; a recall-knee search over
+  cap would return noise, which is why none was run.
+* **Bytes are nearly flat** — ×1.037 to ×1.041 across the whole ladder. Gap
+  over-read saturates almost immediately.
+* **Requests fall steeply, then flatten** — the curve is essentially exhausted by
+  16 MiB.
+* **RSS rises super-linearly at the top** — +3.5, +2.0, then +4.7 points. It is
+  the only quantity that breaches a declared bound, and therefore the only one
+  that decides the answer.
+
+==== Recommendation: Azure read cap = 16 MiB
+
+Two arguments beyond the measurement:
+
+. **16 MiB is already the sanctioned ceiling for S3 and GCS**
+  (`IopsBudget::S3.max`, `IopsBudget::GCS.max`). Adopting it for Azure
+  *converges* the backend profiles instead of making Azure exceptional.
+. **It is already on the candidate ladder** `read_range_cap_candidates` emits for
+  Azure — `{4, 8, 12, 16, 24}` — so no new value has to be invented, and the
+  adaptive chooser can select it without a constant change.
+
+**Do not promote 24 MiB.** It fails the declared RSS guard at production
+geometry and buys 2.3 percentage points of request reduction for nearly the
+entire remaining memory budget.
+
+==== What is NOT established
+
+* **One bed, one operating point.** 768-d, `k_c=90`, `n_comp=32`, `nprobe=25`,
+  top-10. The *method* transfers; the constants are not claimed to.
+* **top-20 is unmeasured at this operating point** — `nprobe=25` is the top-10
+  floor; top-20 needs ≈30 and sits at 0.9784 here, below SLA for a reason
+  unrelated to the cap.
+* **The 24 MiB row is from the S3c run, not this one.** Its ratio is valid
+  because that run carried its own paired 4 MiB baseline, but it is not
+  same-run comparable with the other three rows.
+* **RSS was measured by an external `ps` sampler on a shared host.** The ladder
+  was interrupted twice by other sessions' compilers and the harness failed
+  closed both times rather than measuring through contention; the banked points
+  are from quiet windows.
+
 == Remaining inefficiencies
 
 * The filesystem trait's generic `read_ranges()` is bounded-concurrent but
