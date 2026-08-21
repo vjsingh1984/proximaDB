@@ -103,6 +103,91 @@ def _pairs() -> list[tuple[Path, str, Path]]:
 PAIRS = _pairs()
 
 
+#: ProximaDB protos deliberately not generated for Python. They are server-side
+#: contracts the client never speaks, so a missing stub is a decision, not drift.
+#: Listed explicitly because the alternative -- skipping anything unmatched -- is
+#: how `timeseries_pb2` sat orphaned under a nested path for a release cycle
+#: while its .proto was deleted and nothing noticed.
+NO_PYTHON_STUB_BY_DESIGN = frozenset(
+    {
+        "proximadb/explain.proto",
+        "proximadb/v1/catalog.proto",
+        "proximadb/v1/cluster.proto",
+        "proximadb/v1/observability.proto",
+        "proximadb/v1/ranking.proto",
+        "proximadb/v1/security.proto",
+        "proximadb/v1/streaming.proto",
+        "proximadb/v1/unified.proto",
+        "proximadb/v2/ledger.proto",
+    }
+)
+
+
+def test_every_proximadb_proto_is_either_generated_or_declared_exempt():
+    """No ProximaDB proto may be silently unmatched.
+
+    The comparison above runs only for protos that already have a committed
+    stub, so a proto with no stub anywhere is skipped rather than reported --
+    the same shape of blindness this gate exists to remove, one level up.
+    Anything without a stub must be named as deliberate.
+
+    Vendored `google/protobuf/**` is excluded: well-known types, not our
+    contracts.
+    """
+    unmatched = set()
+    for proto in _proto_files():
+        rel = proto.relative_to(PROTO_DIR).as_posix()
+        if rel.startswith("google/"):
+            continue
+        if any(_stub_for(proto, pkg).exists() for pkg in STUB_PACKAGES):
+            continue
+        unmatched.add(rel)
+
+    surprises = unmatched - NO_PYTHON_STUB_BY_DESIGN
+    assert not surprises, (
+        "These protos have no Python stub and are not declared exempt:\n  - "
+        + "\n  - ".join(sorted(surprises))
+        + "\n\nEither generate the stub, or add it to NO_PYTHON_STUB_BY_DESIGN "
+        "with the reason it is server-side only."
+    )
+
+    stale = NO_PYTHON_STUB_BY_DESIGN - unmatched
+    assert not stale, (
+        "Listed as having no Python stub, but one now exists:\n  - "
+        + "\n  - ".join(sorted(stale))
+        + "\n\nRemove them from NO_PYTHON_STUB_BY_DESIGN so the gate compares them."
+    )
+
+
+def test_no_stub_lives_outside_its_expected_path():
+    """A generated stub must sit where its import path says it does.
+
+    protoc emits into a nested `proximadb/vN/` directory that has to be moved
+    up; when that move is missed the file is committed at
+    `proximadb_sdk/v1/proximadb/v1/foo_pb2.py`, where
+    `from proximadb_sdk.v1 import foo_pb2` cannot reach it. Not hypothetical --
+    that is exactly how `timeseries_pb2` shipped, and it survived a release
+    because every check either skipped it or was never run.
+    """
+    strays = []
+    for package in STUB_PACKAGES:
+        root = PYTHON_SRC / package
+        if not root.exists():
+            continue
+        strays += [
+            str(p.relative_to(PYTHON_SRC))
+            for p in root.rglob("*_pb2*.py")
+            if "proximadb" in p.relative_to(root).parts[:-1]
+        ]
+    assert not strays, (
+        "Generated stubs are committed under a nested proximadb/ directory, so "
+        "their documented import path cannot reach them:\n  - "
+        + "\n  - ".join(sorted(strays))
+        + "\n\nprotoc emits that nesting; move the file up and rewrite its "
+        "`from proximadb.vN import` lines to the owning package."
+    )
+
+
 def test_there_is_something_to_compare():
     """Guard the guard: a path convention change must not silently empty this."""
     assert PAIRS, (
