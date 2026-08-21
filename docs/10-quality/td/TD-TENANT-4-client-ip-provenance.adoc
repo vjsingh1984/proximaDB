@@ -3,7 +3,21 @@
 = TD-TENANT-4: the client IP is never observed, only asserted
 :icons: font
 
-**Status:** Filed 2026-08-21. Implementation in progress.
+**Status:** S1 + S2 shipped with this TD — D1 and D2 both closed.
+
+**Surface coverage is complete.** Three sites classify a client for KOU egress,
+and only one was defective:
+
+* REST (`network/middleware/metrics.rs:46`) — was header-derived; **fixed here**.
+* Arrow Flight (`network/arrow_ipc/service.rs:1564`) — already used tonic's
+  `request.remote_addr()`, a real peer address. No change needed.
+* pgwire (`network/postgres/protocol.rs:5367`) — already used `self.peer_ip`.
+  No change needed.
+
+The only other axum TCP listener (the OTLP ingestion adapter,
+`observability/ingestion/adapters/otlp.rs:531`) does not classify a client at
+all — it is an inbound ingestion endpoint, not a result-egress surface — so it
+is deliberately left without `ConnectInfo`.
 **Origin:** TD-TENANT-3 S4 item 2 flagged the ungated `X-Forwarded-For` read at
 `rate_limit.rs:327` as "the same trust-a-bare-header shape TD-TENANT-1 closed
 for tenancy". Investigating it to fix it showed that framing was **wrong about
