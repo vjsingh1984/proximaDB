@@ -1051,9 +1051,13 @@ mod tests {
             major
         );
 
-        // Verify the crate name
+        // Verify the crate name. Was asserted as "proximadb" — this test moved
+        // here in #1021's extraction with the assertion unchanged, so it could
+        // never pass in this crate and no CI lane runs these tests (fourth
+        // #1021-stranded artifact: wheel config #1675, workflow notes,
+        // loopback-guard paths, this).
         let crate_name = env!("CARGO_PKG_NAME");
-        assert_eq!(crate_name, "proximadb");
+        assert_eq!(crate_name, "proximadb-embedded");
     }
 
     // ========================================================================
