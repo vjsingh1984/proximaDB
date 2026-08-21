@@ -136,7 +136,7 @@ deterministic-commit-contract-check:
 proto-check:
 	@echo "🧬 Validating protobuf/OpenAPI contract drift..."
 	cargo check -p proximadb-proto
-	cd clients/python && $(PYTHON) -m pytest --confcutdir=tests/unit -q tests/unit/test_grpc_proto_drift.py tests/unit/test_openapi_contract.py
+	cd clients/python && $(PYTHON) -m pytest --confcutdir=tests/unit -q tests/unit/test_grpc_proto_drift.py tests/unit/test_proto_schema_drift.py tests/unit/test_openapi_contract.py
 
 # TD-126 Phase 1: the OpenAPI spec is GENERATED from the annotated REST handlers
 # (src/network/rest/openapi.rs), not hand-maintained. This regenerates it in
