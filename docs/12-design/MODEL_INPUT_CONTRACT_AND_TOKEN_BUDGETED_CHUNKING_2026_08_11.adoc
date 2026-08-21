@@ -420,7 +420,16 @@ but one canonical vector can then map to multiple source documents, making sourc
 ambiguous. `evaluate_source_retrieval.py` therefore rejects deduplicated aliases by default; its
 alias-expansion option is diagnostic, not comparable quality evidence. The evaluator binds all
 input digests, collapses by maximum chunk score, uses deterministic source-ID tie breaking, and
-reports macro linear-gain NDCG, binary Recall and MRR over every qrels query.
+reports macro linear-gain NDCG, raw Recall, Precision, AP, MRR and Hit over every qrels query.
+Schema v2 also reports the perfect Recall@k ceiling, capped and ceiling-normalized recall, relevant
+set-size distribution, and source-candidate completeness. These diagnostics explain a low raw
+recall denominator without replacing the standard metric.
+
+Candidate depth is defined after source collapse: top-N chunks do not necessarily contain N
+distinct sources. Every requested k records its minimum/maximum source depth and complete-query
+count. Comparable evidence must use `--require-complete-k` for its decision metric; an incomplete
+point is a lower bound, not a recall regression. Persist the source-collapsed run and per-query
+sidecar so alternatives can be compared on the same queries rather than by aggregate-only deltas.
 
 [source,bash]
 ----
@@ -429,8 +438,25 @@ python scripts/bench/evaluate_source_retrieval.py \
   --source-qrels eval/source_qrels.jsonl \
   --occurrences-jsonl corpus/chunk_occurrences.jsonl \
   --k 1 5 10 20 100 \
+  --require-complete-k 10 \
+  --collapsed-run-output eval/source_run.jsonl \
+  --per-query-output eval/source_per_query.jsonl \
   --output eval/source_metrics.json
 ----
+
+Lexical and hybrid retrieval are controlled alternatives, not assumed improvements. The sealed
+dependency-free `score_bm25_corpus.py` is a reproducible Okapi BM25 reference leg; its analyzer and
+parameters are part of the manifest, and it must not be described as a Lucene, Tantivy or official
+BEIR baseline. `fuse_source_runs.py` performs deterministic weighted reciprocal-rank fusion over
+query-complete source runs. Evaluate either through the same source-level evaluator, then use
+`compare_retrieval_runs.py` for query-aligned paired bootstrap intervals. Tune analyzers, fusion
+weights and rerankers on a development split, not the held-out test set.
+
+Chunk target and overlap are workload policies, not model-catalog defaults. A larger model context
+can reduce vector count only if the quality/citation/answer gates hold at the coarser granularity;
+context capacity alone is not a reason to fill the window. Compare each candidate on one matrix:
+source retrieval quality, citation-span precision, downstream answer quality, vector payload,
+index/serving cost, and update amplification.
 
 Before loading model weights, measure the structural economics of every sealed corpus:
 
@@ -478,6 +504,13 @@ key and favors between-centroid variance. That result was measured on the legacy
 and remains valid index geometry. It does not change chunking. Preserve its corpus hash as
 historical provenance; compare the token-aware rebuild for PCA spectrum, absolute retrieval/RAG
 quality and lifecycle economics only.
+
+The first source-qrels quality audit is recorded in
+`docs/_internal/status/EMBEDDING_RETRIEVAL_QUALITY_DIAGNOSTICS_2026_08_20.adoc`. On NFCorpus,
+BGE-base 128-token chunks improved raw Recall@10 by 5.00% relative to the 480-token control but
+required 3.67x vectors and did not demonstrate a general ranking-quality gain. Equal-weight fusion
+with the sealed reference BM25 leg reduced NDCG and AP. Keep 480/72 as the control until a
+development/held-out evaluation demonstrates a Pareto-relevant replacement.
 
 Timing measurements require a quiet machine. Token correctness, recall and GET/query checks do not
 become timing evidence merely because they ran successfully under contention.
