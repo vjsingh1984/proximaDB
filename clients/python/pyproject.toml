@@ -71,6 +71,10 @@ embedded = [
 #   pip install 'proximadb[embeddings]'
 embeddings = [
     "sentence-transformers>=3.2,<6",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
+    # Trusted modeling code used by catalogued Nomic v1.5 imports
+    # einops directly; keep the public extra sufficient for every advertised
+    # open-weights model rather than relying on an ambient transitive package.
+    "einops>=0.7,<1",
 ]
 
 # Hosted / OpenAI-compatible embedding providers (opt-in, reachable via

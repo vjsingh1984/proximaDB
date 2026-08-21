@@ -246,9 +246,9 @@ For an embedding evidence corpus, each model table sets
 `runtime_provider = "open-weights"`. The builder then loads the pinned SentenceTransformers
 runtime on CPU and derives the counter, runtime context cap, templates and output contract from
 that exact adapter. `local_files_only = true` is forwarded to the runtime and participates in its
-model-cache identity. Loading on CPU here does not perform neural inference: tokenizer fitting
-remains native CPU work, while the later embedding transport explicitly uses MPS/CUDA/another
-approved accelerator.
+model-cache identity. This establishes the runtime contract but may load weights; it does not run
+embedding inference. Tokenizer fitting remains native CPU work, while the later embedding
+transport explicitly uses MPS/CUDA/another approved accelerator.
 
 Omitting `runtime_provider` retains a tokenizer-only contract for cheap planning experiments, but
 that artifact is not sufficient provenance for an embedding evidence run. A tokenizer loaded
@@ -257,14 +257,26 @@ configuration from the tokenizer configured by SentenceTransformers. The embeddi
 therefore continues to require the exact resolved runtime fingerprint rather than weakening the
 check to inferred equivalence.
 
-The output includes shared `texts.json`, per-chunk provenance in `chunks.jsonl`, and
-`corpus.manifest.json` with hashes, policies, contract fingerprints, token and packing histograms,
-corpus scope and a zero-truncation assertion. Packing histograms record actual overlap and new
-source-token coverage per stored chunk, making redundant-boundary amplification observable. The
-corpus records both its transport-script SHA-256 and a deterministic digest of the complete loaded
-SDK chunking-strategy source tree; every later stage records its tracked producer SHA-256, and
-embedding shard identity includes that transport digest. `--max-chunks` is a prefix-sampling
-diagnostic: if it would truncate the
+After one full runtime resolution, repeated corpus variants may add
+`sealed_runtime_contract_fingerprint` while retaining `runtime_provider = "open-weights"`. The
+builder then loads only the pinned tokenizer/config, requires the resolved contract to reproduce
+that exact 64-hex fingerprint, and records the contract TOML digest plus
+`sealed_runtime_fingerprint` resolution mode. The embedding transport still loads the pinned
+weights and independently requires the runtime contract to match before emitting vectors. This
+removes repeated weight initialization without treating a tokenizer-only planning declaration as
+embedding provenance.
+
+The output includes shared `texts.json`, canonical per-chunk provenance in `chunks.jsonl`, every
+source-span occurrence in `chunk_occurrences.jsonl`, and `corpus.manifest.json` with hashes,
+policies, contract fingerprints, token and packing histograms, corpus scope and a zero-truncation
+assertion. Exact deduplication keeps one canonical text/vector while the occurrence sidecar maps
+every duplicate source span to that canonical `corpus_id`. This is load-bearing for source update
+amplification, source-level ACL/citation analysis and qrels projection; canonical chunks alone
+silently lose those aliases. Packing histograms record actual overlap and new source-token coverage
+per stored chunk, making redundant-boundary amplification observable. The corpus records both its
+transport-script SHA-256 and a deterministic digest of the complete loaded SDK chunking-strategy
+source tree; every later stage records its tracked producer SHA-256, and embedding shard identity
+includes that transport digest. `--max-chunks` is a prefix-sampling diagnostic: if it would truncate the
 source, the builder fails unless `--allow-partial-corpus` is explicit and records
 `corpus_scope=partial_prefix`. A realistic full-corpus build must record
 `corpus_scope=complete_source`.
@@ -339,7 +351,105 @@ corpus row. Every `corpus_id` must exist as a `chunk_id` in the digest-matched c
 This path calls the model's query-role renderer/encoder and records query/qrels hashes. Passage-only
 quantization bounds keep the base/index stable across evaluation query sets; out-of-range query
 components are clipped and counted in the embedding manifest. A content-hashed query-ID sidecar
-preserves the exact query-binary row order.
+preserves the exact query-binary row order. Schema-v2 embedding manifests additionally bind the
+passage- and query-shard identity manifests, including model contract, role, resolved runtime,
+dimension, row count and stored dtype.
+
+Embedding/chunking quality is measured before ANN or quantization effects:
+
+[source,bash]
+----
+python scripts/bench/score_embedding_shards.py \
+  --embedding-manifest embeddings/eval.embedding.manifest.json \
+  --corpus-manifest corpus/corpus.manifest.json \
+  --chunks-jsonl corpus/chunks.jsonl \
+  --top-k 100 --output eval/exact_run.jsonl
+----
+
+The scorer validates all corpus, row-order, query-ID and shard lineage, then computes exact
+normalized float32 inner product with deterministic corpus-ID tie breaking. Its run feeds
+`evaluate_source_retrieval.py`. ANN recall, quantization and serving latency are separate gates;
+mixing them into this first quality comparison would make a model/chunking regression impossible
+to distinguish from an index approximation regression.
+
+Source judgments should be stable across tokenizer and token-budget experiments. Store them as
+source qrels with `query_id`, `source_id`, positive `relevance`, and optional half-open
+`start_pos`/`end_pos`. Project each corpus independently through its occurrence sidecar:
+
+Official BEIR fixtures can be normalized without adding the BEIR runtime dependency:
+
+[source,bash]
+----
+python scripts/bench/import_beir_dataset.py \
+  --dataset-root datasets/nfcorpus --split test \
+  --dataset-name nfcorpus \
+  --source-url https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip \
+  --archive datasets/nfcorpus.zip \
+  --expected-archive-md5 a89dba18a62ef92f7d323ec890a0d38d \
+  --output-dir normalized/nfcorpus-test
+----
+
+The importer verifies the published archive MD5, additionally records SHA-256, validates all IDs
+and positive qrels, emits deterministic documents/queries/source-qrels, and binds every input and
+output digest in `beir_import.manifest.json`. Dataset license review remains explicit; a public
+download is not inferred to grant a production license.
+
+[source,bash]
+----
+python scripts/bench/project_span_qrels.py \
+  --source-qrels eval/source_qrels.jsonl \
+  --corpus-manifest corpus/corpus.manifest.json \
+  --occurrences-jsonl corpus/chunk_occurrences.jsonl \
+  --output corpus/qrels.jsonl
+----
+
+A source-level judgment without a span maps to every canonical chunk occurring in that source. A
+span judgment maps only overlapping occurrences. Repeated judgments that converge on the same
+query/corpus pair keep maximum relevance. Unknown sources, invalid spans and judgments matching no
+chunk fail closed. The projection manifest binds source qrels, corpus manifest, occurrence sidecar
+and output qrels hashes.
+
+Document-level BEIR judgments require source-collapsed retrieval evaluation: score each source by
+the maximum score of any of its chunk occurrences, then compare with the original document qrels.
+Treating every projected chunk as an independent relevant item changes NDCG/Recall semantics as
+chunk count changes. Span judgments can be evaluated directly at chunk level and support citation
+precision. The two granularities must not be conflated.
+
+Quality corpora use `--deduplicate none`. Exact deduplication is valid for structural economics,
+but one canonical vector can then map to multiple source documents, making source rank and credit
+ambiguous. `evaluate_source_retrieval.py` therefore rejects deduplicated aliases by default; its
+alias-expansion option is diagnostic, not comparable quality evidence. The evaluator binds all
+input digests, collapses by maximum chunk score, uses deterministic source-ID tie breaking, and
+reports macro linear-gain NDCG, binary Recall and MRR over every qrels query.
+
+[source,bash]
+----
+python scripts/bench/evaluate_source_retrieval.py \
+  --run eval/chunk_run.jsonl \
+  --source-qrels eval/source_qrels.jsonl \
+  --occurrences-jsonl corpus/chunk_occurrences.jsonl \
+  --k 1 5 10 20 100 \
+  --output eval/source_metrics.json
+----
+
+Before loading model weights, measure the structural economics of every sealed corpus:
+
+[source,bash]
+----
+python scripts/bench/embedding_context_economics.py \
+  --corpus-manifest corpus/corpus.manifest.json \
+  --dimension 768 --dimension 256 \
+  --fixed-bytes-per-row 0 \
+  --output corpus/context_economics.json
+----
+
+The report separates canonical rows from source occurrences, vector payload from caller-supplied
+fixed row overhead, and context from output dimension. It records rendered token totals,
+`sum(rendered_tokens^2)` as an explicitly labelled full-attention work proxy, chunks/source update
+amplification and f32/f16/SQ8 payload bytes. The proxy is not latency, and the byte model excludes
+model/index-specific overhead unless supplied. Retrieval quality, citation precision and generator
+payload remain qrels-backed gates. Legacy schema-v1 corpora without an occurrence sidecar can still
+be inspected, but the report marks deduplicated alias/update economics as undercounted.
 The example intentionally writes a new root: never overwrite the legacy `bge768`/`bge384` corpus,
 whose hashes remain provenance for the completed TD-IVF-3 geometry study.
 

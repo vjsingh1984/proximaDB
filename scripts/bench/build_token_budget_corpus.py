@@ -129,12 +129,96 @@ def _runtime_contract(model: dict[str, Any], index: int) -> ResolvedInputContrac
     return contract
 
 
-def _load_contracts(path: Path) -> CompositeInputContract:
+def _declared_contract(model: dict[str, Any], index: int) -> ResolvedInputContract:
+    tokenizer_id = str(model.get("tokenizer_id", model["model_id"]))
+    tokenizer_revision = str(model.get("tokenizer_revision", model["revision"]))
+    counter = HuggingFaceTokenCounter.from_pretrained(
+        tokenizer_id,
+        revision=tokenizer_revision,
+        trust_remote_code=bool(model.get("trust_remote_code", False)),
+        local_files_only=bool(model.get("local_files_only", False)),
+    )
+    resolved_revision = getattr(counter, "resolved_revision", None)
+    if resolved_revision is not None and resolved_revision != tokenizer_revision:
+        raise ValueError(
+            f"models[{index}] tokenizer resolved revision {resolved_revision!r} "
+            f"does not match {tokenizer_revision!r}"
+        )
+    dimensions = tuple(int(value) for value in model.get("output_dimensions", ()))
+    document_parameters = tuple(
+        sorted(
+            (str(key), str(value))
+            for key, value in model.get("document_encode_parameters", {}).items()
+        )
+    )
+    query_parameters = tuple(
+        sorted(
+            (str(key), str(value))
+            for key, value in model.get("query_encode_parameters", {}).items()
+        )
+    )
+    return ResolvedInputContract(
+        model_id=str(model["model_id"]),
+        model_revision=str(model["revision"]),
+        counter=counter,
+        effective_context_limit=int(model["effective_context_limit"]),
+        renderer=InputRenderer(
+            document_template=str(model.get("document_template", "{text}")),
+            query_template=str(model.get("query_template", "{text}")),
+        ),
+        native_dimension=(
+            int(model["native_dimension"]) if "native_dimension" in model else None
+        ),
+        output_dimension=(
+            int(model["output_dimension"]) if "output_dimension" in model else None
+        ),
+        supported_output_dimensions=dimensions,
+        minimum_output_dimension=(
+            int(model["minimum_output_dimension"])
+            if "minimum_output_dimension" in model
+            else None
+        ),
+        document_encode_parameters=document_parameters,
+        query_encode_parameters=query_parameters,
+    )
+
+
+def _read_models(path: Path) -> list[dict[str, Any]]:
     with path.open("rb") as handle:
         config = tomllib.load(handle)
     models = config.get("models")
     if not isinstance(models, list) or not models:
         raise ValueError("contract TOML must contain at least one [[models]] table")
+    if not all(isinstance(model, dict) for model in models):
+        raise ValueError("every [[models]] entry must be a table")
+    return models
+
+
+def _contract_resolution_manifest(path: Path) -> dict[str, Any]:
+    models = _read_models(path)
+    resolved: dict[str, dict[str, str]] = {}
+    for model in models:
+        model_id = str(model.get("model_id", ""))
+        sealed = model.get("sealed_runtime_contract_fingerprint")
+        if sealed is not None:
+            detail = {
+                "mode": "sealed_runtime_fingerprint",
+                "sealed_runtime_contract_fingerprint": str(sealed),
+            }
+        elif "runtime_provider" in model:
+            detail = {"mode": "full_runtime"}
+        else:
+            detail = {"mode": "tokenizer_only"}
+        resolved[model_id] = detail
+    return {
+        "path": str(path.resolve()),
+        "contracts_sha256": _sha256(path),
+        "models": resolved,
+    }
+
+
+def _load_contracts(path: Path) -> CompositeInputContract:
+    models = _read_models(path)
 
     contracts = []
     for index, model in enumerate(models):
@@ -153,58 +237,30 @@ def _load_contracts(path: Path) -> CompositeInputContract:
                 f"models[{index}].tokenizer_revision must be an immutable "
                 "40-character Hugging Face commit SHA"
             )
+        sealed = model.get("sealed_runtime_contract_fingerprint")
+        if sealed is not None:
+            if model.get("runtime_provider") != "open-weights":
+                raise ValueError(
+                    f"models[{index}].sealed_runtime_contract_fingerprint requires "
+                    "runtime_provider='open-weights'"
+                )
+            if re.fullmatch(r"[0-9a-f]{64}", str(sealed)) is None:
+                raise ValueError(
+                    f"models[{index}].sealed_runtime_contract_fingerprint must be "
+                    "a 64-character SHA-256"
+                )
+            contract = _declared_contract(model, index)
+            if contract.fingerprint != sealed:
+                raise ValueError(
+                    f"models[{index}] sealed runtime contract fingerprint drift: "
+                    f"expected {sealed}, resolved {contract.fingerprint}"
+                )
+            contracts.append(contract)
+            continue
         if "runtime_provider" in model:
             contracts.append(_runtime_contract(model, index))
             continue
-        counter = HuggingFaceTokenCounter.from_pretrained(
-            tokenizer_id,
-            revision=tokenizer_revision,
-            trust_remote_code=bool(model.get("trust_remote_code", False)),
-            local_files_only=bool(model.get("local_files_only", False)),
-        )
-        dimensions = tuple(int(value) for value in model.get("output_dimensions", ()))
-        document_parameters = tuple(
-            sorted(
-                (str(key), str(value))
-                for key, value in model.get("document_encode_parameters", {}).items()
-            )
-        )
-        query_parameters = tuple(
-            sorted(
-                (str(key), str(value))
-                for key, value in model.get("query_encode_parameters", {}).items()
-            )
-        )
-        contracts.append(
-            ResolvedInputContract(
-                model_id=str(model["model_id"]),
-                model_revision=str(model["revision"]),
-                counter=counter,
-                effective_context_limit=int(model["effective_context_limit"]),
-                renderer=InputRenderer(
-                    document_template=str(model.get("document_template", "{text}")),
-                    query_template=str(model.get("query_template", "{text}")),
-                ),
-                native_dimension=(
-                    int(model["native_dimension"])
-                    if "native_dimension" in model
-                    else None
-                ),
-                output_dimension=(
-                    int(model["output_dimension"])
-                    if "output_dimension" in model
-                    else None
-                ),
-                supported_output_dimensions=dimensions,
-                minimum_output_dimension=(
-                    int(model["minimum_output_dimension"])
-                    if "minimum_output_dimension" in model
-                    else None
-                ),
-                document_encode_parameters=document_parameters,
-                query_encode_parameters=query_parameters,
-            )
-        )
+        contracts.append(_declared_contract(model, index))
     return CompositeInputContract(tuple(contracts))
 
 
@@ -226,7 +282,9 @@ def _histogram(values: list[int]) -> dict[str, int | None]:
     }
 
 
-def _atomic_paths(output_dir: Path) -> tuple[Path, Path, Path, Path]:
+def _atomic_paths(
+    output_dir: Path,
+) -> tuple[Path, Path, Path, Path, Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     texts_fd, texts_name = tempfile.mkstemp(
         prefix="texts.", suffix=".tmp", dir=output_dir
@@ -234,11 +292,23 @@ def _atomic_paths(output_dir: Path) -> tuple[Path, Path, Path, Path]:
     chunks_fd, chunks_name = tempfile.mkstemp(
         prefix="chunks.", suffix=".tmp", dir=output_dir
     )
+    occurrences_fd, occurrences_name = tempfile.mkstemp(
+        prefix="chunk_occurrences.", suffix=".tmp", dir=output_dir
+    )
     os.close(texts_fd)
     os.close(chunks_fd)
+    os.close(occurrences_fd)
     texts_tmp = Path(texts_name)
     chunks_tmp = Path(chunks_name)
-    return texts_tmp, chunks_tmp, output_dir / "texts.json", output_dir / "chunks.jsonl"
+    occurrences_tmp = Path(occurrences_name)
+    return (
+        texts_tmp,
+        chunks_tmp,
+        occurrences_tmp,
+        output_dir / "texts.json",
+        output_dir / "chunks.jsonl",
+        output_dir / "chunk_occurrences.jsonl",
+    )
 
 
 def build(args: argparse.Namespace) -> dict[str, Any]:
@@ -268,7 +338,14 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         **{key: value for key, value in vars(config).items() if key != "strategy"},
     )
 
-    texts_tmp, chunks_tmp, texts_path, chunks_path = _atomic_paths(args.output_dir)
+    (
+        texts_tmp,
+        chunks_tmp,
+        occurrences_tmp,
+        texts_path,
+        chunks_path,
+        occurrences_path,
+    ) = _atomic_paths(args.output_dir)
     token_lengths: dict[str, list[int]] = defaultdict(list)
     new_content_token_lengths: list[int] = []
     actual_overlap_token_lengths: list[int] = []
@@ -278,13 +355,16 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     dropped_spans: list[dict[str, Any]] = []
     stopped_at_max_chunks = False
     allow_partial_corpus = getattr(args, "allow_partial_corpus", False)
-    seen_chunk_digests: set[bytes] = set()
+    canonical_chunk_ids: dict[bytes, str] = {}
+    seen_source_ids: set[str] = set()
     duplicate_chunk_count = 0
+    chunk_occurrence_count = 0
     try:
         with (
             args.input.open("r", encoding="utf-8") as source,
             texts_tmp.open("w", encoding="utf-8") as texts,
             chunks_tmp.open("w", encoding="utf-8") as chunks_out,
+            occurrences_tmp.open("w", encoding="utf-8") as occurrences_out,
         ):
             texts.write("[")
             first_text = True
@@ -301,6 +381,11 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                         f"line {line_number}: {args.text_field!r} must be a string"
                     )
                 source_id = str(record.get(args.id_field, line_number))
+                if source_id in seen_source_ids:
+                    raise ValueError(
+                        f"line {line_number}: duplicate source id {source_id!r}"
+                    )
+                seen_source_ids.add(source_id)
                 source_count += 1
                 was_oversized = not contracts.fits(
                     text, InputRole.DOCUMENT, budget.target_tokens
@@ -334,12 +419,6 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                     if args.max_chunks is not None and chunk_count >= args.max_chunks:
                         stopped_at_max_chunks = True
                         break
-                    if args.deduplicate == "exact":
-                        digest = hashlib.sha256(chunk.text.encode("utf-8")).digest()
-                        if digest in seen_chunk_digests:
-                            duplicate_chunk_count += 1
-                            continue
-                        seen_chunk_digests.add(digest)
                     new_content_tokens = chunk.metadata.get("new_content_tokens")
                     actual_overlap_tokens = chunk.metadata.get("overlap_tokens")
                     if (
@@ -356,6 +435,34 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                         raise AssertionError(
                             f"chunk {chunk_count} has invalid actual overlap metadata"
                         )
+                    canonical_id = chunk.chunk_id
+                    deduplicated_alias = False
+                    if args.deduplicate == "exact":
+                        digest = hashlib.sha256(chunk.text.encode("utf-8")).digest()
+                        existing_id = canonical_chunk_ids.get(digest)
+                        if existing_id is not None:
+                            canonical_id = existing_id
+                            deduplicated_alias = True
+                            duplicate_chunk_count += 1
+                        else:
+                            canonical_chunk_ids[digest] = canonical_id
+                    occurrences_out.write(
+                        json.dumps(
+                            {
+                                "corpus_id": canonical_id,
+                                "source_id": source_id,
+                                "start_pos": chunk.start_pos,
+                                "end_pos": chunk.end_pos,
+                                "deduplicated_alias": deduplicated_alias,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                    chunk_occurrence_count += 1
+                    if deduplicated_alias:
+                        continue
                     new_content_token_lengths.append(new_content_tokens)
                     actual_overlap_token_lengths.append(actual_overlap_tokens)
                     if not first_text:
@@ -398,9 +505,11 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError("input JSONL changed while the corpus was being built")
         os.replace(texts_tmp, texts_path)
         os.replace(chunks_tmp, chunks_path)
+        os.replace(occurrences_tmp, occurrences_path)
     finally:
         texts_tmp.unlink(missing_ok=True)
         chunks_tmp.unlink(missing_ok=True)
+        occurrences_tmp.unlink(missing_ok=True)
 
     histogram = {
         model_id: {
@@ -419,7 +528,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         for model_id, values in token_lengths.items()
     }
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "builder_sha256": _sha256(Path(__file__).resolve()),
         "sdk_chunking_package_sha256": _python_tree_sha256(
             Path(chunking_package.__file__).resolve().parent
@@ -428,8 +537,10 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "input_sha256": input_sha256,
         "texts_sha256": _sha256(texts_path),
         "chunks_sha256": _sha256(chunks_path),
+        "chunk_occurrences_sha256": _sha256(occurrences_path),
         "source_count": source_count,
         "chunk_count": chunk_count,
+        "chunk_occurrence_count": chunk_occurrence_count,
         "max_chunks": args.max_chunks,
         "stopped_at_max_chunks": stopped_at_max_chunks,
         "corpus_scope": (
@@ -440,8 +551,11 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "split_oversized_source_count": split_sources,
         "dropped_spans": dropped_spans,
         "boundary_strategy": args.strategy,
+        "boundary_char_size": args.boundary_char_size,
+        "source_fields": {"id": args.id_field, "text": args.text_field},
         "token_budget": budget.to_manifest(),
         "input_contract": contracts.to_manifest(),
+        "contract_resolution": _contract_resolution_manifest(args.contracts),
         "token_histogram": histogram,
         "packing_histogram": {
             "new_content_tokens": _histogram(new_content_token_lengths),

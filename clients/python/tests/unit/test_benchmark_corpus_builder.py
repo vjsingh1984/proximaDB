@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import tomllib
 from argparse import Namespace
 from pathlib import Path
 
@@ -47,6 +48,27 @@ def _load_embedder_module():
     return module
 
 
+def _load_scorer_module():
+    repo = Path(__file__).resolve().parents[4]
+    path = repo / "scripts" / "bench" / "score_embedding_shards.py"
+    spec = importlib.util.spec_from_file_location("score_embedding_shards", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_embeddings_extra_includes_trusted_open_model_runtime_dependencies():
+    repo = Path(__file__).resolve().parents[4]
+    pyproject = tomllib.loads(
+        (repo / "clients" / "python" / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    requirements = pyproject["project"]["optional-dependencies"]["embeddings"]
+
+    assert any(requirement.startswith("einops") for requirement in requirements)
+
+
 def _load_tokenizer_validator_module():
     repo = Path(__file__).resolve().parents[4]
     path = repo / "scripts" / "bench" / "validate_open_embedding_tokenizers.py"
@@ -84,10 +106,22 @@ def _args(tmp_path: Path, *, max_chunks: int | None) -> Namespace:
         + "\n",
         encoding="utf-8",
     )
+    contracts = tmp_path / "unused.toml"
+    contracts.write_text(
+        f"""\
+[[models]]
+model_id = "test/model"
+revision = "{'a' * 40}"
+effective_context_limit = 8
+native_dimension = 8
+output_dimension = 8
+""",
+        encoding="utf-8",
+    )
     return Namespace(
         input=source,
         output_dir=tmp_path / "corpus",
-        contracts=tmp_path / "unused.toml",
+        contracts=contracts,
         text_field="text",
         id_field="id",
         strategy="fixed_size",
@@ -220,6 +254,66 @@ runtime_provider = "open-weights"
 
     with pytest.raises(ValueError, match="effective_context_limit"):
         builder._load_contracts(contracts_path)
+
+
+def test_builder_reuses_a_sealed_runtime_contract_without_loading_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    builder = _load_builder_module()
+    revision = "c" * 40
+    expected = ResolvedInputContract(
+        model_id="test/model",
+        model_revision=revision,
+        counter=WordCounter(),
+        effective_context_limit=8,
+        renderer=InputRenderer(
+            document_template="passage: {text}", query_template="query: {text}"
+        ),
+        native_dimension=8,
+        output_dimension=8,
+    )
+    contracts_path = tmp_path / "contracts.toml"
+    contracts_path.write_text(
+        f"""\
+[[models]]
+model_id = "test/model"
+revision = "{revision}"
+tokenizer_revision = "{revision}"
+effective_context_limit = 8
+document_template = "passage: {{text}}"
+query_template = "query: {{text}}"
+native_dimension = 8
+output_dimension = 8
+runtime_provider = "open-weights"
+sealed_runtime_contract_fingerprint = "{expected.fingerprint}"
+local_files_only = true
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        builder.HuggingFaceTokenCounter,
+        "from_pretrained",
+        lambda *_args, **_kwargs: WordCounter(),
+    )
+    monkeypatch.setattr(
+        builder,
+        "create_open_model_provider",
+        lambda *_args, **_kwargs: pytest.fail("sealed contracts must not load weights"),
+    )
+
+    loaded = builder._load_contracts(contracts_path)
+
+    assert loaded.contracts == (expected,)
+    assert builder._contract_resolution_manifest(contracts_path) == {
+        "contracts_sha256": builder._sha256(contracts_path),
+        "models": {
+            "test/model": {
+                "mode": "sealed_runtime_fingerprint",
+                "sealed_runtime_contract_fingerprint": expected.fingerprint,
+            }
+        },
+        "path": str(contracts_path.resolve()),
+    }
 
 
 def test_builder_rejects_an_accidentally_partial_corpus(
@@ -760,3 +854,123 @@ def test_qrels_mode_routes_passages_and_queries_through_distinct_roles(
     assert result["runtime"]["device"] == "mps"
     assert result["artifact_dtype"] == "float32"
     assert json.loads(Path(result["query_ids"]["path"]).read_text()) == ["q1"]
+    assert result["shards"]["passage"]["manifest_sha256"]
+    assert result["shards"]["query"]["manifest_sha256"]
+
+
+def test_exact_embedding_scorer_preserves_row_lineage_and_float_scores(
+    tmp_path: Path,
+):
+    embedder = _load_embedder_module()
+    scorer = _load_scorer_module()
+    import numpy as np
+
+    runtime = {
+        "backend": "torch",
+        "compute_dtype": "float32",
+        "device": "mps",
+        "requested_device": "mps",
+    }
+    texts = tmp_path / "texts.json"
+    texts.write_text(json.dumps(["a", "b", "c"]), encoding="utf-8")
+    chunks = tmp_path / "chunks.jsonl"
+    chunks.write_text(
+        "\n".join(json.dumps({"chunk_id": chunk_id}) for chunk_id in ("c1", "c2", "c3"))
+        + "\n",
+        encoding="utf-8",
+    )
+    corpus_manifest = tmp_path / "corpus.manifest.json"
+    corpus_manifest.write_text(
+        json.dumps(
+            {
+                "texts_sha256": embedder._sha256(texts),
+                "chunks_sha256": embedder._sha256(chunks),
+            }
+        ),
+        encoding="utf-8",
+    )
+    queries = tmp_path / "queries.jsonl"
+    queries.write_text("queries", encoding="utf-8")
+    query_ids = tmp_path / "query_ids.json"
+    query_ids.write_text(json.dumps(["q1", "q2"]), encoding="utf-8")
+
+    passage_paths = embedder.prepare_shards(
+        output_dir=tmp_path / "embeddings",
+        corpus_sha256=embedder._sha256(texts),
+        model_id="test/model",
+        revision="a" * 40,
+        contract_fingerprint="b" * 64,
+        dimension=2,
+        shard_size=3,
+        rows=3,
+        runtime=runtime,
+    )
+    query_paths = embedder.prepare_shards(
+        output_dir=tmp_path / "embeddings",
+        corpus_sha256=embedder._sha256(queries),
+        model_id="test/model",
+        revision="a" * 40,
+        contract_fingerprint="b" * 64,
+        dimension=2,
+        shard_size=2,
+        rows=2,
+        runtime=runtime,
+        input_role="query",
+    )
+    np.save(
+        passage_paths[0],
+        np.asarray([[1.0, 0.0], [0.8, 0.6], [0.0, 1.0]], dtype=np.float32),
+    )
+    np.save(query_paths[0], np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32))
+    passage_shard_manifest = passage_paths[0].parent / "manifest.json"
+    query_shard_manifest = query_paths[0].parent / "manifest.json"
+    embedding_manifest = tmp_path / "embedding.manifest.json"
+    embedding_manifest.write_text(
+        json.dumps(
+            {
+                "evaluation_mode": "qrels",
+                "model_id": "test/model",
+                "model_revision": "a" * 40,
+                "contract_fingerprint": "b" * 64,
+                "dimension": 2,
+                "runtime": runtime,
+                "corpus_sha256": embedder._sha256(texts),
+                "qrels": {
+                    "chunks_sha256": embedder._sha256(chunks),
+                    "queries_sha256": embedder._sha256(queries),
+                },
+                "query_ids": {
+                    "path": str(query_ids),
+                    "sha256": embedder._sha256(query_ids),
+                    "rows": 2,
+                },
+                "shards": {
+                    "passage": {
+                        "manifest_path": str(passage_shard_manifest),
+                        "manifest_sha256": embedder._sha256(passage_shard_manifest),
+                    },
+                    "query": {
+                        "manifest_path": str(query_shard_manifest),
+                        "manifest_sha256": embedder._sha256(query_shard_manifest),
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "run.jsonl"
+
+    result = scorer.score_embedding_shards(
+        embedding_manifest, corpus_manifest, chunks, output, top_k=2
+    )
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [(row["query_id"], row["corpus_id"]) for row in rows] == [
+        ("q1", "c1"),
+        ("q1", "c2"),
+        ("q2", "c3"),
+        ("q2", "c2"),
+    ]
+    assert [row["score"] for row in rows] == pytest.approx([1.0, 0.8, 1.0, 0.6])
+    assert result["scoring"] == "exact normalized float32 inner product"
+    assert result["run_sha256"] == scorer._sha256(output)
