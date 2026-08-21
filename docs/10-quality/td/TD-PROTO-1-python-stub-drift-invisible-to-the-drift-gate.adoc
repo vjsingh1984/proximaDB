@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Open — filed 2026-08-20** from TD-CHUNK-5's wire retirement (#1679), where regenerating one stub picked up four unrelated fields nobody had noticed were missing. Measured across every proto in the tree; numbers below are from `origin/develop` at `b6b79b6f1`.
+| Status | **Resolved — 2026-08-20.** Gate widened to compare serialized descriptors and wired into `make proto-check`; both stub trees regenerated; the two-trees-agree assertion added. Acceptance met by observation, not assumption — see "Executed" below. Original filing follows. — **Open — filed 2026-08-20** from TD-CHUNK-5's wire retirement (#1679), where regenerating one stub picked up four unrelated fields nobody had noticed were missing. Measured across every proto in the tree; numbers below are from `origin/develop` at `b6b79b6f1`.
 | Dim | D2 (network) — the wire contract itself; secondary D5 (governance: a merge-blocking gate that does not block what it claims to)
 | Pillar | REL — secondary OE
 | Blocks | Nothing today. It becomes a correctness problem the moment a caller needs one of the missing fields, and a *silent* one because the failure is an `AttributeError` in the SDK rather than a wire error.
@@ -112,3 +112,53 @@ That PR removed a wire field and regenerated the one stub it touched. Fixing the
 merge-blocking check plus a regeneration of 26 files across two trees — a different blast radius, its
 own review, and three capability additions that deserve to be looked at rather than ridden in on a
 chunking PR. Recorded there and filed here rather than done silently.
+
+== Executed 2026-08-20
+
+All four steps, in the order this TD specified, because a regenerate-first PR would have left the gate
+as blind as it was and the drift would simply have returned.
+
+=== The gate, and the proof it works
+
+`clients/python/tests/unit/test_proto_schema_drift.py` compares the serialized `FileDescriptorProto`
+embedded in each committed `*_pb2.py` against one generated from its `.proto` at HEAD. Byte equality is
+the whole test — no proto parsing to drift from the schema language, options caught alongside
+messages, and immune to protoc's formatting.
+
+Acceptance required the gate to be **observed failing**, and it was, against the exact shape the old
+one is blind to: a single field added to `collection_types.proto`, which declares no service.
+
+[cols="2,2,3",options="header"]
+|===
+| Gate | Result on the injected field | Reading
+| `test_grpc_proto_drift` (services/rpcs) | **3 passed** | blind, as diagnosed
+| `test_proto_schema_drift` (descriptors) | **2 failed** | catches it in both stub trees
+|===
+
+Run first against the unfixed tree, it failed on **14 files** — exactly the set this TD measured, which
+is the same result arrived at twice by different means.
+
+=== The regeneration
+
+33 stub files regenerated across both trees, 27 with real content change. `make proto-check` now runs
+schema drift alongside the service gate: **46 passed**.
+
+The three capabilities the drift had been hiding are now reachable from the Python SDK —
+`PredicateShortfall` and `VectorElementType` on `v2/record`, `LookupStage` on `v1/document`, and
+`text_query`/`document_collection`/`document_weight` on `v2/fusion`. They were declared on the wire the
+whole time; nothing but the stub stood between a caller and them.
+
+=== Two guards on the guard
+
+* **`test_there_is_something_to_compare`** — asserts the path convention still matches at least ten
+  protos. A parametrised gate whose parameter list silently empties is a gate that passes forever, and
+  this file derives its cases from a filesystem convention.
+* **`test_the_two_stub_trees_agree`** — the cheap half of step 3. Collapsing the duplication remains the
+  real fix; both trees are live (`unified_client_async`, `fusion_v2` and `document_v2` import
+  `proximadb.v2`), and independent generation is precisely how they came to disagree on two files.
+
+=== What is deliberately not done
+
+The two stub trees are **not collapsed**. That is a wider change — every importer of one package has to
+move — and it wants its own review rather than riding in on a gate fix. The equality assertion stops
+the bleeding meanwhile, and will fail loudly if anyone regenerates one tree without the other.
