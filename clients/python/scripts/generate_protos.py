@@ -30,7 +30,6 @@ PYTHON_OUT = SCRIPT_DIR.parent / "src" / "proximadb_sdk" / "v1"
 PROTOS = [
     "proximadb/v1/document.proto",
     "proximadb/v1/hybrid.proto",
-    "proximadb/v1/timeseries.proto",
     "proximadb/v1/graph.proto",
     "proximadb/v1/vector.proto",
     "proximadb/v1/collection.proto",
@@ -164,15 +163,12 @@ def verify_generation(python_out: Path) -> bool:
         from proximadb_sdk.v1 import document_pb2_grpc
         from proximadb_sdk.v1 import hybrid_pb2
         from proximadb_sdk.v1 import hybrid_pb2_grpc
-        from proximadb_sdk.v1 import timeseries_pb2
-        from proximadb_sdk.v1 import timeseries_pb2_grpc
 
         print("  All proto files imported successfully!")
 
         # Check for key services
         assert hasattr(document_pb2_grpc, "DocumentServiceStub")
         assert hasattr(hybrid_pb2_grpc, "HybridSearchServiceStub")
-        assert hasattr(timeseries_pb2_grpc, "TimeSeriesServiceStub")
 
         print("  All service stubs found!")
 
