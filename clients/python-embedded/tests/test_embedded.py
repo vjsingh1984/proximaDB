@@ -24,9 +24,13 @@ class TestEmbeddedBasics:
     def test_embedded_source_avoids_loopback_protocol_clients(self):
         """Embedded mode must stay wired to in-process services/API handlers."""
         repo_root = Path(__file__).resolve().parents[3]
+        # #1021 moved the embedded engine out of src/embedded into the binding
+        # crate; this guard silently broke then (file-not-found) — one more
+        # instance of a check whose target moved out from under it.
+        crate_src = repo_root / "crates" / "binding" / "proximadb-embedded" / "src"
         embedded_sources = [
-            repo_root / "src" / "embedded" / "mod.rs",
-            repo_root / "src" / "embedded" / "python.rs",
+            crate_src / "lib.rs",
+            crate_src / "python.rs",
         ]
         forbidden_tokens = [
             "127.0.0.1",
