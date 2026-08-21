@@ -569,8 +569,13 @@ pub struct EmbeddedGraphNode {
     pub id: String,
     /// Node labels/types (e.g., "Person", "function", "Document")
     pub labels: Vec<String>,
-    /// Flexible property storage for domain-specific attributes
-    pub properties: std::collections::HashMap<String, String>,
+    /// Typed property storage. Was `HashMap<String, String>`, which forced
+    /// every value through stringification on write (`line: 42` stored as
+    /// `StringValue("42")`, leaving the engine's numeric index permanently
+    /// empty) and silently DROPPED Bytes/Array/Object/Vector on read
+    /// (proximaDB#1698). `PropertyValue` has `From<&str>/String/i64/i32/f64/
+    /// bool`, so `with_property("name", "Alice")` still reads the same.
+    pub properties: std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
 }
 
 impl EmbeddedGraphNode {
@@ -589,28 +594,22 @@ impl EmbeddedGraphNode {
         self
     }
 
-    /// Add a property to this node
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    /// Add a property to this node (typed; `&str`/`String`/`i64`/`i32`/`f64`/
+    /// `bool` convert implicitly, or pass a `PropertyValue` for the rest)
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<proximadb::graph::model::PropertyValue>,
+    ) -> Self {
         self.properties.insert(key.into(), value.into());
         self
     }
 
-    /// Convert to proto Node for storage
+    /// Convert to proto Node for storage (lossless: properties are typed)
     pub fn to_proto(&self) -> proximadb::graph::Node {
-        use proximadb::graph::{Node, PropertyValue, property_value::Value};
+        use proximadb::graph::Node;
 
-        let properties: std::collections::HashMap<String, PropertyValue> = self
-            .properties
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    PropertyValue {
-                        value: Some(Value::StringValue(v.clone())),
-                    },
-                )
-            })
-            .collect();
+        let properties = self.properties.clone();
 
         Node {
             id: self.id.clone(),
@@ -622,21 +621,10 @@ impl EmbeddedGraphNode {
         }
     }
 
-    /// Create from proto Node
+    /// Create from proto Node (lossless: every variant survives, where the
+    /// stringly version dropped Bytes/Array/Object/Vector outright)
     pub fn from_proto(node: &proximadb::graph::Node) -> Self {
-        use proximadb::graph::model::property_value::Value;
-
-        let properties: std::collections::HashMap<String, String> = node
-            .properties
-            .iter()
-            .filter_map(|(k, v)| match &v.value {
-                Some(Value::StringValue(s)) => Some((k.clone(), s.clone())),
-                Some(Value::IntValue(i)) => Some((k.clone(), i.to_string())),
-                Some(Value::DoubleValue(d)) => Some((k.clone(), d.to_string())),
-                Some(Value::BoolValue(b)) => Some((k.clone(), b.to_string())),
-                _ => None,
-            })
-            .collect();
+        let properties = node.properties.clone();
 
         Self {
             id: node.id.clone(),
@@ -666,8 +654,8 @@ pub struct EmbeddedGraphEdge {
     pub edge_type: String,
     /// Optional weight for weighted traversal
     pub weight: Option<f64>,
-    /// Flexible property storage
-    pub properties: std::collections::HashMap<String, String>,
+    /// Typed property storage (see the node-side comment; proximaDB#1698)
+    pub properties: std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
 }
 
 impl EmbeddedGraphEdge {
@@ -699,8 +687,12 @@ impl EmbeddedGraphEdge {
         self
     }
 
-    /// Add a property
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    /// Add a property (typed; scalars convert implicitly)
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<proximadb::graph::model::PropertyValue>,
+    ) -> Self {
         self.properties.insert(key.into(), value.into());
         self
     }
@@ -715,20 +707,9 @@ impl EmbeddedGraphEdge {
 
     /// Convert to proto Edge
     pub fn to_proto(&self) -> proximadb::graph::Edge {
-        use proximadb::graph::{Edge, PropertyValue, property_value::Value};
+        use proximadb::graph::Edge;
 
-        let properties: std::collections::HashMap<String, PropertyValue> = self
-            .properties
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    PropertyValue {
-                        value: Some(Value::StringValue(v.clone())),
-                    },
-                )
-            })
-            .collect();
+        let properties = self.properties.clone();
 
         Edge {
             id: self.id.clone().unwrap_or_else(|| self.generated_id()),
@@ -744,19 +725,7 @@ impl EmbeddedGraphEdge {
 
     /// Create from proto Edge
     pub fn from_proto(edge: &proximadb::graph::Edge) -> Self {
-        use proximadb::graph::model::property_value::Value;
-
-        let properties: std::collections::HashMap<String, String> = edge
-            .properties
-            .iter()
-            .filter_map(|(k, v)| match &v.value {
-                Some(Value::StringValue(s)) => Some((k.clone(), s.clone())),
-                Some(Value::IntValue(i)) => Some((k.clone(), i.to_string())),
-                Some(Value::DoubleValue(d)) => Some((k.clone(), d.to_string())),
-                Some(Value::BoolValue(b)) => Some((k.clone(), b.to_string())),
-                _ => None,
-            })
-            .collect();
+        let properties = edge.properties.clone();
 
         Self {
             id: Some(edge.id.clone()),
@@ -3465,7 +3434,7 @@ impl EmbeddedProximaDB {
         graph_id: &str,
         node_id: &str,
         labels: Vec<String>,
-        properties: std::collections::HashMap<String, String>,
+        properties: std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
     ) -> Result<EmbeddedGraphNode, Box<dyn std::error::Error + Send + Sync>> {
         let node = EmbeddedGraphNode {
             id: node_id.to_string(),
@@ -3485,7 +3454,7 @@ impl EmbeddedProximaDB {
         to_node_id: &str,
         edge_type: &str,
         weight: Option<f64>,
-        properties: std::collections::HashMap<String, String>,
+        properties: std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
     ) -> Result<EmbeddedGraphEdge, Box<dyn std::error::Error + Send + Sync>> {
         let edge = EmbeddedGraphEdge {
             id: edge_id.map(str::to_string),
@@ -3553,7 +3522,9 @@ impl EmbeddedProximaDB {
         &self,
         graph_id: &str,
         labels: Option<Vec<String>>,
-        properties: Option<std::collections::HashMap<String, String>>,
+        properties: Option<
+            std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
+        >,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<EmbeddedGraphNode>, Box<dyn std::error::Error + Send + Sync>> {
@@ -4958,20 +4929,20 @@ impl EmbeddedProximaDB {
     }
 
     fn property_filters_from_map(
-        properties: &std::collections::HashMap<String, String>,
+        properties: &std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
     ) -> Vec<proximadb::graph::PropertyFilter> {
-        use proximadb::graph::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+        use proximadb::graph::{PropertyFilter, PropertyFilterOperator};
 
+        // Typed filters against typed stored values. When both sides were
+        // stringly this happened to match; once storage is typed (see
+        // #1698), a StringValue("42") filter would never equal IntValue(42),
+        // so the filter map carries PropertyValue end to end.
         properties
             .iter()
             .map(|(key, value)| PropertyFilter {
                 key: key.clone(),
                 operator: PropertyFilterOperator::Equals as i32,
-                value: Some(PropertyValue {
-                    value: Some(proximadb::graph::model::property_value::Value::StringValue(
-                        value.clone(),
-                    )),
-                }),
+                value: Some(value.clone()),
             })
             .collect()
     }

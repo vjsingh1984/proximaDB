@@ -304,6 +304,129 @@ impl From<super::DeltaInfo> for PyDeltaInfo {
 ///
 ///     # For a social network:
 ///     node = GraphNode("user_123", labels=["Person"], properties={"name": "Alice"})
+/// Python object -> typed graph `PropertyValue`.
+///
+/// Order matters: Python `bool` is a subclass of `int`, so it must be probed
+/// first or `True` stores as `IntValue(1)`. The final arm keeps the old
+/// permissiveness — an arbitrary object still round-trips via `str()` — but
+/// scalars, lists, dicts and bytes now keep their types. Before this, EVERY
+/// value went through `str()`: `line: 42` persisted as `StringValue("42")`,
+/// the engine's numeric property index stayed permanently empty for
+/// PyO3-written graphs, and numeric range filters compared lexicographically
+/// ("9" > "42"). See proximaDB#1698.
+type GraphPropertyValue = proximadb::graph::model::PropertyValue;
+
+fn py_to_property_value(v: &Bound<'_, PyAny>) -> PyResult<GraphPropertyValue> {
+    use proximadb::graph::model::property_value::Value;
+    use proximadb::graph::model::{PropertyArray, PropertyObject};
+
+    if v.is_none() {
+        return Ok(GraphPropertyValue { value: None });
+    }
+    if let Ok(b) = v.cast::<pyo3::types::PyBool>() {
+        return Ok(GraphPropertyValue {
+            value: Some(Value::BoolValue(b.is_true())),
+        });
+    }
+    if let Ok(i) = v.extract::<i64>() {
+        return Ok(GraphPropertyValue {
+            value: Some(Value::IntValue(i)),
+        });
+    }
+    if let Ok(f) = v.extract::<f64>()
+        && v.cast::<pyo3::types::PyFloat>().is_ok()
+    {
+        return Ok(GraphPropertyValue {
+            value: Some(Value::DoubleValue(f)),
+        });
+    }
+    if let Ok(s) = v.extract::<String>() {
+        return Ok(GraphPropertyValue {
+            value: Some(Value::StringValue(s)),
+        });
+    }
+    if let Ok(b) = v.extract::<Vec<u8>>()
+        && v.cast::<pyo3::types::PyBytes>().is_ok()
+    {
+        return Ok(GraphPropertyValue {
+            value: Some(Value::BytesValue(b)),
+        });
+    }
+    if let Ok(list) = v.cast::<pyo3::types::PyList>() {
+        let mut values = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            values.push(py_to_property_value(&item)?);
+        }
+        return Ok(GraphPropertyValue {
+            value: Some(Value::ArrayValue(PropertyArray { values })),
+        });
+    }
+    if let Ok(dict) = v.cast::<PyDict>() {
+        let mut fields = HashMap::new();
+        for (k, val) in dict.iter() {
+            fields.insert(k.extract::<String>()?, py_to_property_value(&val)?);
+        }
+        return Ok(GraphPropertyValue {
+            value: Some(Value::ObjectValue(PropertyObject { fields })),
+        });
+    }
+    // Arbitrary objects (Path, UUID, ...) keep the historical str() behaviour.
+    Ok(GraphPropertyValue {
+        value: Some(Value::StringValue(v.str()?.to_string())),
+    })
+}
+
+/// Typed graph `PropertyValue` -> Python object (inverse of the above; every
+/// variant survives, where the stringly layer dropped four of them).
+fn property_value_to_py(py: Python<'_>, v: &GraphPropertyValue) -> PyResult<Py<PyAny>> {
+    use proximadb::graph::model::property_value::Value;
+
+    Ok(match &v.value {
+        None => py.None(),
+        Some(Value::StringValue(s)) => s.into_pyobject(py)?.into_any().unbind(),
+        Some(Value::IntValue(i)) => i.into_pyobject(py)?.into_any().unbind(),
+        Some(Value::DoubleValue(d)) => d.into_pyobject(py)?.into_any().unbind(),
+        Some(Value::BoolValue(b)) => pyo3::types::PyBool::new(py, *b)
+            .to_owned()
+            .into_any()
+            .unbind(),
+        Some(Value::BytesValue(b)) => pyo3::types::PyBytes::new(py, b).into_any().unbind(),
+        Some(Value::ArrayValue(arr)) => {
+            let list = pyo3::types::PyList::empty(py);
+            for item in &arr.values {
+                list.append(property_value_to_py(py, item)?)?;
+            }
+            list.into_any().unbind()
+        }
+        Some(Value::ObjectValue(obj)) => {
+            let dict = PyDict::new(py);
+            for (k, val) in &obj.fields {
+                dict.set_item(k, property_value_to_py(py, val)?)?;
+            }
+            dict.into_any().unbind()
+        }
+        Some(Value::VectorValue(vec)) => {
+            let list = pyo3::types::PyList::empty(py);
+            for f in vec {
+                list.append(*f)?;
+            }
+            list.into_any().unbind()
+        }
+    })
+}
+
+fn py_dict_to_properties(
+    dict: Option<&Bound<'_, PyDict>>,
+) -> PyResult<HashMap<String, GraphPropertyValue>> {
+    let mut map = HashMap::new();
+    if let Some(dict) = dict {
+        for (k, v) in dict.iter() {
+            map.insert(k.extract::<String>()?, py_to_property_value(&v)?);
+        }
+    }
+    Ok(map)
+}
+
 #[pyclass(name = "GraphNode", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraphNode {
@@ -312,8 +435,8 @@ pub struct PyGraphNode {
     pub id: String,
     /// Node labels/types
     labels_vec: Vec<String>,
-    /// Flexible property storage
-    properties_map: HashMap<String, String>,
+    /// Typed property storage (proximaDB#1698: was HashMap<String, String>)
+    properties_map: HashMap<String, GraphPropertyValue>,
 }
 
 #[pymethods]
@@ -331,17 +454,7 @@ impl PyGraphNode {
         labels: Option<Vec<String>>,
         properties: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
-        let properties_map = if let Some(dict) = properties {
-            let mut map = HashMap::new();
-            for (k, v) in dict.iter() {
-                let key: String = k.extract()?;
-                let value: String = v.str()?.to_string();
-                map.insert(key, value);
-            }
-            map
-        } else {
-            HashMap::new()
-        };
+        let properties_map = py_dict_to_properties(properties)?;
 
         Ok(PyGraphNode {
             id,
@@ -362,12 +475,12 @@ impl PyGraphNode {
         self.labels_vec = labels;
     }
 
-    /// Get properties as a dictionary
+    /// Get properties as a dictionary (typed: int/float/bool/str/bytes/list/dict)
     #[getter]
     fn properties(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.properties_map {
-            dict.set_item(k, v)?;
+            dict.set_item(k, property_value_to_py(py, v)?)?;
         }
         Ok(dict.into())
     }
@@ -375,12 +488,7 @@ impl PyGraphNode {
     /// Set properties from a dictionary
     #[setter]
     fn set_properties(&mut self, properties: &Bound<'_, PyDict>) -> PyResult<()> {
-        self.properties_map.clear();
-        for (k, v) in properties.iter() {
-            let key: String = k.extract()?;
-            let value: String = v.str()?.to_string();
-            self.properties_map.insert(key, value);
-        }
+        self.properties_map = py_dict_to_properties(Some(properties))?;
         Ok(())
     }
 
@@ -429,7 +537,7 @@ pub struct PyGraphEdge {
     #[pyo3(get, set)]
     pub weight: Option<f64>,
     /// Flexible property storage
-    properties_map: HashMap<String, String>,
+    properties_map: HashMap<String, GraphPropertyValue>,
 }
 
 #[pymethods]
@@ -453,17 +561,7 @@ impl PyGraphEdge {
         weight: Option<f64>,
         properties: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
-        let properties_map = if let Some(dict) = properties {
-            let mut map = HashMap::new();
-            for (k, v) in dict.iter() {
-                let key: String = k.extract()?;
-                let value: String = v.str()?.to_string();
-                map.insert(key, value);
-            }
-            map
-        } else {
-            HashMap::new()
-        };
+        let properties_map = py_dict_to_properties(properties)?;
 
         Ok(PyGraphEdge {
             id,
@@ -475,12 +573,12 @@ impl PyGraphEdge {
         })
     }
 
-    /// Get properties as a dictionary
+    /// Get properties as a dictionary (typed: int/float/bool/str/bytes/list/dict)
     #[getter]
     fn properties(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.properties_map {
-            dict.set_item(k, v)?;
+            dict.set_item(k, property_value_to_py(py, v)?)?;
         }
         Ok(dict.into())
     }
@@ -2619,13 +2717,7 @@ impl PyProximaDB {
         labels: Option<Vec<String>>,
         properties: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyGraphNode> {
-        let mut property_map = HashMap::new();
-        if let Some(dict) = properties {
-            for (k, v) in dict.iter() {
-                let key: String = k.extract()?;
-                property_map.insert(key, v.str()?.to_string());
-            }
-        }
+        let property_map = py_dict_to_properties(properties)?;
 
         self.db()?
             .create_node(graph_id, node_id, labels.unwrap_or_default(), property_map)
@@ -2644,13 +2736,7 @@ impl PyProximaDB {
         weight: Option<f64>,
         properties: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyGraphEdge> {
-        let mut property_map = HashMap::new();
-        if let Some(dict) = properties {
-            for (k, v) in dict.iter() {
-                let key: String = k.extract()?;
-                property_map.insert(key, v.str()?.to_string());
-            }
-        }
+        let property_map = py_dict_to_properties(properties)?;
 
         self.db()?
             .create_edge(
@@ -2718,13 +2804,7 @@ impl PyProximaDB {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> PyResult<Vec<PyGraphNode>> {
-        let mut property_map = HashMap::new();
-        if let Some(dict) = properties {
-            for (k, v) in dict.iter() {
-                let key: String = k.extract()?;
-                property_map.insert(key, v.str()?.to_string());
-            }
-        }
+        let property_map = py_dict_to_properties(properties)?;
 
         self.db()?
             .query_nodes(

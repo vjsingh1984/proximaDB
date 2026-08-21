@@ -212,7 +212,32 @@ jobs:
           assert len(inc) == 1 and inc[0].from_node_id == "a", inc
           stats = db.graph_stats("smoke")
           assert stats.total_edges == 1, stats
-          print("wheel smoke OK: graph roundtrip on", pe.__file__)
+
+          # Typed property round-trip (#1698): scalars must keep their Python
+          # types across write -> engine -> read. Before the fix every value
+          # was stringified at the boundary ("line": 42 stored as "42"), the
+          # engine's numeric property index stayed empty, and Array/Object
+          # properties were silently dropped on read.
+          db.create_nodes(
+              "smoke",
+              [pe.GraphNode("typed", ["Fn"], {
+                  "line": 42,
+                  "score": 0.5,
+                  "flag": True,
+                  "name": "alpha",
+                  "tags": ["a", "b"],
+              })],
+          )
+          got = db.get_node("smoke", "typed").properties
+          assert got["line"] == 42 and isinstance(got["line"], int), got
+          assert got["score"] == 0.5 and isinstance(got["score"], float), got
+          assert got["flag"] is True, got
+          assert got["name"] == "alpha", got
+          assert got["tags"] == ["a", "b"], got
+          # Typed equality filter must match a typed stored value.
+          hits = db.query_nodes("smoke", None, {"line": 42}, None, None)
+          assert [n.id for n in hits] == ["typed"], [n.id for n in hits]
+          print("wheel smoke OK: graph + typed-property roundtrip on", pe.__file__)
           PY
 
   # ---- TestPyPI (advisory/optional) --------------------------------------------------
