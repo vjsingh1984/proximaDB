@@ -814,11 +814,20 @@ immutable bed (`bge768-ncomp32`, `k_c=90`, `n_comp=32`), same operating point
 [cols="1,1,1,1,1,1", options="header"]
 |===
 | cap | recall | GET/q | GET reduction | bytes ratio | RSS ratio
-| 4 MiB (baseline) | 0.9821 | 41.03 | — | — | 1.000
-| **8 MiB** | 0.9823 | 29.63 | **−27.8%** | 1.037 | **1.035**
-| **16 MiB** | 0.9819 | 25.24 | **−38.5%** | 1.039 | **1.055**
-| 24 MiB (S3c run) | 0.9825 | 24.28 | −40.8% | 1.041 | **1.1019 ✗**
+| 4 MiB (baseline) | 0.9821 | 41.03 | — | — | 1.0000
+| **8 MiB** | 0.9823 | 29.63 | **−27.8%** | 1.0373 | **1.0339** ✓ eligible
+| **16 MiB** | 0.9819 | 25.24 | **−38.5%** | 1.0387 | **1.0549** ✓ eligible
+| 24 MiB | 0.9821 | 24.28 | −40.8% | 1.0407 | **1.1000** ✗ not eligible
 |===
+
+All four points are **same-run** (`runs/cap-ladder-20260820`, `status: pass`,
+4/4, zero measurement failures). `promotion_eligible` is the harness verdict, not
+a hand calculation: **8 MiB and 16 MiB both pass all nine checks**; 24 MiB fails
+exactly one, `rss_not_materially_regressed`, at **1.1000** — landing precisely on
+the bound. S3c measured the same point at 1.1019 in a separate run. **24 MiB does
+not sit under the guard with margin; it straddles it, and which side it lands on
+varies run to run.** That is a stronger reason to reject it than a single
+over-bound reading would have been.
 
 **The knee is 16 MiB.** What each step actually buys:
 
@@ -870,9 +879,6 @@ entire remaining memory budget.
 * **top-20 is unmeasured at this operating point** — `nprobe=25` is the top-10
   floor; top-20 needs ≈30 and sits at 0.9784 here, below SLA for a reason
   unrelated to the cap.
-* **The 24 MiB row is from the S3c run, not this one.** Its ratio is valid
-  because that run carried its own paired 4 MiB baseline, but it is not
-  same-run comparable with the other three rows.
 * **RSS was measured by an external `ps` sampler on a shared host.** The ladder
   was interrupted twice by other sessions' compilers and the harness failed
   closed both times rather than measuring through contention; the banked points
