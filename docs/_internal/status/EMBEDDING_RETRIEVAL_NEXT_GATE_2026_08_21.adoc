@@ -139,8 +139,8 @@ sealed in every manifest.
 
 == Next gate
 
-Do not run another blind chunk sweep. First resolve the lexical contract split exposed here:
-natural-language text versus advanced query syntax, and document Tantivy versus the canonical
-hybrid custom index. Then evaluate an open cross-encoder reranker on the same dev/held-out protocol.
-Citation-span precision and downstream answer quality remain required before promoting any RAG
-default.
+The lexical contract split and production-engine comparison are closed in
+`LEXICAL_QUERY_CONTRACT_GATE_2026_08_22.adoc`: natural language is the safe default, advanced syntax
+is explicit, and held-out evidence rejects a blind canonical-BM25-to-Tantivy replacement. Next,
+evaluate an open cross-encoder reranker on the same dev/held-out protocol. Citation-span precision
+and downstream answer quality remain required before promoting any RAG default.

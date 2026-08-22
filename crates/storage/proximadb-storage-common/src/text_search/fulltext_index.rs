@@ -48,6 +48,7 @@
 //! }
 //! ```
 
+use proximadb_search_types::search_params::LexicalQueryMode;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use thiserror::Error;
 
@@ -82,6 +83,10 @@ pub enum FullTextIndexError {
     /// Index is read-only
     #[error("Index is read-only, cannot modify")]
     ReadOnlyIndex,
+
+    /// The selected query interpretation is not implemented by this engine.
+    #[error("Unsupported lexical query mode: {0}")]
+    UnsupportedQueryMode(String),
 }
 
 // =============================================================================
@@ -1095,6 +1100,25 @@ impl FullTextIndex {
         self.search_with_options(query, SearchOptions::top_k(limit))
     }
 
+    /// Search using an explicit query interpretation contract.
+    ///
+    /// This lightweight in-memory index supports analyzer-driven natural text.
+    /// It deliberately rejects advanced syntax instead of silently treating
+    /// operators as terms or emulating only a subset of Tantivy's language.
+    pub fn search_with_mode(
+        &self,
+        query: &str,
+        limit: usize,
+        mode: LexicalQueryMode,
+    ) -> Result<Vec<FulltextSearchResult>, FullTextIndexError> {
+        match mode {
+            LexicalQueryMode::NaturalLanguage => Ok(self.search(query, limit)),
+            LexicalQueryMode::AdvancedSyntax => Err(FullTextIndexError::UnsupportedQueryMode(
+                "advanced_syntax is available only on a syntax-capable lexical engine".to_string(),
+            )),
+        }
+    }
+
     /// Search the index with custom options
     pub fn search_with_options(
         &self,
@@ -1176,11 +1200,12 @@ impl FullTextIndex {
             )
             .collect();
 
-        // Sort by score descending
+        // Stable IDs make equal-score top-k deterministic across hash-map seeds.
         results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.doc_id.cmp(&b.doc_id))
         });
 
         // Limit results
@@ -1534,6 +1559,37 @@ mod tests {
         assert!(!results.is_empty());
         // doc1 should rank highest (has both "quick" and "brown")
         assert_eq!(results[0].doc_id, "doc1");
+    }
+
+    #[test]
+    fn natural_language_mode_accepts_query_punctuation() {
+        let mut index = FullTextIndex::new(TokenizerConfig::default());
+        index
+            .add_document("doc1", "Bugs and drugs in pork Yersinia and Ractopamine")
+            .unwrap();
+
+        let results = index
+            .search_with_mode(
+                "Bugs & Drugs in Pork: Yersinia and Ractopamine",
+                10,
+                LexicalQueryMode::NaturalLanguage,
+            )
+            .unwrap();
+
+        assert_eq!(
+            results.first().map(|result| result.doc_id.as_str()),
+            Some("doc1")
+        );
+    }
+
+    #[test]
+    fn custom_index_rejects_unsupported_advanced_syntax() {
+        let index = FullTextIndex::new(TokenizerConfig::default());
+        let error = index
+            .search_with_mode("title:needle", 10, LexicalQueryMode::AdvancedSyntax)
+            .unwrap_err();
+
+        assert!(matches!(error, FullTextIndexError::UnsupportedQueryMode(_)));
     }
 
     #[test]

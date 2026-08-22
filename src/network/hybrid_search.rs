@@ -12,6 +12,7 @@ use crate::proto::proximadb_v1::sql_value::Value as SqlValueKind;
 use crate::storage::engines::core::formats::columnar::fulltext_index::{
     FullTextIndex, TokenizerConfig,
 };
+use proximadb_search_types::search_params::LexicalQueryMode;
 
 /// Shared map of per-collection full-text indexes for hybrid BM25+vector search
 pub type HybridFullTextIndexMap = Arc<RwLock<HashMap<String, FullTextIndex>>>;
@@ -157,7 +158,7 @@ impl HybridPort for RestHybridPortImpl {
                 .map_err(|e| anyhow!("BM25 lock error: {}", e))?;
             if let Some(index) = indexes.get(&request.collection) {
                 index
-                    .search(&bm25_text, top_k)
+                    .search_with_mode(&bm25_text, top_k, LexicalQueryMode::NaturalLanguage)?
                     .into_iter()
                     .map(|r| BM25Result {
                         doc_id: r.doc_id,
