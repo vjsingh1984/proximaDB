@@ -46,6 +46,50 @@ try:  # pragma: no cover - availability depends on the optional extra
 except Exception:  # ImportError, or a partial/native load failure
     _victor_codegraph = None
 
+#: Lowest `victor-codegraph` whose behaviour this module's claims are measured
+#: against. Not cosmetic: TD-CG2's acceptance suite passes on 0.9.0 and fails
+#: 30-of-54 on 0.8.1, with R1 failing for 15 of the 16 languages the SDK
+#: advertises symbol extraction for. On an older package the delegated chunker
+#: returns almost no symbols -- the same "dead but advertised" trap TD-CG2
+#: deleted the in-SDK parsers to remove.
+#:
+#: pyproject pins the same floor. This guard exists for the case pip cannot
+#: catch: an environment that already holds an older copy.
+MINIMUM_CODEGRAPH_VERSION = (0, 9, 0)
+
+
+def _parse_version(raw: str) -> tuple[int, ...]:
+    """Leading numeric components of a version string, for comparison only."""
+    parts: list[int] = []
+    for piece in str(raw).split("."):
+        digits = ""
+        for ch in piece:
+            if not ch.isdigit():
+                break
+            digits += ch
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def installed_codegraph_version() -> tuple[int, ...] | None:
+    """Version of the installed package, or None when it is absent."""
+    if _victor_codegraph is None:
+        return None
+    return _parse_version(getattr(_victor_codegraph, "__version__", "0"))
+
+
+def codegraph_is_adequate() -> bool:
+    """True when an installed package meets :data:`MINIMUM_CODEGRAPH_VERSION`.
+
+    Kept separate from "is it installed" because the two failure modes need
+    different messages: absent is an install instruction, too-old is an upgrade
+    instruction, and conflating them sends people to the wrong fix.
+    """
+    version = installed_codegraph_version()
+    return version is not None and version >= MINIMUM_CODEGRAPH_VERSION
+
 
 class CodeSymbolType(IntEnum):
     """Types of code symbols that can be extracted"""
@@ -448,6 +492,19 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
                 "dependency.) Failing here is deliberate: silently returning "
                 "text windows would look like working code chunking while "
                 "extracting no symbols at all."
+            )
+        if not codegraph_is_adequate():
+            found = ".".join(str(n) for n in (installed_codegraph_version() or ()))
+            wanted = ".".join(str(n) for n in MINIMUM_CODEGRAPH_VERSION)
+            raise RuntimeError(
+                f"code chunking requires victor-codegraph >= {wanted}, but "
+                f"{found or 'an unknown version'} is installed. Upgrade with "
+                "`pip install -U 'proximadb[codegraph]'`. "
+                "This is a behavioural floor, not a formality: on 0.8.1 the "
+                "acceptance suite fails 30 of 54, and symbol extraction fails "
+                "for 15 of the 16 advertised languages -- so an older package "
+                "would return almost no symbols while appearing to work, which "
+                "is the exact failure TD-CG2 removed."
             )
         return self._chunk_via_victor_codegraph(
             text, source_id, explicit_language, metadata

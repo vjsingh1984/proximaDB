@@ -9,6 +9,18 @@ a minimal valid source per language. The counterpart matters just as much: the
 languages that do NOT extract symbols are named too, and asserted to still be
 COVERED. Covered-without-symbols and unsupported are different states, and
 conflating them is exactly how the overclaim survived.
+
+Requires `victor-codegraph >= MINIMUM_CODEGRAPH_VERSION`, and skips otherwise --
+absent OR too old. Both guards are load-bearing:
+
+* Without any guard this module did not skip when the package was missing, it
+  FAILED, 50 of 52. Nothing ran it in CI, so those failures were invisible: a red
+  suite outside the gate, which is the precise defect TD-CG2 S0 was filed to stop.
+* The version guard matters just as much. On the published 0.8.1 the package
+  imports fine and this suite fails 30 of 54 -- R1 for 15 of the 16 advertised
+  languages. Skipping on "installed" alone would run the suite against a package
+  whose behaviour the claims were never measured on, and report its failures as
+  ours.
 """
 
 from __future__ import annotations
@@ -18,10 +30,31 @@ import pytest
 from proximadb_sdk.chunking_strategies.code import (
     COVERED_WITHOUT_SYMBOLS,
     EXTENSION_TO_LANGUAGE,
+    MINIMUM_CODEGRAPH_VERSION,
     SYMBOL_EXTRACTING_LANGUAGES,
     WITHDRAWN_LANGUAGES,
     CodeChunkingConfig,
     CodeChunkingStrategy,
+    codegraph_is_adequate,
+    installed_codegraph_version,
+)
+
+pytest.importorskip(
+    "victor_codegraph",
+    reason="TD-CG2's acceptance suite measures the DELEGATED path; without the "
+    "`codegraph` extra there is nothing to measure",
+)
+
+_found = installed_codegraph_version()
+pytestmark = pytest.mark.skipif(
+    not codegraph_is_adequate(),
+    reason=(
+        "victor-codegraph "
+        + ".".join(str(n) for n in (_found or ()))
+        + " is below the measured floor "
+        + ".".join(str(n) for n in MINIMUM_CODEGRAPH_VERSION)
+        + "; this suite asserts behaviour that version does not have"
+    ),
 )
 
 #: One minimal, valid source per language: a free function and a type where the

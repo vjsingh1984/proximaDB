@@ -109,15 +109,26 @@ code-chunking = [
     "tree-sitter-language-pack>=1.0",
 ]
 
-# Shared code->CPG chunker (TD-CG2 / ADR-029). When installed, the deprecated
-# in-SDK `chunking_strategies/code.py` delegates to `victor_codegraph` so the
-# tree-sitter symbol+relation chunker lives in ONE place (Victor owns it).
-# Published on PyPI: `pip install 'proximadb[codegraph]'` (for local source work:
-# pip install -e ../../victor/victor-codegraph).
+# Shared code->CPG chunker (TD-CG2 / ADR-029). The in-SDK `chunking_strategies/
+# code.py` owns no parser; it delegates to `victor_codegraph`, so the tree-sitter
+# symbol+relation chunker lives in ONE place (Victor owns it).
+#
+# The floor is 0.9.0 and that is NOT YET ON PyPI (latest published: 0.8.1). That
+# is deliberate, not an oversight. TD-CG2's acceptance suite
+# (tests/chunking/test_code_language_surface.py) passes on 0.9.0 and fails
+# 30-of-54 on 0.8.1 -- R1 alone fails for 15 of the 16 languages the SDK
+# advertises symbol extraction for. On 0.8.1 the delegated chunker returns almost
+# no symbols, which is precisely the "dead but advertised" trap TD-CG2 deleted the
+# in-SDK parsers to remove.
+#
+# An unsatisfiable floor makes that gap an install-time error naming the version,
+# instead of a silent behavioural difference the caller discovers as an empty
+# result. Lower it only when a release that passes the acceptance suite ships;
+# `code.py` carries the matching runtime guard for environments that already hold
+# an older copy. The language SURFACE is identical across 0.8.1 and 0.9.0 (27
+# extensions, 18 languages) -- it is the behaviour that differs.
 codegraph = [
-    # >=0.1.2 ships the line-independent canonical symbol oid (ADR-044) the SDK now
-    # keys code records on by default (see _code_oid.record_symbol_id).
-    "victor-codegraph>=0.1.2",
+    "victor-codegraph>=0.9.0",
 ]
 
 langchain = [
