@@ -75,6 +75,47 @@ def _load_chunk_ids(path: Path) -> tuple[str, ...]:
     return tuple(identifiers)
 
 
+def _load_source_mapping(
+    path: Path, corpus_ids: tuple[str, ...]
+) -> tuple[dict[str, tuple[str, ...]], int, int]:
+    known_corpus = set(corpus_ids)
+    sources_by_corpus: dict[str, set[str]] = {}
+    source_ids: set[str] = set()
+    alias_count = 0
+    with path.open("r", encoding="utf-8") as source:
+        for line_number, line in enumerate(source, 1):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError(f"occurrences line {line_number}: expected an object")
+            corpus_id = _required_text(
+                record, "corpus_id", f"occurrences line {line_number}"
+            )
+            source_id = _required_text(
+                record, "source_id", f"occurrences line {line_number}"
+            )
+            if corpus_id not in known_corpus:
+                raise ValueError(
+                    f"occurrences line {line_number}: unknown corpus_id {corpus_id!r}"
+                )
+            sources_by_corpus.setdefault(corpus_id, set()).add(source_id)
+            source_ids.add(source_id)
+            if record.get("deduplicated_alias") is True:
+                alias_count += 1
+    missing = sorted(known_corpus - set(sources_by_corpus))
+    if missing:
+        raise ValueError(f"occurrences do not cover corpus IDs: {missing[:3]}")
+    return (
+        {
+            corpus_id: tuple(sorted(source_ids_for_corpus))
+            for corpus_id, source_ids_for_corpus in sources_by_corpus.items()
+        },
+        len(source_ids),
+        alias_count,
+    )
+
+
 def _load_query_ids(path: Path) -> tuple[str, ...]:
     values = _json(path)
     if not isinstance(values, list) or not values:
@@ -183,12 +224,20 @@ def score_embedding_shards(
     output_path: Path,
     *,
     top_k: int,
+    candidate_granularity: str = "chunk",
+    occurrences_path: Path | None = None,
     scoring_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     """Score every query exactly and emit deterministic ranked JSONL rows."""
 
     if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
         raise ValueError("top_k must be a positive integer")
+    if candidate_granularity not in {"chunk", "source"}:
+        raise ValueError("candidate_granularity must be 'chunk' or 'source'")
+    if candidate_granularity == "source" and occurrences_path is None:
+        raise ValueError("source candidate scoring requires occurrences_path")
+    if candidate_granularity == "chunk" and occurrences_path is not None:
+        raise ValueError("occurrences_path is valid only for source candidate scoring")
     embedding = _json(embedding_manifest_path)
     corpus = _json(corpus_manifest_path)
     if not isinstance(embedding, dict) or not isinstance(corpus, dict):
@@ -223,29 +272,70 @@ def score_embedding_shards(
         raise ValueError("query ID sidecar digest mismatch")
     query_ids = _load_query_ids(query_ids_path)
     corpus_ids = _load_chunk_ids(chunks_path)
+    sources_by_corpus: dict[str, tuple[str, ...]] | None = None
+    source_count: int | None = None
+    alias_count: int | None = None
+    occurrences_sha256: str | None = None
+    if occurrences_path is not None:
+        occurrences_sha256 = _sha256(occurrences_path)
+        if corpus.get("chunk_occurrences_sha256") != occurrences_sha256:
+            raise ValueError("occurrences JSONL does not match the corpus manifest")
+        sources_by_corpus, source_count, alias_count = _load_source_mapping(
+            occurrences_path, corpus_ids
+        )
+        declared_source_count = corpus.get("source_count")
+        if (
+            isinstance(declared_source_count, bool)
+            or not isinstance(declared_source_count, int)
+            or declared_source_count <= 0
+        ):
+            raise ValueError("source candidate scoring requires manifest source_count")
+        if source_count != declared_source_count:
+            raise ValueError(
+                "occurrence source count disagrees with the corpus manifest"
+            )
     if len(corpus_ids) != passage_identity.get("rows"):
         raise ValueError("chunk row count does not match passage shards")
     if len(query_ids) != query_identity.get("rows"):
         raise ValueError("query ID row count does not match query shards")
     if query_ids_record.get("rows") != len(query_ids):
         raise ValueError("query ID sidecar row count disagrees with its manifest")
-    if top_k > len(corpus_ids):
-        raise ValueError("top_k cannot exceed the corpus row count")
+    candidate_count = source_count if source_count is not None else len(corpus_ids)
+    if top_k > candidate_count:
+        raise ValueError("top_k cannot exceed the candidate count")
 
     passage_paths = _shard_paths(passage_identity_path, passage_identity)
     query_paths = _shard_paths(query_identity_path, query_identity)
     query_vectors = np.concatenate([np.load(path) for path in query_paths], axis=0)
     best: list[list[tuple[float, str]]] = [[] for _ in query_ids]
+    source_best: list[dict[str, float]] | None = (
+        [dict() for _ in query_ids] if sources_by_corpus is not None else None
+    )
     offset = 0
     for passage_path in passage_paths:
         passages = np.load(passage_path)
         block_ids = corpus_ids[offset : offset + len(passages)]
         scores = query_vectors @ passages.T
         for query_index in range(len(query_ids)):
-            best[query_index] = _merge_top_k(
-                best[query_index], scores[query_index], block_ids, top_k
-            )
+            if source_best is None:
+                best[query_index] = _merge_top_k(
+                    best[query_index], scores[query_index], block_ids, top_k
+                )
+                continue
+            query_source_scores = source_best[query_index]
+            for score, corpus_id in zip(scores[query_index], block_ids, strict=True):
+                numeric_score = float(score)
+                for source_id in sources_by_corpus[corpus_id]:
+                    previous = query_source_scores.get(source_id, -math.inf)
+                    if numeric_score > previous:
+                        query_source_scores[source_id] = numeric_score
         offset += len(passages)
+    if source_best is not None:
+        best = [
+            sorted(values.items(), key=lambda item: (-item[1], item[0]))[:top_k]
+            for values in source_best
+        ]
+        best = [[(score, source_id) for source_id, score in rows] for rows in best]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -255,14 +345,15 @@ def score_embedding_shards(
     temporary = Path(temporary_name)
     try:
         with temporary.open("w", encoding="utf-8") as output:
+            id_field = "source_id" if candidate_granularity == "source" else "corpus_id"
             for query_id, candidates in zip(query_ids, best, strict=True):
-                for rank, (score, corpus_id) in enumerate(candidates, 1):
+                for rank, (score, candidate_id) in enumerate(candidates, 1):
                     if not math.isfinite(score):
                         raise RuntimeError("exact scorer produced a non-finite score")
                     output.write(
                         json.dumps(
                             {
-                                "corpus_id": corpus_id,
+                                id_field: candidate_id,
                                 "query_id": query_id,
                                 "rank": rank,
                                 "score": score,
@@ -279,13 +370,16 @@ def score_embedding_shards(
         f"{output_path.stem}.scoring.manifest.json"
     )
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "producer_sha256": _sha256(Path(__file__).resolve()),
         "scoring": "exact normalized float32 inner product",
-        "tie_break": "corpus_id ascending",
+        "candidate_granularity": candidate_granularity,
+        "tie_break": f"{candidate_granularity}_id ascending",
         "top_k": top_k,
         "query_count": len(query_ids),
         "corpus_row_count": len(corpus_ids),
+        "source_count": source_count,
+        "deduplicated_alias_count": alias_count,
         "run_row_count": len(query_ids) * top_k,
         "embedding_manifest_path": str(embedding_manifest_path.resolve()),
         "embedding_manifest_sha256": _sha256(embedding_manifest_path),
@@ -293,6 +387,10 @@ def score_embedding_shards(
         "corpus_manifest_sha256": _sha256(corpus_manifest_path),
         "chunks_path": str(chunks_path.resolve()),
         "chunks_sha256": chunks_sha256,
+        "occurrences_path": (
+            str(occurrences_path.resolve()) if occurrences_path is not None else None
+        ),
+        "occurrences_sha256": occurrences_sha256,
         "query_ids_path": str(query_ids_path.resolve()),
         "query_ids_sha256": _sha256(query_ids_path),
         "passage_shard_manifest_sha256": _sha256(passage_identity_path),
@@ -301,7 +399,11 @@ def score_embedding_shards(
         "run_sha256": _sha256(output_path),
         "limitations": [
             "exact float scoring does not measure ANN recall or serving latency",
-            "document metrics still require source collapse against original qrels",
+            (
+                "source candidates are exact maximum chunk scores"
+                if candidate_granularity == "source"
+                else "document metrics still require source collapse against original qrels"
+            ),
         ],
     }
     _atomic_json(result, scoring_manifest_path)
@@ -315,6 +417,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunks-jsonl", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--top-k", type=int, default=100)
+    parser.add_argument(
+        "--candidate-granularity", choices=("chunk", "source"), default="chunk"
+    )
+    parser.add_argument("--occurrences-jsonl", type=Path)
     parser.add_argument("--scoring-manifest", type=Path)
     return parser.parse_args()
 
@@ -327,6 +433,8 @@ def main() -> None:
         args.chunks_jsonl,
         args.output,
         top_k=args.top_k,
+        candidate_granularity=args.candidate_granularity,
+        occurrences_path=args.occurrences_jsonl,
         scoring_manifest_path=args.scoring_manifest,
     )
     print(json.dumps(result, indent=2, sort_keys=True))

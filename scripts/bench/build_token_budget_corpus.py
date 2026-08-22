@@ -24,6 +24,7 @@ try:
 except ModuleNotFoundError:  # Python 3.10 — tomllib is stdlib only in 3.11+
     import tomli as tomllib
 from proximadb_sdk.chunking_strategies import (
+    ChunkContextRenderer,
     ChunkingConfig,
     ChunkingStrategy,
     CompositeInputContract,
@@ -316,6 +317,16 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("max_chunks must be positive when set")
     input_sha256 = _sha256(args.input)
     contracts = _load_contracts(args.contracts)
+    context_field = getattr(args, "context_field", None)
+    context_template = getattr(args, "context_template", "{context}\n\n{text}")
+    context_renderer = (
+        ChunkContextRenderer(
+            metadata_key=context_field,
+            template=context_template,
+        )
+        if context_field is not None
+        else None
+    )
     budget = TokenBudget(
         target_tokens=args.target_tokens,
         overlap_tokens=args.overlap_tokens,
@@ -332,6 +343,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         token_budget=budget,
         input_contract=contracts,
         input_role=InputRole.DOCUMENT,
+        context_renderer=context_renderer,
     )
     strategy = get_chunking_strategy(
         config.strategy,
@@ -380,6 +392,13 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                     raise ValueError(
                         f"line {line_number}: {args.text_field!r} must be a string"
                     )
+                context = ""
+                if context_field is not None:
+                    context = record.get(context_field)
+                    if not isinstance(context, str):
+                        raise ValueError(
+                            f"line {line_number}: {context_field!r} must be a string"
+                        )
                 source_id = str(record.get(args.id_field, line_number))
                 if source_id in seen_source_ids:
                     raise ValueError(
@@ -387,10 +406,18 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 seen_source_ids.add(source_id)
                 source_count += 1
-                was_oversized = not contracts.fits(
-                    text, InputRole.DOCUMENT, budget.target_tokens
+                base_metadata = {"source_line": line_number}
+                if context_field is not None:
+                    base_metadata[context_field] = context
+                whole_input = (
+                    context_renderer.render(text, base_metadata)
+                    if context_renderer is not None
+                    else text
                 )
-                emitted = strategy.chunk(text, source_id, {"source_line": line_number})
+                was_oversized = not contracts.fits(
+                    whole_input, InputRole.DOCUMENT, budget.target_tokens
+                )
+                emitted = strategy.chunk(text, source_id, base_metadata)
                 if was_oversized and emitted:
                     split_sources += 1
                 if not emitted and text.strip():
@@ -435,10 +462,13 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                         raise AssertionError(
                             f"chunk {chunk_count} has invalid actual overlap metadata"
                         )
+                    model_input_text = chunk.input_text
                     canonical_id = chunk.chunk_id
                     deduplicated_alias = False
                     if args.deduplicate == "exact":
-                        digest = hashlib.sha256(chunk.text.encode("utf-8")).digest()
+                        digest = hashlib.sha256(
+                            model_input_text.encode("utf-8")
+                        ).digest()
                         existing_id = canonical_chunk_ids.get(digest)
                         if existing_id is not None:
                             canonical_id = existing_id
@@ -467,9 +497,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                     actual_overlap_token_lengths.append(actual_overlap_tokens)
                     if not first_text:
                         texts.write(",")
-                    json.dump(chunk.text, texts, ensure_ascii=False)
+                    json.dump(model_input_text, texts, ensure_ascii=False)
                     first_text = False
-                    counts = contracts.validate(chunk.text, InputRole.DOCUMENT)
+                    counts = contracts.validate(model_input_text, InputRole.DOCUMENT)
                     for model_id, count in counts.items():
                         if count > budget.target_tokens:
                             raise AssertionError(
@@ -484,6 +514,9 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                                 "source_id": source_id,
                                 "start_pos": chunk.start_pos,
                                 "end_pos": chunk.end_pos,
+                                "context_propagated": (
+                                    chunk.model_input_text is not None
+                                ),
                                 "token_counts": counts,
                             },
                             ensure_ascii=False,
@@ -552,7 +585,14 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "dropped_spans": dropped_spans,
         "boundary_strategy": args.strategy,
         "boundary_char_size": args.boundary_char_size,
-        "source_fields": {"id": args.id_field, "text": args.text_field},
+        "source_fields": {
+            "id": args.id_field,
+            "text": args.text_field,
+            **({"context": context_field} if context_field is not None else {}),
+        },
+        "context_propagation": (
+            context_renderer.to_manifest() if context_renderer is not None else None
+        ),
         "token_budget": budget.to_manifest(),
         "input_contract": contracts.to_manifest(),
         "contract_resolution": _contract_resolution_manifest(args.contracts),
@@ -592,6 +632,15 @@ def parse_args() -> argparse.Namespace:
         "--contracts", type=Path, required=True, help="TOML model contracts"
     )
     parser.add_argument("--text-field", default="text")
+    parser.add_argument(
+        "--context-field",
+        help="optional source field propagated into every exact model input",
+    )
+    parser.add_argument(
+        "--context-template",
+        default="{context}\n\n{text}",
+        help="sealed template with exactly one {context} and one {text}",
+    )
     parser.add_argument("--id-field", default="id")
     parser.add_argument(
         "--strategy",

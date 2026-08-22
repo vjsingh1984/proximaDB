@@ -21,13 +21,30 @@
 # DO NOT promote an entry to `measured` without real provenance. Numbers in
 # README/BENCHMARKS are claims, not evidence, until an artifact backs them.
 
-as_of_date = "2026-06-16"
+as_of_date = "2026-08-21"
 source_of_truth = "benches/ + checked-in dated artifacts"
 header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_2026_06_16.adoc): object_economy_e2e promoted to measured; the other e2e claims' benches measure COMPONENT kernels (fusion-merge µs, recall computation, quantization speed) or small-scale per-engine search, NOT the claimed end-to-end metric/scale — they stay unverified with corrected notes; real e2e benches are the follow-up"
 
 # ---------------------------------------------------------------------------
 # MEASURED — backed by a dated, checked-in artifact.
 # ---------------------------------------------------------------------------
+
+[[claims]]
+id = "embedding_retrieval_title_tantivy_source100_nfc"
+claim = "On a dev-first then held-out NFCorpus protocol, propagating title context into every BGE-base-v1.5 480/72 child added 5 vectors (+0.12%) and was quality-neutral: held-out Recall@100 0.338022 -> 0.338231 (delta +0.000210, paired 95% interval -0.001082 to +0.001385) and NDCG@100 delta -0.000290 (interval -0.001330 to +0.000697). Source-direct exact scoring closed the prior candidate-depth defect: all 323 held-out queries now have exactly 100 distinct sources. The production document Tantivy projection reached held-out Recall@100 0.229892 but strict QueryParser rejected 9/323 natural-language queries; explicit zero padding is diagnostic and recorded, not production sanitization."
+metric = "vector rows/payload + NDCG/Recall@10/@100 + paired query-bootstrap intervals + distinct-source candidate completeness + strict lexical query-error rate"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/EMBEDDING_RETRIEVAL_NEXT_GATE_2026_08_21.adoc",
+  "docs/12-design/MODEL_INPUT_CONTRACT_AND_TOKEN_BUDGETED_CHUNKING_2026_08_11.adoc",
+]
+bench_source = "scripts/bench/score_embedding_shards.py"
+bench_command = "Import NFCorpus dev/test with separate title/body; build BGE 480/72 split/no-dedup corpus with --text-field body --context-field title; embed pinned BGE on MPS; exact-score --candidate-granularity source --top-k 100 with the occurrence sidecar; run the ProximaDB document Tantivy projection with strict parsing and explicit --query-error-policy zero-pad; evaluate --run-granularity source --require-complete-k 100; compare 10,000 paired query bootstraps with seed 17; inspect dev before running held-out test"
+artifact = "docs/_internal/status/EMBEDDING_RETRIEVAL_NEXT_GATE_2026_08_21.adoc"
+hardware = "Local macOS arm64 Apple Silicon, PyTorch/MPS float32 normalized embedding and exact float32 scoring; concurrent compilation was present, so no latency or throughput claim"
+date = "2026-08-21"
+version = "source base 5405815a14161ca1699f3fd0b7f6093ceac1b048; BGE revision a5beb1e3e68b9ab74eb54cfd186867f64f240e1a; producer and artifact hashes sealed in the checked-in status artifact"
+notes = "Durable external root /Users/vijaysingh/proximadb-bench-data/retrieval-quality-next-gate-v1/nfcorpus/. Title corpus manifest fcc9eb52b1a9256cad726eaa0c220d64558caf19bfc8c3de6424883a9d943b7e; held-out control/title metrics 31de00e2663e4c9bf4c4a5568ab25b6a95fe86b370434129567e528b215e8c99 / 138afa62b3df8ebca2023c765600eb48884653c092073a9ce23a49677d8aa14f; Recall@100 comparison 0f047d659c08d4157a6cde182d2bba2e686c15887d14db0efa9cfea4347297ba; held-out Tantivy run/metrics 54fe421887be3eb1de96e64a3f78074d1fc38789572dc98816da5b14eac6c000 / 682afff7cd05c7ab83bb55620084dfe95e5d8c046ed7ad558d35a2ca8c0013d9. Tantivy evidence is the actual document projection, not the canonical hybrid endpoint custom FullTextIndex."
 
 [[claims]]
 id = "embedding_retrieval_quality_nfc_types"

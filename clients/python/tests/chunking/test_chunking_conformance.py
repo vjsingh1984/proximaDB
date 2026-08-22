@@ -103,6 +103,7 @@ from proximadb_sdk.chunking_strategies.conformance.invariants import (
     _wall_clock_budget,
 )
 from proximadb_sdk.chunking_strategies.contracts import (
+    ChunkContextRenderer,
     ResolvedInputContract,
     TokenBudget,
 )
@@ -1503,6 +1504,62 @@ native text here
 
 usage text here
 """
+
+
+class TestPropagatedChunkContext:
+    """Repeated context is model input, while spans remain source-exact."""
+
+    @staticmethod
+    def _segmenter(target=8):
+        base = ChunkingStrategyFactory.create_strategy(
+            ChunkingStrategy.FIXED_SIZE,
+            ChunkingConfig(
+                strategy=ChunkingStrategy.FIXED_SIZE,
+                chunk_size=10_000,
+                min_chunk_size=1,
+                max_chunk_size=100_000,
+            ),
+        )
+        return TokenBudgetStrategy(
+            base,
+            TokenBudget(target_tokens=target, overlap_tokens=1),
+            ResolvedInputContract(
+                model_id="m",
+                model_revision="r",
+                counter=WordTokenCounter(),
+                effective_context_limit=32,
+            ),
+            context_renderer=ChunkContextRenderer(
+                metadata_key="title",
+                template="Title: {context}\n\n{text}",
+            ),
+        )
+
+    def test_context_is_counted_on_every_chunk_without_corrupting_offsets(self):
+        text = "one two three four five six seven"
+
+        chunks = self._segmenter().chunk(text, "doc", {"title": "Useful heading"})
+
+        assert len(chunks) > 1
+        assert all(chunk.model_input_text is not None for chunk in chunks)
+        assert all(
+            chunk.model_input_text.startswith("Title: Useful heading\n\n")
+            for chunk in chunks
+        )
+        assert all(
+            WordTokenCounter().count(chunk.model_input_text) <= 8 for chunk in chunks
+        )
+        assert all(
+            text[chunk.start_pos : chunk.end_pos] == chunk.text for chunk in chunks
+        )
+        assert all(chunk.input_text == chunk.model_input_text for chunk in chunks)
+        assert check_totality(text, chunks) is None
+
+    def test_context_that_leaves_no_source_token_capacity_fails_closed(self):
+        with pytest.raises(ValueError, match="context.*no room"):
+            self._segmenter(target=4).chunk(
+                "body tokens", "doc", {"title": "far too many title words"}
+            )
 
 
 class TestHeadingOutline:

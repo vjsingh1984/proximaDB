@@ -135,9 +135,8 @@ comparison is `4aed1fc412ac9d154e7e88837017d73cf84baaa968af40dbeac21f1c17c6598b`
 
 == Next gate
 
-The next quality investment is not another unstructured chunk sweep. Add a development/held-out
-split and evaluate, in order: title propagation into child chunks, a production-equivalent Tantivy
-BM25 leg, candidate recall@100 with source-aware exact depth, then an open cross-encoder reranker.
-Only after that should domain-adapted or multi-vector biomedical models be compared. Every candidate
-must report vector/storage cost, retrieval quality, citation-span quality and downstream answer
-quality together.
+The title-propagation, document-Tantivy and complete source-aware Recall@100 gate is closed in
+`EMBEDDING_RETRIEVAL_NEXT_GATE_2026_08_21.adoc`. It found quality-neutral title propagation,
+corrected the historical Recall@100 lower bound, and exposed strict natural-query parser failures
+plus a document-Tantivy/canonical-hybrid implementation seam. Resolve that lexical contract before
+the open cross-encoder reranker gate.

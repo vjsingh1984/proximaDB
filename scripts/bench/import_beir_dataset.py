@@ -78,7 +78,7 @@ def _atomic_json(value: Any, path: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _document_text(record: dict[str, Any], *, document_id: str) -> str:
+def _document_fields(record: dict[str, Any], *, document_id: str) -> dict[str, str]:
     title = record.get("title", "")
     text = record.get("text", "")
     if title is None:
@@ -89,9 +89,8 @@ def _document_text(record: dict[str, Any], *, document_id: str) -> str:
         raise ValueError(f"corpus document {document_id!r}: title/text must be strings")
     title = title.strip()
     text = text.strip()
-    if title and text:
-        return f"{title}\n\n{text}"
-    return title or text
+    combined = f"{title}\n\n{text}" if title and text else title or text
+    return {"body": text, "text": combined, "title": title}
 
 
 def import_dataset(
@@ -177,7 +176,10 @@ def import_dataset(
     qrels_output = output_dir / "source_qrels.jsonl"
     _atomic_jsonl(
         [
-            {"id": document_id, "text": _document_text(record, document_id=document_id)}
+            {
+                "id": document_id,
+                **_document_fields(record, document_id=document_id),
+            }
             for document_id, record in sorted(corpus.items())
         ],
         documents_output,
@@ -203,13 +205,18 @@ def import_dataset(
     )
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "producer_sha256": _digest(Path(__file__).resolve()),
         "dataset_name": dataset_name,
         "split": split,
         "source_url": source_url,
         "license_review_required": True,
         "judgment_granularity": "document",
+        "document_fields": {
+            "body": "BEIR corpus text",
+            "text": "backward-compatible title plus body",
+            "title": "BEIR corpus title",
+        },
         "archive": archive,
         "inputs": {
             "corpus": {

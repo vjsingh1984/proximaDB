@@ -123,6 +123,8 @@ output_dimension = 8
         output_dir=tmp_path / "corpus",
         contracts=contracts,
         text_field="text",
+        context_field=None,
+        context_template="{context}\n\n{text}",
         id_field="id",
         strategy="fixed_size",
         target_tokens=7,
@@ -135,6 +137,55 @@ output_dimension = 8
         allow_partial_corpus=False,
         deduplicate="exact",
     )
+
+
+def test_builder_propagates_context_inside_the_exact_model_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    builder = _load_builder_module()
+    args = _args(tmp_path, max_chunks=None)
+    args.input.write_text(
+        json.dumps(
+            {
+                "id": "doc-1",
+                "body": "one two three four five six seven",
+                "title": "Useful heading",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    args.text_field = "body"
+    args.context_field = "title"
+    args.context_template = "Title: {context}\n\n{text}"
+    args.target_tokens = 8
+    args.overlap_tokens = 1
+    args.min_content_tokens = 1
+    args.deduplicate = "none"
+    monkeypatch.setattr(builder, "_load_contracts", lambda _path: _contract())
+
+    manifest = builder.build(args)
+
+    texts = json.loads((args.output_dir / "texts.json").read_text(encoding="utf-8"))
+    chunks = [
+        json.loads(line)
+        for line in (args.output_dir / "chunks.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert len(texts) > 1
+    assert all(text.startswith("Title: Useful heading\n\n") for text in texts)
+    assert all(chunk["context_propagated"] for chunk in chunks)
+    assert all(chunk["token_counts"]["test/model"] <= 8 for chunk in chunks)
+    assert manifest["context_propagation"] == {
+        "metadata_key": "title",
+        "template": "Title: {context}\n\n{text}",
+    }
+    assert manifest["source_fields"] == {
+        "context": "title",
+        "id": "id",
+        "text": "body",
+    }
 
 
 def _contract() -> CompositeInputContract:
@@ -974,3 +1025,165 @@ def test_exact_embedding_scorer_preserves_row_lineage_and_float_scores(
     assert [row["score"] for row in rows] == pytest.approx([1.0, 0.8, 1.0, 0.6])
     assert result["scoring"] == "exact normalized float32 inner product"
     assert result["run_sha256"] == scorer._sha256(output)
+
+
+def test_exact_embedding_scorer_can_rank_complete_distinct_sources(tmp_path: Path):
+    embedder = _load_embedder_module()
+    scorer = _load_scorer_module()
+    import numpy as np
+
+    runtime = {
+        "backend": "torch",
+        "compute_dtype": "float32",
+        "device": "cpu",
+        "requested_device": "cpu",
+    }
+    texts = tmp_path / "texts.json"
+    texts.write_text(json.dumps(["a-1", "a-2", "b", "c"]), encoding="utf-8")
+    chunks = tmp_path / "chunks.jsonl"
+    chunks.write_text(
+        "\n".join(
+            json.dumps({"chunk_id": chunk_id}) for chunk_id in ("c1", "c2", "c3", "c4")
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    occurrences = tmp_path / "occurrences.jsonl"
+    occurrences.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "corpus_id": chunk_id,
+                    "source_id": source_id,
+                    "deduplicated_alias": False,
+                }
+            )
+            for chunk_id, source_id in (
+                ("c1", "doc-a"),
+                ("c2", "doc-a"),
+                ("c3", "doc-b"),
+                ("c4", "doc-c"),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    corpus_manifest = tmp_path / "corpus.manifest.json"
+    corpus_manifest.write_text(
+        json.dumps(
+            {
+                "texts_sha256": embedder._sha256(texts),
+                "chunks_sha256": embedder._sha256(chunks),
+                "chunk_occurrences_sha256": embedder._sha256(occurrences),
+                "source_count": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+    queries = tmp_path / "queries.jsonl"
+    queries.write_text("queries", encoding="utf-8")
+    query_ids = tmp_path / "query_ids.json"
+    query_ids.write_text(json.dumps(["q1"]), encoding="utf-8")
+    passage_paths = embedder.prepare_shards(
+        output_dir=tmp_path / "embeddings",
+        corpus_sha256=embedder._sha256(texts),
+        model_id="test/model",
+        revision="a" * 40,
+        contract_fingerprint="b" * 64,
+        dimension=2,
+        shard_size=4,
+        rows=4,
+        runtime=runtime,
+    )
+    query_paths = embedder.prepare_shards(
+        output_dir=tmp_path / "embeddings",
+        corpus_sha256=embedder._sha256(queries),
+        model_id="test/model",
+        revision="a" * 40,
+        contract_fingerprint="b" * 64,
+        dimension=2,
+        shard_size=1,
+        rows=1,
+        runtime=runtime,
+        input_role="query",
+    )
+    np.save(
+        passage_paths[0],
+        np.asarray([[1.0, 0.0], [0.9, 0.0], [0.8, 0.0], [0.7, 0.0]], dtype=np.float32),
+    )
+    np.save(query_paths[0], np.asarray([[1.0, 0.0]], dtype=np.float32))
+    passage_manifest = passage_paths[0].parent / "manifest.json"
+    query_manifest = query_paths[0].parent / "manifest.json"
+    embedding_manifest = tmp_path / "embedding.manifest.json"
+    embedding_manifest.write_text(
+        json.dumps(
+            {
+                "evaluation_mode": "qrels",
+                "model_id": "test/model",
+                "model_revision": "a" * 40,
+                "contract_fingerprint": "b" * 64,
+                "dimension": 2,
+                "runtime": runtime,
+                "corpus_sha256": embedder._sha256(texts),
+                "qrels": {
+                    "chunks_sha256": embedder._sha256(chunks),
+                    "queries_sha256": embedder._sha256(queries),
+                },
+                "query_ids": {
+                    "path": str(query_ids),
+                    "sha256": embedder._sha256(query_ids),
+                    "rows": 1,
+                },
+                "shards": {
+                    "passage": {
+                        "manifest_path": str(passage_manifest),
+                        "manifest_sha256": embedder._sha256(passage_manifest),
+                    },
+                    "query": {
+                        "manifest_path": str(query_manifest),
+                        "manifest_sha256": embedder._sha256(query_manifest),
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "source-run.jsonl"
+
+    result = scorer.score_embedding_shards(
+        embedding_manifest,
+        corpus_manifest,
+        chunks,
+        output,
+        top_k=3,
+        candidate_granularity="source",
+        occurrences_path=occurrences,
+    )
+
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [row["source_id"] for row in rows] == ["doc-a", "doc-b", "doc-c"]
+    assert [row["score"] for row in rows] == pytest.approx([1.0, 0.8, 0.7])
+    assert result["candidate_granularity"] == "source"
+    assert result["source_count"] == 3
+
+    corpus_manifest.write_text(
+        json.dumps(
+            {
+                "texts_sha256": embedder._sha256(texts),
+                "chunks_sha256": embedder._sha256(chunks),
+                "chunk_occurrences_sha256": embedder._sha256(occurrences),
+                "source_count": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="source count disagrees"):
+        scorer.score_embedding_shards(
+            embedding_manifest,
+            corpus_manifest,
+            chunks,
+            output,
+            top_k=2,
+            candidate_granularity="source",
+            occurrences_path=occurrences,
+        )

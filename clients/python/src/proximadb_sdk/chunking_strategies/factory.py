@@ -78,6 +78,7 @@ class ChunkingStrategyFactory:
                     token_budget=config.token_budget,
                     input_contract=config.input_contract,
                     input_role=config.input_role,
+                    context_renderer=config.context_renderer,
                 )
 
         # Create the boundary strategy, then optionally decorate it with the
@@ -100,6 +101,7 @@ class ChunkingStrategyFactory:
             config.token_budget,
             config.input_contract,
             role=role,
+            context_renderer=config.context_renderer,
         )
 
     @classmethod

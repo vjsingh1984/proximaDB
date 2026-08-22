@@ -512,5 +512,15 @@ required 3.67x vectors and did not demonstrate a general ranking-quality gain. E
 with the sealed reference BM25 leg reduced NDCG and AP. Keep 480/72 as the control until a
 development/held-out evaluation demonstrates a Pareto-relevant replacement.
 
+The development/held-out follow-up is recorded in
+`docs/_internal/status/EMBEDDING_RETRIEVAL_NEXT_GATE_2026_08_21.adoc`. Optional metadata context
+can now be rendered into every exact model input while the source chunk and citation offsets remain
+unchanged. NFCorpus title propagation added 0.12% vectors but did not demonstrate a Recall/NDCG
+gain. Exact scoring now selects top-k distinct sources directly over the complete chunk corpus, so
+Recall@100 is complete rather than a collapsed top-chunk lower bound. The actual document Tantivy
+projection also rejected 2.79-4.01% of natural-language queries under its strict parser; it is a
+different implementation from the canonical hybrid endpoint. Natural-text/query-syntax contracts
+and lexical-engine convergence are prerequisites to a default hybrid quality claim.
+
 Timing measurements require a quiet machine. Token correctness, recall and GET/query checks do not
 become timing evidence merely because they ran successfully under contention.

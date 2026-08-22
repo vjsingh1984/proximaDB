@@ -463,8 +463,13 @@ def test_beir_import_preserves_document_level_judgment_semantics(tmp_path: Path)
         .splitlines()
     ]
     assert documents == [
-        {"id": "doc-1", "text": "First title\n\nfirst body"},
-        {"id": "doc-2", "text": "second"},
+        {
+            "body": "first body",
+            "id": "doc-1",
+            "text": "First title\n\nfirst body",
+            "title": "First title",
+        },
+        {"body": "second", "id": "doc-2", "text": "second", "title": ""},
     ]
     assert queries == [{"id": "q1", "text": "first query"}]
     assert source_qrels == [
