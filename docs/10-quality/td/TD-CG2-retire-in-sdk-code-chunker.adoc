@@ -342,7 +342,7 @@ matching runtime guard for environments already holding an older copy, and the a
 `SUPPORTED_SURFACE` is corrected and the code-chunking tier drops **Beta -> Experimental**, which is
 what "requires an unreleased dependency" actually means.
 
-The unblocker is upstream: **publish a codegraph release that passes this suite.** Until then the
+The unblocker is upstream and is now filed as **victor#941**: publish a codegraph release that passes this suite. Until then the
 delegated path stays unexercised in CI, and wiring the extra into the conformance job is pointless —
 it would only make the gap loud in a place that blocks everyone rather than in the docs.
 
