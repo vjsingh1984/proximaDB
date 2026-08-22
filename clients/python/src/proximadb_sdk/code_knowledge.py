@@ -49,10 +49,10 @@ from typing import Any
 from ._code_oid import record_symbol_id
 from .chunking_strategies.base import TextChunk
 from .chunking_strategies.code import (
-    EXTENSION_TO_LANGUAGE,
+    STATIC_EXTENSION_TO_LANGUAGE,
     CodeChunkingConfig,
     CodeChunkingStrategy,
-    get_supported_extensions,
+    static_supported_extensions,
 )
 
 
@@ -289,7 +289,10 @@ class CodeKnowledgeBuilder:
 
         # Detect language
         ext = file_path.suffix.lower()
-        language = EXTENSION_TO_LANGUAGE.get(ext)
+        # ATTRIBUTION: what language is this? Naming it is not a claim to
+        # parse it, so this is answered statically; whether symbols can
+        # actually be extracted is the chunker's call, and it fails loudly.
+        language = STATIC_EXTENSION_TO_LANGUAGE.get(ext)
 
         if not language:
             result.files_skipped = 1
@@ -375,7 +378,11 @@ class CodeKnowledgeBuilder:
     def _collect_files(self, directory: Path, recursive: bool) -> list[Path]:
         """Collect files to index based on patterns."""
         files = []
-        supported_extensions = set(get_supported_extensions())
+        # ROUTING: stay wide. This must not depend on the optional parser
+        # extra -- when it did, an absent extra emptied the map and this
+        # collected zero files, so indexing a repository silently produced
+        # nothing at all.
+        supported_extensions = set(static_supported_extensions())
 
         if recursive:
             iterator = directory.rglob("*")

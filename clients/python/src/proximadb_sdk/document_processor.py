@@ -621,34 +621,20 @@ class CodeDocumentProcessor(DocumentProcessor):
 
     #: Extensions this processor CLAIMS, for routing only.
     #:
-    #: Deliberately a literal table and NOT derived from
-    #: `chunking_strategies.code.EXTENSION_TO_LANGUAGE`, even though that map is
-    #: derived and this one is hand-maintained -- which is normally the wrong
-    #: way round, and is exactly the duplication TD-CG2 removed from `code.py`.
-    #:
-    #: The two answer different questions. The derived map answers "which
-    #: languages can we extract symbols for", and it is EMPTY when the optional
-    #: `codegraph` extra is absent. This one answers "which processor should
-    #: claim this file". Deriving it would mean that without the extra no
-    #: processor claims a `.py` file, so it would fall through to the text
-    #: processor and be silently window-chunked -- reintroducing precisely the
-    #: fail-quietly behaviour TD-CG2 replaced with a loud error. Routing must
-    #: stay wide so the capability check can fail loudly.
-    LANGUAGE_PATTERNS = {
-        "python": [".py"],
-        "rust": [".rs"],
-        "go": [".go"],
-        "java": [".java"],
-        "javascript": [".js", ".jsx", ".mjs"],
-        "typescript": [".ts", ".tsx"],
-        "cpp": [".cpp", ".cc", ".cxx", ".hpp", ".h"],
-        "c": [".c"],
-        "ruby": [".rb"],
-        "php": [".php"],
-        "swift": [".swift"],
-        "kotlin": [".kt", ".kts"],
-        "scala": [".scala"],
-    }
+    #: Derived from the shared STATIC table rather than restated here. The
+    #: reasoning that used to live in this comment now lives with the table:
+    #: routing must stay wide so the capability check can fail loudly, which
+    #: means it must NOT depend on the optional `codegraph` extra. Keeping a
+    #: second literal copy is what let that decision be applied here and nowhere
+    #: else, so the same class of bug reappeared in code_knowledge.
+    @staticmethod
+    def _language_patterns() -> dict[str, list[str]]:
+        from .chunking_strategies.code import STATIC_EXTENSION_TO_LANGUAGE
+
+        out: dict[str, list[str]] = {}
+        for ext, lang in STATIC_EXTENSION_TO_LANGUAGE.items():
+            out.setdefault(lang, []).append(ext)
+        return out
 
     def __init__(self, config: ProcessorConfig | None = None):
         super().__init__(config)
@@ -666,7 +652,7 @@ class CodeDocumentProcessor(DocumentProcessor):
         """Check if content looks like source code"""
         if file_path:
             ext = Path(file_path).suffix.lower()
-            for exts in self.LANGUAGE_PATTERNS.values():
+            for exts in self._language_patterns().values():
                 if ext in exts:
                     return True
 

@@ -150,7 +150,15 @@ def test_paragraph_strategy_groups_lists_and_splits_large_paragraphs():
     assert len(paragraphs) == 3
     assert strategy._is_list_paragraph("- a\n- b\n- c") is True
     assert strategy._is_list_paragraph("not a list") is False
-    assert len(large_split) == 2
+    # THREE, not two. "Sentence two is also long." is 26 characters and the cap
+    # is 25, so the cap backstop splits it -- which is the behaviour the
+    # max_chunk_size post-condition exists to guarantee. Expecting two encoded
+    # the pre-cap behaviour, where an oversized sentence was emitted whole.
+    assert large_split == [
+        "Sentence one is long.",
+        "Sentence two is also",
+        "long.",
+    ]
     assert chunks[0].metadata["chunk_type"] == "paragraph"
     list_chunk = strategy._create_chunk(
         "- a\n- b", 0, 99, "doc", {"source": "unit"}, paragraph_count=1, is_list=True
@@ -236,7 +244,14 @@ def test_semantic_strategy_splits_large_sections():
         assert source[start:end] == source[start:end].strip()
         assert end - start <= strategy.config.max_chunk_size
     # Spans are ordered and non-overlapping, which is what the old cursor broke.
-    for (_s1, e1), (s2, _e2) in zip(pieces, pieces[1:], strict=False):
+    #
+    # Each piece is ((start, end), forced) -- the same shape the loop above
+    # unpacks. This loop used to destructure it as (start, end), which bound
+    # `e1` to the FORCED FLAG and `s2` to a span tuple, so the comparison was
+    # bool <= tuple. It never raised because it never ran: the enclosing test
+    # was skipped by the --run-slow gate, and that gate silently stopped
+    # applying on the pytest 9.0 -> 9.1 upgrade.
+    for ((_s1, e1), _f1), ((s2, _e2), _f2) in zip(pieces, pieces[1:], strict=False):
         assert e1 <= s2
 
     chunks = strategy.chunk(source, "doc", {"source": "unit"})
