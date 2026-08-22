@@ -843,9 +843,24 @@ jobs:
   # that would have caught the cloud-full `ObjectStoreExt` compile-rot (the
   # AnvaiOps ADLS CrashLoopBackOff) at PR time instead of in production:
   # aws/azure/gcp/onnx/cluster/catalog code is gated, so the default build
-  # skips it and rot accumulates invisibly. `cargo check` (no link/test) keeps
+  # skips it and rot accumulates invisibly. `cargo check` (no link/run) keeps
   # this cheap while still surfacing E0599-class errors. Each combo runs on its
   # own runner (fail-fast: false) so one feature's break doesn't mask others.
+  #
+  # `--tests` is load-bearing, not tidiness. Plain `cargo check` compiles the
+  # LIBRARY ONLY, so a `#[cfg(test)]` module behind a feature is never compiled
+  # by CI — the feature is covered and its tests are not. That is how
+  # `rest/canonical/catalog.rs`'s test module came to carry a `CatalogNamespace`
+  # literal seven fields out of date and stay green while `enterprise-catalogs`
+  # sat in this very matrix (TD-CAT-8).
+  #
+  # `--tests`, NOT `--all-targets`, deliberately. `--all-targets` would add the
+  # root crate's 38 benches + 23 examples per combo, and the clippy job above
+  # records that `--all-targets` OOMs these runners. That evidence is from a
+  # heavier pass (clippy, workspace-wide) than this one (`check -p <pkg>`), so it
+  # does not transfer directly — but the headroom warning is real and
+  # benches/examples are not the rot class this closes. Verified locally: all 13
+  # combos pass with `--tests` (and with `--all-targets`) as of TD-CAT-8.
   feature-matrix:
     name: Feature Matrix (${{ matrix.label }})
     runs-on: ubuntu-latest
@@ -905,14 +920,14 @@ jobs:
         with:
           prefix-key: "v1-feature-matrix"
           shared-key: ${{ matrix.label }}
-      - name: cargo check -p ${{ matrix.pkg }} ${{ matrix.args }}
+      - name: cargo check -p ${{ matrix.pkg }} --tests ${{ matrix.args }}
         env:
           CARGO_PROFILE_DEV_DEBUG: 0
         run: |
           # Batched small-crates entry: check each package sequentially on one runner.
           for pkg in ${{ matrix.pkg }}; do
-            echo "::group::cargo check -p $pkg ${{ matrix.args }}"
-            cargo check -p "$pkg" ${{ matrix.args }}
+            echo "::group::cargo check -p $pkg --tests ${{ matrix.args }}"
+            cargo check -p "$pkg" --tests ${{ matrix.args }}
             echo "::endgroup::"
           done
 
