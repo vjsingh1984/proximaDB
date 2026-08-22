@@ -253,11 +253,28 @@ class Calculator:
                 for t in texts
             ]
 
+        # CODE delegates to the optional `codegraph` extra and raises without it
+        # (TD-CG2: silently returning text windows would look like working code
+        # chunking while extracting no symbols). That is the contract, so assert
+        # it here rather than skipping the strategy -- a skip would let the
+        # behaviour change without this test noticing.
+        try:
+            import victor_codegraph  # noqa: F401
+
+            codegraph_installed = True
+        except ImportError:
+            codegraph_installed = False
+
         for strategy in ChunkingStrategy:
             config = ChunkingConfig(
                 strategy=strategy, chunk_size=200, embedding_provider=fake_provider
             )
             chunker = TextChunker(config)
+
+            if strategy is ChunkingStrategy.CODE and not codegraph_installed:
+                with pytest.raises(RuntimeError, match="codegraph"):
+                    chunker.chunk_text(text, f"test_{strategy.value}.py")
+                continue
 
             chunks = chunker.chunk_text(text, f"test_{strategy.value}.py")
 

@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from .chunking_strategies.code import (
-    get_supported_extensions,
+    static_supported_extensions,
 )
 from .code_knowledge import (
     CodeIndexConfig,
@@ -402,7 +402,7 @@ class RepositoryIndexer:
 
     def _collect_all_files(self, directory: Path) -> list[Path]:
         """Collect all indexable files in directory."""
-        supported_extensions = set(get_supported_extensions())
+        supported_extensions = set(static_supported_extensions())
         files = []
 
         for path in directory.rglob("*"):

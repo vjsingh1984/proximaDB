@@ -381,11 +381,13 @@ class ConfigValidator:
     def validate_languages(languages: list[str]) -> ValidationResult:
         """Validate language configuration against the live parser registry"""
         result = ValidationResult(valid=True)
-        # Use the real per-language registry from code.py rather than the
-        # (always-empty) plugin registry that previously backed this check.
-        from .code import get_supported_languages
+        # Static language knowledge, not parser capability. `python` is a real
+        # language whether or not the optional `codegraph` extra is installed,
+        # so validating a config against the DERIVED map made every language
+        # warn on a machine without the extra.
+        from .code import STATIC_EXTENSION_TO_LANGUAGE
 
-        supported = {lang.lower() for lang in get_supported_languages()}
+        supported = {lang.lower() for lang in STATIC_EXTENSION_TO_LANGUAGE.values()}
 
         for lang in languages:
             if lang.lower() not in supported:

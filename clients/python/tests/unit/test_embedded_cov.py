@@ -88,8 +88,18 @@ class FakeAsyncClient:
     init_kwargs = []
     responder = staticmethod(lambda verb, url, **kw: FakeResp({"success": True}))
 
+    #: `_http_client` pools one client per instance and re-creates it when the
+    #: pooled one is closed, so it reads `.is_closed` on the way out. A fake
+    #: standing in for `httpx.AsyncClient` has to carry the attributes the code
+    #: under test reads, or it stops being a drop-in and starts being a source
+    #: of AttributeErrors that look like product bugs.
+    is_closed = False
+
     def __init__(self, *a, **kw):
         FakeAsyncClient.init_kwargs.append(kw)
+
+    async def aclose(self):
+        type(self).is_closed = True
 
     async def __aenter__(self):
         return self

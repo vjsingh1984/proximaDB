@@ -240,6 +240,76 @@ _EXTENSION_ALIASES: dict[str, str] = {
 }
 
 
+#: Extension -> language for ROUTING and ATTRIBUTION, independent of whether the
+#: optional `codegraph` extra is installed.
+#:
+#: This is a different question from EXTENSION_TO_LANGUAGE below, and separating
+#: them is the fix for a regression TD-CG2 introduced. Three questions were being
+#: answered by one map:
+#:
+#:   routing      -- should this file be considered at all?      no parser needed
+#:   attribution  -- what language is this file written in?      no parser needed
+#:   capability   -- can symbols be extracted from it?           parser REQUIRED
+#:
+#: TD-CG2 correctly made *capability* depend on the installed parser, and made
+#: the derived map empty without it so the SDK could not claim languages nothing
+#: could parse. Routing and attribution were then wired to that same map -- so
+#: with the extra absent, `code_knowledge.index_file` found no language for any
+#: extension and skipped every file, returning a success-shaped result with
+#: `files_processed=0`. Indexing a repository silently produced nothing.
+#:
+#: That is the same defect class TD-CG2 was filed against (silently returning
+#: useless output), one layer up. Naming a file's language is not a claim to
+#: parse it, so routing and attribution use this static table and stay wide,
+#: which is what lets the capability check fail LOUDLY instead of vanishing into
+#: a skip. `document_processor.CodeDocumentProcessor` already made exactly this
+#: call for its own routing; this hoists that decision to one place instead of
+#: leaving it applied at a single call site.
+STATIC_EXTENSION_TO_LANGUAGE: dict[str, str] = {
+    ".py": "python",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".h": "cpp",
+    ".c": "c",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".cs": "csharp",
+    ".lua": "lua",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".sql": "sql",
+    **_EXTENSION_ALIASES,
+}
+
+
+def static_supported_extensions() -> list[str]:
+    """Extensions worth CONSIDERING, whether or not a parser is installed.
+
+    Use this for file discovery and language attribution. For "can we actually
+    extract symbols", use :data:`SYMBOL_EXTRACTING_LANGUAGES` or let
+    `CodeChunkingStrategy.chunk` fail loudly.
+    """
+    return list(STATIC_EXTENSION_TO_LANGUAGE)
+
+
+def static_language_for(extension: str) -> str | None:
+    """The language a file extension denotes, independent of parser support."""
+    return STATIC_EXTENSION_TO_LANGUAGE.get(extension.lower())
+
+
 def _build_extension_map() -> dict[str, str]:
     """Derived map, plus aliases that resolve to languages it already supports."""
     base = _victor_extension_map()
