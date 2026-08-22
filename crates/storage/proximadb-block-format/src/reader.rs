@@ -726,6 +726,29 @@ impl<'a> PaxBlockReader<'a> {
             })
             .copied()
             .collect();
+        // Coalesced blocks intentionally hoist lossy base/rerank columns to
+        // Region B, but keep an optional exact tier block-local. An empty base
+        // set is authoritative only when at least one raw-f32 tier is present
+        // and complete; zero vector columns must never succeed vacuously.
+        if base_entries.is_empty() {
+            let exact_entries: Vec<_> = self
+                .vparams
+                .entries
+                .iter()
+                .filter(|entry| entry.column_id >= crate::col_id::F32_TIER_BASE)
+                .copied()
+                .collect();
+            return !exact_entries.is_empty()
+                && exact_entries.iter().all(|entry| {
+                    entry.quant_kind == QUANT_RAW_F32
+                        && self
+                            .decode_f32_vec_stripe(entry.column_id)
+                            .is_some_and(|rows| {
+                                rows.len() == self.row_count() as usize
+                                    && rows.iter().all(Option::is_some)
+                            })
+                });
+        }
         for base_entry in base_entries {
             let Some(base_rows) = self.decode_f32_vec_stripe(base_entry.column_id) else {
                 return false;

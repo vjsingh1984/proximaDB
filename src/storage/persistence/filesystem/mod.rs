@@ -273,61 +273,28 @@ impl std::fmt::Debug for FilesystemFactory {
     }
 }
 
-/// Forwards `CountingFileSystem` GET reads into the per-query `IoTrace`
-/// (TD-096 S2). The record fns are ADR-030 always-on accumulators: they no-op
-/// outside an active `io_trace` scope and when the `io-trace` perf-emission
-/// feature is compiled out, so this impl is unconditional and zero-cost when no
-/// query is being traced.
-///
-/// **Single-source discipline (io-trace GET/bytes):** ranged reads are accounted
-/// ONCE, by the leaf backend — `LocalFileSystem`/`AzureBlob`/`Gcs`/`AwsS3` each
-/// call `record_range_gets(1)` + `record_bytes_read` in their own `read_range`,
-/// and batched reads (`read_ranges`) loop `read_range` via the trait default. So
-/// this decorator records ONLY (a) the op verb (`get_ops` — no backend records
-/// it) and (b) whole-object `read()` bytes (no backend records those). Mirroring
-/// `range_gets`/`bytes_read` here too double-counted every ranged GET whenever
-/// the counting wrapper was active (io-trace reported 2× the real GET count under
-/// `PROXIMADB_COUNT_FS_IO`). Regression: `counting_wrapper_records_ranged_gets_once_not_twice`.
-#[derive(Debug, Default)]
-struct IoTraceFsRecorder;
+/// Record a successful whole-object read at the physical filesystem boundary.
+/// This is always-on query evidence; `PROXIMADB_COUNT_FS_IO` controls only the
+/// separate process-global benchmark counters.
+pub(super) fn record_physical_full_read(bytes: u64) {
+    crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+    crate::observability::io_trace::record_bytes_read(bytes);
+}
 
-impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceFsRecorder {
-    fn record_full_read(&self, bytes: u64) {
-        // Whole-object reads are NOT re-accounted by the leaf backends (only
-        // ranged reads are), so the recorder is the sole io_trace source here.
-        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
-        if bytes > 0 {
-            crate::observability::io_trace::record_bytes_read(bytes);
-        }
-    }
-    fn record_range_read(&self, _bytes: u64) {
-        // The leaf backend's `read_range` already recorded `range_gets(1)` +
-        // `bytes_read`; re-recording here double-counts. Keep only the op verb.
-        crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
-    }
-    fn record_batched_ranges(&self, physical_gets: u64, _bytes: u64) {
-        // `read_ranges` loops the leaf `read_range` (trait default), which
-        // already accounted each constituent range's bytes/range_gets. This
-        // decorator owns only the op verb, once per physical range.
-        for _ in 0..physical_gets {
-            crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
-        }
-    }
+/// Record a successful ranged read at the physical filesystem boundary.
+/// `get_ops` is the total physical GET count; `range_gets` is its ranged subset.
+pub(super) fn record_physical_range_read(bytes: u64) {
+    crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+    crate::observability::io_trace::record_range_gets(1);
+    crate::observability::io_trace::record_bytes_read(bytes);
 }
 
 /// Records `ProximaObjectStore` reads into the per-query `IoTrace`.
 ///
-/// **Deliberately different from [`IoTraceFsRecorder`], and the difference is
-/// the whole point.** That one records only the op verb, because the leaf
-/// `FileSystem` backends already accounted `range_gets` and `bytes_read` before
-/// it runs — recording again would double-count.
-///
-/// Nothing accounts for the `ProximaObjectStore` stack. It goes straight to
-/// upstream `object_store`, bypassing our leaf backends entirely, so this
-/// recorder is the **sole** source and must record the physical counters in
-/// full. Copying the FileSystem recorder's "verb only" behaviour here would
-/// leave graph cold storage, the Iceberg bridge and `RangedSegmentReader`
-/// counted as operations that moved zero bytes and issued zero ranged GETs.
+/// `ProximaObjectStore` goes straight to upstream `object_store`, bypassing the
+/// root `FileSystem` leaf backends and their always-on helpers above. This
+/// recorder is therefore the sole source for that stack and records each
+/// physical counter in full.
 #[derive(Debug)]
 pub struct IoTraceObjectStoreRecorder;
 
@@ -597,21 +564,15 @@ impl FilesystemFactory {
             .cloned()
             .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme_str.to_string()))?;
 
-        // TD-096 S2: when the GET-count instrumentation env gate is set, wrap the
-        // filesystem so (a) a bench can tally per-search read operations via the
-        // global counters, AND (b) each read is forwarded into the per-query
-        // `IoTrace` (via `IoTraceFsRecorder`) so GET counts drive the route cost
-        // model + per-tenant KRU. Default OFF — one `env::var_os` check per
-        // cached factory lookup — so there is zero behavior change otherwise.
-        // The recorder calls `io_trace::record_*`, which are ADR-030 always-on
-        // accumulators that no-op outside an active query scope (and when the
-        // `io-trace` perf-emission feature is compiled out).
+        // TD-096 S2: the env gate enables process-global benchmark counters.
+        // Per-query IoTrace accounting is an independent production invariant
+        // recorded by each physical leaf backend, so routing evidence cannot
+        // silently disappear when this diagnostic gate is OFF.
         if std::env::var_os("PROXIMADB_COUNT_FS_IO").is_some() {
             Ok(Arc::new(
-                proximadb_storage_filesystem_types::counting::CountingFileSystem::new_with_recorder(
+                proximadb_storage_filesystem_types::counting::CountingFileSystem::new(
                     fs,
                     proximadb_storage_filesystem_types::counting::global_counters(),
-                    std::sync::Arc::new(IoTraceFsRecorder),
                 ),
             ))
         } else {
@@ -1518,13 +1479,41 @@ mod inline_tests {
         }
     }
 
-    /// Regression for the io-trace `range_gets` / `bytes_read` DOUBLE-COUNT.
+    /// Physical read accounting is a production invariant, not a benchmark
+    /// capability.  The diagnostic counting wrapper may be disabled, but the
+    /// route-cost ledger must still see both whole-object and ranged GETs.
+    #[tokio::test]
+    async fn local_leaf_records_all_physical_reads_without_counting_wrapper() {
+        use crate::observability::io_trace;
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        let temp = TempDir::new().unwrap();
+        let file_path = temp.path().join("physical-reads.bin");
+        let payload = vec![7u8; 4096];
+        std::fs::write(&file_path, &payload).unwrap();
+        let url = format!("file://{}", file_path.display());
+        let fs = LocalFileSystem::new(LocalConfig::default()).await.unwrap();
+
+        let snap = io_trace::scope(async {
+            assert_eq!(fs.read(&url).await.unwrap().len(), 4096);
+            assert_eq!(fs.read_range(&url, 1024, 512).await.unwrap().len(), 512);
+            io_trace::snapshot().expect("io_trace scope active")
+        })
+        .await;
+
+        assert_eq!(snap.get_ops, 2, "both physical reads are GET operations");
+        assert_eq!(snap.range_gets, 1, "only the ranged read is a range GET");
+        assert_eq!(snap.bytes_read, 4096 + 512);
+    }
+
+    /// Regression for io-trace double-counting under the diagnostic wrapper.
     /// `CountingFileSystem` (active under `PROXIMADB_COUNT_FS_IO`) wraps the leaf
     /// `LocalFileSystem`; both used to call `record_range_gets(1)` +
     /// `record_bytes_read` on every ranged GET, so io-trace reported 2× the real
     /// GET count and 2× the real bytes whenever the counting wrapper was on (`avg_get_bytes`
     /// self-corrected by cancelling both halves). The wrapper must now record only
-    /// the op verb + whole-read bytes; ranged GETs/bytes come once from the backend.
+    /// only owns process-global counters; all per-query evidence comes once from
+    /// the physical backend.
     #[tokio::test]
     async fn counting_wrapper_records_ranged_gets_once_not_twice() {
         use crate::observability::io_trace;
@@ -1538,11 +1527,8 @@ mod inline_tests {
         let url = format!("file://{}", file_path.display());
 
         let inner = LocalFileSystem::new(LocalConfig::default()).await.unwrap();
-        let fs: Arc<dyn FileSystem> = Arc::new(CountingFileSystem::new_with_recorder(
-            Arc::new(inner),
-            global_counters(),
-            Arc::new(IoTraceFsRecorder),
-        ));
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(CountingFileSystem::new(Arc::new(inner), global_counters()));
 
         let snap = io_trace::scope(async {
             let a = fs.read_range(&url, 0, 1024).await.unwrap();
@@ -1564,7 +1550,7 @@ mod inline_tests {
         );
         assert_eq!(
             snap.get_ops, 2,
-            "op verb recorded once per read by the recorder (backends do not record it)"
+            "each physical leaf read records its GET exactly once"
         );
     }
 

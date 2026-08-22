@@ -603,22 +603,46 @@ pub fn pax_inputs_have_f32_tier(input_files: &[std::path::PathBuf]) -> bool {
         let Ok(bytes) = std::fs::read(f) else {
             return false;
         };
-        let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()) else {
-            return false;
-        };
-
-        let mut saw_block = false;
-        while let Some(reader) = scanner.next_block() {
-            saw_block = true;
-            if !reader.has_exact_vector_authority() {
-                return false;
-            }
-        }
-        if !saw_block {
+        if !pax_segment_has_exact_vector_authority(&bytes) {
             return false;
         }
     }
     saw_pax
+}
+
+/// True only when every vector row in this PAX segment has an authoritative
+/// raw-f32 value, either in `EMBED_BASE` or the co-located exact tier. Query
+/// execution and compaction share this pure predicate so neither can relabel a
+/// lossy SQ8/RaBitQ reconstruction as exact. Parse/decode failure and empty or
+/// non-PAX input fail closed.
+pub fn pax_segment_has_exact_vector_authority(bytes: &[u8]) -> bool {
+    if SegmentFormat::detect(bytes) != SegmentFormat::Pax {
+        return false;
+    }
+    // ADR-065 hoists the lossy RaBitQ/SQ8 columns out of blocks. The block-level
+    // predicate would otherwise see zero base embedding columns and return true
+    // vacuously. The segment footer is the authoritative capability declaration
+    // for this layout; only an explicitly emitted f32 tier satisfies exactness.
+    if proximadb_storage_common::segment_layout::is_coalesced_segment(bytes) {
+        return proximadb_storage_common::segment_layout::SegmentFooterIndex::locate_in_segment(
+            bytes,
+        )
+        .ok()
+        .flatten()
+        .is_some_and(|footer| footer.has_f32_tier);
+    }
+    let Ok(mut scanner) = PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())
+    else {
+        return false;
+    };
+    let mut saw_block = false;
+    while let Some(reader) = scanner.next_block() {
+        saw_block = true;
+        if !reader.has_exact_vector_authority() {
+            return false;
+        }
+    }
+    saw_block
 }
 
 /// True iff `bytes` is a `.pax` SEGMENT whose `EMBED_BASE` column is RaBitQ-coded
@@ -4112,6 +4136,10 @@ mod tests {
             .unwrap()
             .expect("coalesced footer");
         assert!(footer.has_f32_tier, "footer must declare the exact tier");
+        assert!(
+            pax_segment_has_exact_vector_authority(&bytes),
+            "coalesced footer capability must admit its emitted exact tier"
+        );
 
         let mut scanner =
             PaxSegmentScanner::from_bytes(bytes.clone(), ScanPredicate::default()).unwrap();
@@ -4120,23 +4148,27 @@ mod tests {
                 block.vector_params().get(col_id::F32_TIER_BASE).is_some(),
                 "every coalesced block must emit the requested exact tier"
             );
+            assert!(
+                block.has_exact_vector_authority(),
+                "an exact-only coalesced block must prove non-vacuous authority"
+            );
         }
 
-        // Region B (ADR-065): the coalesced segment stores its SQ8 rerank tier in
-        // Region B, so read_segment_records fails closed (vectors are not in the
-        // blocks). The exact f32 tier is verified EMITTED above (footer flag + the
-        // per-block F32_TIER stripe); full Region-B-aware materialization that
-        // prefers the exact f32 tier is a follow-up (Region-B read_records).
-        // Region B (ADR-065): the f32 tier is EMITTED in the blocks (verified
-        // above). read_segment_records overlays SQ8 vectors from Region B for the
-        // coalesced segment; exact-f32 materialization (preferring F32_TIER) is a
-        // follow-up. Here we confirm the reader returns records WITH vectors.
+        // The canonical materializer must prefer the block-local exact tier over
+        // Region B's SQ8 rerank values. Merely checking that a vector exists would
+        // allow Exact search to rank a lossy reconstruction.
         let materialized = read_segment_records(&bytes, &[], &[], None).unwrap();
         assert_eq!(materialized.len(), records.len());
+        let expected: std::collections::HashMap<_, _> = records
+            .iter()
+            .map(|record| (record.oid.as_str(), &record.embeddings))
+            .collect();
         for got in &materialized {
-            assert!(
-                !got.embeddings.is_empty(),
-                "overlay attaches vectors for {}",
+            let want = expected.get(got.oid.as_str()).expect("known record oid");
+            assert_eq!(
+                got.embeddings.first().map(|cell| cell.as_fp32_cow()),
+                want.first().map(|cell| cell.as_fp32_cow()),
+                "exact tier must round-trip bitwise for {}",
                 got.oid
             );
         }
@@ -4175,13 +4207,58 @@ mod tests {
         .unwrap();
 
         assert!(pax_inputs_have_f32_tier(std::slice::from_ref(&exact)));
+        assert!(pax_segment_has_exact_vector_authority(
+            &std::fs::read(&exact).unwrap()
+        ));
         assert!(
-            !pax_inputs_have_f32_tier(&[exact.clone(), lossy]),
+            !pax_inputs_have_f32_tier(&[exact.clone(), lossy.clone()]),
             "one exact input must not make a mixed compacted output exact"
+        );
+        assert!(
+            !pax_segment_has_exact_vector_authority(&std::fs::read(&lossy).unwrap()),
+            "lossy PAX must not satisfy an exact-search contract"
         );
         assert!(
             !pax_inputs_have_f32_tier(&[exact, dir.path().join("unknown.arrow")]),
             "an unrelated physical format must not be assumed exact"
+        );
+    }
+
+    #[test]
+    fn coalesced_lossy_segment_does_not_claim_exact_authority_vacuously() {
+        enable_coalesced_rabitq();
+        let dir = tempfile::tempdir().unwrap();
+        let lossy = dir.path().join("coalesced-lossy.pax");
+        let records = vec![
+            rec("a", 1, vec![-1.0, 0.123_456_7, 7.0]),
+            rec("b", 2, vec![3.0, 4.765_432, -2.0]),
+        ];
+        write_pax_segment_with_f32_tier(
+            &lossy,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            false,
+            None,
+        )
+        .unwrap();
+
+        let bytes = std::fs::read(&lossy).unwrap();
+        assert!(
+            !pax_segment_has_exact_vector_authority(&bytes),
+            "hoisted vectors with no f32 tier are lossy, not vacuously exact"
+        );
+        let mut scanner = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()).unwrap();
+        while let Some(block) = scanner.next_block() {
+            assert!(
+                !block.has_exact_vector_authority(),
+                "a coalesced block with neither base nor exact stripes must not pass vacuously"
+            );
+        }
+        assert!(
+            !pax_inputs_have_f32_tier(&[lossy]),
+            "compaction must not upgrade a lossy coalesced input to exact"
         );
     }
 

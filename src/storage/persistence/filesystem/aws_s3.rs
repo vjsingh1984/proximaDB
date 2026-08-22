@@ -158,7 +158,9 @@ impl FileSystem for AwsS3FileSystem {
             .await
             .map_err(|e| Self::net("S3 get", e))?;
         let bytes = result.bytes().await.map_err(|e| Self::net("S3 body", e))?;
-        Ok(bytes.to_vec())
+        let bytes = bytes.to_vec();
+        super::record_physical_full_read(bytes.len() as u64);
+        Ok(bytes)
     }
 
     /// ADR-023 cold path: a TRUE ranged S3 GET — fetches only `[offset, +length)`.
@@ -174,8 +176,7 @@ impl FileSystem for AwsS3FileSystem {
             .map_err(|e| Self::net("S3 get_range", e))?;
         // ADR-030 / TD-158: physical GET boundary — feed the per-query I/O accumulator
         // (task-local; no-op outside a query scope). Always-on core counters.
-        crate::observability::io_trace::record_range_gets(1);
-        crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
+        super::record_physical_range_read(bytes.len() as u64);
         Ok(bytes.to_vec())
     }
 

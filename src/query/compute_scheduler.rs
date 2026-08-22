@@ -947,11 +947,11 @@ impl ComputeScheduler {
                 // when it moves fewer bytes (latency = depth × RTT). Flip to the
                 // cheapest freshness-safe candidate WITHIN the budget.
                 if let Some(budget) = model.rtt_budget()
-                    && static_choice.range_gets > budget
+                    && static_choice.get_ops > budget
                     && let Some(within) = consult
                         .ranked()
                         .iter()
-                        .filter(|c| c.range_gets <= budget && flip_eligible(&c.backend))
+                        .filter(|c| c.get_ops <= budget && flip_eligible(&c.backend))
                         .min_by(|a, b| {
                             a.score
                                 .partial_cmp(&b.score)
@@ -1450,12 +1450,9 @@ mod tests {
         assert!(line.starts_with("Compute Route: Native(Volcano) (workload=Olap"));
     }
 
-    fn io_snap(
-        range_gets: u64,
-        bytes_read: u64,
-    ) -> crate::observability::io_trace::IoTraceSnapshot {
+    fn io_snap(get_ops: u64, bytes_read: u64) -> crate::observability::io_trace::IoTraceSnapshot {
         crate::observability::io_trace::IoTraceSnapshot {
-            range_gets,
+            get_ops,
             bytes_read,
             ..Default::default()
         }

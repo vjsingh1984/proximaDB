@@ -191,7 +191,7 @@ impl OverrideScope {
 /// consult table is re-derived on load. Bumping this invalidates older files
 /// (they load nothing and the model re-learns), so a format change is never
 /// mis-read.
-const COST_MODEL_PERSIST_VERSION: u32 = 1;
+const COST_MODEL_PERSIST_VERSION: u32 = 2;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PersistedCostModel {
@@ -536,14 +536,14 @@ impl Default for CostWeights {
 /// terms are added.
 #[derive(Debug, Clone, Copy, Default)]
 struct CostQuantities {
-    range_gets: f64,
+    get_ops: f64,
     bytes_read: f64,
     egress_bytes: f64,
     bytes_written: f64,
     compute_ms: f64,
     // Diagnostic observability (ADR-056 AQE-S2): the runtime-filter skip ratio
     // + the wait-outcome ratio. NOT in `score` (pruning already reduced
-    // `range_gets`/`bytes_read` — scoring these double-counts). Recorded per
+    // `get_ops`/`bytes_read` — scoring these double-counts). Recorded per
     // (shape-class, backend) so promotion/demotion gates + AQE-S4 (build/probe
     // swap) can read them.
     splits_total: f64,
@@ -556,7 +556,7 @@ struct CostQuantities {
 impl CostQuantities {
     fn from_snapshot(snap: &IoTraceSnapshot) -> Self {
         Self {
-            range_gets: snap.range_gets as f64,
+            get_ops: snap.get_ops as f64,
             bytes_read: snap.bytes_read as f64,
             egress_bytes: snap.egress_bytes as f64,
             bytes_written: snap.bytes_written as f64,
@@ -573,7 +573,7 @@ impl CostQuantities {
 /// One (shape-class, backend) cell: EWMA means of the cost-bearing quantities.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct Cell {
-    range_gets: f64,
+    get_ops: f64,
     bytes_read: f64,
     egress_bytes: f64,
     bytes_written: f64,
@@ -589,7 +589,7 @@ struct Cell {
 impl Cell {
     fn fold(&mut self, alpha: f64, q: CostQuantities) {
         if self.samples == 0 {
-            self.range_gets = q.range_gets;
+            self.get_ops = q.get_ops;
             self.bytes_read = q.bytes_read;
             self.egress_bytes = q.egress_bytes;
             self.bytes_written = q.bytes_written;
@@ -601,7 +601,7 @@ impl Cell {
             self.runtime_filter_wait_ms = q.runtime_filter_wait_ms;
         } else {
             let blend = |old: f64, new: f64| alpha * new + (1.0 - alpha) * old;
-            self.range_gets = blend(self.range_gets, q.range_gets);
+            self.get_ops = blend(self.get_ops, q.get_ops);
             self.bytes_read = blend(self.bytes_read, q.bytes_read);
             self.egress_bytes = blend(self.egress_bytes, q.egress_bytes);
             self.bytes_written = blend(self.bytes_written, q.bytes_written);
@@ -620,7 +620,7 @@ impl Cell {
 
     fn quantities(&self) -> CostQuantities {
         CostQuantities {
-            range_gets: self.range_gets,
+            get_ops: self.get_ops,
             bytes_read: self.bytes_read,
             egress_bytes: self.egress_bytes,
             bytes_written: self.bytes_written,
@@ -639,7 +639,7 @@ impl Cell {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RouteCost {
     pub samples: u64,
-    pub range_gets: f64,
+    pub get_ops: f64,
     pub bytes_read: f64,
     /// EWMA cross-region / internet egress bytes (KEU) — zero on the free same-region path.
     pub egress_bytes: f64,
@@ -696,8 +696,8 @@ pub struct BackendChoice {
     pub score: f64,
     /// EWMA sample count at bake time.
     pub samples: u64,
-    /// Predicted ranged-GET count — the TD-170 hard round-trip-budget term.
-    pub range_gets: f64,
+    /// Predicted physical GET count — the TD-170 hard round-trip-budget term.
+    pub get_ops: f64,
 }
 
 /// Per-shape-class pre-baked recommendation: everything the lock-free consult
@@ -706,7 +706,7 @@ pub struct BackendChoice {
 #[derive(Debug, Clone)]
 pub struct ClassRecommendation {
     /// Every freshness-safe candidate with ANY history, cheapest-first. Carries
-    /// score/samples/range_gets so the consult can apply BOTH the soft
+    /// score/samples/get_ops so the consult can apply BOTH the soft
     /// `min_advantage` gate and the hard `rtt_budget` gate from frozen data.
     ranked: Vec<BackendChoice>,
     /// The least-sampled freshness-safe candidate still under `min_samples` (the
@@ -863,7 +863,7 @@ pub struct RouteCostModel {
     /// freshness-safe candidate is sampled (~1 in `exploration_interval`).
     explore_tick: AtomicU64,
     exploration_interval: u64,
-    /// TD-170 / ADR-034 P7: a HARD per-query round-trip (predicted `range_gets`)
+    /// TD-170 / ADR-034 P7: a HARD per-query round-trip (predicted `get_ops`)
     /// budget. `None` = disabled (default). When set, the override fires
     /// regardless of the soft `min_advantage` byte-cost gate if the static choice
     /// exceeds the budget and a freshness-safe candidate is within it — because
@@ -917,7 +917,7 @@ impl RouteCostModel {
         }
     }
 
-    /// Set the hard round-trip budget (predicted `range_gets`); `None` disables it
+    /// Set the hard round-trip budget (predicted `get_ops`); `None` disables it
     /// (the default). Builder form for tests; production reads
     /// `PROXIMADB_ROUTE_RTT_BUDGET` at construction.
     pub fn with_rtt_budget(mut self, budget: Option<f64>) -> Self {
@@ -995,7 +995,7 @@ impl RouteCostModel {
     /// footer-cache hit shows up as fewer GETs / fewer bytes in the trace.
     fn score(&self, q: CostQuantities) -> f64 {
         let mib = |bytes: f64| bytes / (1024.0 * 1024.0);
-        self.weights.per_get * q.range_gets
+        self.weights.per_get * q.get_ops
             + self.weights.per_mib_read * mib(q.bytes_read)
             + self.weights.per_mib_egress * mib(q.egress_bytes)
             + self.weights.per_mib_written * mib(q.bytes_written)
@@ -1083,7 +1083,7 @@ impl RouteCostModel {
         }
         Some(RouteCost {
             samples: c.samples,
-            range_gets: c.range_gets,
+            get_ops: c.get_ops,
             bytes_read: c.bytes_read,
             egress_bytes: c.egress_bytes,
             bytes_written: c.bytes_written,
@@ -1104,7 +1104,7 @@ impl RouteCostModel {
     }
 
     /// Like [`recommend`] but, when `max_rtt` is `Some`, only considers candidates
-    /// whose predicted `range_gets` is within that round-trip budget (TD-170 hard
+    /// whose predicted `get_ops` is within that round-trip budget (TD-170 hard
     /// admission filter) — used to pick the cheapest *within-budget* backend.
     fn recommend_filtered(
         &self,
@@ -1117,7 +1117,7 @@ impl RouteCostModel {
             .filter_map(|b| {
                 self.estimate(shape_class, b)
                     .filter(|c| c.samples >= self.min_samples)
-                    .filter(|c| max_rtt.is_none_or(|budget| c.range_gets <= budget))
+                    .filter(|c| max_rtt.is_none_or(|budget| c.get_ops <= budget))
                     .map(|c| (b.clone(), c))
             })
             .collect();
@@ -1171,7 +1171,7 @@ impl RouteCostModel {
         // the budget: a backend over the round-trip budget loses even when it moves
         // fewer bytes (latency = depth × RTT), regardless of `min_advantage`.
         if let Some(budget) = self.rtt_budget
-            && static_cost.range_gets > budget
+            && static_cost.get_ops > budget
             && let Some(within) = self.recommend_filtered(shape_class, candidates, Some(budget))
             && backend_label(&within.backend) != backend_label(static_backend)
         {
@@ -1303,7 +1303,7 @@ impl RouteCostModel {
                         backend,
                         score: self.score(cell.quantities()),
                         samples: cell.samples,
-                        range_gets: cell.range_gets,
+                        get_ops: cell.get_ops,
                     })
                 })
                 .collect();
@@ -1378,7 +1378,7 @@ mod tests {
         let est = fresh
             .estimate("olap/parquet/large", &ComputeBackend::DataFusionLocal)
             .expect("warmed estimate");
-        assert_eq!(est.range_gets, 12.0);
+        assert_eq!(est.get_ops, 12.0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1394,9 +1394,9 @@ mod tests {
         );
     }
 
-    fn snap(range_gets: u64, bytes_read: u64, compute_ms: u64) -> IoTraceSnapshot {
+    fn snap(get_ops: u64, bytes_read: u64, compute_ms: u64) -> IoTraceSnapshot {
         let mut s = IoTraceSnapshot {
-            range_gets,
+            get_ops,
             bytes_read,
             ..Default::default()
         };
@@ -1423,6 +1423,24 @@ mod tests {
         assert_eq!(q.runtime_filter_arrived, 4.0);
         assert_eq!(q.runtime_filter_timed_out, 1.0);
         assert_eq!(q.runtime_filter_wait_ms, 4_200.0);
+    }
+
+    #[test]
+    fn whole_object_get_is_a_cost_bearing_round_trip() {
+        let model = RouteCostModel::new().with_min_samples(1);
+        let snapshot = IoTraceSnapshot {
+            get_ops: 1,
+            bytes_read: 1 << 20,
+            ..Default::default()
+        };
+        model.observe("vector/sst/exact", &ComputeBackend::Native, &snapshot);
+
+        let estimate = model
+            .estimate("vector/sst/exact", &ComputeBackend::Native)
+            .expect("whole-object read creates a learned cell");
+        let weights = CostWeights::default();
+        assert_eq!(estimate.get_ops, 1.0);
+        assert!((estimate.score - (weights.per_get + weights.per_mib_read)).abs() < 1e-6);
     }
 
     #[test]
@@ -1728,7 +1746,7 @@ mod tests {
         // Identical in every term except egress, so the score delta isolates it.
         let same_region = snap(4, 8 << 20, 0);
         let cross_region = IoTraceSnapshot {
-            range_gets: 4,
+            get_ops: 4,
             bytes_read: 8 << 20,
             egress_bytes: 8 << 20,
             ..Default::default()
@@ -1765,7 +1783,7 @@ mod tests {
         // read-only routes, active once a route induces writes).
         let m = RouteCostModel::new().with_min_samples(1);
         let written = IoTraceSnapshot {
-            range_gets: 0,
+            get_ops: 0,
             bytes_written: 2 << 20,
             ..Default::default()
         };
@@ -1788,7 +1806,7 @@ mod tests {
             .expect("history");
         assert_eq!(est.samples, 10);
         // EWMA of a constant series converges to that constant.
-        assert!((est.range_gets - 2.0).abs() < 1e-6);
+        assert!((est.get_ops - 2.0).abs() < 1e-6);
         assert!(est.score > 0.0);
     }
 
@@ -1802,7 +1820,7 @@ mod tests {
             .estimate("olap/parquet", &ComputeBackend::DataFusionLocal)
             .expect("label-keyed observation is visible to typed estimate");
         assert_eq!(by_label.samples, 1);
-        assert!((by_label.range_gets - 4.0).abs() < 1e-6);
+        assert!((by_label.get_ops - 4.0).abs() < 1e-6);
     }
 
     #[test]
@@ -1821,7 +1839,7 @@ mod tests {
         };
         let model = RouteCostModel::new();
         let single = IoTraceSnapshot {
-            range_gets: 2,
+            get_ops: 2,
             bytes_read: 8 << 20,
             vector_accesses: vec![access.clone()],
             ..Default::default()
@@ -1832,10 +1850,10 @@ mod tests {
             .estimate_by_label(&shape, "exact")
             .expect("single access is attributable");
         assert_eq!(estimate.samples, 1);
-        assert_eq!(estimate.range_gets, 2.0);
+        assert_eq!(estimate.get_ops, 2.0);
 
         let ambiguous = IoTraceSnapshot {
-            range_gets: 99,
+            get_ops: 99,
             vector_accesses: vec![access.clone(), access],
             ..Default::default()
         };

@@ -509,7 +509,9 @@ impl FileSystem for HdfsFileSystem {
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("📖 HDFS read: {}", path);
         let normalized_path = self.normalize_path(path);
-        self.client.read_file(&normalized_path).await
+        let bytes = self.client.read_file(&normalized_path).await?;
+        super::record_physical_full_read(bytes.len() as u64);
+        Ok(bytes)
     }
 
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {

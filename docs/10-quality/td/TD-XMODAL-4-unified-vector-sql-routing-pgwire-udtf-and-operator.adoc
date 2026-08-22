@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision, and successful SST exact/ANN executions now land attributable trace/warehouse samples plus observe-only cost cells. Automatic cost selection, paired evidence, and cross-surface parity gates remain open.
+| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision; successful SST exact/ANN executions land attributable trace/warehouse samples and observe-only cost cells. A bounded paired SIFT gate now proves comparable intent/path/correctness/cost evidence. Automatic cost selection remains closed pending storage-class/cache-state attribution; cross-surface parity also remains open.
 | Severity | Medium-High (surface consistency + moat: one internal vector-search intent behind every SQL surface; removes the hardcoded pgwire `<->` bypass and the pgwire/UDTF reachability gap)
 | Component | pgwire (`src/network/postgres/relational_pipeline.rs`, `pgvector_params.rs`) ; router (`src/query/compute_scheduler.rs` `VectorQueryShape`/`route_vector_search`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
 | Governs / derives from | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — "no new DSL; reuse SQL + table functions") ; the reserved TD-XMODAL-4 forward-reference therein.
@@ -20,7 +20,7 @@ A pgwire/UDTF audit found the building blocks already present but **disconnected
 * **Before the 2026-08-15 slice, pgvector `<->`/`<=>`/`<#>` worked over pgwire via a hardcoded bypass**: regex-extract the vector literal + `LIMIT`, then call `unified_search_native()`. It skipped the relational pipeline and router — no typed plan, cost, or shape. That bypass is now deleted; router integration remains open.
 * **Before the 2026-08-17 slice, the router had no vector access-path decision** — `QueryShape` described only the containing relational plan and `route_select_inner` selected only its `ComputeBackend`. The first draft proposed adding a vector boolean to that shape; implementation review rejected it because a `vector_search(...)` source can be nested inside a DataFusion join. Operator access-method selection and whole-plan engine selection are orthogonal axes.
 
-The two SQL spellings now share one typed intent and runtime port. The scheduler observes the explicit exact/approximate/adaptive access intent, but it does not yet have comparable access-path cost cells; geometry-driven exact/ANN/striped/pruned selection therefore remains open.
+The two SQL spellings now share one typed intent and runtime port. The scheduler observes explicit exact/approximate/adaptive intent and learns separate exact/ANN access-path cells from attributable executions. A bounded paired gate now makes those paths comparable at identical geometry, but live geometry-driven selection remains open until storage class and cache state prevent unlike deployments from poisoning one cell.
 
 == Design: one canonical `VectorSearch` node
 
@@ -108,7 +108,59 @@ The second S2 increment adds the evidence substrate without enabling an automati
 * rebind the owning `IoTrace` handle across SST's per-file `tokio::spawn` boundary, so multi-core PAX I/O and ANN engagement contribute to the same query sample instead of disappearing with the task-local context;
 * fixed an exactness defect exposed by that attribution audit: `execute_exact_segment_scan` previously set only `block_prune.force_exact`, leaving Adaptive file pruning enabled, while every direct-scan implementation attempted the RaBitQ cascade before consulting that flag. The effective mode is now forced to `Exact`, and one shared cascade gate makes `force_exact` dominate sequential and multi-core PAX scans.
 
-This remains observe-only. The scheduler's absent-intent default is still Exact, persisted vector cells are not admitted to the whole-plan backend recommendation table, and no gate can flip vector access automatically. The next increment requires paired exact/ANN observations at identical geometry, the existing SIFT/PAX recall ratchet, and a density review before defining any stable geometry buckets or live policy.
+This snapshot remained observe-only. The scheduler's absent-intent default stayed Exact, persisted vector cells were not admitted to the whole-plan backend recommendation table, and no gate could flip vector access automatically. The next section records the paired-evidence increment and the correctness defects it exposed.
+
+== Paired evidence and exact-authority correction (2026-08-21)
+
+The third S2 increment attempted the required same-query exact/ANN comparison and
+invalidated two earlier assumptions before admitting any live policy:
+
+* Whole-object reads were absent from exact-path traces: ranged leaf reads were
+  always attributed, while local full reads bypassed the filesystem port and
+  full reads elsewhere depended on the optional counting wrapper. Physical leaf
+  reads now own task-local attribution, and the staged object reader uses the
+  port for local and remote URLs. The cost model prices total `get_ops`, not only
+  `range_gets`; persisted cost cells use schema version 2 and relearn rather than
+  interpreting version-1 range counts as total round trips.
+* The first 100K paired run proved that exhaustive ranking of RaBitQ/SQ8 values
+  is not `SearchMode::Exact`: one query returned only 9/10 brute-force neighbors.
+  Explicit Exact now requires authoritative raw-f32 values in every PAX segment
+  and fails with an actionable error otherwise. Exact per-file failures also
+  propagate in serial and parallel scans instead of being warned away and
+  returned as a partial success; approximate scans retain best-effort behavior.
+* Coalesced PAX exposed a second authority bug: the footer and block-local exact
+  tier existed, but canonical record materialization looked for it only while an
+  `EMBED_BASE` stripe existed. Coalesced blocks intentionally omit that base, so
+  SQ8 Region B was appended and ranked. The shared `FlatRow` materializer now
+  discovers base or exact stripes, prefers raw f32, and uses SQ8 only for rows
+  without an authoritative vector. The round-trip gate requires bit-exact values,
+  not merely a non-empty embedding.
+
+The bounded SIFT cohort alternates path order, uses explicit `Exact` and
+`Approximate` intent, requires exactly one attributable vector access per query,
+checks Exact top-10 set equality against brute force, retains the ANN recall
+ratchet, and reports performance without making latency a flaky assertion. At
+`N=100,000`, `dim=128`, `top_k=10`, three query pairs measured:
+
+[cols="1,2,2", options="header"]
+|===
+| Measure | Exact raw-f32 scan | PAX ANN cascade
+| Correctness | 10/10 oracle set on every query | recall@10 = 0.9667
+| Latency p50 / p95 | 1,084,196 / 1,084,196 us | 61,269 / 61,269 us
+| Physical GETs per query | 5.00 (whole reads) | 28.33 (ranged reads)
+| Bytes per query | 77,192,428 | 35,642,387
+| Attributed compute per query | 1,078.33 ms | 71.00 ms
+|===
+
+This evidence does **not** admit an automatic route flip. Local latency and
+compute strongly favor ANN, total bytes also favor ANN, but object-store RTT
+pricing favors the five whole GETs over roughly 28 ranged GETs. The current
+vector cell key contains geometry and path but not storage class or cache state;
+combining local/warm and remote/cold samples would train contradictory policies
+into one cell. The next admission slice must add those dimensions (or an
+equivalent deployment-scoped model boundary), require a minimum paired cohort,
+and keep recall/correctness as hard gates. No new env gate or parallel router is
+introduced here, and the default remains unchanged.
 
 == Constraints
 
