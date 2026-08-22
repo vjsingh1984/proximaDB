@@ -323,29 +323,30 @@ pub async fn rate_limit_middleware(
 
 /// Extract client IP from request. `pub` so the (root) metrics middleware can
 /// classify the same client (one IP-extraction seam shared across the edge).
+///
+/// TD-TENANT-4: this used to read `X-Forwarded-For` → `X-Real-IP` → a hardcoded
+/// `127.0.0.1`, so the address was whatever the client claimed, or a constant.
+/// It now resolves from the **observed** transport peer
+/// ([`ConnectInfo`](axum::extract::ConnectInfo), wired at the TCP serve sites),
+/// honoring a forwarded header only when the peer is a declared trusted proxy.
+///
+/// The trusted-proxy allowlist is read from the process env
+/// ([`TRUSTED_PROXY_CIDRS_ENV`](crate::client_addr::TRUSTED_PROXY_CIDRS_ENV))
+/// once and cached: this runs on every metered request, so re-parsing CIDRs per
+/// request would put env access and allocation on the hot path.
+///
+/// Prefer [`crate::client_addr::client_addr_from_request`] in new code — it
+/// returns the provenance alongside the address, so a caller that meters can
+/// tell an observation from a fallback.
 pub fn get_client_ip(request: &Request) -> IpAddr {
-    // Try to get IP from X-Forwarded-For header first (for proxies)
-    if let Some(forwarded_for) = request.headers().get("X-Forwarded-For")
-        && let Ok(forwarded_str) = forwarded_for.to_str()
-        && let Some(first_ip) = forwarded_str.split(',').next()
-        && let Ok(ip) = first_ip.trim().parse::<IpAddr>()
-    {
-        return ip;
-    }
+    crate::client_addr::client_addr_from_request(request, trusted_proxies()).ip
+}
 
-    // Try X-Real-IP header
-    if let Some(real_ip) = request.headers().get("X-Real-IP")
-        && let Ok(ip_str) = real_ip.to_str()
-        && let Ok(ip) = ip_str.parse::<IpAddr>()
-    {
-        return ip;
-    }
-
-    // Fall back to connection remote address
-    // Note: This would need to be set by the server, for now use localhost
-    "127.0.0.1"
-        .parse()
-        .unwrap_or_else(|_| std::net::IpAddr::from([127, 0, 0, 1]))
+/// Process-wide trusted-proxy allowlist, parsed once from the environment.
+fn trusted_proxies() -> &'static crate::client_addr::TrustedProxies {
+    static TRUSTED: std::sync::OnceLock<crate::client_addr::TrustedProxies> =
+        std::sync::OnceLock::new();
+    TRUSTED.get_or_init(crate::client_addr::TrustedProxies::from_env)
 }
 
 /// Check if the path is a health endpoint

@@ -1160,9 +1160,17 @@ impl MultiServer {
 
             let handle = tokio::spawn(async move {
                 // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+                // TD-TENANT-4: `_with_connect_info` supplies the real peer
+                // address so the edge classifies an OBSERVED client rather than
+                // a header claim (KOU egress metering reads it).
                 match tokio::net::TcpListener::bind(&internal_rest_addr).await {
                     Ok(listener) => {
-                        if let Err(e) = axum::serve(listener, router.into_make_service()).await {
+                        if let Err(e) = axum::serve(
+                            listener,
+                            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                        )
+                        .await
+                        {
                             tracing::error!("Internal REST server error: {}", e);
                         }
                     }

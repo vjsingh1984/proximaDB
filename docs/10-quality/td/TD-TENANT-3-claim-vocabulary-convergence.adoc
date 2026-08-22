@@ -214,10 +214,19 @@ normalization happens on the *caller* side of the seam.
 . Retire Flight's `x-proximadb-tenant-id` / `tenant-id` / `tenant_id` aliases
   once the deprecation warning is silent across a release.
 . `X-Forwarded-For` is read ungated at
-  `crates/platform/proximadb-network-middleware/src/rate_limit.rs:327` — a
-  client-supplied header trusted for rate-limit keying, i.e. the same
-  trust-a-bare-header shape TD-TENANT-1 closed for tenancy. It should route
-  through a trust policy rather than being believed unconditionally.
+  `crates/platform/proximadb-network-middleware/src/rate_limit.rs:327`.
++
+[NOTE]
+====
+**Superseded by TD-TENANT-4 (2026-08-21), which corrects this framing.** The
+item above says the header is "trusted for rate-limit keying". It is not: the
+REST rate limiter is unmounted dead code, and pgwire — the one live
+rate-limited path — already keys on the real socket peer address. The header
+*is* consumed on a live path, but it is KOU egress metering, and the root
+cause is that the real peer address is never observed at all (no `ConnectInfo`
+is wired), not merely that a header is ungated. See
+`TD-TENANT-4-client-ip-provenance.adoc`.
+====
 
 == References
 

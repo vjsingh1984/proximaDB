@@ -286,6 +286,7 @@ serde = { version = "1.0", features = ["derive"] }
 # nested plans (TD-EXEC-2 §1.a). Same primitive rustc/Servo use.
 stacker = "0.1"
 tempfile = "3.0"
+ipnet = "2.12" # CIDR matching (KOU client-locality, TD-TENANT-4 trusted proxies)
 thiserror = "2.0"
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }

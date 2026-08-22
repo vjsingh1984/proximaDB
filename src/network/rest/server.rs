@@ -995,8 +995,12 @@ impl RestServer {
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to load TLS certificates: {}", e))?;
 
+            // TD-TENANT-4: observe the real peer address (see start_plaintext).
             axum_server::bind_rustls(self.bind_addr, rustls_config)
-                .serve(self.router.into_make_service())
+                .serve(
+                    self.router
+                        .into_make_service_with_connect_info::<SocketAddr>(),
+                )
                 .await
                 .map_err(|e| anyhow::anyhow!("TLS server error: {}", e))?;
 
@@ -1068,8 +1072,12 @@ impl RestServer {
         tracing::info!("mTLS server configured - client certificates will be verified against CA");
         tracing::info!("Note: Client certificate info will be available in request extensions");
 
+        // TD-TENANT-4: observe the real peer address (see start_plaintext).
         axum_server::bind_rustls(self.bind_addr, rustls_config)
-            .serve(self.router.into_make_service())
+            .serve(
+                self.router
+                    .into_make_service_with_connect_info::<SocketAddr>(),
+            )
             .await
             .map_err(|e| anyhow::anyhow!("mTLS server error: {}", e))?;
 
@@ -1088,10 +1096,21 @@ impl RestServer {
                 );
                 Self::log_endpoints(&self.bind_addr, false);
                 // axum 0.8 serves any `Listener`; tokio's UnixListener qualifies.
+                // TD-TENANT-4: deliberately NOT `_with_connect_info::<SocketAddr>`
+                // — a Unix socket has no `SocketAddr`, so demanding one here
+                // would not compile. A UDS peer is on the same host by
+                // construction and classifies as local, which is correct rather
+                // than a fallback.
                 let listener = crate::network::uds::bind_unix_listener(&uds_path).map_err(|e| {
                     anyhow::anyhow!("REST UDS bind failed at {}: {}", uds_path.display(), e)
                 })?;
-                axum::serve(listener, self.router.into_make_service()).await?;
+                // Mark the surface instead, so a UDS request resolves as
+                // `LocalSocket` rather than `Unobserved` — the latter must keep
+                // meaning "ConnectInfo was not wired here".
+                let router = self.router.layer(axum::Extension(
+                    proximadb_network_middleware::client_addr::LocalSocketPeer,
+                ));
+                axum::serve(listener, router.into_make_service()).await?;
                 return Ok(());
             }
             #[cfg(not(unix))]
@@ -1108,8 +1127,15 @@ impl RestServer {
         Self::log_endpoints(&self.bind_addr, false);
 
         // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+        // TD-TENANT-4: `_with_connect_info` supplies the real peer address so
+        // the edge classifies an OBSERVED client instead of a header claim.
         let listener = tokio::net::TcpListener::bind(&self.bind_addr).await?;
-        axum::serve(listener, self.router.into_make_service()).await?;
+        axum::serve(
+            listener,
+            self.router
+                .into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
 
         Ok(())
     }
