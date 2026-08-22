@@ -77,6 +77,10 @@ class TextChunk:
     end_pos: int
     chunk_id: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Optional exact model input after deterministic per-source context
+    # propagation. ``text`` remains the source slice named by start/end so
+    # citation offsets never become synthetic.
+    model_input_text: str | None = None
 
     @property
     def start(self) -> int:
@@ -87,6 +91,11 @@ class TextChunk:
     def end(self) -> int:
         """Backward compatibility alias for end_pos"""
         return self.end_pos
+
+    @property
+    def input_text(self) -> str:
+        """Text counted and sent to the model, preserving legacy behavior."""
+        return self.model_input_text if self.model_input_text is not None else self.text
 
     def __post_init__(self):
         """Add chunk-specific metadata"""
@@ -206,6 +215,9 @@ class ChunkingConfig:
     token_budget: Any | None = None
     input_contract: Any | None = None
     input_role: Any | None = None
+    # Optional contracts.ChunkContextRenderer. Kept dependency-light like
+    # token_budget/input_contract because base.py must not import tokenizers.
+    context_renderer: Any | None = None
 
 
 def config_kwargs(config: Any) -> dict[str, Any]:

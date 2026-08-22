@@ -67,6 +67,7 @@ from .code import (
     get_supported_languages,
 )
 from .contracts import (
+    ChunkContextRenderer,
     CompositeInputContract,
     InputRenderer,
     InputRole,

@@ -9,6 +9,7 @@ from typing import Any
 from .base import OFFSET_CONTRACT_EXACT, ChunkingStrategyInterface, TextChunk
 from .boundaries import StrategyBoundarySource
 from .contracts import (
+    ChunkContextRenderer,
     CompositeInputContract,
     InputRole,
     OverflowPolicy,
@@ -44,6 +45,7 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
         *,
         role: InputRole = InputRole.DOCUMENT,
         boundary_source: Any | None = None,
+        context_renderer: ChunkContextRenderer | None = None,
     ):
         super().__init__(boundary_strategy.config)
         self.boundary_strategy = boundary_strategy
@@ -59,6 +61,7 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
         self.budget = budget
         self.input_contract = as_composite_contract(input_contract)
         self.role = role
+        self.context_renderer = context_renderer
         self._boundary_meaning: dict[int, tuple[int, str, dict]] = {}
         if budget.target_tokens > self.input_contract.minimum_context_limit:
             raise ValueError(
@@ -115,6 +118,7 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
         text: str,
         offsets: Sequence[tuple[int, int]],
         start_token: int,
+        base_metadata: dict[str, Any] | None,
     ) -> int:
         low = start_token + 1
         high = min(len(offsets), start_token + self.budget.target_tokens)
@@ -124,7 +128,7 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
             start_char, end_char = self._char_bounds(
                 offsets, start_token, middle, len(text)
             )
-            candidate = text[start_char:end_char]
+            candidate = self._render_input(text[start_char:end_char], base_metadata)
             if self.input_contract.fits(
                 candidate, self.role, self.budget.target_tokens
             ):
@@ -134,10 +138,16 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
                 high = middle - 1
         if best is None:
             raise ValueError(
-                "role prefix and tokenizer overhead leave no room for one source token "
+                "propagated context, role prefix and tokenizer overhead leave no room "
+                "for one source token "
                 f"inside target_tokens={self.budget.target_tokens}"
             )
         return best
+
+    def _render_input(self, text: str, base_metadata: dict[str, Any] | None) -> str:
+        if self.context_renderer is None:
+            return text
+        return self.context_renderer.render(text, base_metadata)
 
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
@@ -160,8 +170,11 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
         if not offsets:
             return []
 
-        whole_counts = self.input_contract.counts(text, self.role)
-        if not self.input_contract.fits(text, self.role, self.budget.target_tokens):
+        whole_input = self._render_input(text, base_metadata)
+        whole_counts = self.input_contract.counts(whole_input, self.role)
+        if not self.input_contract.fits(
+            whole_input, self.role, self.budget.target_tokens
+        ):
             if self.budget.overflow_policy == OverflowPolicy.ERROR:
                 raise ValueError(
                     f"source input token counts {whole_counts} exceed target "
@@ -178,7 +191,9 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
         start_token = 0
         previous_end_token: int | None = None
         while start_token < len(offsets):
-            maximum_end = self._greatest_fitting_end(text, offsets, start_token)
+            maximum_end = self._greatest_fitting_end(
+                text, offsets, start_token, base_metadata
+            )
             minimum_end = min(
                 len(offsets), start_token + self.budget.min_content_tokens
             )
@@ -226,7 +241,8 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
                 offsets, start_token, end_token, len(text)
             )
             chunk_text = text[start_char:end_char]
-            counts = self.input_contract.validate(chunk_text, self.role)
+            model_input_text = self._render_input(chunk_text, base_metadata)
+            counts = self.input_contract.validate(model_input_text, self.role)
             if any(count > self.budget.target_tokens for count in counts.values()):
                 raise AssertionError(
                     "internal error: emitted chunk exceeds target budget"
@@ -253,6 +269,7 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
                 "has_overlap": actual_overlap_tokens > 0,
                 "overlap_tokens": actual_overlap_tokens,
                 "new_content_tokens": new_content_tokens,
+                "context_propagated": model_input_text != chunk_text,
             }
             chunk = TextChunk(
                 text=chunk_text,
@@ -260,6 +277,9 @@ class TokenBudgetStrategy(ChunkingStrategyInterface):
                 end_pos=end_char,
                 chunk_id=f"{source_id}_chunk_{index}",
                 metadata=metadata,
+                model_input_text=(
+                    model_input_text if model_input_text != chunk_text else None
+                ),
             )
             self.add_chunk_metadata(chunk, index, -1, "token_budget")
             chunks.append(chunk)
