@@ -168,7 +168,8 @@ impl FileSystem for GcsFileSystem {
 
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let (bucket, object) = Self::parse(path)?;
-        self.client
+        let bytes = self
+            .client
             .download_object(
                 &GetObjectRequest {
                     bucket,
@@ -178,7 +179,9 @@ impl FileSystem for GcsFileSystem {
                 &Range::default(),
             )
             .await
-            .map_err(|e| Self::net("GCS download_object", e))
+            .map_err(|e| Self::net("GCS download_object", e))?;
+        super::record_physical_full_read(bytes.len() as u64);
+        Ok(bytes)
     }
 
     /// ADR-023 cold path: a ranged object download — fetches only `[offset, +length)`.
@@ -201,8 +204,7 @@ impl FileSystem for GcsFileSystem {
             .map_err(|e| Self::net("GCS download_object range", e))?;
         // ADR-030 / TD-158: physical GET boundary — feed the per-query I/O accumulator
         // (task-local; no-op outside a query scope). Always-on core counters.
-        crate::observability::io_trace::record_range_gets(1);
-        crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
+        super::record_physical_range_read(bytes.len() as u64);
         Ok(bytes)
     }
 

@@ -1373,6 +1373,7 @@ impl SstEngine {
                                 k,
                                 distance_metric,
                                 snapshot_lsn,
+                                prune_config.force_exact,
                             )
                             .await
                         } else {
@@ -1407,7 +1408,9 @@ impl SstEngine {
                         );
                         all_candidates.extend(file_results);
                     }
-                    Err(e) => warn!("SST: Failed to search file {e}"),
+                    Err(e) => {
+                        Self::handle_per_file_scan_failure(path, &e, prune_config.force_exact)?
+                    }
                 }
             }
         } else {
@@ -1491,6 +1494,7 @@ impl SstEngine {
                         k,
                         distance_metric,
                         snapshot_lsn,
+                        prune_config.force_exact,
                     )
                     .await
                 } else {
@@ -1570,8 +1574,11 @@ impl SstEngine {
                         all_candidates.extend(results);
                     }
                     Err(e) => {
-                        warn!("SST: Failed to search file {}: {}", sstable_path, e);
-                        // Continue with other files
+                        Self::handle_per_file_scan_failure(
+                            sstable_path,
+                            &e,
+                            prune_config.force_exact,
+                        )?;
                     }
                 }
             } // end sequential fallback
@@ -1786,6 +1793,7 @@ impl SstEngine {
                 k,
                 distance_metric,
                 snapshot_lsn,
+                prune_config.force_exact,
             )
             .await
         } else if use_pipeline {
@@ -1854,6 +1862,26 @@ impl SstEngine {
                 distance_metric,
                 DistanceMetric::Euclidean | DistanceMetric::Cosine | DistanceMetric::DotProduct
             )
+    }
+
+    /// Preserve the caller's completeness contract at the per-file boundary.
+    /// Approximate scans retain the historical best-effort behavior, but an
+    /// exact scan cannot silently omit an unreadable or semantically ineligible
+    /// segment and still claim complete results.
+    fn handle_per_file_scan_failure(
+        sstable_path: &str,
+        error: &dyn std::fmt::Display,
+        require_complete_scan: bool,
+    ) -> Result<()> {
+        if require_complete_scan {
+            anyhow::bail!("SST exact scan failed for segment '{sstable_path}': {error}");
+        }
+        warn!(
+            file = sstable_path,
+            error = %error,
+            "SST approximate per-file scan failed (best-effort)"
+        );
+        Ok(())
     }
 
     /// TD-SEARCH-2 S2: multi-core direct search. Same semantics as
@@ -1933,8 +1961,10 @@ impl SstEngine {
             // Cap in-flight scans at `degree` so file_count >> cores does not
             // oversubscribe; the runtime worker pool backpressures cross-query.
             let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(degree as usize));
-            let mut handles: Vec<tokio::task::JoinHandle<Result<Vec<OptimizedSearchRecord>>>> =
-                Vec::with_capacity(sstable_files.len());
+            let mut handles: Vec<(
+                String,
+                tokio::task::JoinHandle<Result<Vec<OptimizedSearchRecord>>>,
+            )> = Vec::with_capacity(sstable_files.len());
             for path in sstable_files {
                 // Gate concurrency: await a permit before spawning (bound at degree).
                 let permit = std::sync::Arc::clone(&sem).acquire_owned().await?;
@@ -1946,37 +1976,44 @@ impl SstEngine {
                 let url = storage_url.to_string();
                 let prune = prune_config.clone();
                 let trace = trace_handle.clone();
-                handles.push(tokio::spawn(async move {
-                    let _permit = permit; // released on task drop
-                    // `engine` is `Arc<SstEngine>`; method-call auto-derefs to `&self`.
-                    let scan = engine.scan_single_file(
-                        &path,
-                        &collection,
-                        &query[..],
-                        filter.as_ref(),
-                        k,
-                        distance_metric,
-                        &cid,
-                        &url,
-                        &prune,
-                        use_pipeline,
-                        use_parallel_morsels,
-                        use_vectorized,
-                    );
-                    if let Some(trace) = trace {
-                        crate::observability::io_trace::scope_with_handle(trace, scan).await
-                    } else {
-                        scan.await
-                    }
-                }));
+                let scan_path = path.clone();
+                handles.push((
+                    path,
+                    tokio::spawn(async move {
+                        let _permit = permit; // released on task drop
+                        // `engine` is `Arc<SstEngine>`; method-call auto-derefs to `&self`.
+                        let scan = engine.scan_single_file(
+                            &scan_path,
+                            &collection,
+                            &query[..],
+                            filter.as_ref(),
+                            k,
+                            distance_metric,
+                            &cid,
+                            &url,
+                            &prune,
+                            use_pipeline,
+                            use_parallel_morsels,
+                            use_vectorized,
+                        );
+                        if let Some(trace) = trace {
+                            crate::observability::io_trace::scope_with_handle(trace, scan).await
+                        } else {
+                            scan.await
+                        }
+                    }),
+                ));
             }
-            // Collect: best-effort on per-file I/O errors (warn + continue, as
-            // S1 does), fail-closed on JoinError (a panic is a logic bug, not
-            // transient I/O — silently dropping its file would degrade recall).
-            for h in handles {
+            // Approximate scans remain best-effort on per-file I/O errors.
+            // Exact scans fail closed because omitting one segment violates the
+            // completeness contract. JoinError is always fatal: a panic is a
+            // logic bug, not transient I/O.
+            for (path, h) in handles {
                 match h.await {
                     Ok(Ok(recs)) => all_candidates.extend(recs),
-                    Ok(Err(e)) => warn!(error = %e, "SST S2: per-file scan failed (best-effort)"),
+                    Ok(Err(e)) => {
+                        Self::handle_per_file_scan_failure(&path, &e, prune_config.force_exact)?
+                    }
                     Err(join_err) => {
                         return Err(anyhow::anyhow!(
                             "SST S2: per-file scan task panicked: {join_err}"
@@ -2006,7 +2043,7 @@ impl SstEngine {
                 {
                     Ok(recs) => all_candidates.extend(recs),
                     Err(e) => {
-                        warn!(file = %path, error = %e, "SST S2: per-file scan failed (best-effort)")
+                        Self::handle_per_file_scan_failure(path, &e, prune_config.force_exact)?
                     }
                 }
             }
@@ -2579,12 +2616,15 @@ impl SstEngine {
     /// exotic), a non-RaBitQ quant (RawF32 / SQ8), or a cascade miss/error. The
     /// segment is decoded back to `ProximaRecord`s via the mixed-format reader
     /// (`segment_format::read_segment_records`, magic-detected) and ranked by
-    /// exact distance for the requested metric, so a `.pax` file is searchable
-    /// under EVERY metric and quant. This is the property that makes the PAX
+    /// exhaustive distance for the requested metric, so a `.pax` file is searchable
+    /// under EVERY metric and quant for approximate/adaptive callers. An explicit
+    /// exact request additionally requires raw-f32 authority and fails loudly
+    /// before ranking when the segment is lossy. This is the property that makes the PAX
     /// write-default flip safe: the L2/Cosine fast path still takes the RaBitQ
     /// cascade; everything else falls here instead of hitting the
     /// ProximaBlocks-only `sstable_reader` (which cannot decode `.pax`). Recall
-    /// is exact for `RawF32` quant and dequantization-bound for `RaBitQ`/`SQ8`.
+    /// is exact for `RawF32` or an exact-f32 tier; lossy `RaBitQ`/`SQ8` values
+    /// remain valid only for callers that accepted approximate semantics.
     #[cfg_attr(not(feature = "cold-deletion-vectors"), allow(unused_variables))]
     async fn search_pax_file_exact(
         &self,
@@ -2594,6 +2634,7 @@ impl SstEngine {
         limit: usize,
         distance_metric: DistanceMetric,
         snapshot_lsn: u64,
+        require_exact_authority: bool,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
         use std::sync::Arc;
@@ -2606,6 +2647,17 @@ impl SstEngine {
         )
         .await
         .map_err(|e| anyhow::anyhow!("read pax segment {pax_path}: {e}"))?;
+        if require_exact_authority
+            && !crate::storage::engines::sst::segment_format::pax_segment_has_exact_vector_authority(
+                &bytes,
+            )
+        {
+            anyhow::bail!(
+                "exact vector search requires authoritative raw-f32 values, but PAX segment \
+                 '{pax_path}' is lossy; enable the collection's pax_f32_tier or use \
+                 SearchMode::Approximate"
+            );
+        }
         let records = crate::storage::engines::sst::segment_format::read_segment_records(
             &bytes,
             &[],

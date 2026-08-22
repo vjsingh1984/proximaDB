@@ -250,23 +250,14 @@ impl Drop for StagedSegmentWrite {
     }
 }
 
-/// Read a whole segment object, routing cloud URLs through the `FileSystem`
-/// (the defect-6 READ class: string-stripping a cloud URL and `tokio::fs::read`ing
-/// the result can never find the object).
+/// Read a whole segment object through the filesystem port for every scheme.
+/// Besides keeping cloud URL routing correct, this preserves the physical-read
+/// instrumentation boundary for local segments as well.
 pub async fn read_object_bytes(factory: &Arc<dyn FilesystemPort>, url: &str) -> Result<Vec<u8>> {
-    if url.contains("://") && !url.starts_with("file://") {
-        let fs = factory
-            .get_filesystem(url)
-            .map_err(|e| anyhow::anyhow!("segment filesystem for {url}: {e}"))?;
-        fs.read(url)
-            .await
-            .map_err(|e| anyhow::anyhow!("read segment object {url}: {e}"))
-    } else {
-        let local = url.strip_prefix("file://").unwrap_or(url);
-        tokio::fs::read(local)
-            .await
-            .with_context(|| format!("read local segment {url}"))
-    }
+    factory
+        .read(url)
+        .await
+        .map_err(|e| anyhow::anyhow!("read segment object {url}: {e}"))
 }
 
 /// A segment made readable at a LOCAL path for path-based readers

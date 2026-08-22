@@ -2504,11 +2504,10 @@ impl PaxSegmentScanner {
 /// dispatched here via
 /// [`crate::segment_layout::SegmentFormat::detect`]). Records are reconstructed
 /// via the canonical inverse ([`PaxSegmentScanner::read_records`]); for a
-/// coalesced segment with an SQ8 Region B (ADR-065), the SQ8 rerank vectors are
-/// overlaid by row index (block row order == Region B cluster order) so
-/// compaction / recovery / full-read see the vectors rather than silently
-/// dropping them. Factored out of the root crate so it is unit-testable without
-/// linking the root; byte-for-byte identical to the former in-root path.
+/// coalesced segment with an SQ8 Region B (ADR-065), SQ8 rerank vectors fill only
+/// rows that lack an authoritative block-local f32 embedding. Block row order ==
+/// Region B cluster order. Factored out of the root crate so it is unit-testable
+/// without linking the root; byte-for-byte identical to the former in-root path.
 pub fn read_pax_segment_records(
     bytes: &[u8],
     embedding_model_ids: &[String],
@@ -2517,9 +2516,10 @@ pub fn read_pax_segment_records(
 ) -> Result<Vec<ProximaRecord>> {
     let mut scanner = PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())?;
     let mut recs = scanner.read_records(embedding_model_ids, user_column_keys, tenant_ctx)?;
-    // ADR-065 Region B: a coalesced segment with an SQ8 region stores its vectors
-    // in Region B (blocks are pure row data). Overlay the SQ8 vectors by row index
-    // — block row order == Region B cluster order, so recs[i] <-> Region B row i.
+    // ADR-065 Region B: blocks without an exact tier are pure row data, so fill
+    // their missing vector from SQ8 by row index. When an exact tier is present,
+    // `FlatRow::from_block_reader` has already materialized it and remains the
+    // canonical value.
     if is_coalesced_segment(bytes)
         && let Ok(h) = SegmentHeaderPrefix::parse(bytes)
         && h.sq8_len > 0
@@ -2528,7 +2528,9 @@ pub fn read_pax_segment_records(
         if let Ok(sq8) = proximadb_block_format::coalesced_sq8::Sq8Region::from_bytes(region) {
             let dim = sq8.header.dim;
             for (i, rec) in recs.iter_mut().enumerate() {
-                if let Some(v) = sq8.decode_row(i) {
+                if rec.embeddings.is_empty()
+                    && let Some(v) = sq8.decode_row(i)
+                {
                     rec.embeddings.push(proximadb_records::EmbeddingCell {
                         modality: "dense".into(),
                         dim,

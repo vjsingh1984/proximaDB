@@ -471,20 +471,23 @@ impl FlatRow {
         // f32 merely because it is the primary scan stripe.
         let mut embedding_stripes: Vec<Vec<Option<Vec<f32>>>> = Vec::new();
         let mut e = 0;
-        while let Some(base) = reader.decode_f32_vec_stripe(col_id::EMBED_BASE + e) {
+        loop {
+            let base = reader.decode_f32_vec_stripe(col_id::EMBED_BASE + e);
             let exact_column = col_id::F32_TIER_BASE + e;
             let exact = reader
                 .vector_params()
                 .get(exact_column)
                 .filter(|entry| entry.quant_kind == crate::vparam::QUANT_RAW_F32)
                 .and_then(|_| reader.decode_f32_vec_stripe(exact_column));
-            let materialized = match exact {
-                Some(exact) if exact.len() == base.len() => base
+            let materialized = match (base, exact) {
+                (None, None) => break,
+                (None, Some(exact)) => exact,
+                (Some(base), Some(exact)) if exact.len() == base.len() => base
                     .into_iter()
                     .zip(exact)
                     .map(|(approximate, exact)| exact.or(approximate))
                     .collect(),
-                _ => base,
+                (Some(base), _) => base,
             };
             embedding_stripes.push(materialized);
             e += 1;

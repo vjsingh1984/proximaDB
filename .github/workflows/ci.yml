@@ -1621,9 +1621,11 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true        # advisory — never a merge gate (also not in ci-success.needs)
     # 10m is a CANARY, not a budget: with the selection fixed this lane is a
-    # cheap leaf compile (observed 58-165s from cold), so ~4x headroom. If a
-    # future dependency edge makes a "leaf" crate heavy again, we want to find
-    # out after 10 wasted minutes, not 15.
+    # cheap leaf compile plus fast unit tests. Production-scale ratchets stay in
+    # their required, explicitly budgeted lanes below; duplicating one here made
+    # 709/710 fast tests pass before the job was cancelled on the final N=100k
+    # recall harness. If a future dependency edge makes the remaining graph
+    # heavy again, fail after 10 wasted minutes, not 15.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -1671,7 +1673,12 @@ jobs:
             pkg_args="$pkg_args -p $p"
           done
           echo "Affected leaf crates:$pkg_args"
-          cargo nextest run --lib --profile unit $pkg_args
+          # This production-scale synthetic recall ratchet takes minutes by
+          # design. The required 90-minute rust-test/unit lane still runs it;
+          # only this explicitly advisory fast-feedback lane excludes it.
+          cargo nextest run --lib --profile unit \
+            -E 'not test(rabitq_cold_recall_harness_n100000_recall_at_10)' \
+            $pkg_args
 
   # TD-168 develop early-detection: run the CHEAP object-store Cool-tier tests
   # (scripts/run_cloud_emulator_tests.sh --fast — compiles only the small

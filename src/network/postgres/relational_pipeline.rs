@@ -3440,7 +3440,7 @@ mod route_explain_tests {
         use crate::observability::io_trace::IoTraceSnapshot;
         use crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL;
         let snap = IoTraceSnapshot {
-            range_gets: 5,
+            get_ops: 5,
             bytes_read: 1 << 20,
             ..Default::default()
         };

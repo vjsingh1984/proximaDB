@@ -13,7 +13,7 @@
 //! well-separated vectors so the exact ranking is unambiguous.
 
 use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchParams};
+use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchMode, SearchParams};
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine, VectorRecord,
 };
@@ -44,11 +44,15 @@ const VECTORS: [[f32; DIM]; 4] = [
 const QUERY: [f32; DIM] = [1.0, 0.0, 0.0, 0.0];
 
 fn collection(id: &str, temp_dir: &TempDir) -> Collection {
+    collection_with_dim(id, temp_dir, DIM)
+}
+
+fn collection_with_dim(id: &str, temp_dir: &TempDir, dimension: usize) -> Collection {
     Collection {
         id: id.to_string(),
         config: Some(CollectionConfig {
             name: id.to_string(),
-            dimension: DIM as u32,
+            dimension: dimension as u32,
             distance_metric: Some(DistanceMetric::Euclidean as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
             // NOTE: no `pax_vector_format` tag — the GLOBAL kill-switch alone
@@ -80,24 +84,75 @@ fn vector_records() -> Vec<VectorRecord> {
         .collect()
 }
 
-/// Recursively collect file extensions under `dir` (the SST engine writes
-/// segments under a `collection_data_path` subpath, not the base directly).
-fn collect_exts(dir: &std::path::Path, pax: &mut bool, sst: &mut bool) {
+async fn flush_records(engine: &SstEngine, collection: &Collection, records: Vec<VectorRecord>) {
+    let flush_params = FlushParameters {
+        collection_id: Some(collection.id.clone()),
+        vector_records: records.into_iter().map(Into::into).collect(),
+        force: true,
+        synchronous: true,
+        hints: HashMap::new(),
+        timeout_ms: None,
+        trigger_compaction: false,
+        batch_ids: vec![],
+        collection_config: Some(collection.clone()),
+        estimated_size: 0,
+    };
+    let result = engine
+        .do_flush(&flush_params)
+        .await
+        .expect("flush succeeds");
+    assert!(result.success, "flush should succeed");
+}
+
+fn exact_context(collection: &Collection, query: Vec<f32>, top_k: usize) -> StorageQueryContext {
+    StorageQueryContext {
+        search_params: Arc::new(SearchParams {
+            query_vectors: Some(vec![query]),
+            top_k: Some(top_k as u16),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            search_mode: SearchMode::Exact,
+            block_prune: BlockPruneConfig {
+                radius_k: 0.0,
+                force_exact: true,
+                mode: BlockPruneMode::Ratio,
+                ratio: 1.0,
+                min_keep: 1,
+                max_keep: 0,
+                min_blocks_override: Some(0),
+            },
+            ..Default::default()
+        }),
+        collection: Arc::new(collection.clone()),
+        metadata: StorageQueryMetadata {
+            collection_id: collection.id.clone(),
+            ..Default::default()
+        },
+        user_context: None,
+        tenant_context: None,
+    }
+}
+
+/// Recursively collect durable segment paths under `dir` (the SST engine writes
+/// them below a `collection_data_path` subdirectory, not the base directly).
+fn collect_segment_paths(dir: &std::path::Path, paths: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_exts(&path, pax, sst);
-        } else {
-            match path.extension().and_then(|e| e.to_str()) {
-                Some("pax") => *pax = true,
-                Some("sst") => *sst = true,
-                _ => {}
-            }
+            collect_segment_paths(&path, paths);
+        } else if matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("pax" | "sst")
+        ) {
+            paths.push(path);
         }
     }
+}
+
+fn has_extension(path: &std::path::Path, extension: &str) -> bool {
+    path.extension().and_then(|value| value.to_str()) == Some(extension)
 }
 
 /// Brute-force exact Euclidean ranking — the recall oracle.
@@ -142,63 +197,23 @@ async fn kill_switch_flushes_rawf32_pax_and_reads_back_exact() {
     let engine = SstEngine::new().await.unwrap();
 
     // Flush under the kill-switch → must write a `.pax` (RawF32-PAX) segment.
-    let flush_params = FlushParameters {
-        collection_id: Some(collection.id.clone()),
-        vector_records: vector_records().into_iter().map(Into::into).collect(),
-        force: true,
-        synchronous: true,
-        hints: HashMap::new(),
-        timeout_ms: None,
-        trigger_compaction: false,
-        batch_ids: vec![],
-        collection_config: Some(collection.clone()),
-        estimated_size: 0,
-    };
-    let result = engine
-        .do_flush(&flush_params)
-        .await
-        .expect("flush succeeds");
-    assert!(result.success, "flush should succeed under the kill-switch");
+    flush_records(&engine, &collection, vector_records()).await;
 
     // The flushed segment must be `.pax` (RawF32-PAX), NOT legacy `.sst`.
-    let mut pax = false;
-    let mut sst = false;
-    collect_exts(std::path::Path::new(&base), &mut pax, &mut sst);
+    let mut segments = Vec::new();
+    collect_segment_paths(std::path::Path::new(&base), &mut segments);
     assert!(
-        pax,
+        segments.iter().any(|path| has_extension(path, "pax")),
         "kill-switch must still write a .pax segment (RawF32-PAX)"
     );
     assert!(
-        !sst,
+        !segments.iter().any(|path| has_extension(path, "sst")),
         "kill-switch must NOT write legacy .sst (got a .sst under {base})"
     );
 
     // Exact search → must match the brute-force oracle (RawF32 = no quantization
     // loss; the search dispatch's exact PAX scan reads the raw vectors back).
-    let ctx = StorageQueryContext {
-        search_params: Arc::new(SearchParams {
-            query_vectors: Some(vec![QUERY.to_vec()]),
-            top_k: Some(TOP_K as u16),
-            distance_metric: Some(DistanceMetric::Euclidean),
-            block_prune: BlockPruneConfig {
-                radius_k: 0.0,
-                force_exact: true,
-                mode: BlockPruneMode::Ratio,
-                ratio: 1.0,
-                min_keep: 1,
-                max_keep: 0,
-                min_blocks_override: Some(0),
-            },
-            ..Default::default()
-        }),
-        collection: Arc::new(collection.clone()),
-        metadata: StorageQueryMetadata {
-            collection_id: collection.id.clone(),
-            ..Default::default()
-        },
-        user_context: None,
-        tenant_context: None,
-    };
+    let ctx = exact_context(&collection, QUERY.to_vec(), TOP_K);
     let got: Vec<String> = engine
         .search_vectors_unified(&ctx)
         .await
@@ -232,26 +247,73 @@ async fn default_without_kill_switch_writes_pax_segment() {
     let base = temp_dir.path().to_str().unwrap().to_string();
     let collection = collection("default_pax", &temp_dir);
     let engine = SstEngine::new().await.unwrap();
-    let flush_params = FlushParameters {
-        collection_id: Some(collection.id.clone()),
-        vector_records: vector_records().into_iter().map(Into::into).collect(),
-        force: true,
-        synchronous: true,
-        hints: HashMap::new(),
-        timeout_ms: None,
-        trigger_compaction: false,
-        batch_ids: vec![],
-        collection_config: Some(collection.clone()),
-        estimated_size: 0,
-    };
-    let result = engine
-        .do_flush(&flush_params)
+    flush_records(&engine, &collection, vector_records()).await;
+    let mut segments = Vec::new();
+    collect_segment_paths(std::path::Path::new(&base), &mut segments);
+    assert!(
+        segments.iter().any(|path| has_extension(path, "pax")),
+        "default flush must write a .pax segment"
+    );
+    assert!(
+        !segments.iter().any(|path| has_extension(path, "sst")),
+        "default flush must not write legacy .sst"
+    );
+}
+
+/// `SearchMode::Exact` is a 100%-recall contract, not a synonym for scanning
+/// every lossy code. A default RaBitQ/SQ8 segment without raw-f32 authority must
+/// reject the request instead of returning approximate rows labeled exact.
+#[tokio::test]
+async fn lossy_pax_rejects_exact_search() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    unsafe {
+        std::env::remove_var(KILL_SWITCH);
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_F32_TIER", "0");
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    const LOSSY_DIM: usize = 64;
+    let collection = collection_with_dim("lossy_pax_exact_rejected", &temp_dir, LOSSY_DIM);
+    let engine = SstEngine::new().await.unwrap();
+    let records = (0..8)
+        .map(|i| VectorRecord {
+            id: format!("lossy-{i}"),
+            vector: (0..LOSSY_DIM)
+                .map(|d| ((i * LOSSY_DIM + d) as f32 * 0.017).sin())
+                .collect(),
+            metadata: HashMap::new(),
+            version: Some(1),
+            timestamp: Some(i as i64),
+            updated_at: None,
+            expires_at: None,
+            source: None,
+        })
+        .collect();
+    flush_records(&engine, &collection, records).await;
+
+    let mut segments = Vec::new();
+    collect_segment_paths(temp_dir.path(), &mut segments);
+    let pax_paths: Vec<_> = segments
+        .iter()
+        .filter(|path| has_extension(path, "pax"))
+        .collect();
+    assert_eq!(pax_paths.len(), 1, "fixture must flush one PAX segment");
+    let segment = std::fs::read(&pax_paths[0]).unwrap();
+    assert!(
+        !proximadb::storage::engines::sst::segment_format::pax_segment_has_exact_vector_authority(
+            &segment
+        ),
+        "fixture must prove the on-disk PAX segment is lossy"
+    );
+
+    let error = engine
+        .search_vectors_unified(&exact_context(&collection, vec![0.0; LOSSY_DIM], TOP_K))
         .await
-        .expect("flush succeeds");
-    assert!(result.success);
-    let mut pax = false;
-    let mut sst = false;
-    collect_exts(std::path::Path::new(&base), &mut pax, &mut sst);
-    assert!(pax, "default flush must write a .pax segment");
-    assert!(!sst, "default flush must not write legacy .sst");
+        .expect_err("lossy PAX cannot satisfy SearchMode::Exact");
+    let message = error.to_string();
+    assert!(
+        message.contains("authoritative raw-f32") && message.contains("pax_f32_tier"),
+        "exact-search rejection must explain how to satisfy the contract: {message}"
+    );
 }

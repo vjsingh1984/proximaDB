@@ -147,18 +147,14 @@ pub fn global_counters() -> Arc<GetCounters> {
         .clone()
 }
 
-/// DIP hook for forwarding GET counts into a per-query trace (the root's
-/// `IoTrace` task-local). The sub-crate cannot depend on the root's
-/// `observability::io_trace`, so `CountingFileSystem` calls this trait; the
-/// root wires an impl that records into the per-query `IoTrace` (feeding the
-/// route cost model + per-tenant KRU). `Option` so the bench path
-/// (`CountingFileSystem::new`) works without one.
+/// Dependency-inversion hook for storage stacks that cannot depend on the
+/// root observability crate. `ProximaObjectStore` uses this interface because
+/// it bypasses the root `FileSystem` leaf backends; `CountingFileSystem` does
+/// not, because diagnostic counters and per-query evidence have separate
+/// ownership.
 pub trait IoRecorder: Send + Sync + std::fmt::Debug {
-    /// A whole-object read (`read` / `get_mmap`).
     fn record_full_read(&self, bytes: u64);
-    /// A single ranged read (`read_range`).
     fn record_range_read(&self, bytes: u64);
-    /// A logical `read_ranges` call and its physical constituent GET count.
     fn record_batched_ranges(&self, physical_gets: u64, bytes: u64);
 }
 
@@ -168,7 +164,6 @@ pub trait IoRecorder: Send + Sync + std::fmt::Debug {
 pub struct CountingFileSystem {
     inner: Arc<dyn FileSystem>,
     counters: Arc<GetCounters>,
-    recorder: Option<Arc<dyn IoRecorder>>,
 }
 
 impl CountingFileSystem {
@@ -176,27 +171,7 @@ impl CountingFileSystem {
     /// [`global_counters()`] to share the process-wide counters used by the
     /// `PROXIMADB_COUNT_FS_IO` bench path. No per-query recorder.
     pub fn new(inner: Arc<dyn FileSystem>, counters: Arc<GetCounters>) -> Self {
-        Self {
-            inner,
-            counters,
-            recorder: None,
-        }
-    }
-
-    /// Wrap `inner` AND forward each read into `recorder` (the per-query
-    /// `IoTrace`), in addition to the global counters. Used by the production
-    /// wiring (root `FilesystemFactory`) so GET counts drive the route cost
-    /// model + per-tenant KRU.
-    pub fn new_with_recorder(
-        inner: Arc<dyn FileSystem>,
-        counters: Arc<GetCounters>,
-        recorder: Arc<dyn IoRecorder>,
-    ) -> Self {
-        Self {
-            inner,
-            counters,
-            recorder: Some(recorder),
-        }
+        Self { inner, counters }
     }
 }
 
@@ -219,9 +194,6 @@ impl FileSystem for CountingFileSystem {
         let bytes = buf.len() as u64;
         self.counters.full_reads.fetch_add(1, RELAXED);
         self.counters.bytes_read.fetch_add(bytes, RELAXED);
-        if let Some(recorder) = &self.recorder {
-            recorder.record_full_read(bytes);
-        }
         Ok(buf)
     }
 
@@ -230,9 +202,6 @@ impl FileSystem for CountingFileSystem {
         let bytes = buf.len() as u64;
         self.counters.range_reads.fetch_add(1, RELAXED);
         self.counters.bytes_read.fetch_add(bytes, RELAXED);
-        if let Some(recorder) = &self.recorder {
-            recorder.record_range_read(bytes);
-        }
         Ok(buf)
     }
 
@@ -264,9 +233,6 @@ impl FileSystem for CountingFileSystem {
         self.counters
             .coalesced_overread_bytes
             .fetch_add(overread, RELAXED);
-        if let Some(recorder) = &self.recorder {
-            recorder.record_batched_ranges(physical_gets, bytes);
-        }
         Ok(bufs)
     }
 
@@ -275,12 +241,6 @@ impl FileSystem for CountingFileSystem {
         let mmap = self.inner.get_mmap(path).await?;
         if mmap.is_some() {
             self.counters.full_reads.fetch_add(1, RELAXED);
-            if let Some(recorder) = &self.recorder {
-                // mmap size is unknown here without stat; record a full-read op
-                // with 0 bytes (the op count is the cost signal; bytes are
-                // captured by the non-mmap read paths).
-                recorder.record_full_read(0);
-            }
         }
         Ok(mmap)
     }

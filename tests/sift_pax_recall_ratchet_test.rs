@@ -39,7 +39,8 @@
 //! don't leak. `set_var` is `unsafe` (edition 2024).
 
 use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchParams};
+use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchMode, SearchParams};
+use proximadb::observability::io_trace::{VectorAccessPath, VectorSearchIntent};
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine, VectorRecord,
 };
@@ -67,6 +68,12 @@ const DIMENSION: usize = 128;
 const TOP_K: usize = 10;
 const BATCH_SIZE: usize = 20_000;
 const DEFAULT_QUERIES: usize = 1000;
+/// Bound the exact side of the paired access-path evidence across every SIFT
+/// scale. This yields 100 pairs at N=10k, 30 at N=100k, and 3 at N=1M: enough
+/// to cross the route-cost model's three-sample warmup without making the
+/// full-corpus recall ratchet pay an unbounded brute-force tax.
+const MAX_PAIRED_VECTOR_COMPARISONS: usize = 3_000_000;
+const MIN_PAIRED_SAMPLES: usize = 3;
 
 fn directory_file_bytes(path: &Path) -> std::io::Result<u64> {
     let mut bytes = 0u64;
@@ -266,12 +273,18 @@ async fn flush_batch(engine: &SstEngine, collection: &Collection, batch: Vec<Vec
     );
 }
 
-async fn search_topk(engine: &SstEngine, collection: &Collection, query: Vec<f32>) -> Vec<String> {
+async fn search_topk_with_mode(
+    engine: &SstEngine,
+    collection: &Collection,
+    query: Vec<f32>,
+    search_mode: SearchMode,
+) -> Vec<String> {
     let ctx = StorageQueryContext {
         search_params: Arc::new(SearchParams {
             query_vectors: Some(vec![query]),
             top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Euclidean),
+            search_mode,
             block_prune: BlockPruneConfig {
                 radius_k: 0.0,
                 force_exact: false,
@@ -300,6 +313,63 @@ async fn search_topk(engine: &SstEngine, collection: &Collection, query: Vec<f32
         .collect()
 }
 
+async fn search_topk(engine: &SstEngine, collection: &Collection, query: Vec<f32>) -> Vec<String> {
+    search_topk_with_mode(engine, collection, query, SearchMode::default()).await
+}
+
+#[derive(Debug)]
+struct MeasuredSearch {
+    ids: Vec<String>,
+    elapsed_us: u64,
+    snapshot: proximadb::observability::io_trace::IoTraceSnapshot,
+}
+
+async fn measured_search(
+    engine: &SstEngine,
+    collection: &Collection,
+    query: Vec<f32>,
+    search_mode: SearchMode,
+) -> MeasuredSearch {
+    let started = Instant::now();
+    let (ids, snapshot) = proximadb::observability::io_trace::scope(async {
+        let ids = search_topk_with_mode(engine, collection, query, search_mode).await;
+        let snapshot = proximadb::observability::io_trace::snapshot()
+            .expect("io_trace scope active during measured vector search");
+        (ids, snapshot)
+    })
+    .await;
+    MeasuredSearch {
+        ids,
+        elapsed_us: started.elapsed().as_micros() as u64,
+        snapshot,
+    }
+}
+
+fn assert_single_vector_access(
+    measured: &MeasuredSearch,
+    expected_intent: VectorSearchIntent,
+    expected_path: VectorAccessPath,
+) {
+    assert_eq!(
+        measured.snapshot.vector_accesses.len(),
+        1,
+        "each ratchet query must report one physical vector access"
+    );
+    let access = &measured.snapshot.vector_accesses[0];
+    assert_eq!(
+        access.requested_mode, expected_intent,
+        "ratchet caller intent must be explicit and attributable"
+    );
+    assert_eq!(
+        access.actual_path, expected_path,
+        "ratchet must exercise the requested physical access path"
+    );
+    assert_eq!(access.engine, "sst");
+    assert_eq!(access.dimensions, DIMENSION as u64);
+    assert_eq!(access.top_k, TOP_K as u64);
+    assert!(!access.has_filter);
+}
+
 /// WS8 real-dataset ratchet: PAX RaBitQ→SQ8 cascade recall@10 on SIFT1M.
 #[tokio::test]
 async fn sift_pax_cascade_recall_at_10_ratchet() {
@@ -309,6 +379,9 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     unsafe {
         std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
         std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        // A paired exact/ANN cost sample is admissible only when the exact arm
+        // ranks authoritative inserted vectors, not lossy SQ8 reconstructions.
+        std::env::set_var("PROXIMADB_PAX_F32_TIER", "1");
     }
 
     let base_path = match dataset_path("sift_base.fvecs") {
@@ -394,6 +467,7 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         }
     };
     let qcount = queries.len();
+    assert!(qcount > 0, "need at least one SIFT query");
 
     // --- Ground truth: filtered provided top-100 plus exact subset fallback ------------
     let gt_path = dataset_path("sift_groundtruth.ivecs");
@@ -412,16 +486,93 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     // before the query loop on the 1M run.
     drop(base);
 
-    // --- Search + recall --------------------------------------------------------------
+    // --- Search + recall + bounded exact/ANN paired evidence --------------------------
+    let paired_queries = qcount.min(
+        (MAX_PAIRED_VECTOR_COMPARISONS / n.max(1))
+            .max(MIN_PAIRED_SAMPLES)
+            .min(qcount),
+    );
     let mut recall_sum = 0.0f64;
     let mut measured = 0usize;
+    let mut exact_us = Vec::with_capacity(paired_queries);
+    let mut ann_us = Vec::with_capacity(qcount);
+    let mut exact_gets = 0u64;
+    let mut ann_gets = 0u64;
+    let mut exact_range_gets = 0u64;
+    let mut ann_range_gets = 0u64;
+    let mut exact_bytes = 0u64;
+    let mut ann_bytes = 0u64;
+    let mut exact_compute_ms = 0u64;
+    let mut ann_compute_ms = 0u64;
     for (qi, query) in queries.iter().enumerate() {
-        let got = search_topk(&engine, &collection, query.clone()).await;
-        if got.is_empty() {
+        let paired = qi < paired_queries;
+        let (ann, exact) = if paired && qi.is_multiple_of(2) {
+            let exact =
+                measured_search(&engine, &collection, query.clone(), SearchMode::Exact).await;
+            let ann = measured_search(
+                &engine,
+                &collection,
+                query.clone(),
+                SearchMode::Approximate { nprobe: None },
+            )
+            .await;
+            (ann, Some(exact))
+        } else if paired {
+            let ann = measured_search(
+                &engine,
+                &collection,
+                query.clone(),
+                SearchMode::Approximate { nprobe: None },
+            )
+            .await;
+            let exact =
+                measured_search(&engine, &collection, query.clone(), SearchMode::Exact).await;
+            (ann, Some(exact))
+        } else {
+            (
+                measured_search(
+                    &engine,
+                    &collection,
+                    query.clone(),
+                    SearchMode::Approximate { nprobe: None },
+                )
+                .await,
+                None,
+            )
+        };
+
+        assert_single_vector_access(&ann, VectorSearchIntent::Approximate, VectorAccessPath::Ann);
+        ann_us.push(ann.elapsed_us);
+        ann_gets = ann_gets.saturating_add(ann.snapshot.get_ops);
+        ann_range_gets = ann_range_gets.saturating_add(ann.snapshot.range_gets);
+        ann_bytes = ann_bytes.saturating_add(ann.snapshot.bytes_read);
+        ann_compute_ms = ann_compute_ms.saturating_add(ann.snapshot.total_compute_ms());
+
+        if let Some(exact) = exact {
+            assert_single_vector_access(&exact, VectorSearchIntent::Exact, VectorAccessPath::Exact);
+            let exact_ids: std::collections::HashSet<String> =
+                exact.ids.iter().take(TOP_K).cloned().collect();
+            assert_eq!(
+                exact_ids.intersection(&ground_truth[qi]).count(),
+                TOP_K,
+                "exact SIFT top-k must match the ground-truth set for query {qi}"
+            );
+            exact_us.push(exact.elapsed_us);
+            assert!(
+                exact.snapshot.get_ops > 0 && exact.snapshot.bytes_read > 0,
+                "exact PAX scan must report its whole-segment physical read"
+            );
+            exact_gets = exact_gets.saturating_add(exact.snapshot.get_ops);
+            exact_range_gets = exact_range_gets.saturating_add(exact.snapshot.range_gets);
+            exact_bytes = exact_bytes.saturating_add(exact.snapshot.bytes_read);
+            exact_compute_ms = exact_compute_ms.saturating_add(exact.snapshot.total_compute_ms());
+        }
+
+        if ann.ids.is_empty() {
             eprintln!("  warn: query {qi} returned no results");
             continue;
         }
-        let got_ids: std::collections::HashSet<String> = got.into_iter().take(TOP_K).collect();
+        let got_ids: std::collections::HashSet<String> = ann.ids.into_iter().take(TOP_K).collect();
         let gt_ids = &ground_truth[qi];
         let overlap = got_ids.intersection(gt_ids).count();
         recall_sum += overlap as f64 / TOP_K as f64;
@@ -432,6 +583,27 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     eprintln!(
         "SIFT PAX cascade recall@{TOP_K} = {recall:.4} over {measured} queries \
          (N={n}, floor={floor}, brute-force-GT rows={brute_force_rows})",
+    );
+    exact_us.sort_unstable();
+    ann_us.sort_unstable();
+    let exact_p50_us = percentile_us(&exact_us, 50);
+    let exact_p95_us = percentile_us(&exact_us, 95);
+    let ann_p50_us = percentile_us(&ann_us, 50);
+    let ann_p95_us = percentile_us(&ann_us, 95);
+    eprintln!(
+        "SIFT paired exact/ANN evidence: pairs={paired_queries}, N={n}, dim={DIMENSION}, \
+         top_k={TOP_K}; exact p50/p95={exact_p50_us}/{exact_p95_us} us, \
+         ANN p50/p95={ann_p50_us}/{ann_p95_us} us; \
+         exact GET/range-GET/bytes/compute-ms per pair={:.2}/{:.2}/{:.0}/{:.2}, \
+         ANN GET/range-GET/bytes/compute-ms per query={:.2}/{:.2}/{:.0}/{:.2}",
+        exact_gets as f64 / paired_queries as f64,
+        exact_range_gets as f64 / paired_queries as f64,
+        exact_bytes as f64 / paired_queries as f64,
+        exact_compute_ms as f64 / paired_queries as f64,
+        ann_gets as f64 / measured as f64,
+        ann_range_gets as f64 / measured as f64,
+        ann_bytes as f64 / measured as f64,
+        ann_compute_ms as f64 / measured as f64,
     );
     assert!(
         recall >= floor,

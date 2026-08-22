@@ -220,7 +220,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_REST_V1_SUNSET` | RFC 8594 `Sunset` HTTP-date advertised when v1 is disabled. | unset → no Sunset header | opt-in; TD-V1SUNSET-1 | src/network/middleware/v1_sunset.rs:48
 | `PROXIMADB_ROUTER_QUANT_HELIX` | Under `index_policy.mode=auto` + quantization, route the collection to the HELIX engine instead of SST cold path. | OFF | opt-in; ADR-028 | src/services/collection/engine_selector.rs
 | `PROXIMADB_ROUTE_COST_OVERRIDE` | Enables the live route-cost override (global bool or comma-list of shape-class prefixes). | OFF (observe-only; unparseable → OFF) | eval; ADR-058 / TD-EXEC-2 | src/query/route_cost_model.rs:70
-| `PROXIMADB_ROUTE_RTT_BUDGET` | Hard round-trip (range_gets) budget for route costing. | `None` (disabled) | opt-in; TD-170 | src/query/route_cost_model.rs:854
+| `PROXIMADB_ROUTE_RTT_BUDGET` | Hard physical-read round-trip (`get_ops`, full or ranged GET) budget for route costing. | `None` (disabled) | opt-in; TD-170 | src/query/route_cost_model.rs:854
 | `PROXIMADB_S3_BUCKET` | S3 bucket that enables the cloud index-storage tier. | `None` (cloud tier off) | config-mirror; — | src/index/axis/storage/universal_index_storage.rs:137
 | `PROXIMADB_S3_ENDPOINT` | Custom S3 endpoint URL (e.g. MinIO). | `None` (AWS default endpoint) | config-mirror; — | src/storage/persistence/filesystem/mod.rs:486
 | `PROXIMADB_S3_FORCE_PATH_STYLE` | Forces path-style S3 addressing (MinIO/compat). | `false` | config-mirror; — | src/storage/persistence/filesystem/mod.rs:487
