@@ -155,6 +155,14 @@ jobs:
               # workspace-wide, so a bump must re-run the Rust suite.
               - 'rust-toolchain*'
               - '.cargo/**'
+              # This file DEFINES the Rust jobs (clippy args, feature matrix
+              # combos, test shapes), so a change to it changes their outcome —
+              # but it was not listed, which meant **CI could not validate a
+              # change to its own Rust gating**. The PR that added `--tests` to
+              # the feature matrix skipped that very matrix and reported green:
+              # skipped is not passed. A gate that cannot see the change to
+              # itself is the same defect class it exists to catch.
+              - '.github/workflows/ci.yml'
             # `compile` gates the rust-compile hard gate. It is a deliberate
             # SUPERSET of every path that can affect `cargo check --workspace`:
             # the root `src/**`, every workspace member under `crates/**` and
