@@ -1699,7 +1699,12 @@ jobs:
           # This production-scale synthetic recall ratchet takes minutes by
           # design. The required 90-minute rust-test/unit lane still runs it;
           # only this explicitly advisory fast-feedback lane excludes it.
-          cargo nextest run --lib --profile unit \
+          # --no-tests=pass: a PR whose touched crates have no #[cfg(test)]
+          # unit tests makes nextest exit 4 ("no tests to run"), reddening this
+          # lane for a PR that did nothing wrong. Observed on #1701 (typed
+          # graph properties). Advisory lanes must stay signal, not noise —
+          # a lane that cries wolf is one people stop reading.
+          cargo nextest run --lib --profile unit --no-tests=pass \
             -E 'not test(rabitq_cold_recall_harness_n100000_recall_at_10)' \
             $pkg_args
 
