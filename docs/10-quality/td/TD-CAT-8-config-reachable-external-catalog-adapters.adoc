@@ -305,9 +305,36 @@ Two distinct blind spots, not one:
 | *test* rot behind ANY covered feature is invisible — `enterprise-catalogs` included
 |===
 
-Adding `--all-targets` would close the second across every feature at once. **Not done here**: it
-will surface pre-existing breakage in other feature-gated test modules, which deserves its own
-change rather than riding along in a catalog PR. Filed as the concrete next step.
+**Closed** — with two corrections to this paragraph's own predictions.
+
+. *"It will surface pre-existing breakage in other feature-gated test modules."* **It does not.**
+  All 13 matrix combos were run locally with `--all-targets` before the change: every one passes.
+  The only rot was the `catalog.rs` test module already fixed above, which is what prompted the
+  investigation. The change ships as pure prevention.
+. *"Adding `--all-targets`"* — narrowed to **`--tests`**. `--all-targets` would add the root crate's
+  38 benches + 23 examples per combo, and `ci.yml`'s clippy job records that `--all-targets` **OOMs
+  these runners**. That evidence is from a heavier pass (clippy, workspace-wide) than the matrix
+  (`check -p <pkg>`), so it does not transfer directly — but the headroom warning is real and
+  benches/examples are not the rot class being closed.
+
+**Teeth** (a CI guard nobody has watched fail is just a longer build). Reintroducing the exact
+stale-struct-literal rot into the `#[cfg(test)]` module:
+
+[cols="2,2", options="header"]
+|===
+| Command | Result
+| `cargo check -p proximadb --features enterprise-catalogs` (the old one)
+| **0 errors — blind**
+| `cargo check -p proximadb --tests --features enterprise-catalogs` (the fix)
+| `error[E0063]: missing fields …`, exit 101
+|===
+
+=== Still open, and deliberately not bundled
+
+**No CI lane compiles benches or examples at all** — clippy is `--lib --bins`, and nothing else uses
+`--all-targets`. The root crate has 38 benches and 23 examples that no gate has ever built. That is
+a second real rot surface, and closing it means confronting the documented OOM, so it needs its own
+change with runner-memory evidence rather than riding along here.
 
 == Still to do
 
