@@ -54,7 +54,8 @@ pub use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 // struct.
 pub use proximadb_search_types::search_params::{
     BlockPruneConfig, DEFAULT_ADAPTIVE_VECTOR_THRESHOLD, FilterOptimizationHints, HybridSearchMode,
-    ProgressiveRecalls, SearchEffort, SearchMode, UnifiedSearchParams, VectorFreshnessMode,
+    LexicalQueryMode, ProgressiveRecalls, SearchEffort, SearchMode, UnifiedSearchParams,
+    VectorFreshnessMode,
 };
 /// Backward-compatibility alias kept here so the long-standing
 /// `crate::core::search::SearchParams` path continues to resolve.

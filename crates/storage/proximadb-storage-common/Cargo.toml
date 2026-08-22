@@ -35,6 +35,7 @@ proximadb-compression.workspace = true
 proximadb-proto.workspace = true
 proximadb-data-model = { workspace = true }
 proximadb-records = { workspace = true }
+proximadb-search-types = { workspace = true }
 proximadb-block-format = { workspace = true }
 proximadb-codec = { workspace = true }
 proximadb-filter-expression = { workspace = true }

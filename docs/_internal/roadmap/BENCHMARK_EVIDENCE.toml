@@ -21,13 +21,30 @@
 # DO NOT promote an entry to `measured` without real provenance. Numbers in
 # README/BENCHMARKS are claims, not evidence, until an artifact backs them.
 
-as_of_date = "2026-08-21"
+as_of_date = "2026-08-22"
 source_of_truth = "benches/ + checked-in dated artifacts"
 header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_2026_06_16.adoc): object_economy_e2e promoted to measured; the other e2e claims' benches measure COMPONENT kernels (fusion-merge µs, recall computation, quantization speed) or small-scale per-engine search, NOT the claimed end-to-end metric/scale — they stay unverified with corrected notes; real e2e benches are the follow-up"
 
 # ---------------------------------------------------------------------------
 # MEASURED — backed by a dated, checked-in artifact.
 # ---------------------------------------------------------------------------
+
+[[claims]]
+id = "lexical_query_contract_engine_convergence_nfc"
+claim = "On a dev-first then held-out NFCorpus protocol, explicit natural-language mode eliminated document Tantivy's prior strict-parser failures: document Tantivy and canonical hybrid BM25 each completed all 324 dev and 323 held-out queries with exactly 100 sources. On held-out test, canonical-minus-Tantivy Recall@100 was -0.000079 (paired 95% interval -0.011129 to +0.008930), while canonical NDCG@10 improved +0.019002 (+0.009360 to +0.029213) and NDCG@100 improved +0.012716 (+0.006104 to +0.019871). This supports semantic/capability convergence, not a blind engine replacement."
+metric = "natural-query error rate + complete source-aware NDCG/Recall@10/@100 + paired query-bootstrap intervals"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/LEXICAL_QUERY_CONTRACT_GATE_2026_08_22.adoc",
+  "docs/12-design/LEXICAL_QUERY_CONTRACT_AND_ENGINE_CONVERGENCE_2026_08_22.adoc",
+]
+bench_source = "src/bin/score_lexical_corpus.rs"
+bench_command = "Score the fixed NFCorpus dev/test sources at --top-k 100 with --query-mode natural-language through --engine document-tantivy and canonical-hybrid; evaluate_source_retrieval.py --run-granularity source --require-complete-k 100; compare_retrieval_runs.py for recall@100 and ndcg@10/@100 with 10,000 paired bootstrap samples, seed 17; inspect dev before held-out test"
+artifact = "docs/_internal/status/LEXICAL_QUERY_CONTRACT_GATE_2026_08_22.adoc"
+hardware = "Local macOS arm64 Apple Silicon; quality-only deterministic scoring, no latency or throughput claim"
+date = "2026-08-22"
+version = "runner e2206ffefc1b709ed4739e3046f2500ee3c52d224880fdd7bad1ad0b835ea6b7; query contract fee4ea285b6f63c4feccdd172af4897649145fae1241f7776df518db252c0a61; document implementation 1c63e927f66629fbcb95237580fbcba528e83ecb5cf65411ed2013d2aad3f62c; canonical implementation b87389bdef3f1f8a5b75a27741630c983f0eff12c2003b4ce74aa4f9723f2ec0"
+notes = "Durable external root /Users/vijaysingh/proximadb-bench-data/retrieval-quality-lexical-contract-v1/nfcorpus/. Held-out document/canonical metric hashes 721e139118c9f6c1b92ae78052a37724b588adad57ba782b88637dcf2a75dfa7 / 72b577dfdb4aacd68297415b37d2b52297a4c595d282c7842df5a532b7dbfb0d; held-out Recall@100/NDCG@10/NDCG@100 comparisons 6ca56d3d5253dcedb2fe84488e8c7899d680c38e17ac652200de4925b96dbd4c / 481d8995d25e06dd8da1336c18e09aa084c5310ef2989742ad28c865f4cc2774 / 1854231cd0ed38218b9f42440dd5f0c2b23998adb2548ad1dc121d9323c5bf53. Engines differ in field model/analyzer; score magnitudes are not calibrated."
 
 [[claims]]
 id = "embedding_retrieval_title_tantivy_source100_nfc"

@@ -131,6 +131,9 @@ Read these in order for future-shaping architecture work:
    Companion native catalog blueprint:
    link:XCATALOG_MLOPS_MODEL_REGISTRY_2026_08_12.adoc[xCatalog MLOps model registry co-design,
    MLflow/MLMD/OpenLineage pressure test, and TDD rollout seams].
+   Companion lexical contract:
+   link:LEXICAL_QUERY_CONTRACT_AND_ENGINE_CONVERGENCE_2026_08_22.adoc[natural-text versus advanced
+   syntax semantics, production BM25/Tantivy capability routing, and measured convergence gates].
 21. `CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc` +
    Co-design spec for hosting an external coding agent's Code Property Graph as a correlated
    OLTP + graph + vector substrate: one `ProximaRecord`/`oid` per code symbol simultaneously a

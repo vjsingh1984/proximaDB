@@ -1,4 +1,4 @@
-//! Seal a source-level lexical run through ProximaDB's document Tantivy index.
+//! Seal a source-level lexical run through a ProximaDB production lexical engine.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -7,16 +7,20 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
-use proximadb::storage::document::indexes::fulltext::FullTextIndex;
+use proximadb::storage::document::indexes::fulltext::FullTextIndex as DocumentFullTextIndex;
+use proximadb::storage::engines::core::formats::columnar::fulltext_index::{
+    FullTextIndex as CanonicalFullTextIndex, TokenizerConfig,
+};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{ProximaTree, ProximaTreeNode};
+use proximadb_search_types::search_params::LexicalQueryMode;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
 #[derive(Debug, Parser)]
-#[command(about = "Score JSONL sources with ProximaDB's document Tantivy projection")]
+#[command(about = "Score JSONL sources with a ProximaDB production lexical engine")]
 struct Args {
     #[arg(long)]
     documents: PathBuf,
@@ -30,6 +34,33 @@ struct Args {
     top_k: usize,
     #[arg(long, value_enum, default_value_t = QueryErrorPolicy::Fail)]
     query_error_policy: QueryErrorPolicy,
+    #[arg(long, value_enum, default_value_t = Engine::DocumentTantivy)]
+    engine: Engine,
+    #[arg(long, value_enum, default_value_t = QueryModeArg::NaturalLanguage)]
+    query_mode: QueryModeArg,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+enum Engine {
+    DocumentTantivy,
+    CanonicalHybrid,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+enum QueryModeArg {
+    NaturalLanguage,
+    AdvancedSyntax,
+}
+
+impl From<QueryModeArg> for LexicalQueryMode {
+    fn from(value: QueryModeArg) -> Self {
+        match value {
+            QueryModeArg::NaturalLanguage => Self::NaturalLanguage,
+            QueryModeArg::AdvancedSyntax => Self::AdvancedSyntax,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
@@ -60,6 +91,65 @@ struct RunRow<'a> {
     rank: usize,
     score: f32,
     source_id: &'a str,
+}
+
+enum EvalIndex {
+    DocumentTantivy {
+        _root: tempfile::TempDir,
+        index: DocumentFullTextIndex,
+    },
+    CanonicalHybrid(CanonicalFullTextIndex),
+}
+
+impl EvalIndex {
+    fn build(engine: Engine, documents: &[DocumentInput]) -> Result<Self> {
+        match engine {
+            Engine::DocumentTantivy => {
+                // Reopen after commit so the evaluation observes the same persisted
+                // segment boundary used after a process restart, without relying on
+                // the asynchronous OnCommitWithDelay reader refresh.
+                let root = tempfile::tempdir()?;
+                {
+                    let mut index =
+                        DocumentFullTextIndex::new_persistent("source-eval", root.path())?;
+                    index.add_field("title")?;
+                    index.add_field("body")?;
+                    for document in documents {
+                        index.index_document(&document.id, &document_tree(document))?;
+                    }
+                    index.commit()?;
+                }
+                let mut index = DocumentFullTextIndex::new_persistent("source-eval", root.path())?;
+                index.add_field("title")?;
+                index.add_field("body")?;
+                Ok(Self::DocumentTantivy { _root: root, index })
+            }
+            Engine::CanonicalHybrid => {
+                let mut index = CanonicalFullTextIndex::new(TokenizerConfig::for_keyword_search());
+                for document in documents {
+                    let text = format!("{}\n\n{}", document.title, document.body);
+                    index.add_document(&document.id, &text)?;
+                }
+                Ok(Self::CanonicalHybrid(index))
+            }
+        }
+    }
+
+    fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        mode: LexicalQueryMode,
+    ) -> Result<Vec<(String, f32)>> {
+        match self {
+            Self::DocumentTantivy { index, .. } => index.search_with_mode(query, limit, mode),
+            Self::CanonicalHybrid(index) => Ok(index
+                .search_with_mode(query, limit, mode)?
+                .into_iter()
+                .map(|result| (result.doc_id, result.score as f32))
+                .collect()),
+        }
+    }
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -150,27 +240,45 @@ fn atomic_json(path: &Path, value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+fn engine_manifest(engine: Engine, query_mode: QueryModeArg) -> serde_json::Value {
+    match engine {
+        Engine::DocumentTantivy => json!({
+            "id": "document_tantivy",
+            "implementation": "proximadb::storage::document::indexes::fulltext::FullTextIndex",
+            "implementation_sha256": sha256_bytes(include_bytes!("../storage/document/indexes/fulltext.rs")),
+            "library": "tantivy",
+            "library_requirement": "0.22",
+            "query_mode": query_mode,
+            "query_interpretation": match query_mode {
+                QueryModeArg::NaturalLanguage => "configured field analyzers; OR terms; no query parser",
+                QueryModeArg::AdvancedSyntax => "Tantivy QueryParser strict",
+            },
+            "scoring": "Tantivy BM25 defaults",
+            "text_fields": ["title", "body"],
+        }),
+        Engine::CanonicalHybrid => json!({
+            "id": "canonical_hybrid",
+            "implementation": "proximadb_storage_common::text_search::fulltext_index::FullTextIndex",
+            "implementation_sha256": sha256_bytes(include_bytes!("../../crates/storage/proximadb-storage-common/src/text_search/fulltext_index.rs")),
+            "library": null,
+            "query_mode": query_mode,
+            "query_interpretation": match query_mode {
+                QueryModeArg::NaturalLanguage => "TokenizerConfig::for_keyword_search; OR terms",
+                QueryModeArg::AdvancedSyntax => "unsupported; fails explicitly",
+            },
+            "scoring": "ProximaDB in-memory BM25 defaults",
+            "text_fields": ["combined title and body"],
+        }),
+    }
+}
+
 fn run(args: &Args) -> Result<serde_json::Value> {
     let documents: Vec<DocumentInput> = load_jsonl(&args.documents, "documents")?;
     let queries: Vec<QueryInput> = load_jsonl(&args.queries, "queries")?;
     validate_inputs(&documents, &queries, args.top_k)?;
 
-    // Reopen after commit so the evaluation observes the same persisted
-    // segment boundary used after a process restart, without relying on the
-    // asynchronous OnCommitWithDelay reader refresh.
-    let index_root = tempfile::tempdir()?;
-    {
-        let mut index = FullTextIndex::new_persistent("source-eval", index_root.path())?;
-        index.add_field("title")?;
-        index.add_field("body")?;
-        for document in &documents {
-            index.index_document(&document.id, &document_tree(document))?;
-        }
-        index.commit()?;
-    }
-    let mut index = FullTextIndex::new_persistent("source-eval", index_root.path())?;
-    index.add_field("title")?;
-    index.add_field("body")?;
+    let index = EvalIndex::build(args.engine, &documents)?;
+    let query_mode = LexicalQueryMode::from(args.query_mode);
 
     let output_parent = args.output.parent().context("output path has no parent")?;
     std::fs::create_dir_all(output_parent)?;
@@ -179,26 +287,27 @@ fn run(args: &Args) -> Result<serde_json::Value> {
     {
         let mut output = BufWriter::new(&mut temporary);
         for query in &queries {
-            let matched: HashMap<String, f32> = match index.search(&query.text, documents.len()) {
-                Ok(results) => results.into_iter().collect(),
-                Err(error) => match args.query_error_policy {
-                    QueryErrorPolicy::Fail => {
-                        return Err(error).with_context(|| {
-                            format!(
-                                "query '{}' failed under strict production parsing",
-                                query.id
-                            )
-                        });
-                    }
-                    QueryErrorPolicy::ZeroPad => {
-                        query_errors.push(json!({
-                            "query_id": query.id,
-                            "error": format!("{error:#}"),
-                        }));
-                        HashMap::new()
-                    }
-                },
-            };
+            let matched: HashMap<String, f32> =
+                match index.search(&query.text, documents.len(), query_mode) {
+                    Ok(results) => results.into_iter().collect(),
+                    Err(error) => match args.query_error_policy {
+                        QueryErrorPolicy::Fail => {
+                            return Err(error).with_context(|| {
+                                format!(
+                                    "query '{}' failed for {:?} under {:?}",
+                                    query.id, args.engine, args.query_mode
+                                )
+                            });
+                        }
+                        QueryErrorPolicy::ZeroPad => {
+                            query_errors.push(json!({
+                                "query_id": query.id,
+                                "error": format!("{error:#}"),
+                            }));
+                            HashMap::new()
+                        }
+                    },
+                };
             let mut ranked: Vec<(&str, f32)> = documents
                 .iter()
                 .map(|document| {
@@ -235,16 +344,10 @@ fn run(args: &Args) -> Result<serde_json::Value> {
         .with_context(|| format!("failed to persist {}", args.output.display()))?;
 
     let manifest = json!({
-        "schema_version": 1,
-        "producer_sha256": sha256_bytes(include_bytes!("score_tantivy_corpus.rs")),
-        "engine": {
-            "implementation": "proximadb::storage::document::indexes::fulltext::FullTextIndex",
-            "library": "tantivy",
-            "library_requirement": "0.22",
-            "query_parser": "Tantivy QueryParser strict",
-            "scoring": "Tantivy BM25 defaults",
-            "text_fields": ["title", "body"],
-        },
+        "schema_version": 3,
+        "producer_sha256": sha256_bytes(include_bytes!("score_lexical_corpus.rs")),
+        "query_contract_sha256": sha256_bytes(include_bytes!("../../crates/foundation/proximadb-search-types/src/search_params.rs")),
+        "engine": engine_manifest(args.engine, args.query_mode),
         "candidate_granularity": "source",
         "tie_break": "score descending, source_id ascending",
         "zero_score_policy": "pad the full source universe deterministically before top-k",
@@ -263,7 +366,7 @@ fn run(args: &Args) -> Result<serde_json::Value> {
         "run_sha256": sha256_file(&args.output)?,
         "limitations": [
             "quality evidence only; no serving latency claim",
-            "this is the document Tantivy projection, not the canonical hybrid endpoint custom FullTextIndex",
+            "engines differ in field modeling and analyzers; score magnitudes are not cross-engine calibrated",
         ],
     });
     atomic_json(&args.manifest, &manifest)?;
@@ -304,6 +407,8 @@ mod tests {
             manifest: manifest_path,
             top_k: 3,
             query_error_policy: QueryErrorPolicy::Fail,
+            engine: Engine::DocumentTantivy,
+            query_mode: QueryModeArg::NaturalLanguage,
         })?;
 
         let rows: Vec<serde_json::Value> = load_jsonl(&output, "run")?;
@@ -314,11 +419,21 @@ mod tests {
         assert_eq!(ids, vec!["doc-z", "doc-a", "doc-b"]);
         assert_eq!(manifest["run_row_count"], 3);
         assert_eq!(manifest["engine"]["library"], "tantivy");
+        assert_eq!(
+            manifest["engine"]["implementation_sha256"]
+                .as_str()
+                .map(str::len),
+            Some(64)
+        );
+        assert_eq!(
+            manifest["query_contract_sha256"].as_str().map(str::len),
+            Some(64)
+        );
         Ok(())
     }
 
     #[test]
-    fn zero_pad_policy_records_strict_query_parser_failures() -> Result<()> {
+    fn advanced_mode_zero_pad_records_strict_query_parser_failures() -> Result<()> {
         let root = tempfile::tempdir()?;
         let documents = root.path().join("documents.jsonl");
         let queries = root.path().join("queries.jsonl");
@@ -339,6 +454,8 @@ mod tests {
             manifest: root.path().join("manifest.json"),
             top_k: 2,
             query_error_policy: QueryErrorPolicy::ZeroPad,
+            engine: Engine::DocumentTantivy,
+            query_mode: QueryModeArg::AdvancedSyntax,
         })?;
 
         let rows: Vec<serde_json::Value> = load_jsonl(&output, "run")?;
@@ -349,6 +466,42 @@ mod tests {
         assert_eq!(ids, vec!["doc-a", "doc-b"]);
         assert_eq!(manifest["query_error_count"], 1);
         assert_eq!(manifest["query_errors"][0]["query_id"], "q-bad");
+        Ok(())
+    }
+
+    #[test]
+    fn natural_mode_has_zero_errors_for_prose_punctuation() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let documents = root.path().join("documents.jsonl");
+        let queries = root.path().join("queries.jsonl");
+        let output = root.path().join("run.jsonl");
+        std::fs::write(
+            &documents,
+            concat!(
+                "{\"id\":\"doc-b\",\"title\":\"plain\",\"body\":\"text\"}\n",
+                "{\"id\":\"doc-a\",\"title\":\"Bugs and Drugs\",\"body\":\"Pork Yersinia\"}\n"
+            ),
+        )?;
+        std::fs::write(
+            &queries,
+            "{\"id\":\"q-prose\",\"text\":\"Bugs & Drugs in Pork: Yersinia?\"}\n",
+        )?;
+
+        let manifest = run(&Args {
+            documents,
+            queries,
+            output: output.clone(),
+            manifest: root.path().join("manifest.json"),
+            top_k: 2,
+            query_error_policy: QueryErrorPolicy::Fail,
+            engine: Engine::DocumentTantivy,
+            query_mode: QueryModeArg::NaturalLanguage,
+        })?;
+
+        let rows: Vec<serde_json::Value> = load_jsonl(&output, "run")?;
+        assert_eq!(rows[0]["source_id"], "doc-a");
+        assert_eq!(manifest["query_error_count"], 0);
+        assert_eq!(manifest["engine"]["query_mode"], "natural_language");
         Ok(())
     }
 }

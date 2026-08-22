@@ -13,12 +13,14 @@ use std::sync::RwLock;
 use anyhow::{Context, Result};
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
-use tantivy::query::QueryParser;
-use tantivy::schema::{Field, STORED, Schema, TEXT, Value};
-use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument};
+use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
+use tantivy::schema::{Field, FieldType, IndexRecordOption, STORED, Schema, TEXT, Value};
+use tantivy::tokenizer::TokenStream;
+use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
 use jsonpath_rust::JsonPathQuery;
 use proximadb_records::ProximaTree;
+use proximadb_search_types::search_params::LexicalQueryMode;
 use serde_json::Value as JsonValue;
 
 use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
@@ -263,31 +265,51 @@ impl FullTextIndex {
         Ok(())
     }
 
-    /// Search for documents matching query
+    /// Search ordinary user text. Punctuation is analyzed as text and is never
+    /// interpreted as Tantivy query syntax.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<(String, f32)>> {
-        // Get all text fields for query parser
-        let text_fields: Vec<Field> = self
+        self.search_with_mode(query, limit, LexicalQueryMode::NaturalLanguage)
+    }
+
+    /// Search with an explicit natural-text or advanced-syntax contract.
+    pub fn search_with_mode(
+        &self,
+        query: &str,
+        limit: usize,
+        mode: LexicalQueryMode,
+    ) -> Result<Vec<(String, f32)>> {
+        let mut text_fields: Vec<Field> = self
             .text_fields
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .values()
             .cloned()
             .collect();
+        text_fields.sort_by_key(|field| field.field_id());
 
         if text_fields.is_empty() {
             return Ok(vec![]);
         }
 
-        // Parse query
-        let query_parser = QueryParser::for_index(&self.index, text_fields);
-        let parsed_query = query_parser
-            .parse_query(query)
-            .context("Failed to parse search query")?;
+        let parsed_query: Box<dyn Query> = match mode {
+            LexicalQueryMode::NaturalLanguage => {
+                let Some(query) = self.build_natural_language_query(query, &text_fields)? else {
+                    return Ok(Vec::new());
+                };
+                query
+            }
+            LexicalQueryMode::AdvancedSyntax => {
+                let query_parser = QueryParser::for_index(&self.index, text_fields);
+                query_parser
+                    .parse_query(query)
+                    .context("Failed to parse advanced search query")?
+            }
+        };
 
         // Execute search
         let searcher = self.reader.searcher();
         let top_docs = searcher
-            .search(&parsed_query, &TopDocs::with_limit(limit))
+            .search(parsed_query.as_ref(), &TopDocs::with_limit(limit))
             .context("Search failed")?;
 
         // Extract results
@@ -302,6 +324,59 @@ impl FullTextIndex {
         }
 
         Ok(results)
+    }
+
+    /// Analyze natural text with each field's configured Tantivy tokenizer and
+    /// OR the resulting field terms. This preserves Tantivy BM25 scoring while
+    /// bypassing query-language parsing entirely.
+    fn build_natural_language_query(
+        &self,
+        query: &str,
+        text_fields: &[Field],
+    ) -> Result<Option<Box<dyn Query>>> {
+        let schema = self.index.schema();
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+        let mut seen_terms = std::collections::HashSet::new();
+
+        for field in text_fields {
+            let field_entry = schema.get_field_entry(*field);
+            let FieldType::Str(text_options) = field_entry.field_type() else {
+                continue;
+            };
+            let indexing = text_options
+                .get_indexing_options()
+                .with_context(|| format!("text field '{}' is not indexed", field_entry.name()))?;
+            let tokenizer_name = indexing.tokenizer();
+            let mut analyzer = self
+                .index
+                .tokenizers()
+                .get(tokenizer_name)
+                .with_context(|| {
+                    format!(
+                        "tokenizer '{}' for field '{}' is not registered",
+                        tokenizer_name,
+                        field_entry.name()
+                    )
+                })?;
+            let mut token_stream = analyzer.token_stream(query);
+            while token_stream.advance() {
+                let token_text = token_stream.token().text.clone();
+                if !seen_terms.insert((*field, token_text.clone())) {
+                    continue;
+                }
+                let term = Term::from_field_text(*field, &token_text);
+                clauses.push((
+                    Occur::Should,
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs)),
+                ));
+            }
+        }
+
+        if clauses.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(Box::new(BooleanQuery::new(clauses))))
+        }
     }
 
     /// Extract text value from a JSON path in the canonical `props` tree.
@@ -411,5 +486,67 @@ mod tests {
         let results = idx.search("quick", 5).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "d1");
+    }
+
+    #[test]
+    fn natural_language_query_treats_punctuation_as_text() {
+        let mut idx = FullTextIndex::new("test").unwrap();
+        idx.add_field("title").unwrap();
+        idx.add_field("body").unwrap();
+        idx.index_document(
+            "d1",
+            &make_doc(vec![(
+                "title",
+                "Bugs and drugs in pork Yersinia and Ractopamine",
+            )]),
+        )
+        .unwrap();
+        idx.commit().unwrap();
+        idx.reader.reload().unwrap();
+
+        let results = idx
+            .search_with_mode(
+                "Bugs & Drugs in Pork: Yersinia and Ractopamine",
+                10,
+                LexicalQueryMode::NaturalLanguage,
+            )
+            .unwrap();
+
+        assert_eq!(results.first().map(|result| result.0.as_str()), Some("d1"));
+    }
+
+    #[test]
+    fn advanced_syntax_is_explicit_and_field_aware() {
+        let mut idx = FullTextIndex::new("test").unwrap();
+        idx.add_field("title").unwrap();
+        idx.add_field("body").unwrap();
+        idx.index_document(
+            "title-hit",
+            &make_doc(vec![("title", "needle"), ("body", "plain")]),
+        )
+        .unwrap();
+        idx.index_document(
+            "body-hit",
+            &make_doc(vec![("title", "plain"), ("body", "title needle")]),
+        )
+        .unwrap();
+        idx.commit().unwrap();
+        idx.reader.reload().unwrap();
+
+        let natural = idx
+            .search_with_mode("title:needle", 10, LexicalQueryMode::NaturalLanguage)
+            .unwrap();
+        let advanced = idx
+            .search_with_mode("title:needle", 10, LexicalQueryMode::AdvancedSyntax)
+            .unwrap();
+
+        assert_eq!(natural.len(), 2, "natural text must not select a field");
+        assert_eq!(advanced.len(), 1);
+        assert_eq!(advanced[0].0, "title-hit");
+        assert!(
+            idx.search_with_mode("title:", 10, LexicalQueryMode::AdvancedSyntax)
+                .is_err(),
+            "malformed advanced syntax must fail loudly"
+        );
     }
 }

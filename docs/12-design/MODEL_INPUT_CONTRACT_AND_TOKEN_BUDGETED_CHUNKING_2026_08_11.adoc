@@ -520,7 +520,13 @@ gain. Exact scoring now selects top-k distinct sources directly over the complet
 Recall@100 is complete rather than a collapsed top-chunk lower bound. The actual document Tantivy
 projection also rejected 2.79-4.01% of natural-language queries under its strict parser; it is a
 different implementation from the canonical hybrid endpoint. Natural-text/query-syntax contracts
-and lexical-engine convergence are prerequisites to a default hybrid quality claim.
+and lexical-engine convergence are prerequisites to a default hybrid quality claim. The follow-on
+contract and production-engine comparison are recorded in
+`docs/_internal/status/LEXICAL_QUERY_CONTRACT_GATE_2026_08_22.adoc`: natural language bypasses query
+syntax parsers and completed all 647 NFCorpus queries, advanced syntax is explicit and capability
+checked, and canonical BM25 retained materially better held-out NDCG while Recall@100 tied Tantivy.
+Therefore converge semantics and routing first; do not swap physical engines without a separate
+analyzer/field-model migration gate.
 
 Timing measurements require a quiet machine. Token correctness, recall and GET/query checks do not
 become timing evidence merely because they ran successfully under contention.

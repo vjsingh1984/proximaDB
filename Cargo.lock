@@ -8766,6 +8766,7 @@ dependencies = [
  "proximadb-proto",
  "proximadb-records",
  "proximadb-runtime-common",
+ "proximadb-search-types",
  "proximadb-storage-filesystem-types",
  "regex",
  "serde",

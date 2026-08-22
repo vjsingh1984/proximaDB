@@ -37,6 +37,7 @@ use crate::index::axis::types::{Data, IndexAlgorithm, IndexSelectionStrategy, In
 use crate::storage::engines::core::formats::columnar::fulltext_index::{
     FullTextIndex, TokenizerConfig,
 };
+use proximadb_search_types::search_params::LexicalQueryMode;
 
 /// Reciprocal-rank-fusion constant for external hybrid search (the native
 /// default). Rank-based, so robust to the BM25-vs-cosine score-scale mismatch.
@@ -501,7 +502,7 @@ impl ExternalCollectionService {
                 .get(&ec.spec.name)
                 .ok_or_else(|| anyhow::anyhow!("BM25 index missing for '{}'", ec.spec.name))?;
             index
-                .search(&text_query, pool)
+                .search_with_mode(&text_query, pool, LexicalQueryMode::NaturalLanguage)?
                 .into_iter()
                 .map(|r| BM25Result {
                     doc_id: r.doc_id,

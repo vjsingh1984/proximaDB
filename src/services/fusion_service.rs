@@ -31,6 +31,7 @@ use crate::graph::GraphOperationsService;
 use crate::graph::model::{Edge, Node};
 use crate::network::hybrid_search::HybridFullTextIndexMap;
 use crate::services::VectorOperationsService;
+use proximadb_search_types::search_params::LexicalQueryMode;
 
 /// T1.2: Retry with exponential backoff for transient vector search failures.
 async fn retry_vector_search<F, Fut>(
@@ -283,9 +284,11 @@ impl DocumentExpander {
             .read()
             .ok()
             .and_then(|guard| {
-                guard
-                    .get(collection)
-                    .map(|index| index.search(text_query, k))
+                guard.get(collection).and_then(|index| {
+                    index
+                        .search_with_mode(text_query, k, LexicalQueryMode::NaturalLanguage)
+                        .ok()
+                })
             })
             .unwrap_or_default();
         bm25_hits_to_source(&hits, weight)
