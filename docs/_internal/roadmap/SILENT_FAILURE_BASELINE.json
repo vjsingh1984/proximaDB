@@ -1,0 +1,8 @@
+{
+  "total": 3,
+  "by_file": {
+    "graph.py": 1,
+    "integrations/haystack.py": 1,
+    "unified_client_async.py": 1
+  }
+}
