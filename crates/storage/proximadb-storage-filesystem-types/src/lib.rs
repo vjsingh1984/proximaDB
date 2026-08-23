@@ -143,9 +143,10 @@ where
 
     let in_flight = Arc::new(AtomicUsize::new(0));
     let max_inflight = Arc::new(AtomicUsize::new(0));
+    let max_inflight_snapshot = max_inflight.clone();
     let read = read.clone();
 
-    let buffers = stream::iter(ranges)
+    let buffers: Vec<Vec<u8>> = stream::iter(ranges)
         .map(move |r| {
             let read = read.clone();
             let in_flight = in_flight.clone();
@@ -172,7 +173,7 @@ where
 
     let metrics = ReadRangesMetrics {
         fetch_rounds,
-        max_inflight: max_inflight.load(Ordering::SeqCst) as u64,
+        max_inflight: max_inflight_snapshot.load(Ordering::SeqCst) as u64,
     };
 
     Ok((buffers, metrics))

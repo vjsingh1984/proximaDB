@@ -895,6 +895,34 @@ pub fn record_cache_tenant_stats(cache: &str, stats: &[proximadb_cache::TenantCa
     }
 }
 
+/// TD-RDSTRAT-12: Record bounded-concurrent `FileSystem::read_ranges` metrics.
+///
+/// Called by the SST engine (or other callers with tenant context) after draining
+/// the thread-local `read_ranges` metrics via `drain_read_ranges_metrics()`.
+/// Emits to the per-tenant Prometheus counters.
+pub fn record_read_ranges_metrics(tenant_id: &str, fetch_rounds: u64, max_inflight: u64) {
+    READ_RANGES_FETCH_ROUNDS_TOTAL
+        .with_label_values(&[tenant_id])
+        .inc_by(fetch_rounds as f64);
+    READ_RANGES_MAX_INFLIGHT
+        .with_label_values(&[tenant_id])
+        .set(max_inflight as i64);
+}
+
+/// TD-RDSTRAT-12: Drain and emit bounded-concurrent `FileSystem::read_ranges` metrics.
+///
+/// Convenience function that combines `drain_read_ranges_metrics()` (from
+/// `proximadb_storage_filesystem_types`) and `record_read_ranges_metrics()`.
+/// Call this after operations that use `FileSystem::read_ranges` with parallelism
+/// enabled (`PROXIMADB_FS_READ_RANGES_PARALLEL > 1`). No-op if no metrics were
+/// recorded (e.g., sequential reads or no `read_ranges` calls since last drain).
+pub fn drain_and_emit_read_ranges_metrics(tenant_id: &str) {
+    use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
+    if let Some(metrics) = drain_read_ranges_metrics() {
+        record_read_ranges_metrics(tenant_id, metrics.fetch_rounds, metrics.max_inflight);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
