@@ -833,6 +833,27 @@ impl EmbeddedProximaDB {
         let (shared_services, collection_port) =
             runtime.block_on(async { Self::init_services(storage_config).await })?;
 
+        // Recover graphs from snapshots + WAL before serving any request.
+        //
+        // The other half of #1524. `ProximaDB::start` has always done this,
+        // but — exactly like the shutdown-side flush — its call is gated on
+        // `self.multi_server`, the NETWORK object. Port-free embedded never
+        // constructs one, so it started with an empty ORION engine no matter
+        // what the WAL held: reopening a directory containing 177k durable
+        // edges answered `edges=0`, indistinguishable from data loss.
+        //
+        // Both halves of durability were attached to the network server, so a
+        // transport choice silently decided whether data survived. Recovery is
+        // best-effort here for the same reason the server treats it that way:
+        // a corrupt or partial WAL should degrade to an empty graph with a
+        // warning, not prevent the database from opening at all.
+        runtime.block_on(async {
+            match shared_services.graph_service.recover_all_graphs().await {
+                Ok(()) => tracing::info!("EMBEDDED: graphs recovered from persistent storage"),
+                Err(e) => tracing::warn!("EMBEDDED: graph recovery failed (continuing): {}", e),
+            }
+        });
+
         // Initialize RL planner if enabled
         let rl_policy_path = if config.enable_rl_planner {
             let policy_path = config.rl_policy_path.clone().unwrap_or_else(|| {
@@ -2899,6 +2920,53 @@ impl EmbeddedProximaDB {
     /// db.flush()?;  // Persist vector data
     /// db.close();   // Persist RL policy and cleanup
     /// ```
+    /// Flush every graph's WAL buffer to disk. Idempotent and best-effort.
+    ///
+    /// Graph writes land in `UnifiedWALWriter::current_segment_data`, an
+    /// in-memory buffer that reaches disk only on an explicit flush or a 64 MB
+    /// segment rotation. `UnifiedWALEntry::new` never sets `requires_fsync`, so
+    /// no graph write triggers the former, and a realistic code graph (93k
+    /// nodes / 177k edges) never reaches the latter. Nothing on the in-process
+    /// path called flush, so the buffer died with the process: measured before
+    /// this change, ingest reported 177,046 edges, `graph_stats` agreed,
+    /// `close()` returned cleanly, the WAL file on disk was 0 bytes, and a
+    /// fresh process saw `edges=0`. Total silent data loss (#1524).
+    ///
+    /// The server has always flushed here (`ProximaDB::stop`), but its loop is
+    /// gated on `self.multi_server` — the NETWORK object. Embedded is
+    /// deliberately port-free and never constructs one, so it inherited none of
+    /// the durability. Attaching a durability step to the network layer is what
+    /// let a transport choice decide whether data survives.
+    ///
+    /// Errors are logged rather than propagated: this runs from `close()` and
+    /// from `Drop`, where raising is worse than warning, and one unflushable
+    /// graph must not stop the others from flushing.
+    fn flush_graph_wals(&self) {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+            match graph_service.list_graphs().await {
+                Ok(graph_ids) => {
+                    let total = graph_ids.len();
+                    let mut flushed = 0usize;
+                    for graph_id in graph_ids {
+                        match graph_service.flush_wal(&graph_id).await {
+                            Ok(()) => flushed += 1,
+                            Err(e) => tracing::warn!(
+                                "EMBEDDED: failed to flush WAL for graph {}: {}",
+                                graph_id,
+                                e
+                            ),
+                        }
+                    }
+                    if total > 0 {
+                        tracing::info!("EMBEDDED: flushed WAL for {flushed}/{total} graph(s)");
+                    }
+                }
+                Err(e) => tracing::warn!("EMBEDDED: could not list graphs to flush WAL: {}", e),
+            }
+        });
+    }
+
     pub fn close(&self) {
         // Persist RL planner policy if enabled
         if let Some(ref policy_path) = self.rl_policy_path
@@ -2924,6 +2992,8 @@ impl EmbeddedProximaDB {
                 }
             });
         }
+
+        self.flush_graph_wals();
 
         tracing::info!("🛑 EMBEDDED: Database closed");
     }
@@ -6100,3 +6170,29 @@ pub struct UnifiedQueryPlan {
 
 #[cfg(test)]
 mod tests;
+
+/// Flush graph WALs if the handle is dropped without an explicit `close()`.
+///
+/// `close()` is the documented path, but a Rust caller doing `drop(db)` — or a
+/// Python object collected without `close()` — must not silently lose data;
+/// that asymmetry is exactly how #1524 stayed invisible (the existing
+/// `embedded_flush_persists_and_recovers` test drops the handle, and covers
+/// only VECTOR durability, so the graph gap sat under a passing suite).
+///
+/// Guarded on not already being inside a Tokio runtime: `block_on` from within
+/// a runtime thread panics, and Drop can run on odd threads (interpreter
+/// teardown, nested runtimes). In that case the flush is skipped with a
+/// warning rather than taking the process down during cleanup — callers who
+/// need the guarantee should call `close()` explicitly.
+impl Drop for EmbeddedProximaDB {
+    fn drop(&mut self) {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tracing::warn!(
+                "EMBEDDED: dropped inside a Tokio runtime; skipping graph WAL flush. \
+                 Call close() explicitly to guarantee durability."
+            );
+            return;
+        }
+        self.flush_graph_wals();
+    }
+}
