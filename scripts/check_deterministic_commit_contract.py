@@ -11,6 +11,7 @@ point at deterministic policies:
 * tenant/path mandates remain visible in the system map
 * Arrow Flight exports bind client paths to the selected collection
 * query ratchets count only executed queries and cloud proofs cover every backend
+* rust-cache inputs resolve to keys accepted by GitHub's cache service
 * conflict markers are not staged into source/docs
 """
 
@@ -50,6 +51,11 @@ TEXT_EXTENSIONS = {
 }
 
 CONFLICT_RE = re.compile(r"^(<<<<<<<|=======|>>>>>>>)($| )", re.MULTILINE)
+RUST_CACHE_RE = re.compile(r"^(?P<indent>\s*)-\s+uses:\s*Swatinem/rust-cache@")
+CACHE_INPUT_RE = re.compile(
+    r"^\s+(?P<name>prefix-key|shared-key):\s*(?P<value>.*?)\s*$"
+)
+MATRIX_REF_RE = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*}}")
 
 
 @dataclass(frozen=True)
@@ -320,6 +326,86 @@ def check_object_store_proof_authority(findings: list[Finding]) -> None:
     )
 
 
+def check_rust_cache_keys(findings: list[Finding]) -> None:
+    """Catch invalid commas before expensive rust-cache jobs fan out.
+
+    rust-cache reports GitHub's key-validation error as an annotation and then
+    continues with a cold compile. Matrix references therefore need resolving;
+    checking only the literal ``shared-key`` expression misses the failure.
+    """
+
+    for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            action = RUST_CACHE_RE.match(line)
+            if action is None:
+                continue
+
+            job_start = index
+            while job_start >= 0 and not re.match(
+                r"^  [A-Za-z0-9_-]+:\s*$", lines[job_start]
+            ):
+                job_start -= 1
+            job_end = job_start + 1
+            while job_end < len(lines) and not re.match(
+                r"^  [A-Za-z0-9_-]+:\s*$", lines[job_end]
+            ):
+                job_end += 1
+            job = lines[job_start:job_end] if job_start >= 0 else []
+
+            action_indent = len(action.group("indent"))
+            cursor = index + 1
+            while cursor < len(lines):
+                stripped = lines[cursor].lstrip()
+                indent = len(lines[cursor]) - len(stripped)
+                if indent == action_indent and stripped.startswith("- "):
+                    break
+                cache_input = CACHE_INPUT_RE.match(lines[cursor])
+                cursor += 1
+                if cache_input is None:
+                    continue
+
+                value = cache_input.group("value").strip("\"'")
+                if "," in MATRIX_REF_RE.sub("", value):
+                    findings.append(
+                        Finding(
+                            "rust-cache-key",
+                            f"{rel(path)}:{cursor} {cache_input.group('name')} "
+                            f"contains a comma: {value!r}",
+                        )
+                    )
+
+                for field in MATRIX_REF_RE.findall(value):
+                    field_re = re.compile(
+                        rf"(?:^|[{{,])\s*{re.escape(field)}\s*:\s*"
+                        r'(?:(?P<quote>["\'])(?P<quoted>.*?)(?P=quote)|'
+                        r"(?P<plain>[^,}\s#]+))"
+                    )
+                    values: list[str] = []
+                    for job_line in job:
+                        candidate = job_line.strip().removeprefix("- ").lstrip()
+                        values.extend(
+                            match.group("quoted") or match.group("plain") or ""
+                            for match in field_re.finditer(candidate)
+                        )
+                    if not values:
+                        findings.append(
+                            Finding(
+                                "rust-cache-key",
+                                f"{rel(path)}:{cursor} cannot resolve matrix.{field}",
+                            )
+                        )
+                    for matrix_value in values:
+                        if "," in matrix_value:
+                            findings.append(
+                                Finding(
+                                    "rust-cache-key",
+                                    f"{rel(path)}:{cursor} matrix.{field} contains "
+                                    f"a comma: {matrix_value!r}",
+                                )
+                            )
+
+
 def tracked_files() -> list[Path]:
     try:
         output = subprocess.check_output(
@@ -368,13 +454,14 @@ def main() -> int:
     check_flight_export_authority(findings)
     check_query_conformance_authority(findings)
     check_object_store_proof_authority(findings)
+    check_rust_cache_keys(findings)
     check_conflict_markers(findings)
 
     print("Deterministic commit contract")
     if not findings:
         print(
             "OK: nextest, CI/Makefile wiring, architecture guards, Flight/query/object-store "
-            "authorities, and conflict-marker checks pass."
+            "authorities, rust-cache keys, and conflict-marker checks pass."
         )
         return 0
 

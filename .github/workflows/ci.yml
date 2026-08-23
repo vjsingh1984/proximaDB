@@ -134,6 +134,8 @@ jobs:
           # Full history so dorny/paths-filter can reach the merge-base across a
           # large develop→main gap (shallow --deepen fails: "shallow file has changed").
           fetch-depth: 0
+      - name: Validate rust-cache key inputs before fan-out
+        run: python3 scripts/check_deterministic_commit_contract.py
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -880,7 +882,7 @@ jobs:
         include:
           # The two combos the published images actually ship (PR #78):
           - { label: "cloud-full",          pkg: proximadb-server, args: "--features cloud-full" }
-          - { label: "cloud-full,onnx",     pkg: proximadb-server, args: "--features cloud-full,onnx" }
+          - { label: "cloud-full+onnx",     pkg: proximadb-server, args: "--features cloud-full,onnx" }
           # Other gated surfaces invisible to default CI:
           - { label: "cluster",             pkg: proximadb,        args: "--features cluster" }
           - { label: "enterprise-catalogs", pkg: proximadb,        args: "--features enterprise-catalogs" }
