@@ -906,7 +906,7 @@ pub fn record_read_ranges_metrics(tenant_id: &str, fetch_rounds: u64, max_inflig
         .inc_by(fetch_rounds as f64);
     READ_RANGES_MAX_INFLIGHT
         .with_label_values(&[tenant_id])
-        .set(max_inflight as i64);
+        .set(max_inflight as f64);
 }
 
 /// TD-RDSTRAT-12: Drain and emit bounded-concurrent `FileSystem::read_ranges` metrics.
