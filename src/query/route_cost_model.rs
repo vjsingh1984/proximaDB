@@ -79,18 +79,79 @@ pub fn install_route_cost_observer() {
     GLOBAL_ROUTE_COST_MODEL.set_override_scope(scope);
 }
 
+/// Query-local cache outcome for a completed vector access. This is observed
+/// evidence, not a pre-execution prediction: it may partition learned cells,
+/// but must not be treated as a route-time cache promise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VectorCacheRegime {
+    Cold,
+    Warm,
+    Mixed,
+    /// The instrumented read path issued physical reads without consulting a
+    /// traced cache. This is a known uncached regime, not missing evidence.
+    Bypass,
+    Unknown,
+}
+
+impl VectorCacheRegime {
+    pub fn from_snapshot(snap: &IoTraceSnapshot) -> Self {
+        let hits = snap
+            .footer_hits
+            .saturating_add(snap.survivor_l1_hits)
+            .saturating_add(snap.l2_hits);
+        let misses = snap
+            .footer_misses
+            .saturating_add(snap.survivor_l1_misses)
+            .saturating_add(snap.l2_misses);
+
+        // Physical I/O is authoritative. Lower-tier misses followed by an L1
+        // or L2 hit are still warm when no object-store GET escaped the cache;
+        // any cache hit plus a physical GET is mixed. With io-trace compiled
+        // out, absence of cache counters is missing evidence, never bypass.
+        if snap.get_ops == 0 && hits > 0 {
+            Self::Warm
+        } else if snap.get_ops > 0 && hits > 0 {
+            Self::Mixed
+        } else if snap.get_ops > 0 && misses > 0 {
+            Self::Cold
+        } else if cfg!(feature = "io-trace") && snap.get_ops > 0 {
+            Self::Bypass
+        } else {
+            Self::Unknown
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cold => "cold",
+            Self::Warm => "warm",
+            Self::Mixed => "mixed",
+            Self::Bypass => "bypass",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Whether the cache regime is sufficiently observed to partition an
+    /// admission cohort. Unknown remains durable but cannot authorize routing.
+    pub fn is_admissible(self) -> bool {
+        self != Self::Unknown
+    }
+}
+
 /// Exact, unbucketed physical geometry for one vector access-path cost cell.
-/// The engine belongs in the shape so exact and ANN cells are compared only
-/// within the same physical implementation. Caller intent is evidence carried
-/// by the durable trace, not a cell dimension: partitioning on intent would
-/// prevent the exact-vs-ANN comparison this observe-only slice exists to make.
-pub fn vector_access_shape(access: &VectorAccessTrace) -> String {
+/// The engine, physical storage locality, and observed cache regime belong in
+/// the shape so exact and ANN cells are compared only within one truthful
+/// execution regime. Caller intent is durable evidence but not a cell
+/// dimension: partitioning on intent would prevent exact-vs-ANN comparison.
+pub fn vector_access_shape(access: &VectorAccessTrace, snap: &IoTraceSnapshot) -> String {
     format!(
-        "vector/engine={}/dim={}/k={}/filter={}",
+        "vector/engine={}/dim={}/k={}/filter={}/storage={}/cache={}",
         access.engine,
         access.dimensions,
         access.top_k,
-        if access.has_filter { "yes" } else { "no" }
+        if access.has_filter { "yes" } else { "no" },
+        access.storage_scope.as_str(),
+        VectorCacheRegime::from_snapshot(snap).as_str(),
     )
 }
 
@@ -102,8 +163,14 @@ fn observe_vector_access_snapshot(model: &RouteCostModel, snap: &IoTraceSnapshot
     let [access] = snap.vector_accesses.as_slice() else {
         return false;
     };
+    let cache_regime = VectorCacheRegime::from_snapshot(snap);
+    if access.storage_scope == crate::observability::io_trace::VectorStorageScope::Unknown
+        || !cache_regime.is_admissible()
+    {
+        return false;
+    }
     model.observe_by_label(
-        &vector_access_shape(access),
+        &vector_access_shape(access, snap),
         access.actual_path.as_str(),
         snap,
     );
@@ -1348,6 +1415,121 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vector_cost_cells_separate_storage_and_cache_regimes() {
+        use crate::observability::io_trace::{
+            VectorAccessPath, VectorSearchIntent, VectorStorageScope,
+        };
+
+        let access = VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: VectorSearchIntent::Exact,
+            actual_path: VectorAccessPath::Exact,
+            storage_scope: VectorStorageScope::Remote,
+        };
+        let cold = IoTraceSnapshot {
+            get_ops: 1,
+            footer_misses: 2,
+            l2_misses: 2,
+            ..Default::default()
+        };
+        let warm = IoTraceSnapshot {
+            footer_hits: 2,
+            l2_hits: 2,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            vector_access_shape(&access, &cold),
+            "vector/engine=sst/dim=384/k=10/filter=no/storage=remote/cache=cold"
+        );
+        assert_eq!(
+            vector_access_shape(&access, &warm),
+            "vector/engine=sst/dim=384/k=10/filter=no/storage=remote/cache=warm"
+        );
+    }
+
+    #[test]
+    fn vector_cache_regime_uses_physical_io_as_authority() {
+        let warm = IoTraceSnapshot {
+            survivor_l1_hits: 2,
+            survivor_l1_misses: 1,
+            l2_misses: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheRegime::from_snapshot(&warm),
+            VectorCacheRegime::Warm
+        );
+
+        let mixed = IoTraceSnapshot {
+            get_ops: 1,
+            survivor_l1_hits: 1,
+            survivor_l1_misses: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheRegime::from_snapshot(&mixed),
+            VectorCacheRegime::Mixed
+        );
+
+        let cold = IoTraceSnapshot {
+            get_ops: 1,
+            survivor_l1_misses: 1,
+            l2_misses: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheRegime::from_snapshot(&cold),
+            VectorCacheRegime::Cold
+        );
+
+        let no_activity = IoTraceSnapshot::default();
+        assert_eq!(
+            VectorCacheRegime::from_snapshot(&no_activity),
+            VectorCacheRegime::Unknown
+        );
+
+        let uncached_read = IoTraceSnapshot {
+            get_ops: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheRegime::from_snapshot(&uncached_read),
+            if cfg!(feature = "io-trace") {
+                VectorCacheRegime::Bypass
+            } else {
+                VectorCacheRegime::Unknown
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_vector_execution_regime_does_not_train_cost_model() {
+        use crate::observability::io_trace::{VectorAccessPath, VectorSearchIntent};
+
+        let model = RouteCostModel::new();
+        let unknown = IoTraceSnapshot {
+            vector_accesses: vec![VectorAccessTrace {
+                engine: "sst".to_string(),
+                dimensions: 384,
+                top_k: 10,
+                has_filter: false,
+                requested_mode: VectorSearchIntent::Exact,
+                actual_path: VectorAccessPath::Exact,
+                storage_scope: crate::observability::io_trace::VectorStorageScope::Unknown,
+            }],
+            get_ops: 1,
+            ..Default::default()
+        };
+
+        assert!(!observe_vector_access_snapshot(&model, &unknown));
+        assert!(model.learned_cell_keys().is_empty());
+    }
+
+    #[test]
     fn persist_load_round_trip_warms_a_fresh_model() {
         let m = RouteCostModel::new();
         // Learn two cells from measured snapshots (typed observe so the backend
@@ -1836,16 +2018,18 @@ mod tests {
             has_filter: false,
             requested_mode: VectorSearchIntent::Adaptive,
             actual_path: VectorAccessPath::Exact,
+            storage_scope: crate::observability::io_trace::VectorStorageScope::Local,
         };
         let model = RouteCostModel::new();
         let single = IoTraceSnapshot {
             get_ops: 2,
             bytes_read: 8 << 20,
+            footer_misses: 1,
             vector_accesses: vec![access.clone()],
             ..Default::default()
         };
         assert!(observe_vector_access_snapshot(&model, &single));
-        let shape = vector_access_shape(&access);
+        let shape = vector_access_shape(&access, &single);
         let estimate = model
             .estimate_by_label(&shape, "exact")
             .expect("single access is attributable");

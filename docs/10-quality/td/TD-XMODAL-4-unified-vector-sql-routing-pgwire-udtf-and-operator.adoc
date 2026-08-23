@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision; successful SST exact/ANN executions land attributable trace/warehouse samples and observe-only cost cells. A bounded paired SIFT gate now proves comparable intent/path/correctness/cost evidence. Automatic cost selection remains closed pending storage-class/cache-state attribution; cross-surface parity also remains open.
+| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision; successful SST exact/ANN executions land attributable trace/warehouse samples and observe-only cost cells. Vector cost cells now partition truthful storage locality and completed cache outcome, and the bounded paired SIFT gate rejects unknown or mixed cohorts. Automatic cost selection remains closed pending representative remote/cold and warm cohorts; cross-surface parity also remains open.
 | Severity | Medium-High (surface consistency + moat: one internal vector-search intent behind every SQL surface; removes the hardcoded pgwire `<->` bypass and the pgwire/UDTF reachability gap)
 | Component | pgwire (`src/network/postgres/relational_pipeline.rs`, `pgvector_params.rs`) ; router (`src/query/compute_scheduler.rs` `VectorQueryShape`/`route_vector_search`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
 | Governs / derives from | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — "no new DSL; reuse SQL + table functions") ; the reserved TD-XMODAL-4 forward-reference therein.
@@ -161,6 +161,52 @@ into one cell. The next admission slice must add those dimensions (or an
 equivalent deployment-scoped model boundary), require a minimum paired cohort,
 and keep recall/correctness as hard gates. No new env gate or parallel router is
 introduced here, and the default remains unchanged.
+
+== Execution-regime evidence correction (2026-08-22)
+
+The next measurement broke the initial cache-state implementation before any
+route flip was enabled:
+
+* Storage locality is derived from the storage URL actually used by the
+  completed SST access (`local`, `remote`, or fail-closed `unknown`). It is not
+  called an access tier: `ObjectAccessTier` is write-side policy metadata and is
+  not observable on this read boundary. Claiming hot/cool/cold here would invent
+  evidence.
+* A feature-on SIFT run returned zero physical GETs for later ANN queries but no
+  footer/L2 hits, so the first classifier reported `unknown`. The bytes had been
+  served by the DRAM survivor-range cache, whose aggregate Prometheus counters
+  were never represented in the query-local `IoTrace`. The cache foundation now
+  returns the serving outcome (`MemoryHit`, `PersistentHit`, or `Loaded`); the
+  SST wrapper records exactly one logical `survivor_l1_hits/misses` outcome per
+  requested range. Exact-key and parent-key probes are implementation detail and
+  cannot inflate the logical count.
+* Cache regime uses physical I/O as authority: no GET plus any hit is `warm`; a
+  GET plus a hit is `mixed`; a GET plus misses and no hits is `cold`; an
+  instrumented GET with no cache consultation is `bypass`; insufficient evidence
+  is `unknown`. `unknown` is durable for diagnosis but cannot enter an admission
+  cohort. The CI ratchet therefore builds with `io-trace`; the feature-off
+  negative control fails closed rather than silently treating missing counters
+  as bypass.
+* The paired exact/ANN gate uses an explicitly cache-free engine instance. Exact
+  does not consult the survivor cache, so comparing it with warmed ANN would
+  repeat the original pooled-regime defect. Cache benefit remains measured by
+  the separate coalesced warm-tier test.
+* The persisted JSON structure remains schema version 2. Only the vector shape
+  key gained `storage` and `cache` dimensions; old keys cannot collide with the
+  new identity, and this behavior has not shipped. Bumping the whole file would
+  discard unrelated relational learning without a format change.
+
+The controlled `N=1,000`, three-query validation then admitted all three pairs
+into one `storage=local/cache=bypass` cohort. Exact matched the brute-force
+top-10 set for every query, ANN recall@10 was 1.0, and the observed p50 values
+were 1,516 us exact versus 531 us ANN. This is a wiring/correctness validation,
+not representative performance evidence; the existing `N=100,000` cohort and
+future remote/cold and warm cohorts remain the decision-grade measurements.
+
+This slice still does not authorize automatic exact/ANN selection. Cache outcome
+is completed-execution evidence, not a route-time promise. A live decision needs
+an independently observable starting regime or an admission policy whose
+deployment scope guarantees it, plus paired remote/cold and warm measurements.
 
 == Constraints
 

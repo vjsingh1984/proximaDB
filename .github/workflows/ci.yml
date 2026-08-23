@@ -2739,7 +2739,9 @@ jobs:
       - name: Build ratchet binary
         env:
           CARGO_BUILD_JOBS: "4"
-        run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
+        # Cache-regime admission is fail-closed: without `io-trace`, cache
+        # probes intentionally no-op and the paired cohort remains `unknown`.
+        run: cargo test --release --features io-trace --test sift_pax_recall_ratchet_test --no-run
       - name: Run SIFT PAX recall ratchet (N=10000, floor=0.85)
         env:
           PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
@@ -2747,7 +2749,7 @@ jobs:
           PROXIMADB_SIFT_QUERIES: "100"
           PROXIMADB_SIFT_RECALL_FLOOR: "0.85"
           PROXIMADB_RECALL_DATASET_REQUIRED: "1"
-        run: cargo test --release --test sift_pax_recall_ratchet_test -- --nocapture
+        run: cargo test --release --features io-trace --test sift_pax_recall_ratchet_test -- --nocapture
 
   # ============================================================================
   # SUMMARY - Final status check

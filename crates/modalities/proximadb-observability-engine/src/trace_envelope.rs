@@ -92,6 +92,11 @@ pub struct TraceHeader {
     pub footer_hits: u64,
     #[serde(default)]
     pub footer_misses: u64,
+    /// In-process DRAM cache outcomes. Additive and mixed-read-safe.
+    #[serde(default)]
+    pub survivor_l1_hits: u64,
+    #[serde(default)]
+    pub survivor_l1_misses: u64,
     /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
     /// `serde(default)` keeps pre-existing envelopes readable (mixed-read-safe).
     #[serde(default)]
@@ -259,6 +264,8 @@ impl TraceHeader {
             range_gets: snap.range_gets,
             footer_hits: snap.footer_hits,
             footer_misses: snap.footer_misses,
+            survivor_l1_hits: snap.survivor_l1_hits,
+            survivor_l1_misses: snap.survivor_l1_misses,
             l2_hits: snap.l2_hits,
             l2_misses: snap.l2_misses,
             compute_ms: snap.compute_ms.clone(),
@@ -381,14 +388,18 @@ mod tests {
     #[test]
     fn header_carries_l2_probes_and_legacy_json_defaults_to_zero() {
         let snap = IoTraceSnapshot {
+            survivor_l1_hits: 7,
+            survivor_l1_misses: 3,
             l2_hits: 5,
             l2_misses: 2,
             ..Default::default()
         };
         let h = TraceHeader::from_snapshot(&snap, Some("t"), 1);
+        assert_eq!((h.survivor_l1_hits, h.survivor_l1_misses), (7, 3));
         assert_eq!((h.l2_hits, h.l2_misses), (5, 2));
 
         let legacy: TraceHeader = serde_json::from_str(r#"{"event_time_unix_ms":7}"#).unwrap();
+        assert_eq!((legacy.survivor_l1_hits, legacy.survivor_l1_misses), (0, 0));
         assert_eq!((legacy.l2_hits, legacy.l2_misses), (0, 0));
     }
 
@@ -468,6 +479,7 @@ mod tests {
             has_filter: true,
             requested_mode: VectorSearchIntent::Adaptive,
             actual_path: VectorAccessPath::Exact,
+            storage_scope: crate::io_trace::VectorStorageScope::Local,
         };
         let snap = IoTraceSnapshot {
             vector_accesses: vec![access.clone()],
