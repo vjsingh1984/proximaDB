@@ -203,6 +203,36 @@ were 1,516 us exact versus 531 us ANN. This is a wiring/correctness validation,
 not representative performance evidence; the existing `N=100,000` cohort and
 future remote/cold and warm cohorts remain the decision-grade measurements.
 
+=== Decision-grade local/bypass replication (2026-08-23)
+
+The regime-aware harness was then run three times from fresh test processes at
+`N=100,000`, `dim=128`, `top_k=10`, with 30 paired queries per run. Because the
+subset has no matching provided ground-truth file, every query's oracle was
+brute-forced over the same 100,000 raw SIFT vectors. All 90 exact arms matched
+the oracle top-10 set; all three ANN runs measured recall@10 = 0.9867 and
+admitted all 30 pairs into the same
+`vector/engine=sst/dim=128/k=10/filter=no/storage=local/cache=bypass` cohort.
+
+[cols="1,2,2", options="header"]
+|===
+| Measure | Exact raw-f32 scan | PAX ANN cascade
+| Latency p50 range across three runs | 179,833--199,654 us | 14,342--15,186 us
+| Latency p95 range across three runs | 189,525--251,811 us | 15,701--20,053 us
+| Physical GETs per query | 5.00 whole reads | 45.43 ranged reads
+| Bytes per query | 77,192,428 | 58,901,320
+| Attributed compute per query range | 177.73--210.70 ms | 13.47--15.83 ms
+|===
+
+This replicated local result makes ANN's compute advantage durable rather than
+a three-query timing anecdote, but it also sharpens why automatic selection is
+still closed. ANN saves about 24% of bytes while issuing about 9.1x as many
+physical requests; a local bypass cohort cannot price remote request latency or
+prove a route-time cache state. The older three-query and new 30-query I/O
+counts also differ materially (28.33 versus 45.43 ANN GETs/query), so neither
+sample may be generalized across query distributions. A paired remote/cold
+cohort and an independently observable starting-cache regime remain admission
+requirements.
+
 This slice still does not authorize automatic exact/ANN selection. Cache outcome
 is completed-execution evidence, not a route-time promise. A live decision needs
 an independently observable starting regime or an admission policy whose

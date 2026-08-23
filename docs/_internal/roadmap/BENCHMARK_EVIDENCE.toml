@@ -21,7 +21,7 @@
 # DO NOT promote an entry to `measured` without real provenance. Numbers in
 # README/BENCHMARKS are claims, not evidence, until an artifact backs them.
 
-as_of_date = "2026-08-22"
+as_of_date = "2026-08-23"
 source_of_truth = "benches/ + checked-in dated artifacts"
 header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_2026_06_16.adoc): object_economy_e2e promoted to measured; the other e2e claims' benches measure COMPONENT kernels (fusion-merge µs, recall computation, quantization speed) or small-scale per-engine search, NOT the claimed end-to-end metric/scale — they stay unverified with corrected notes; real e2e benches are the follow-up"
 
@@ -1048,3 +1048,19 @@ hardware = "Local macOS arm64, Azurite (direct :10010 + 50ms proxy :10000), rele
 date = "2026-07-26"
 version = "develop (post #1216/#1218/#1221/#1223/#1224)"
 notes = "Compaction did NOT fire (8 L0, 0 L1+) => full-scan, no IVF pruning. recall=0.98 is full-scan RaBitQ (recall-exact; compaction cuts GETs+vectors-ranked, not recall). The earlier 0.23 recall was a flush-blocked/memtable artifact. S2 speedup bounded by file_count/degree (8/4~2x); more files => more S2 headroom. record_count=0 persists (Table 'default.1' — #1224 incomplete: resolve_collection_id_and_name config=None fallback returns the id)."
+
+[[claims]]
+id = "vector_exact_ann_local_bypass_sift100k_2026_08_23"
+claim = "Three fresh-process SIFT-100k runs (30 paired queries/run) in one known local/cache-bypass SST regime held exact top-10 oracle equality and ANN recall@10 0.9867. Exact p50 was 179.833-199.654 ms with 5.00 GETs and 77,192,428 bytes/query; ANN p50 was 14.342-15.186 ms with 45.43 ranged GETs and 58,901,320 bytes/query. This supports the local ANN compute advantage but does not admit automatic routing without paired remote/cold evidence and an observable starting-cache regime."
+metric = "paired exact/ANN recall + p50/p95 latency + physical GETs + bytes + attributed compute, partitioned by execution regime"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-XMODAL-4-unified-vector-sql-routing-pgwire-udtf-and-operator.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_SIFT_DATASET_DIR=<sift-dir> PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=30 PROXIMADB_SIFT_RECALL_FLOOR=0.85 cargo test --release --features io-trace --test sift_pax_recall_ratchet_test sift_pax_cascade_recall_at_10_ratchet -- --nocapture  # repeat in three fresh processes"
+artifact = "docs/10-quality/td/TD-XMODAL-4-unified-vector-sql-routing-pgwire-udtf-and-operator.adoc"
+hardware = "Local macOS 26.2 arm64 Apple Silicon, serialized release-profile runs"
+date = "2026-08-23"
+version = "develop e9420fcc4d6fc2b349f29c5b8f27145c8aad08b5"
+notes = "All three runs used brute-force subset ground truth for the same 30 queries and admitted 30/30 pairs to vector/engine=sst/dim=128/k=10/filter=no/storage=local/cache=bypass. p95 ranges: exact 189.525-251.811 ms, ANN 15.701-20.053 ms; compute/query ranges: exact 177.73-210.70 ms, ANN 13.47-15.83 ms. Exact/ANN I/O counts and bytes were identical across replicas. Test executable SHA-256 30ba11e197e0f4ad6469483835e957815559e85af18d3ab8cb4bfc4308d35519; base/query SHA-256 d5293a00e8ced7fcbd4d6ed505c99ea28c1e2628d9526c8ea1739cdc5f79d997 / 4e686785082f56916a6422b120ad4c54b4110701195c17fa582391156bcb32cc. The installed server binary and editable Python SDK were independently verified before measurement even though this in-process Rust gate does not invoke either surface."
