@@ -1,0 +1,101 @@
+= TD-CI-1: Benches/Examples CI Gap (2026-08-23)
+
+== Problem Statement
+
+ProximaDB's CI does **not** compile the root crate's 50 bench files and 31 example files on every PR. These targets can rot without detection until develop→qa promotion.
+
+== Evidence
+
+=== Current CI Coverage
+
+* **`rust-compile-benches` job** — runs `cargo check --workspace --benches` on `medium_tier` (develop→qa promotions **only**, not every PR)
+* **No examples coverage** — examples are never compiled in CI
+* **`--all-targets` OOM warning documented** — ci.yml comment states that `--all-targets` OOMs runners with benches/examples, citing evidence from a heavier clippy pass
+
+=== Inventory
+
+* **`benches/`** — 50 Rust files (criterion benchmarks)
+* **`examples/`** — 31 Rust files (example programs)
+
+```bash
+$ find benches -name "*.rs" | wc -l
+50
+$ find examples -name "*.rs" | wc -l
+31
+```
+
+=== CI Behavior
+
+```yaml
+# From .github/workflows/ci.yml
+rust-compile-benches:
+  if: needs.changes.outputs.compile == 'true' && needs.changes.outputs.medium_tier == 'true'
+  steps:
+    - name: cargo check --workspace --benches
+      run: cargo check --workspace --benches
+```
+
+* **Gated on `medium_tier`** — only runs on develop→qa, not on feat→develop PRs
+* **Examples unchecked** — no step runs `cargo check --workspace --examples`
+
+== Impact
+
+* **Silent rot** — benches or examples can break without failing CI
+* **Delayed discovery** — breakage surfaces only at develop→qa promotion (late cycle)
+* **Developer friction** — developers must manually run `cargo check --benches --examples` before PR (easy to forget)
+
+== Proposed Solution (TBD — measurement required)
+
+=== Option A: Lightweight PR-time job
+
+Add a PR-time CI job that compiles benches+examples with **constrained parallelism** to avoid OOM:
+
+```yaml
+rust-compile-benches-examples:
+  if: needs.changes.outputs.compile == 'true' && needs.changes.outputs.test_tier == 'true'
+  env:
+    CARGO_BUILD_JOBS: 1  # Constrain to avoid OOM
+  steps:
+    - name: cargo check --workspace --benches --examples
+      run: cargo check --workspace --benches --examples
+```
+
+**Pros:** Catches rot early (on every PR)
+**Cons:** Adds PR-time latency; requires measurement to confirm it fits in runner memory
+
+=== Option B: Accept medium-tier-only coverage
+
+Document that benches/examples are validated only at develop→qa, not on every PR.
+
+**Pros:** No CI cost
+**Cons:** Breakage discovered late; developers must remember to run manually
+
+=== Option C: Split benches/examples into separate jobs
+
+Run benches and examples in separate CI jobs to spread memory/cost.
+
+**Pros:** Isolated failures; better parallelism
+**Cons:** More CI infrastructure
+
+== Exit Criteria
+
+1. **Measure peak memory** for `cargo check --workspace --benches --examples` with `CARGO_BUILD_JOBS=1` on a standard GitHub Actions runner
+2. **Decide** between Option A/B/C based on measurement
+3. **If Option A:** Add PR-time job and verify it doesn't OOM
+4. **If Option B:** Document policy and add pre-push reminder
+5. **If Option C:** Implement split jobs
+
+== Status
+
+**OPEN** — awaiting memory measurement on GitHub Actions runner
+
+== Next Steps
+
+1. Measure peak RSS for `cargo check --workspace --benches --examples` with `CARGO_BUILD_JOBS=1` on `ubuntu-latest`
+2. Compare against GitHub Actions runner memory limit (7 GB for standard, ~28 GB for larger runners if available)
+3. File PR with chosen solution
+
+== Related
+
+* CLAUDE.md mandate #7: "PR Sizing for CI Efficiency" — CI runners are a shared resource
+* .github/workflows/ci.yml — existing `rust-compile-benches` job (medium-tier only)
