@@ -925,3 +925,31 @@ def test_paired_bootstrap_rejects_different_query_sets(tmp_path: Path):
             bootstrap_samples=20,
             seed=1,
         )
+
+
+def test_paired_bootstrap_compares_explicit_candidate_pool_depths(tmp_path: Path):
+    comparison = _load_script("compare_retrieval_runs")
+    baseline = tmp_path / "baseline.jsonl"
+    candidate = tmp_path / "candidate.jsonl"
+    baseline.write_text(
+        json.dumps({"query_id": "q1", "metrics": {"100": {"recall": 0.3}}}) + "\n",
+        encoding="utf-8",
+    )
+    candidate.write_text(
+        json.dumps({"query_id": "q1", "metrics": {"200": {"recall": 0.4}}}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = comparison.compare_runs(
+        baseline,
+        candidate,
+        baseline_k=100,
+        candidate_k=200,
+        metric="recall",
+        bootstrap_samples=20,
+        seed=1,
+    )
+
+    assert result["baseline_k"] == 100
+    assert result["candidate_k"] == 200
+    assert result["mean_delta"] == pytest.approx(0.1)

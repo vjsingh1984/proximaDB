@@ -387,21 +387,29 @@ def _resolve_device(requested: str) -> str:
 
 
 def score_cache(args: argparse.Namespace) -> dict[str, Any]:
-    if args.max_rerank <= 0 or args.batch_size <= 0:
+    rerank_all = bool(getattr(args, "rerank_all", False))
+    max_rerank = None if rerank_all else args.max_rerank
+    if (max_rerank is not None and max_rerank <= 0) or args.batch_size <= 0:
         raise ValueError("max-rerank and batch-size must be positive")
     documents = _load_documents(args.documents)
     queries = _load_queries(args.queries)
     run = _load_run(args.run)
     if set(run) != set(queries):
         raise ValueError("baseline run and query IDs differ")
-    if any(len(candidates) < args.max_rerank for candidates in run.values()):
+    if max_rerank is not None and any(
+        len(candidates) < max_rerank for candidates in run.values()
+    ):
         raise ValueError("baseline run has fewer candidates than max-rerank")
 
     producer_sha256 = _sha256(Path(__file__).resolve())
     contract = {
         "producer_sha256": producer_sha256,
         "model": {"id": args.model, "revision": args.revision},
-        "max_rerank": args.max_rerank,
+        "rerank_policy": (
+            {"mode": "all_candidates"}
+            if max_rerank is None
+            else {"mode": "prefix", "count": max_rerank}
+        ),
         "max_length": args.max_length,
         "overlap_tokens": args.overlap_tokens,
         "documents_sha256": _sha256(args.documents),
@@ -443,7 +451,9 @@ def score_cache(args: argparse.Namespace) -> dict[str, Any]:
             scorer,
             query_id=query_id,
             query=queries[query_id],
-            candidates=run[query_id][: args.max_rerank],
+            candidates=(
+                run[query_id] if max_rerank is None else run[query_id][:max_rerank]
+            ),
             documents=documents,
             max_length=args.max_length,
             overlap_tokens=args.overlap_tokens,
@@ -484,6 +494,10 @@ def score_cache(args: argparse.Namespace) -> dict[str, Any]:
             "run_sha256": _sha256(args.run),
         },
         "query_count": len(records),
+        "candidate_count_per_query": {
+            "min": min(record["candidate_count"] for record in records),
+            "max": max(record["candidate_count"] for record in records),
+        },
         "candidate_count": sum(record["candidate_count"] for record in records),
         "window_count": sum(record["window_count"] for record in records),
         "input_token_count": sum(
@@ -507,24 +521,33 @@ def materialize_run(
     baseline: dict[str, list[dict[str, Any]]],
     cached: dict[str, dict[str, Any]],
     *,
-    rerank_count: int,
+    rerank_count: int | None,
 ) -> list[dict[str, Any]]:
-    if rerank_count <= 0:
+    if rerank_count is not None and rerank_count <= 0:
         raise ValueError("rerank_count must be positive")
     output: list[dict[str, Any]] = []
     for query_id, candidates in baseline.items():
         record = cached.get(query_id)
         if record is None:
             raise ValueError(f"missing cached scores for query {query_id!r}")
+        effective_rerank_count = (
+            len(candidates) if rerank_count is None else rerank_count
+        )
         score_rows = record.get("candidates")
-        if not isinstance(score_rows, list) or len(score_rows) < rerank_count:
+        if not isinstance(score_rows, list) or len(score_rows) < effective_rerank_count:
             raise ValueError(f"query {query_id!r} has insufficient cached candidates")
-        prefix_ids = [candidate["source_id"] for candidate in candidates[:rerank_count]]
-        cached_ids = [candidate["source_id"] for candidate in score_rows[:rerank_count]]
+        if rerank_count is None and len(score_rows) != len(candidates):
+            raise ValueError(f"query {query_id!r} cache does not cover every candidate")
+        prefix_ids = [
+            candidate["source_id"] for candidate in candidates[:effective_rerank_count]
+        ]
+        cached_ids = [
+            candidate["source_id"] for candidate in score_rows[:effective_rerank_count]
+        ]
         if prefix_ids != cached_ids:
             raise ValueError(f"query {query_id!r} cache does not match baseline prefix")
         reranked = sorted(
-            score_rows[:rerank_count],
+            score_rows[:effective_rerank_count],
             key=lambda row: (
                 -_finite(row.get("rerank_score"), "rerank_score"),
                 row["source_id"],
@@ -539,7 +562,7 @@ def materialize_run(
             }
             for row in reranked
         ]
-        merged.extend(candidates[rerank_count:])
+        merged.extend(candidates[effective_rerank_count:])
         if {row["source_id"] for row in merged} != {
             row["source_id"] for row in candidates
         }:
@@ -571,14 +594,19 @@ def materialize_cache(args: argparse.Namespace) -> dict[str, Any]:
         if not path.exists():
             raise ValueError(f"missing cache file for query {query_id!r}")
         cached[query_id] = json.loads(path.read_text(encoding="utf-8"))
-    records = materialize_run(baseline, cached, rerank_count=args.rerank_count)
+    rerank_count = None if getattr(args, "rerank_all", False) else args.rerank_count
+    records = materialize_run(baseline, cached, rerank_count=rerank_count)
     _atomic_jsonl(records, args.output)
     manifest = {
         "schema_version": 1,
         "producer_sha256": _sha256(Path(__file__).resolve()),
-        "policy": "rerank_prefix_then_append_untouched_tail",
+        "policy": (
+            "rerank_all_candidates"
+            if rerank_count is None
+            else "rerank_prefix_then_append_untouched_tail"
+        ),
         "score_field": "ordinal_rank_score; raw model value is rerank_score",
-        "rerank_count": args.rerank_count,
+        "rerank_count": "all" if rerank_count is None else rerank_count,
         "query_count": len(baseline),
         "row_count": len(records),
         "candidate_membership_preserved": True,
@@ -609,6 +637,11 @@ def parse_args() -> argparse.Namespace:
     score.add_argument("--model", required=True)
     score.add_argument("--revision", required=True)
     score.add_argument("--max-rerank", type=int, default=100)
+    score.add_argument(
+        "--rerank-all",
+        action="store_true",
+        help="score every candidate, including variable-depth query pools",
+    )
     score.add_argument("--max-length", type=int, default=512)
     score.add_argument("--overlap-tokens", type=int, default=32)
     score.add_argument("--batch-size", type=int, default=32)
@@ -620,7 +653,13 @@ def parse_args() -> argparse.Namespace:
     )
     materialize.add_argument("--run", type=Path, required=True)
     materialize.add_argument("--cache", type=Path, required=True)
-    materialize.add_argument("--rerank-count", type=int, required=True)
+    materialize_selection = materialize.add_mutually_exclusive_group(required=True)
+    materialize_selection.add_argument("--rerank-count", type=int)
+    materialize_selection.add_argument(
+        "--rerank-all",
+        action="store_true",
+        help="rerank every cached candidate for each query",
+    )
     materialize.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 

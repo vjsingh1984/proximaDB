@@ -103,12 +103,17 @@ Generator answer quality is likewise outside a ranking-only evaluation. Maximum-
 reduction also gives longer documents more scoring opportunities; its length bias needs a labeled
 span corpus before choosing among max, top-n aggregation or learned pooling.
 
+The first follow-up is closed in `HYBRID_CANDIDATE_RECALL_GATE_2026_08_23.adoc`: the complete BM25
+and dense union materially raises the candidate-pool ceiling, but global MiniLM selection
+significantly regresses final Recall@100 and NDCG@100 versus dense. Held-out therefore remained
+sealed.
+
 The next evidence order is:
 
-. raise candidate Recall@100 with a fixed BM25 + dense source union, then rerank that complete,
-  source-aware set;
+. find a stronger open selector or calibrated cascade that beats the dense control on development
+  quality under explicit candidate/window/token budgets, then evaluate held-out once;
 . add a span-labeled citation and downstream answer-quality suite;
-. export the pinned model to ONNX and prove PyTorch/ONNX rank parity, zero-truncation window
+. export only the promoted selector to ONNX and prove framework rank parity, zero-truncation window
   reduction, accelerator-provider selection and quiet-machine latency/cost;
 . only then register a deployable reranker capability in the model catalog. Its contract must carry
   task type, tokenizer/model revision, maximum pair length, title/window/reducer policy, tensor
