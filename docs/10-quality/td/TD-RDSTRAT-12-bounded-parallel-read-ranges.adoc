@@ -87,9 +87,7 @@ Add `PROXIMADB_READ_RANGES_INFLIGHT` to `docs/12-design/ENV_GATE_REGISTRY.adoc` 
 * Semantic: "Prefetch cap for pure I/O-bound ranged reads in `FileSystem::read_ranges`. Higher than the decode-bound `PROXIMADB_FS_READ_RANGES_PARALLEL` cap."
 * Default: sensible value (e.g., 32, or `2 × PARALLEL`)
 * Tier: opt-in (like `PARALLEL`, default OFF until measured)
-|===
-
-Implementation notes
+== Implementation notes
 
 * The core `read_ranges_buffered` contract is correct and unit-tested — do NOT change its behavior
 * `INFLIGHT` is additive: when unset, behavior is unchanged (current `PARALLEL` cap still applies)
