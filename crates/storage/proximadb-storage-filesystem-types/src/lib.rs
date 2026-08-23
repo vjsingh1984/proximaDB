@@ -569,6 +569,7 @@ pub trait FilesystemFile: Send + Sync + std::fmt::Debug {
 /// result order; `try_collect` short-circuits on the first error (identical to a
 /// sequential `await?` loop). The futures share a `&self` borrow (read takes
 /// `&self`) — polled in-place on the current task, no spawn, no Send/'static.
+#[allow(dead_code)]
 async fn read_ranges_buffered<F, Fut>(
     ranges: Vec<std::ops::Range<u64>>,
     parallel: usize,
