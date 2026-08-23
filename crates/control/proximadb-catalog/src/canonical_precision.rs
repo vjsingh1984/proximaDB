@@ -160,10 +160,7 @@ mod tests {
                 .ok_or_else(|| anyhow::anyhow!("Table not found: {}", identifier))
         }
 
-        async fn get_namespace(
-            &self,
-            namespace: &[String],
-        ) -> anyhow::Result<CatalogNamespace> {
+        async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<CatalogNamespace> {
             let namespaces = self.namespaces.read().await;
             namespaces
                 .get(namespace)
@@ -179,10 +176,7 @@ mod tests {
             Ok(namespaces.values().cloned().collect())
         }
 
-        async fn list_tables(
-            &self,
-            namespace: &[String],
-        ) -> anyhow::Result<Vec<TableIdentifier>> {
+        async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>> {
             let tables = self.tables.read().await;
             Ok(tables
                 .keys()

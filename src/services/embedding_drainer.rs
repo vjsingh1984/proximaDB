@@ -1158,9 +1158,7 @@ mod tests {
     async fn drainer_stamps_target_precision_from_resolver() {
         use proximadb_catalog::cache::CatalogCache;
         use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-        use proximadb_catalog::{
-            Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier,
-        };
+        use proximadb_catalog::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
         use std::collections::HashMap;
         use tokio::sync::RwLock;
 

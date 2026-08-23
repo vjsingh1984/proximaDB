@@ -903,9 +903,7 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
 async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::{
-        Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier,
-    };
+    use proximadb_catalog::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -978,10 +976,7 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
                 .ok_or_else(|| anyhow::anyhow!("Table not found: {}", identifier))
         }
 
-        async fn get_namespace(
-            &self,
-            namespace: &[String],
-        ) -> anyhow::Result<CatalogNamespace> {
+        async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<CatalogNamespace> {
             let namespaces = self.namespaces.read().await;
             namespaces
                 .get(namespace)
@@ -997,10 +992,7 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             Ok(namespaces.values().cloned().collect())
         }
 
-        async fn list_tables(
-            &self,
-            namespace: &[String],
-        ) -> anyhow::Result<Vec<TableIdentifier>> {
+        async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>> {
             let tables = self.tables.read().await;
             Ok(tables
                 .keys()
@@ -1090,9 +1082,7 @@ async fn td_global_precision_resolver_stamps_hint_without_per_instance_wiring() 
     use crate::storage::engines::sst::compaction::set_global_precision_resolver;
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::{
-        Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier,
-    };
+    use proximadb_catalog::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;
