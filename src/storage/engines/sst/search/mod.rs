@@ -613,6 +613,7 @@ impl SstEngine {
             if result.is_ok() {
                 Self::record_completed_vector_access(
                     ctx,
+                    &storage_url,
                     query_vector.len(),
                     k,
                     filter_expression.is_some(),
@@ -678,6 +679,7 @@ impl SstEngine {
         {
             Self::record_completed_vector_access(
                 ctx,
+                &storage_url,
                 query_vector.len(),
                 k,
                 filter_expression.is_some(),
@@ -1677,13 +1679,16 @@ impl SstEngine {
     /// never warm an ANN cost cell without an engagement proof.
     fn record_completed_vector_access(
         ctx: &StorageQueryContext,
+        storage_url: &str,
         dimensions: usize,
         top_k: usize,
         has_filter: bool,
         actual_path: crate::observability::io_trace::VectorAccessPath,
     ) {
         use crate::core::search::SearchMode;
-        use crate::observability::io_trace::{VectorAccessTrace, VectorSearchIntent};
+        use crate::observability::io_trace::{
+            VectorAccessTrace, VectorSearchIntent, VectorStorageScope,
+        };
 
         let requested_mode = match &ctx.search_params.search_mode {
             SearchMode::Exact => VectorSearchIntent::Exact,
@@ -1697,6 +1702,7 @@ impl SstEngine {
             has_filter,
             requested_mode,
             actual_path,
+            storage_scope: VectorStorageScope::from_storage_url(storage_url),
         });
     }
 
@@ -2108,6 +2114,7 @@ impl SstEngine {
             if result.is_ok() {
                 Self::record_completed_vector_access(
                     ctx,
+                    &storage_url,
                     query_vector.len(),
                     k,
                     filter_expression.is_some(),
@@ -2155,6 +2162,7 @@ impl SstEngine {
         {
             Self::record_completed_vector_access(
                 ctx,
+                &storage_url,
                 query_vector.len(),
                 k,
                 filter_expression.is_some(),

@@ -44,8 +44,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 use proximadb_cache::{
-    CacheBudget, CacheKey, CacheKind, CacheScope, L2CacheStats, L2Class, L2ValueStore,
-    PersistentArcBytesL2, PersistentByteStore, TenantCache,
+    CacheBudget, CacheKey, CacheKind, CacheReadOutcome, CacheScope, L2CacheStats, L2Class,
+    L2ValueStore, PersistentArcBytesL2, PersistentByteStore, TenantCache,
 };
 use proximadb_storage_filesystem_types::{FilesystemError, FsResult};
 
@@ -320,14 +320,22 @@ impl SurvivorRangeCache {
         let Ok(slice_len) = usize::try_from(len) else {
             return self.get_or_fetch(kind, path, off, len, loader).await;
         };
-        if let Some(exact) = self.inner.get(&exact_key).await {
+        if let Some((exact, outcome)) = self.inner.get_with_outcome(&exact_key).await {
+            crate::observability::io_trace::record_survivor_l1s(
+                u64::from(outcome == CacheReadOutcome::MemoryHit),
+                u64::from(outcome != CacheReadOutcome::MemoryHit),
+            );
             self.sync_prometheus();
             return Ok(exact);
         }
         let end = start.saturating_add(slice_len);
-        if let Some(parent) = self.inner.get(&parent_key).await
+        if let Some((parent, outcome)) = self.inner.get_with_outcome(&parent_key).await
             && let Some(slice) = parent.get(start..end)
         {
+            crate::observability::io_trace::record_survivor_l1s(
+                u64::from(outcome == CacheReadOutcome::MemoryHit),
+                u64::from(outcome != CacheReadOutcome::MemoryHit),
+            );
             // A complete write-time seed already occupies the useful cache
             // slot. Do not admit every query-dependent slice as another exact
             // entry: doing so duplicates the region, evicts its parent, and
@@ -347,6 +355,7 @@ impl SurvivorRangeCache {
                 self.inner
                     .insert_memory_only(exact_key, weight, bytes.clone())
                     .await;
+                crate::observability::io_trace::record_survivor_l1s(0, 1);
                 self.sync_prometheus();
                 return Ok(bytes);
             }
@@ -360,8 +369,9 @@ impl SurvivorRangeCache {
                 Ok::<Arc<[u8]>, FilesystemError>(Arc::from(loader().await?))
             })
             .await;
+        crate::observability::io_trace::record_survivor_l1s(0, 1);
         self.sync_prometheus();
-        result
+        result.map(|(value, _)| value)
     }
 
     pub fn l2_stats(&self) -> L2CacheStats {
@@ -475,8 +485,14 @@ impl SurvivorRangeCache {
                 Ok::<Arc<[u8]>, FilesystemError>(Arc::from(bytes))
             })
             .await;
+        if let Ok((_, outcome)) = &result {
+            crate::observability::io_trace::record_survivor_l1s(
+                u64::from(*outcome == CacheReadOutcome::MemoryHit),
+                u64::from(*outcome != CacheReadOutcome::MemoryHit),
+            );
+        }
         self.sync_prometheus();
-        result
+        result.map(|(value, _)| value)
     }
 
     /// TD-CACHE-1 S2: the top-`k` hot ranges per tenant by hit count — the
@@ -834,6 +850,38 @@ mod tests {
             snap.l2_hits,
             snap.l2_misses
         );
+        assert_eq!(
+            (snap.survivor_l1_hits, snap.survivor_l1_misses),
+            (0, 1),
+            "the exact-key and parent-key probes are one logical DRAM miss"
+        );
+    }
+
+    /// A survivor lookup records one logical L1 outcome per requested range.
+    /// The first request misses and loads; the second request hits DRAM.
+    #[cfg(feature = "io-trace")]
+    #[tokio::test]
+    async fn dram_probe_outcomes_reach_the_ambient_io_trace() {
+        let cache = SurvivorRangeCache::new(1 << 20);
+        let snap =
+            crate::observability::io_trace::instrument(Some("t".to_string()), "test", async move {
+                cache
+                    .get_or_fetch(CacheKind::QuantizedCodes, "seg.pax", 8, 4, || async {
+                        Ok(vec![1, 2, 3, 4])
+                    })
+                    .await
+                    .expect("cold load");
+                cache
+                    .get_or_fetch(CacheKind::QuantizedCodes, "seg.pax", 8, 4, || async {
+                        panic!("warm lookup must not call loader")
+                    })
+                    .await
+                    .expect("warm hit");
+                crate::observability::io_trace::snapshot().expect("trace in scope")
+            })
+            .await;
+
+        assert_eq!((snap.survivor_l1_hits, snap.survivor_l1_misses), (1, 1));
     }
 
     /// TD-CACHE-1 S2: warm_set ranks by hit count, caps at top_k, and

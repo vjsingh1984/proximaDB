@@ -223,6 +223,15 @@ pub struct L2CacheStats {
     pub resident_bytes: u64,
 }
 
+/// Tier that satisfied a cache read. `Loaded` means no cache tier served the
+/// request and the caller-provided authoritative loader ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheReadOutcome {
+    MemoryHit,
+    PersistentHit,
+    Loaded,
+}
+
 /// A cached value carrying its byte weight (so moka's weigher budgets by bytes,
 /// not entry count).
 #[derive(Debug, Clone)]
@@ -780,23 +789,21 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         u.saturating_add(weight) <= fair
     }
 
-    /// Look up a value, recording a per-tenant hit or miss. Pinned entries
-    /// (the tenant's floor working set) are checked before the shared pool.
-    pub async fn get(&self, key: &CacheKey) -> Option<V> {
+    async fn lookup(&self, key: &CacheKey) -> Option<(V, CacheReadOutcome)> {
         if let Some(pinned) = &self.pinned
             && let Some(v) = pinned.get(key)
         {
             self.usage_for(&key.scope)
                 .hits
                 .fetch_add(1, Ordering::Relaxed);
-            return Some(v);
+            return Some((v, CacheReadOutcome::MemoryHit));
         }
         let result = self.inner.get(key).await;
         let u = self.usage_for(&key.scope);
         match result {
             Some(cv) => {
                 u.hits.fetch_add(1, Ordering::Relaxed);
-                Some(cv.value)
+                Some((cv.value, CacheReadOutcome::MemoryHit))
             }
             None => {
                 u.misses.fetch_add(1, Ordering::Relaxed);
@@ -808,7 +815,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                     Ok(Some((value, weight))) => {
                         self.l2_hits.fetch_add(1, Ordering::Relaxed);
                         self.insert_l1(key.clone(), weight, value.clone()).await;
-                        Some(value)
+                        Some((value, CacheReadOutcome::PersistentHit))
                     }
                     Ok(None) | Err(_) => {
                         self.l2_misses.fetch_add(1, Ordering::Relaxed);
@@ -817,6 +824,19 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                 }
             }
         }
+    }
+
+    /// Look up a value, recording a per-tenant hit or miss. Pinned entries
+    /// (the tenant's floor working set) are checked before the shared pool.
+    pub async fn get(&self, key: &CacheKey) -> Option<V> {
+        self.lookup(key).await.map(|(value, _)| value)
+    }
+
+    /// Lookup with the physical cache tier that satisfied it. Engine wrappers
+    /// use this to forward truthful per-query evidence without making the
+    /// foundation cache depend on an observability crate.
+    pub async fn get_with_outcome(&self, key: &CacheKey) -> Option<(V, CacheReadOutcome)> {
+        self.lookup(key).await
     }
 
     /// Get `key`, or run `loader` on miss and cache the result **iff** the
@@ -828,22 +848,22 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         key: CacheKey,
         weight: u32,
         loader: F,
-    ) -> Result<V, E>
+    ) -> Result<(V, CacheReadOutcome), E>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<V, E>>,
     {
-        if let Some(v) = self.get(&key).await {
-            return Ok(v);
+        if let Some(found) = self.lookup(&key).await {
+            return Ok(found);
         }
-        // `get` already recorded the miss.
+        // `lookup` already recorded the miss.
         let value = loader().await?;
 
         if let Some(l2) = &self.l2 {
             let _ = l2.put(&key, weight, value.clone()).await;
         }
         self.insert_l1(key, weight, value.clone()).await;
-        Ok(value)
+        Ok((value, CacheReadOutcome::Loaded))
     }
 
     /// TD-CACHE-3 S2: route an admitted insert into the tenant's pinned floor
@@ -1252,13 +1272,17 @@ mod tests {
             .get_or_load(k.clone(), 16, || async { Ok::<u64, ()>(42) })
             .await
             .unwrap();
-        assert_eq!(v, 42);
+        assert_eq!(v, (42, CacheReadOutcome::Loaded));
         // hit → no reload
         let v2 = c
             .get_or_load(k.clone(), 16, || async { Ok::<u64, ()>(999) })
             .await
             .unwrap();
-        assert_eq!(v2, 42, "second call must hit cache, not reload");
+        assert_eq!(
+            v2,
+            (42, CacheReadOutcome::MemoryHit),
+            "second call must hit cache, not reload"
+        );
         c.sync().await;
         let s = c.tenant_stats();
         let a = s.iter().find(|s| s.tenant == "A").unwrap();

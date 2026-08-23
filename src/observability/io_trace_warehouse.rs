@@ -555,6 +555,10 @@ fn header_schema() -> SchemaRef {
         // them, and readers must resolve the absence to NULL — never fail.
         opt("l2_hits", DataType::Int64),
         opt("l2_misses", DataType::Int64),
+        // In-process DRAM cache outcomes. Also appended/nullable for mixed
+        // reads with warehouse segments written before this evidence existed.
+        opt("survivor_l1_hits", DataType::Int64),
+        opt("survivor_l1_misses", DataType::Int64),
     ]))
 }
 
@@ -623,6 +627,9 @@ fn vector_access_schema() -> SchemaRef {
         req("has_filter", DataType::Boolean),
         req("requested_mode", DataType::Utf8),
         req("actual_path", DataType::Utf8),
+        // Appended/nullable: vector-access satellites written before this
+        // dimension existed do not contain the column.
+        opt("storage_scope", DataType::Utf8),
     ]))
 }
 
@@ -682,6 +689,8 @@ fn build_header_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
     let mut compute_ms_total = Vec::with_capacity(n);
     let mut l2_hits = Vec::with_capacity(n);
     let mut l2_misses = Vec::with_capacity(n);
+    let mut survivor_l1_hits = Vec::with_capacity(n);
+    let mut survivor_l1_misses = Vec::with_capacity(n);
     for e in envs {
         let h = &e.header;
         writer_uuid.push(e.writer_uuid.clone());
@@ -718,6 +727,8 @@ fn build_header_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
         compute_ms_total.push(h.compute_ms.values().sum::<u64>() as i64);
         l2_hits.push(h.l2_hits as i64);
         l2_misses.push(h.l2_misses as i64);
+        survivor_l1_hits.push(h.survivor_l1_hits as i64);
+        survivor_l1_misses.push(h.survivor_l1_misses as i64);
     }
     let cols: Vec<ArrayRef> = vec![
         str_arr(writer_uuid),
@@ -750,6 +761,8 @@ fn build_header_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, Sto
         i64_arr(compute_ms_total),
         i64_arr(l2_hits),
         i64_arr(l2_misses),
+        i64_arr(survivor_l1_hits),
+        i64_arr(survivor_l1_misses),
     ];
     RecordBatch::try_new(header_schema(), cols)
         .map(Some)
@@ -930,6 +943,7 @@ fn build_vector_access_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatc
     let mut has_filter = Vec::new();
     let mut requested_mode = Vec::new();
     let mut actual_path = Vec::new();
+    let mut storage_scope = Vec::new();
     for envelope in envs {
         if let TracePayload::VectorAnn(payload) = &envelope.payload {
             for (index, access) in payload.access_paths.iter().enumerate() {
@@ -943,6 +957,7 @@ fn build_vector_access_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatc
                 has_filter.push(access.has_filter);
                 requested_mode.push(access.requested_mode.as_str().to_string());
                 actual_path.push(access.actual_path.as_str().to_string());
+                storage_scope.push(access.storage_scope.as_str().to_string());
             }
         }
     }
@@ -960,6 +975,7 @@ fn build_vector_access_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatc
         Arc::new(BooleanArray::from(has_filter)),
         str_arr(requested_mode),
         str_arr(actual_path),
+        str_arr(storage_scope),
     ];
     RecordBatch::try_new(vector_access_schema(), cols)
         .map(Some)
@@ -1046,15 +1062,32 @@ mod tests {
     #[test]
     fn header_batch_carries_l2_probe_columns() {
         let mut e = env("w", 1, TracePayload::Generic);
+        e.header.survivor_l1_hits = 11;
+        e.header.survivor_l1_misses = 4;
         e.header.l2_hits = 9;
         e.header.l2_misses = 3;
         let batch = build_header_batch(&[e]).unwrap().unwrap();
         let schema = batch.schema();
+        let (i1h, i1m) = (
+            schema.index_of("survivor_l1_hits").unwrap(),
+            schema.index_of("survivor_l1_misses").unwrap(),
+        );
         let (ih, im) = (
             schema.index_of("l2_hits").unwrap(),
             schema.index_of("l2_misses").unwrap(),
         );
+        assert!(schema.field(i1h).is_nullable() && schema.field(i1m).is_nullable());
         assert!(schema.field(ih).is_nullable() && schema.field(im).is_nullable());
+        let l1_hits = batch
+            .column(i1h)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let l1_misses = batch
+            .column(i1m)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
         let hits = batch
             .column(ih)
             .as_any()
@@ -1065,7 +1098,39 @@ mod tests {
             .as_any()
             .downcast_ref::<Int64Array>()
             .unwrap();
+        assert_eq!((l1_hits.value(0), l1_misses.value(0)), (11, 4));
         assert_eq!((hits.value(0), misses.value(0)), (9, 3));
+    }
+
+    #[test]
+    fn vector_access_batch_carries_storage_scope() {
+        use proximadb_observability_engine::io_trace::VectorStorageScope;
+
+        let e = env(
+            "w",
+            1,
+            TracePayload::VectorAnn(VectorAnnPayload {
+                access_paths: vec![VectorAccessTrace {
+                    engine: "sst".to_string(),
+                    dimensions: 384,
+                    top_k: 10,
+                    has_filter: false,
+                    requested_mode: VectorSearchIntent::Exact,
+                    actual_path: VectorAccessPath::Exact,
+                    storage_scope: VectorStorageScope::Remote,
+                }],
+                ..Default::default()
+            }),
+        );
+        let batch = build_vector_access_batch(&[e]).unwrap().unwrap();
+        let index = batch.schema().index_of("storage_scope").unwrap();
+        assert!(batch.schema().field(index).is_nullable());
+        let values = batch
+            .column(index)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(values.value(0), "remote");
     }
 
     fn relational(writer: &str, seq: u64, n_exec: usize) -> TraceEnvelope {
@@ -1162,6 +1227,7 @@ mod tests {
                                 has_filter: false,
                                 requested_mode: VectorSearchIntent::Exact,
                                 actual_path: VectorAccessPath::Exact,
+                                storage_scope: proximadb_observability_engine::io_trace::VectorStorageScope::Local,
                             },
                             VectorAccessTrace {
                                 engine: "sst".to_string(),
@@ -1170,6 +1236,7 @@ mod tests {
                                 has_filter: true,
                                 requested_mode: VectorSearchIntent::Approximate,
                                 actual_path: VectorAccessPath::Ann,
+                                storage_scope: proximadb_observability_engine::io_trace::VectorStorageScope::Remote,
                             },
                         ],
                         centroid_total_blocks: 64,

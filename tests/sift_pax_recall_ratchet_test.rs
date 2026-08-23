@@ -40,10 +40,13 @@
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchMode, SearchParams};
-use proximadb::observability::io_trace::{VectorAccessPath, VectorSearchIntent};
+use proximadb::observability::io_trace::{
+    VectorAccessPath, VectorSearchIntent, VectorStorageScope,
+};
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine, VectorRecord,
 };
+use proximadb::query::route_cost_model::{VectorCacheRegime, vector_access_shape};
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::engines::sst::segment_format::{
     CacheTier, SegmentInvariantsCache, drain_get_trace, rabitq_search_segment_coalesced,
@@ -368,6 +371,11 @@ fn assert_single_vector_access(
     assert_eq!(access.dimensions, DIMENSION as u64);
     assert_eq!(access.top_k, TOP_K as u64);
     assert!(!access.has_filter);
+    assert_eq!(
+        access.storage_scope,
+        VectorStorageScope::Local,
+        "the local SIFT fixture must not train a remote storage cell"
+    );
 }
 
 /// WS8 real-dataset ratchet: PAX RaBitQ→SQ8 cascade recall@10 on SIFT1M.
@@ -424,7 +432,13 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
 
     let temp_dir = TempDir::new().unwrap();
     let collection = collection("sift_pax_ratchet", &temp_dir);
-    let engine = SstEngine::new().await.unwrap();
+    // Admission evidence uses a controlled cache-free cohort. Exact does not
+    // consult the survivor cache, so comparing it with a warmed ANN path would
+    // pool different execution regimes and teach the route model a lie.
+    let engine = SstEngine::new()
+        .await
+        .unwrap()
+        .with_warm_tier_caches(None, None);
 
     // --- Load base (subset or full) ---------------------------------------------------
     eprintln!("loading base vectors ({})", {
@@ -504,6 +518,7 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     let mut ann_bytes = 0u64;
     let mut exact_compute_ms = 0u64;
     let mut ann_compute_ms = 0u64;
+    let mut comparable_regime_pairs: HashMap<String, usize> = HashMap::new();
     for (qi, query) in queries.iter().enumerate() {
         let paired = qi < paired_queries;
         let (ann, exact) = if paired && qi.is_multiple_of(2) {
@@ -550,6 +565,23 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
 
         if let Some(exact) = exact {
             assert_single_vector_access(&exact, VectorSearchIntent::Exact, VectorAccessPath::Exact);
+            let exact_shape =
+                vector_access_shape(&exact.snapshot.vector_accesses[0], &exact.snapshot);
+            let ann_shape = vector_access_shape(&ann.snapshot.vector_accesses[0], &ann.snapshot);
+            let exact_cache = VectorCacheRegime::from_snapshot(&exact.snapshot);
+            let ann_cache = VectorCacheRegime::from_snapshot(&ann.snapshot);
+            let known_scope = exact.snapshot.vector_accesses[0].storage_scope
+                != VectorStorageScope::Unknown
+                && ann.snapshot.vector_accesses[0].storage_scope != VectorStorageScope::Unknown;
+            if exact_shape == ann_shape
+                && exact_cache.is_admissible()
+                && ann_cache.is_admissible()
+                && known_scope
+            {
+                *comparable_regime_pairs.entry(exact_shape).or_default() += 1;
+            } else {
+                eprintln!("  regime mismatch query {qi}: exact={exact_shape}, ANN={ann_shape}");
+            }
             let exact_ids: std::collections::HashSet<String> =
                 exact.ids.iter().take(TOP_K).cloned().collect();
             assert_eq!(
@@ -604,6 +636,16 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         ann_range_gets as f64 / measured as f64,
         ann_bytes as f64 / measured as f64,
         ann_compute_ms as f64 / measured as f64,
+    );
+    let (admitted_regime, admitted_pairs) = comparable_regime_pairs
+        .iter()
+        .max_by_key(|(_, pairs)| **pairs)
+        .map(|(regime, pairs)| (regime.as_str(), *pairs))
+        .unwrap_or(("none", 0));
+    eprintln!("SIFT comparable regime cohort: regime={admitted_regime}, pairs={admitted_pairs}");
+    assert!(
+        admitted_pairs >= MIN_PAIRED_SAMPLES,
+        "exact/ANN evidence must contain at least {MIN_PAIRED_SAMPLES} pairs from the same known storage/cache regime; best cohort={admitted_regime} ({admitted_pairs})"
     );
     assert!(
         recall >= floor,
@@ -757,27 +799,30 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
     let engine = SstEngine::new().await.unwrap()
         .with_directory_cache(Arc::new(
             proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
-        ))
-        .with_segment_invariants_cache(Arc::new(
-            proximadb::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
-                64 * 1024 * 1024,
-            ),
         ));
     // ADR-065 Q3: opt-in ranged survivor/OID cache. Set
     // PROXIMADB_SURVIVOR_CACHE_BUDGET_MB (default unset → uncached baseline) to
     // measure the GET/bytes win on the repeated-query working set.
-    let engine = match std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
+    let survivor_cache = match std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|b| *b > 0)
     {
-        Some(mb) => engine.with_survivor_cache(Arc::new(
+        Some(mb) => Some(Arc::new(
             proximadb::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::new(
                 mb * 1024 * 1024,
             ),
         )),
-        None => engine,
+        None => None,
     };
+    let engine = engine.with_warm_tier_caches(
+        Some(Arc::new(
+            proximadb::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
+                64 * 1024 * 1024,
+            ),
+        )),
+        survivor_cache,
+    );
     let batch: Vec<VectorRecord> = base
         .iter()
         .enumerate()

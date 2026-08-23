@@ -181,6 +181,11 @@ pub struct IoTrace {
     /// Footer/metadata cache outcomes (Dimension 3 — the highest-ROI cache).
     footer_hits: AtomicU64,
     footer_misses: AtomicU64,
+    /// In-process DRAM cache outcomes. These are logical request outcomes,
+    /// recorded once per requested immutable range rather than once per
+    /// implementation-key probe (exact key plus optional parent key).
+    survivor_l1_hits: AtomicU64,
+    survivor_l1_misses: AtomicU64,
     /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
     /// Distinct from the in-memory footer cache: an L2 hit serves bytes that
     /// survived process restart/L1 eviction without a billed ranged GET, so a
@@ -376,6 +381,48 @@ impl VectorAccessPath {
     }
 }
 
+/// Coarse physical locality of the storage that served a vector access.
+///
+/// This intentionally describes only what the read path can prove from its
+/// storage URL. It does not claim an object access tier (`hot`/`cool`/`cold`):
+/// that write-side property is not currently available at vector-read time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorStorageScope {
+    /// A local path or `file://` filesystem.
+    Local,
+    /// A network/object filesystem supported by the canonical filesystem port.
+    Remote,
+    /// The scheme is absent from the current filesystem vocabulary.
+    #[default]
+    Unknown,
+}
+
+impl VectorStorageScope {
+    /// Classify the physical read locality from a canonical storage URL.
+    /// Unknown schemes fail closed instead of being priced as local or remote.
+    pub fn from_storage_url(storage_url: &str) -> Self {
+        let Some((scheme, _)) = storage_url.split_once("://") else {
+            return Self::Local;
+        };
+        match scheme.to_ascii_lowercase().as_str() {
+            "file" => Self::Local,
+            "s3" | "gcs" | "gs" | "az" | "azure" | "adls" | "abfs" | "hdfs" | "http" | "https" => {
+                Self::Remote
+            }
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Remote => "remote",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// One successfully completed physical vector access. Exact numeric geometry
 /// is retained for offline analysis; it is not emitted as a metrics label.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -387,6 +434,10 @@ pub struct VectorAccessTrace {
     pub has_filter: bool,
     pub requested_mode: VectorSearchIntent,
     pub actual_path: VectorAccessPath,
+    /// Read-time locality, derived from the storage URL at the engine boundary.
+    /// Defaulted so traces written before this field remain readable.
+    #[serde(default)]
+    pub storage_scope: VectorStorageScope,
 }
 
 impl IoTrace {
@@ -606,6 +657,12 @@ impl IoTrace {
         self.footer_misses.fetch_add(misses, Ordering::Relaxed);
     }
 
+    /// Record logical in-process DRAM cache outcomes.
+    pub fn record_survivor_l1s(&self, hits: u64, misses: u64) {
+        self.survivor_l1_hits.fetch_add(hits, Ordering::Relaxed);
+        self.survivor_l1_misses.fetch_add(misses, Ordering::Relaxed);
+    }
+
     /// Record a batch of persistent-L2 cache probe outcomes (ADR-085 tier).
     pub fn record_l2s(&self, hits: u64, misses: u64) {
         self.l2_hits.fetch_add(hits, Ordering::Relaxed);
@@ -769,6 +826,8 @@ impl IoTrace {
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
+            survivor_l1_hits: self.survivor_l1_hits.load(Ordering::Relaxed),
+            survivor_l1_misses: self.survivor_l1_misses.load(Ordering::Relaxed),
             l2_hits: self.l2_hits.load(Ordering::Relaxed),
             l2_misses: self.l2_misses.load(Ordering::Relaxed),
             egress_bytes: self.egress_bytes.load(Ordering::Relaxed),
@@ -879,6 +938,12 @@ pub struct IoTraceSnapshot {
     pub bytes_written: u64,
     pub footer_hits: u64,
     pub footer_misses: u64,
+    /// In-process DRAM cache outcomes. `serde(default)` keeps snapshots
+    /// serialized before this additive evidence readable.
+    #[serde(default)]
+    pub survivor_l1_hits: u64,
+    #[serde(default)]
+    pub survivor_l1_misses: u64,
     /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
     /// `serde(default)` keeps snapshots serialized before this field readable.
     #[serde(default)]
@@ -1006,6 +1071,8 @@ impl IoTraceSnapshot {
             && self.bytes_written == 0
             && self.footer_hits == 0
             && self.footer_misses == 0
+            && self.survivor_l1_hits == 0
+            && self.survivor_l1_misses == 0
             && self.l2_hits == 0
             && self.l2_misses == 0
             && self.egress_bytes == 0
@@ -1052,6 +1119,8 @@ impl IoTraceSnapshot {
             footer_hits = self.footer_hits,
             footer_misses = self.footer_misses,
             footer_hit_ratio = self.footer_hit_ratio().unwrap_or(f64::NAN),
+            survivor_l1_hits = self.survivor_l1_hits,
+            survivor_l1_misses = self.survivor_l1_misses,
             l2_hits = self.l2_hits,
             l2_misses = self.l2_misses,
             egress_bytes = self.egress_bytes,
@@ -1181,6 +1250,16 @@ pub fn record_footers(hits: u64, misses: u64) {
 #[cfg(not(feature = "io-trace"))]
 #[inline(always)]
 pub fn record_footers(_hits: u64, _misses: u64) {}
+
+/// Record logical in-process DRAM cache outcomes for the active query.
+/// Compile-time gated with the other performance/geometry trace fields.
+#[cfg(feature = "io-trace")]
+pub fn record_survivor_l1s(hits: u64, misses: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_survivor_l1s(hits, misses));
+}
+#[cfg(not(feature = "io-trace"))]
+#[inline(always)]
+pub fn record_survivor_l1s(_hits: u64, _misses: u64) {}
 
 /// Record a batch of persistent-L2 cache probe outcomes for the active query
 /// (ADR-085 / TD-IOTRACE-4). (TD-160: perf/geometry trace class —
@@ -1795,6 +1874,7 @@ mod tests {
             has_filter: false,
             requested_mode: VectorSearchIntent::Adaptive,
             actual_path: VectorAccessPath::Exact,
+            storage_scope: VectorStorageScope::Unknown,
         }); // outside scope: no-op
 
         let snap = scope(async {
@@ -1805,6 +1885,7 @@ mod tests {
                 has_filter: false,
                 requested_mode: VectorSearchIntent::Adaptive,
                 actual_path: VectorAccessPath::Exact,
+                storage_scope: VectorStorageScope::Local,
             });
             record_vector_access(VectorAccessTrace {
                 engine: "sst".to_string(),
@@ -1813,6 +1894,7 @@ mod tests {
                 has_filter: true,
                 requested_mode: VectorSearchIntent::Approximate,
                 actual_path: VectorAccessPath::Ann,
+                storage_scope: VectorStorageScope::Remote,
             });
             IO_TRACE.try_with(|t| t.snapshot()).unwrap()
         })
@@ -1823,6 +1905,52 @@ mod tests {
         assert_eq!(snap.vector_accesses[1].dimensions, 768);
         assert_eq!(snap.vector_accesses[1].actual_path, VectorAccessPath::Ann);
         assert!(!snap.is_empty(), "an access-only trace is durable evidence");
+    }
+
+    #[test]
+    fn vector_storage_scope_classifies_urls_without_claiming_access_tier() {
+        assert_eq!(
+            VectorStorageScope::from_storage_url("file:///var/lib/proximadb/data"),
+            VectorStorageScope::Local
+        );
+        assert_eq!(
+            VectorStorageScope::from_storage_url("/var/lib/proximadb/data"),
+            VectorStorageScope::Local
+        );
+        for url in [
+            "s3://bucket/data",
+            "gs://bucket/data",
+            "az://container/data",
+            "azure://container/data",
+            "adls://container/data",
+            "abfs://container/data",
+            "hdfs://namenode/data",
+            "https://object-gateway.example/data",
+        ] {
+            assert_eq!(
+                VectorStorageScope::from_storage_url(url),
+                VectorStorageScope::Remote,
+                "{url}"
+            );
+        }
+        assert_eq!(
+            VectorStorageScope::from_storage_url("future-store://bucket/data"),
+            VectorStorageScope::Unknown
+        );
+    }
+
+    #[test]
+    fn legacy_vector_access_defaults_storage_scope_to_unknown() {
+        let legacy = r#"{
+            "engine":"sst",
+            "dimensions":384,
+            "top_k":10,
+            "has_filter":false,
+            "requested_mode":"exact",
+            "actual_path":"exact"
+        }"#;
+        let access: VectorAccessTrace = serde_json::from_str(legacy).expect("legacy access");
+        assert_eq!(access.storage_scope, VectorStorageScope::Unknown);
     }
 
     #[tokio::test]
@@ -1845,6 +1973,7 @@ mod tests {
                 has_filter: false,
                 requested_mode: VectorSearchIntent::Exact,
                 actual_path: VectorAccessPath::Exact,
+                storage_scope: VectorStorageScope::Local,
             });
         })
         .await;
@@ -2069,6 +2198,26 @@ mod tests {
         obj.remove("l2_misses");
         let legacy: IoTraceSnapshot = serde_json::from_value(v).unwrap();
         assert_eq!((legacy.l2_hits, legacy.l2_misses), (0, 0));
+    }
+
+    /// The survivor cache is an in-process L1 above the filesystem. Its
+    /// outcomes must remain distinct from persistent L2 and physical GETs,
+    /// while old snapshots remain readable after the additive fields land.
+    #[test]
+    fn l1_probes_record_snapshot_and_default_from_legacy_json() {
+        let t = IoTrace::new();
+        t.record_survivor_l1s(2, 1);
+        t.record_survivor_l1s(3, 0);
+        let s = t.snapshot();
+        assert_eq!((s.survivor_l1_hits, s.survivor_l1_misses), (5, 1));
+        assert!(!s.is_empty(), "an L1-only trace is not empty");
+
+        let mut v = serde_json::to_value(IoTraceSnapshot::default()).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("survivor_l1_hits");
+        obj.remove("survivor_l1_misses");
+        let legacy: IoTraceSnapshot = serde_json::from_value(v).unwrap();
+        assert_eq!((legacy.survivor_l1_hits, legacy.survivor_l1_misses), (0, 0));
     }
 
     #[tokio::test]
