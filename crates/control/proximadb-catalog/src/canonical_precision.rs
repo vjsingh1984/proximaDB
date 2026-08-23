@@ -85,15 +85,142 @@ impl CanonicalPrecisionResolver {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     use crate::cache::CatalogCache;
-    use crate::oltp::{OltpCatalog, OltpCatalogConfig};
-    use crate::{CatalogTableSchema, TableIdentifier};
+    use crate::{Catalog, CatalogTableSchema, CatalogNamespace, CatalogError, TableIdentifier};
 
-    async fn make_test_catalog(cache: Arc<CatalogCache>) -> Arc<OltpCatalog> {
-        let config = OltpCatalogConfig::sqlite("sqlite::memory:");
-        let cat = OltpCatalog::new("test", config, cache).await.unwrap();
-        Arc::new(cat)
+    /// TD-CAT-7.4: Minimal in-memory test catalog.
+    ///
+    /// Replaces OltpCatalog which is gated behind `oltp-catalog` and unusable
+    /// in both configurations. This catalog stores everything in-memory HashMaps
+    /// and only implements the methods needed for these tests.
+    struct InMemoryTestCatalog {
+        name: String,
+        namespaces: HashMap<Vec<String>, CatalogNamespace>,
+        tables: HashMap<TableIdentifier, CatalogTableSchema>,
+    }
+
+    impl InMemoryTestCatalog {
+        fn new(name: String) -> Self {
+            Self {
+                name,
+                namespaces: HashMap::new(),
+                tables: HashMap::new(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Catalog for InMemoryTestCatalog {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn catalog_type(&self) -> &str {
+            "test-memory"
+        }
+
+        async fn create_namespace(
+            &self,
+            namespace: &[String],
+            properties: HashMap<String, String>,
+        ) -> Result<CatalogNamespace, CatalogError> {
+            let mut ns = CatalogNamespace::new(namespace.to_vec());
+            ns.properties = properties;
+            ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
+            self.namespaces.insert(namespace.to_vec(), ns.clone());
+            Ok(ns)
+        }
+
+        async fn create_table(
+            &self,
+            identifier: &TableIdentifier,
+            schema: CatalogTableSchema,
+        ) -> Result<CatalogTableSchema, CatalogError> {
+            self.tables.insert(identifier.clone(), schema.clone());
+            Ok(schema)
+        }
+
+        async fn get_table(
+            &self,
+            identifier: &TableIdentifier,
+        ) -> Result<CatalogTableSchema, CatalogError> {
+            self.tables
+                .get(identifier)
+                .cloned()
+                .ok_or_else(|| CatalogError::TableNotFound(identifier.to_string()))
+        }
+
+        async fn list_namespaces(&self) -> Result<Vec<CatalogNamespace>, CatalogError> {
+            Ok(self.namespaces.values().cloned().collect())
+        }
+
+        async fn list_tables(
+            &self,
+            namespace: &[String],
+        ) -> Result<Vec<CatalogTableSchema>, CatalogError> {
+            Ok(self
+                .tables
+                .iter()
+                .filter(|(id, _)| id.namespace() == namespace)
+                .map(|(_, schema)| schema.clone())
+                .collect())
+        }
+
+        fn identity_authority(&self) -> Option<&dyn crate::CatalogAuthority> {
+            None
+        }
+
+        // All other Catalog methods are unimplemented for this test double
+        async fn drop_table(&self, _identifier: &TableIdentifier) -> Result<(), CatalogError> {
+            Ok(())
+        }
+
+        async fn get_namespace(
+            &self,
+            namespace: &[String],
+        ) -> Result<CatalogNamespace, CatalogError> {
+            self.namespaces
+                .get(namespace)
+                .cloned()
+                .ok_or_else(|| CatalogError::NamespaceNotFound(namespace.join(".")))
+        }
+
+        async fn alter_table(
+            &self,
+            _identifier: &TableIdentifier,
+            _changes: Vec<crate::TableChange>,
+        ) -> Result<CatalogTableSchema, CatalogError> {
+            Err(CatalogError::UnsupportedOperation(
+                "alter_table not implemented in test catalog".to_string(),
+            ))
+        }
+
+        async fn create_namespace_inner(
+            &self,
+            _namespace: &[String],
+            _properties: HashMap<String, String>,
+            _tenant_id: Option<String>,
+        ) -> Result<CatalogNamespace, CatalogError> {
+            Err(CatalogError::UnsupportedOperation(
+                "create_namespace_inner not implemented in test catalog".to_string(),
+            ))
+        }
+
+        async fn create_table_inner(
+            &self,
+            _identifier: &TableIdentifier,
+            _schema: CatalogTableSchema,
+        ) -> Result<CatalogTableSchema, CatalogError> {
+            Err(CatalogError::UnsupportedOperation(
+                "create_table_inner not implemented in test catalog".to_string(),
+            ))
+        }
+    }
+
+    async fn make_test_catalog(_cache: Arc<CatalogCache>) -> Arc<dyn Catalog> {
+        Arc::new(InMemoryTestCatalog::new("test".to_string()))
     }
 
     fn fp16_schema(name: &str) -> CatalogTableSchema {

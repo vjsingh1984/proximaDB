@@ -1158,8 +1158,7 @@ mod tests {
     async fn drainer_stamps_target_precision_from_resolver() {
         use proximadb_catalog::cache::CatalogCache;
         use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-        use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
-        use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
+        use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier, CatalogNamespace, CatalogError};
 
         ensure_embedding_singleton();
         let tmp = TempDir::new().expect("tempdir");
@@ -1177,17 +1176,149 @@ mod tests {
         };
         embed_service.update_tenant_route("tenant-fp16", route.clone());
 
+        /// TD-CAT-7.4: Minimal in-memory test catalog.
+        ///
+        /// Replaces OltpCatalog which is gated behind `oltp-catalog` and unusable
+        /// in both configurations. This catalog stores everything in-memory HashMaps.
+        struct InMemoryTestCatalog {
+            inner: Arc<Inner>,
+        }
+
+        struct Inner {
+            name: String,
+            namespaces: HashMap<Vec<String>, CatalogNamespace>,
+            tables: HashMap<TableIdentifier, CatalogTableSchema>,
+        }
+
+        impl InMemoryTestCatalog {
+            fn new(name: String) -> Self {
+                Self {
+                    inner: Arc::new(Inner {
+                        name,
+                        namespaces: HashMap::new(),
+                        tables: HashMap::new(),
+                    }),
+                }
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl Catalog for InMemoryTestCatalog {
+            fn name(&self) -> &str {
+                &self.inner.name
+            }
+
+            fn catalog_type(&self) -> &str {
+                "test-memory"
+            }
+
+            async fn create_namespace(
+                &self,
+                namespace: &[String],
+                properties: HashMap<String, String>,
+            ) -> Result<CatalogNamespace, CatalogError> {
+                let mut ns = CatalogNamespace::new(namespace.to_vec());
+                ns.properties = properties;
+                ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
+                let mut inner = Arc::clone(&self.inner);
+                let inner_mut = Arc::make_mut(&mut inner);
+                inner_mut.namespaces.insert(namespace.to_vec(), ns.clone());
+                Ok(ns)
+            }
+
+            async fn create_table(
+                &self,
+                identifier: &TableIdentifier,
+                schema: CatalogTableSchema,
+            ) -> Result<CatalogTableSchema, CatalogError> {
+                let mut inner = Arc::clone(&self.inner);
+                let inner_mut = Arc::make_mut(&mut inner);
+                inner_mut.tables.insert(identifier.clone(), schema.clone());
+                Ok(schema)
+            }
+
+            async fn get_table(
+                &self,
+                identifier: &TableIdentifier,
+            ) -> Result<CatalogTableSchema, CatalogError> {
+                self.inner
+                    .tables
+                    .get(identifier)
+                    .cloned()
+                    .ok_or_else(|| CatalogError::TableNotFound(identifier.to_string()))
+            }
+
+            fn identity_authority(&self) -> Option<&dyn proximadb_catalog::CatalogAuthority> {
+                None
+            }
+
+            async fn drop_table(&self, _identifier: &TableIdentifier) -> Result<(), CatalogError> {
+                Ok(())
+            }
+
+            async fn get_namespace(
+                &self,
+                namespace: &[String],
+            ) -> Result<CatalogNamespace, CatalogError> {
+                self.inner
+                    .namespaces
+                    .get(namespace)
+                    .cloned()
+                    .ok_or_else(|| CatalogError::NamespaceNotFound(namespace.join(".")))
+            }
+
+            async fn list_namespaces(&self) -> Result<Vec<CatalogNamespace>, CatalogError> {
+                Ok(self.inner.namespaces.values().cloned().collect())
+            }
+
+            async fn list_tables(
+                &self,
+                namespace: &[String],
+            ) -> Result<Vec<CatalogTableSchema>, CatalogError> {
+                Ok(self
+                    .inner
+                    .tables
+                    .iter()
+                    .filter(|(id, _)| id.namespace() == namespace)
+                    .map(|(_, schema)| schema.clone())
+                    .collect())
+            }
+
+            async fn alter_table(
+                &self,
+                _identifier: &TableIdentifier,
+                _changes: Vec<proximadb_catalog::TableChange>,
+            ) -> Result<CatalogTableSchema, CatalogError> {
+                Err(CatalogError::UnsupportedOperation(
+                    "alter_table not implemented in test catalog".to_string(),
+                ))
+            }
+
+            async fn create_namespace_inner(
+                &self,
+                _namespace: &[String],
+                _properties: HashMap<String, String>,
+                _tenant_id: Option<String>,
+            ) -> Result<CatalogNamespace, CatalogError> {
+                Err(CatalogError::UnsupportedOperation(
+                    "create_namespace_inner not implemented in test catalog".to_string(),
+                ))
+            }
+
+            async fn create_table_inner(
+                &self,
+                _identifier: &TableIdentifier,
+                _schema: CatalogTableSchema,
+            ) -> Result<CatalogTableSchema, CatalogError> {
+                Err(CatalogError::UnsupportedOperation(
+                    "create_table_inner not implemented in test catalog".to_string(),
+                ))
+            }
+        }
+
         // Stand up an in-memory catalog with one fp16 collection.
         let cache = Arc::new(CatalogCache::new(1000, 60));
-        let cat: Arc<OltpCatalog> = Arc::new(
-            OltpCatalog::new(
-                "drainer-test",
-                OltpCatalogConfig::sqlite("sqlite::memory:"),
-                cache.clone(),
-            )
-            .await
-            .unwrap(),
-        );
+        let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new("drainer-test".to_string()));
         cat.create_namespace(&["default".to_string()], HashMap::new())
             .await
             .unwrap();

@@ -1,0 +1,97 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-CAT-7.4: OltpCatalog retirement — unusable in both configurations
+
+:status: Filed
+:dim: D5
+:pillar: OE
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Filed — retirement decision with evidence
+| Severity | Low — no production impact (feature never worked)
+| Component | `crates/control/proximadb-catalog/src/oltp.rs` (1010 lines)
+| Relates to | [[TD-CAT-7]] (item 4 — collapsing internal impls), [[TD-CAT-8]]
+|===
+
+== The finding
+
+`OltpCatalog` is unusable in BOTH configurations, and has been for some time:
+
+[cols="2,3", options="header"]
+|===
+| Configuration | Behavior
+
+| **Feature OFF** (the default)
+| 15 inline `#[cfg(feature = "oltp-catalog")]` gates strip all sqlx paths.
+The `not(...)` arm at `oltp.rs:298-299` logs `"OLTP catalog: no feature enabled, skipping DDL"`
+and returns `Ok(())`. The catalog is in-memory, persists nothing, and **reports success**.
+A silent no-op that claims to work is worse than an error — it masks the failure.
+
+| **Feature ON** (`--features oltp-catalog-sqlite`)
+| `cargo check -p proximadb-catalog --features oltp-catalog-sqlite` **does not compile**.
+sqlx's compile-time injection lint rejects `sqlx::query(&stmt)` at `oltp.rs:291` and `:317`
+("dynamic SQL strings should be audited for possible injections").
+The fix is to wrap with `AssertSqlSafe()` after auditing, but nobody has done this.
+|===
+
+**How this went unnoticed:** `oltp-catalog*` appears in **no** CI workflow at all.
+The feature matrix covers `enterprise-catalogs` but not `oltp-catalog-*`,
+so the *library* compiles (with the sqlx gates stripping the body) but the *feature*
+has never been tested. A green build is not evidence the feature works.
+
+== Test impact
+
+Three root-crate tests use `OltpCatalog` with `sqlite::memory:`:
+
+* `src/storage/engines/sst/compaction_tests.rs:899` — `check_compaction_needed_stamps_precision_hint_from_resolver`
+* `src/storage/engines/sst/compaction_tests.rs:983` — `check_compaction_needed_stamps_precision_hint_from_create_table`
+* `src/services/embedding_drainer.rs:969` — `canonical_precision.rs` module test
+
+These tests are **not** testing OLTP persistence. They use `OltpCatalog` as *a convenient catalog shape*
+for creating namespaces/tables with precision metadata, then read back via `CanonicalPrecisionResolver`.
+With the feature off (the default), they exercise the **in-memory no-op path** and happen to pass,
+but they're not coverage of a SQL-backed catalog.
+
+Gating `oltp.rs` would break these tests. Moving them to `NativeCatalog` or `SystemCatalog`
+changes what they exercise (file-system vs. WAL vs. in-memory), so that migration needs its own
+verification rather than riding along with a module gate.
+
+== Decision: retire, not rescue
+
+`oltp.rs` is 1010 lines of:
+1. **Feature-off:** A silent no-op that pretends to succeed
+2. **Feature-on:** Doesn't compile (sqlx injection lint)
+3. **Zero CI coverage** — the feature has never been built or tested
+4. **Three tests** that aren't actually testing OLTP persistence
+
+Fixing the sqlx lint and adding CI would make this a *new* feature development effort,
+not debt paydown. The honest fix for "silent no-op + compile failure" is retirement.
+
+**Retirement path:**
+
+. Add `#![cfg(feature = "oltp-catalog")]` to `oltp.rs` — the module is now opt-in.
+. Migrate the three root-crate tests to `NativeCatalog` (file:// tempdir) or `SystemCatalog` (WAL tempdir).
+. The `oltp-catalog*` features stay in `Cargo.toml` for now (removing them is a separate breaking change).
+. If a future PR wants to revive OLTP catalog support, it starts from a working baseline, not this.
+
+== Evidence
+
+Compile failure with feature ON:
+----
+$ cargo check -p proximadb-catalog --features oltp-catalog-sqlite
+error[E0277]: dynamic SQL strings should be audited for possible injections
+  --> crates/control/proximadb-catalog/src/oltp.rs:291:29
+   |
+291 |                 sqlx::query(&stmt).execute(pool).await.map_err(|e| {
+   |
+   = note: this trait is only implemented for `&'static str`, not all `&str`
+----
+
+Feature-off no-op (`oltp.rs:298-299`):
+----
+#[cfg(not(feature = "oltp-catalog"))]
+debug!("OLTP catalog: no feature enabled, skipping DDL");
+(returns `Ok(())`)
+----

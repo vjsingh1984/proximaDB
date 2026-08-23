@@ -525,6 +525,9 @@ impl CatalogManager {
     /// - `postgres://user:pw@host/db` — PostgreSQL, Neon, Supabase, CockroachDB
     /// - `mysql://user:pw@host/db` — MariaDB, MySQL, TiDB
     /// - `sqlite:///path/catalog.db` — SQLite
+    ///
+    /// **TD-CAT-7.4:** This function is gated behind `oltp-catalog` and is **not maintained**.
+    #[cfg(feature = "oltp-catalog")]
     pub async fn create_oltp_catalog(
         &self,
         name: &str,
