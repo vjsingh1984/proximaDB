@@ -116,10 +116,7 @@ pub fn record_read_ranges_metrics(metrics: ReadRangesMetrics) {
 /// Returns `None` if no metrics have been recorded since the last drain (or if
 /// `read_ranges` ran sequentially with `parallel <= 1`).
 pub fn drain_read_ranges_metrics() -> Option<ReadRangesMetrics> {
-    READ_RANGES_METRICS
-        .lock()
-        .ok()
-        .and_then(|mut m| m.take())
+    READ_RANGES_METRICS.lock().ok().and_then(|mut m| m.take())
 }
 
 /// Bounded-concurrent, order-preserving, short-circuit-on-error ranged read
