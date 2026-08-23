@@ -81,7 +81,104 @@ pub struct DirEntry {
     pub metadata: FsFileMetadata,
 }
 
-/// Temporary directory strategy for atomic operations
+/// Metrics from a bounded-concurrent `read_ranges` call (TD-RDSTRAT-12).
+///
+/// `fetch_rounds` is the count of parallel rounds issued by `buffered(N)`.
+/// `max_inflight` is the peak concurrent reads in a single round.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReadRangesMetrics {
+    /// Number of parallel fetch rounds issued.
+    pub fetch_rounds: u64,
+    /// Peak concurrent reads in any round (bounded by the parallelism cap).
+    pub max_inflight: u64,
+}
+
+/// Thread-local storage for the most recent `read_ranges` metrics (TD-RDSTRAT-12).
+///
+/// Similar to the IVF `PROBE_TRACE` pattern: each `read_ranges` call with
+/// `parallel > 1` records its metrics here, and callers with tenant context
+/// (e.g., the SST engine) drain and emit to Prometheus.
+static READ_RANGES_METRICS: std::sync::Mutex<Option<ReadRangesMetrics>> =
+    std::sync::Mutex::new(None);
+
+/// Record metrics from a bounded-concurrent `read_ranges` call (TD-RDSTRAT-12).
+///
+/// Called by `read_ranges_buffered_with_metrics` after the reads complete.
+/// Thread-safe; overwrites any previous value (one metric per query is sufficient).
+pub fn record_read_ranges_metrics(metrics: ReadRangesMetrics) {
+    if let Ok(mut m) = READ_RANGES_METRICS.lock() {
+        *m = Some(metrics);
+    }
+}
+
+/// Drain the most recent `read_ranges` metrics, if any (TD-RDSTRAT-12).
+///
+/// Returns `None` if no metrics have been recorded since the last drain (or if
+/// `read_ranges` ran sequentially with `parallel <= 1`).
+pub fn drain_read_ranges_metrics() -> Option<ReadRangesMetrics> {
+    READ_RANGES_METRICS
+        .lock()
+        .ok()
+        .and_then(|mut m| m.take())
+}
+
+/// Bounded-concurrent, order-preserving, short-circuit-on-error ranged read
+/// **with metrics tracking** (TD-RDSTRAT-12).
+///
+/// Returns the buffers and the metrics (`fetch_rounds`, `max_inflight`).
+/// The caller should emit the metrics to Prometheus via
+/// `READ_RANGES_FETCH_ROUNDS_TOTAL` and `READ_RANGES_MAX_INFLIGHT`.
+async fn read_ranges_buffered_with_metrics<F, Fut>(
+    ranges: Vec<std::ops::Range<u64>>,
+    parallel: usize,
+    read: F,
+) -> FsResult<(Vec<Vec<u8>>, ReadRangesMetrics)>
+where
+    F: Fn(u64, u64) -> Fut + Clone,
+    Fut: std::future::Future<Output = FsResult<Vec<u8>>>,
+{
+    use futures::stream::{self, StreamExt as _, TryStreamExt as _};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let max_inflight = Arc::new(AtomicUsize::new(0));
+    let read = read.clone();
+
+    let buffers = stream::iter(ranges)
+        .map(move |r| {
+            let read = read.clone();
+            let in_flight = in_flight.clone();
+            let max_inflight = max_inflight.clone();
+            async move {
+                in_flight.fetch_add(1, Ordering::SeqCst);
+                let cur = in_flight.load(Ordering::SeqCst);
+                max_inflight.fetch_max(cur, Ordering::SeqCst);
+                let result = read(r.start, r.end - r.start).await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                result
+            }
+        })
+        .buffered(parallel)
+        .try_collect()
+        .await?;
+
+    // Estimate rounds: ceil(len / parallel), with a minimum of 1
+    let fetch_rounds = if buffers.is_empty() {
+        0
+    } else {
+        ((buffers.len() as f64) / (parallel as f64)).ceil().max(1.0) as u64
+    };
+
+    let metrics = ReadRangesMetrics {
+        fetch_rounds,
+        max_inflight: max_inflight.load(Ordering::SeqCst) as u64,
+    };
+
+    Ok((buffers, metrics))
+}
+
+/// Bounded-concurrent, order-preserving, short-circuit-on-error ranged read.
 #[derive(Debug, Clone, Default)]
 pub enum TempStrategy {
     /// Direct write (no temp files) - for local filesystem with atomic guarantees
@@ -626,13 +723,18 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
             }
             buffers
         } else {
-            // Bounded-concurrent (order-preserving, short-circuit-on-error) —
-            // TD-RDSTRAT-8 rev-2.1. Delegated to `read_ranges_buffered` so the
-            // concurrency contract is unit-testable without a full FileSystem impl.
-            read_ranges_buffered(plan.physical.clone(), parallel, |offset, length| {
-                self.read_range(path, offset, length)
-            })
-            .await?
+            // Bounded-concurrent with metrics tracking (TD-RDSTRAT-12).
+            // Delegates to `read_ranges_buffered_with_metrics`, which tracks
+            // `fetch_rounds` and `max_inflight` and records them to thread-local
+            // storage for callers with tenant context to emit to Prometheus.
+            let (bufs, metrics) = read_ranges_buffered_with_metrics(
+                plan.physical.clone(),
+                parallel,
+                |offset, length| self.read_range(path, offset, length),
+            )
+            .await?;
+            record_read_ranges_metrics(metrics);
+            bufs
         };
 
         if identity {

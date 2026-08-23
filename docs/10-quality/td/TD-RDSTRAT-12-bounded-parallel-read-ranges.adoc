@@ -1,0 +1,111 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-RDSTRAT-12: Bounded-parallel FileSystem read_ranges — complete the parallel read path
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Partial — core parallel path exists (`PROXIMADB_FS_READ_RANGES_PARALLEL`); missing INFLIGHT cap, io_trace fields, and SIFT1M evidence.**
+| Priority | **P2** — performance optimization for cold queries; not correctness-blocked.
+| Severity | Feature-complete, missing observability and evidence.
+| Component | `crates/storage/proximadb-storage-filesystem-types/src/lib.rs` — `read_ranges_buffered`, `FileSystem::read_ranges`
+| Governs | Parallelism of ranged GETs in the `FileSystem::read_ranges` path, which serves PAX segment reads (Region-A/B reads, footer fetches).
+| Relates to | TD-RDSTRAT-8 (IVF coarse probe — this is the orthogonal work item from §Bounded-parallel `read_ranges`), TD-RDSTRAT-6 (binary tier I/O baseline)
+| Pillar | PERF (latency)
+|===
+
+== Problem statement
+
+TD-RDSTRAT-8 §"Bounded-parallel `read_ranges`" (rev 2.1) identifies that cold query latency follows a **waves-not-sums model**: `latency ≈ rounds × RTT + Σ ceil(GETs_in_round / pool) × RTT + compute`. The sequential `read_ranges` loop (1 GET at a time) makes the first term dominate. A bounded concurrent executor (issue ranges in parallel, complete into the decode pipeline) turns cold latency from `GETs × RTT` into `rounds × RTT`.
+
+The TD specifies two env knobs, acceptance criteria, and io_trace additions.
+
+== Current state (partial)
+
+[cols="2,3", options="header"]
+|===
+| Item | Status
+| `read_ranges_buffered` helper | ✅ **Implemented** (lines 477-492 of `proximadb-storage-filesystem-types/src/lib.rs`) — order-preserving, short-circuit-on-error, unit-tested
+| `PROXIMADB_FS_READ_RANGES_PARALLEL` | ✅ **Implemented** — env gate registered, default 0 (sequential)
+| `FileSystem::read_ranges` parallel path | ✅ **Implemented** (lines 620-636) — delegates to `read_ranges_buffered` when `PARALLEL > 1`
+| `PROXIMADB_READ_RANGES_INFLIGHT` | ❌ **Not implemented** — TD-specified separate prefetch cap for pure prefetch vs decode-bound work
+| `fetch_rounds` + `max_inflight` in io_trace | ❌ **Not implemented for general path** — exists for IVF probe (`src/storage/engines/sst/metrics.rs`) but not as general `read_ranges` telemetry
+| SIFT1M cold p50 ≥2× improvement | ❌ **Not measured** — acceptance evidence not collected
+|===
+
+== Remaining work
+
+=== 1. Add `PROXIMADB_READ_RANGES_INFLIGHT` prefetch cap
+
+The TD specifies **two independent bounds**:
+
+* `PROXIMADB_READ_RANGES_PARALLEL` (renamed in code to `PROXIMADB_FS_READ_RANGES_PARALLEL`) — the **decode-bound** concurrency cap (~40% of cores)
+* `PROXIMADB_READ_RANGES_INFLIGHT` — the **pure prefetch cap**, for I/O-bound work that doesn't decode (zstd, SQ8 parse, distance kernels)
+
+Current implementation has one cap (`PARALLEL`). Add `INFLIGHT` as a separate env var that:
+
+* Defaults to a higher value than `PARALLEL` (e.g., 2× `PARALLEL`, or a fixed sensible default like 32)
+* Is parsed + cached in `read_ranges_buffered` or its caller
+* Controls the `buffered(N)` concurrency when prefetch is safe (caller can annotate "pure prefetch" via a separate method or flag)
+
+Note: The TD text is ambiguous on **how** the caller signals "pure prefetch". Two options:
+
+* **Option A:** Add a `FileSystem::read_ranges_prefetch` method that uses `INFLIGHT` (only for metadata/footer prefetch paths)
+* **Option B:** Pass a "decode cost" hint to `read_ranges`; use `INFLIGHT` when decode is cheap/none
+
+Decision gate: file a sub-TD or ADR to resolve the API shape before implementing.
+
+=== 2. Add `fetch_rounds` + `max_inflight` to general io_trace
+
+Today `fetch_rounds` exists only for IVF probe metrics (`src/storage/engines/sst/metrics.rs:46`). The TD requires these fields for **general `read_ranges` telemetry**, so the concurrency benefits are observable across all paths (footer fetches, Region-A/B reads, not just IVF).
+
+Required:
+
+* Extend the `io_trace` mechanism with `fetch_rounds` (count of parallel rounds issued) and `max_inflight` (peak in-flight reads in a round)
+* Emit in `read_ranges_buffered` or its caller
+* Surface in Prometheus metrics (`proximadb_read_ranges_fetch_rounds_total`, `proximadb_read_ranges_max_inflight`)
+
+=== 3. Collect SIFT1M evidence
+
+Acceptance criteria (from TD-RDSTRAT-8):
+
+* "SIFT1M cold p50 improves ≥2× at equal GETs"
+
+This requires:
+
+* A benchmark run on SIFT1M comparing sequential (`PROXIMADB_FS_READ_RANGES_PARALLEL=0`) vs parallel (`=4` or sensible cap)
+* Verify GET count is **unchanged** (coalescing is independent of parallelism)
+* Report cold p50 latency improvement
+* Record evidence in `BENCHMARK_EVIDENCE.toml` under an entry like `rdstrat12_sift1m_parallel_read_ranges`
+
+The TD notes this benefits `PXH1` segments equally (not just v3), so the benchmark should use v1 segments to prove the general win.
+
+=== 4. Update ENV_GATE_REGISTRY
+
+Add `PROXIMADB_READ_RANGES_INFLIGHT` to `docs/12-design/ENV_GATE_REGISTRY.adoc` with:
+
+* Semantic: "Prefetch cap for pure I/O-bound ranged reads in `FileSystem::read_ranges`. Higher than the decode-bound `PROXIMADB_FS_READ_RANGES_PARALLEL` cap."
+* Default: sensible value (e.g., 32, or `2 × PARALLEL`)
+* Tier: opt-in (like `PARALLEL`, default OFF until measured)
+|===
+
+Implementation notes
+
+* The core `read_ranges_buffered` contract is correct and unit-tested — do NOT change its behavior
+* `INFLIGHT` is additive: when unset, behavior is unchanged (current `PARALLEL` cap still applies)
+* io_trace additions should reuse the existing `drain_get_trace` / `drain_probe_trace` pattern from `src/storage/traces/`
+* Benchmark: reuse the SIFT harness infrastructure from `tests/sift_pax_recall_ratchet_test.rs` or the SIFT1M eval runs
+
+== Historical context
+
+The TD-RDSTRAT-8 §"Bounded-parallel `read_ranges`" text:
+
+```
+Add a bounded concurrent executor: issue the ranges of a round in parallel, completing into the decode pipeline. Sizing: the GETs themselves are I/O-bound (async in-flight may exceed core count; the real ceilings are store throttles — S3 ~5,500 GET/s/prefix, Azure per-partition limits — and NIC bandwidth); the ~40%-of-cores bound applies to the decode-coupled completion work (zstd, SQ8 parse, distance kernels), with pure prefetch allowed a higher in-flight cap. Env: PROXIMADB_READ_RANGES_PARALLEL (0 = sequential, default until measured), PROXIMADB_READ_RANGES_INFLIGHT (prefetch cap). Benefits PXH1 segments equally; lands independently of the successor layout. Acceptance: SIFT1M cold p50 improves ≥2× at equal GETs; io_trace gains fetch_rounds + max_inflight fields.
+```
+
+Current implementation:
+* `PROXIMADB_FS_READ_RANGES_PARALLEL` (note the `FS_` prefix) ✅
+* `PROXIMADB_READ_RANGES_INFLIGHT` ❌
+* `fetch_rounds` / `max_inflight` ❌
+* SIFT1M evidence ❌

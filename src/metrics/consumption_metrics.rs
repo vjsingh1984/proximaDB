@@ -102,6 +102,23 @@ lazy_static! {
         "Armed v3 probes that fell back to a whole Region-A scan (TD-RDSTRAT-8)",
         &["tenant_id"]
     );
+    /// TD-RDSTRAT-12: per-tenant parallel read-rounds counter — the count of
+    /// concurrent rounds issued by `FileSystem::read_ranges` when bounded parallelism
+    /// is enabled (`PROXIMADB_FS_READ_RANGES_PARALLEL > 1`). Surface for the
+    /// "waves-not-sums" latency model: `latency ≈ rounds × RTT + ...`.
+    pub static ref READ_RANGES_FETCH_ROUNDS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_read_ranges_fetch_rounds_total",
+        "Parallel read-rounds issued by bounded-concurrent FileSystem::read_ranges (TD-RDSTRAT-12)",
+        &["tenant_id"]
+    );
+    /// TD-RDSTRAT-12: per-tenant max-inflight gauge — peak concurrent reads in
+    /// a single `read_ranges` call. Shows the actual parallelism achieved vs the
+    /// `PROXIMADB_FS_READ_RANGES_PARALLEL` cap.
+    pub static ref READ_RANGES_MAX_INFLIGHT: GaugeVec = registered_gauge_vec(
+        "proximadb_read_ranges_max_inflight",
+        "Peak concurrent reads in a FileSystem::read_ranges call (TD-RDSTRAT-12)",
+        &["tenant_id"]
+    );
     pub static ref STORAGE_BYTES_SECONDS: GaugeVec = registered_gauge_vec(
         "proximadb_storage_bytes_seconds",
         "GB-seconds or raw bytes stored per tenant",
