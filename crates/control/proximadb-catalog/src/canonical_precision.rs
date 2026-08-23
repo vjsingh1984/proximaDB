@@ -34,7 +34,9 @@
 //! and (b) give us a single chokepoint to add metrics / circuit-breaking
 //! later if catalog reads become a hot-path concern.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use anyhow::Result;
 use proximadb_records::EmbeddingScalarType;
@@ -88,7 +90,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::cache::CatalogCache;
-    use crate::{Catalog, CatalogTableSchema, CatalogNamespace, CatalogError, TableIdentifier};
+    use crate::{Catalog, CatalogError, CatalogNamespace, CatalogTableSchema, TableIdentifier};
 
     /// TD-CAT-7.4: Minimal in-memory test catalog.
     ///
@@ -97,16 +99,16 @@ mod tests {
     /// and only implements the methods needed for these tests.
     struct InMemoryTestCatalog {
         name: String,
-        namespaces: HashMap<Vec<String>, CatalogNamespace>,
-        tables: HashMap<TableIdentifier, CatalogTableSchema>,
+        namespaces: RwLock<HashMap<Vec<String>, CatalogNamespace>>,
+        tables: RwLock<HashMap<TableIdentifier, CatalogTableSchema>>,
     }
 
     impl InMemoryTestCatalog {
         fn new(name: String) -> Self {
             Self {
                 name,
-                namespaces: HashMap::new(),
-                tables: HashMap::new(),
+                namespaces: RwLock::new(HashMap::new()),
+                tables: RwLock::new(HashMap::new()),
             }
         }
     }
@@ -129,7 +131,8 @@ mod tests {
             let mut ns = CatalogNamespace::new(namespace.to_vec());
             ns.properties = properties;
             ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
-            self.namespaces.insert(namespace.to_vec(), ns.clone());
+            let mut namespaces = self.namespaces.write().await;
+            namespaces.insert(namespace.to_vec(), ns.clone());
             Ok(ns)
         }
 
@@ -138,7 +141,8 @@ mod tests {
             identifier: &TableIdentifier,
             schema: CatalogTableSchema,
         ) -> Result<CatalogTableSchema, CatalogError> {
-            self.tables.insert(identifier.clone(), schema.clone());
+            let mut tables = self.tables.write().await;
+            tables.insert(identifier.clone(), schema.clone());
             Ok(schema)
         }
 
@@ -146,22 +150,24 @@ mod tests {
             &self,
             identifier: &TableIdentifier,
         ) -> Result<CatalogTableSchema, CatalogError> {
-            self.tables
+            let tables = self.tables.read().await;
+            tables
                 .get(identifier)
                 .cloned()
                 .ok_or_else(|| CatalogError::TableNotFound(identifier.to_string()))
         }
 
         async fn list_namespaces(&self) -> Result<Vec<CatalogNamespace>, CatalogError> {
-            Ok(self.namespaces.values().cloned().collect())
+            let namespaces = self.namespaces.read().await;
+            Ok(namespaces.values().cloned().collect())
         }
 
         async fn list_tables(
             &self,
             namespace: &[String],
         ) -> Result<Vec<CatalogTableSchema>, CatalogError> {
-            Ok(self
-                .tables
+            let tables = self.tables.read().await;
+            Ok(tables
                 .iter()
                 .filter(|(id, _)| id.namespace() == namespace)
                 .map(|(_, schema)| schema.clone())
@@ -181,7 +187,8 @@ mod tests {
             &self,
             namespace: &[String],
         ) -> Result<CatalogNamespace, CatalogError> {
-            self.namespaces
+            let namespaces = self.namespaces.read().await;
+            namespaces
                 .get(namespace)
                 .cloned()
                 .ok_or_else(|| CatalogError::NamespaceNotFound(namespace.join(".")))

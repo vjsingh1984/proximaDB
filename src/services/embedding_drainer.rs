@@ -50,6 +50,7 @@
 //!   prevent two replicas from competing; assignment via partition
 //!   ranges or rendezvous-hash is a follow-up.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -60,6 +61,7 @@ use proximadb_embedding::scheduler::IngestMode;
 use proximadb_embedding::service::{EmbedBatch, EmbedRecord};
 use proximadb_queue::QueueClient;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
@@ -1158,7 +1160,9 @@ mod tests {
     async fn drainer_stamps_target_precision_from_resolver() {
         use proximadb_catalog::cache::CatalogCache;
         use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-        use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier, CatalogNamespace, CatalogError};
+        use proximadb_catalog::{
+            Catalog, CatalogError, CatalogNamespace, CatalogTableSchema, TableIdentifier,
+        };
 
         ensure_embedding_singleton();
         let tmp = TempDir::new().expect("tempdir");
@@ -1181,23 +1185,17 @@ mod tests {
         /// Replaces OltpCatalog which is gated behind `oltp-catalog` and unusable
         /// in both configurations. This catalog stores everything in-memory HashMaps.
         struct InMemoryTestCatalog {
-            inner: Arc<Inner>,
-        }
-
-        struct Inner {
             name: String,
-            namespaces: HashMap<Vec<String>, CatalogNamespace>,
-            tables: HashMap<TableIdentifier, CatalogTableSchema>,
+            namespaces: RwLock<HashMap<Vec<String>, CatalogNamespace>>,
+            tables: RwLock<HashMap<TableIdentifier, CatalogTableSchema>>,
         }
 
         impl InMemoryTestCatalog {
             fn new(name: String) -> Self {
                 Self {
-                    inner: Arc::new(Inner {
-                        name,
-                        namespaces: HashMap::new(),
-                        tables: HashMap::new(),
-                    }),
+                    name,
+                    namespaces: RwLock::new(HashMap::new()),
+                    tables: RwLock::new(HashMap::new()),
                 }
             }
         }
@@ -1205,7 +1203,7 @@ mod tests {
         #[async_trait::async_trait]
         impl Catalog for InMemoryTestCatalog {
             fn name(&self) -> &str {
-                &self.inner.name
+                &self.name
             }
 
             fn catalog_type(&self) -> &str {
@@ -1220,9 +1218,8 @@ mod tests {
                 let mut ns = CatalogNamespace::new(namespace.to_vec());
                 ns.properties = properties;
                 ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
-                let mut inner = Arc::clone(&self.inner);
-                let inner_mut = Arc::make_mut(&mut inner);
-                inner_mut.namespaces.insert(namespace.to_vec(), ns.clone());
+                let mut namespaces = self.namespaces.write().await;
+                namespaces.insert(namespace.to_vec(), ns.clone());
                 Ok(ns)
             }
 
@@ -1231,9 +1228,8 @@ mod tests {
                 identifier: &TableIdentifier,
                 schema: CatalogTableSchema,
             ) -> Result<CatalogTableSchema, CatalogError> {
-                let mut inner = Arc::clone(&self.inner);
-                let inner_mut = Arc::make_mut(&mut inner);
-                inner_mut.tables.insert(identifier.clone(), schema.clone());
+                let mut tables = self.tables.write().await;
+                tables.insert(identifier.clone(), schema.clone());
                 Ok(schema)
             }
 
@@ -1241,8 +1237,8 @@ mod tests {
                 &self,
                 identifier: &TableIdentifier,
             ) -> Result<CatalogTableSchema, CatalogError> {
-                self.inner
-                    .tables
+                let tables = self.tables.read().await;
+                tables
                     .get(identifier)
                     .cloned()
                     .ok_or_else(|| CatalogError::TableNotFound(identifier.to_string()))
@@ -1260,24 +1256,24 @@ mod tests {
                 &self,
                 namespace: &[String],
             ) -> Result<CatalogNamespace, CatalogError> {
-                self.inner
-                    .namespaces
+                let namespaces = self.namespaces.read().await;
+                namespaces
                     .get(namespace)
                     .cloned()
                     .ok_or_else(|| CatalogError::NamespaceNotFound(namespace.join(".")))
             }
 
             async fn list_namespaces(&self) -> Result<Vec<CatalogNamespace>, CatalogError> {
-                Ok(self.inner.namespaces.values().cloned().collect())
+                let namespaces = self.namespaces.read().await;
+                Ok(namespaces.values().cloned().collect())
             }
 
             async fn list_tables(
                 &self,
                 namespace: &[String],
             ) -> Result<Vec<CatalogTableSchema>, CatalogError> {
-                Ok(self
-                    .inner
-                    .tables
+                let tables = self.tables.read().await;
+                Ok(tables
                     .iter()
                     .filter(|(id, _)| id.namespace() == namespace)
                     .map(|(_, schema)| schema.clone())

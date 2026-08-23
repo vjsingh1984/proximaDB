@@ -5,8 +5,10 @@ use crate::storage::engines::sst::blocks::SstRecord;
 use crate::storage::engines::sst::{
     Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,
 };
+use std::collections::HashMap as StdHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_compaction_basic() {
@@ -903,7 +905,9 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
 async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier, CatalogNamespace, CatalogError};
+    use proximadb_catalog::{
+        Catalog, CatalogError, CatalogNamespace, CatalogTableSchema, TableIdentifier,
+    };
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
 
@@ -912,23 +916,17 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     /// Replaces OltpCatalog which is gated behind `oltp-catalog` and unusable
     /// in both configurations. This catalog stores everything in-memory HashMaps.
     struct InMemoryTestCatalog {
-        inner: Arc<Inner>,
-    }
-
-    struct Inner {
         name: String,
-        namespaces: StdHashMap<Vec<String>, CatalogNamespace>,
-        tables: StdHashMap<TableIdentifier, CatalogTableSchema>,
+        namespaces: RwLock<StdHashMap<Vec<String>, CatalogNamespace>>,
+        tables: RwLock<StdHashMap<TableIdentifier, CatalogTableSchema>>,
     }
 
     impl InMemoryTestCatalog {
         fn new(name: String) -> Self {
             Self {
-                inner: Arc::new(Inner {
-                    name,
-                    namespaces: StdHashMap::new(),
-                    tables: StdHashMap::new(),
-                }),
+                name,
+                namespaces: RwLock::new(StdHashMap::new()),
+                tables: RwLock::new(StdHashMap::new()),
             }
         }
     }
@@ -936,7 +934,7 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     #[async_trait::async_trait]
     impl Catalog for InMemoryTestCatalog {
         fn name(&self) -> &str {
-            &self.inner.name
+            &self.name
         }
 
         fn catalog_type(&self) -> &str {
@@ -951,10 +949,8 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             let mut ns = CatalogNamespace::new(namespace.to_vec());
             ns.properties = properties;
             ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
-            let mut inner = Arc::clone(&self.inner);
-            // SAFETY: We're the only writer for this catalog
-            let inner_mut = Arc::make_mut(&mut inner);
-            inner_mut.namespaces.insert(namespace.to_vec(), ns.clone());
+            let mut namespaces = self.namespaces.write().await;
+            namespaces.insert(namespace.to_vec(), ns.clone());
             Ok(ns)
         }
 
@@ -963,9 +959,8 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             identifier: &TableIdentifier,
             schema: CatalogTableSchema,
         ) -> Result<CatalogTableSchema, CatalogError> {
-            let mut inner = Arc::clone(&self.inner);
-            let inner_mut = Arc::make_mut(&mut inner);
-            inner_mut.tables.insert(identifier.clone(), schema.clone());
+            let mut tables = self.tables.write().await;
+            tables.insert(identifier.clone(), schema.clone());
             Ok(schema)
         }
 
@@ -973,8 +968,8 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             &self,
             identifier: &TableIdentifier,
         ) -> Result<CatalogTableSchema, CatalogError> {
-            self.inner
-                .tables
+            let tables = self.tables.read().await;
+            tables
                 .get(identifier)
                 .cloned()
                 .ok_or_else(|| CatalogError::TableNotFound(identifier.to_string()))
@@ -992,24 +987,24 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             &self,
             namespace: &[String],
         ) -> Result<CatalogNamespace, CatalogError> {
-            self.inner
-                .namespaces
+            let namespaces = self.namespaces.read().await;
+            namespaces
                 .get(namespace)
                 .cloned()
                 .ok_or_else(|| CatalogError::NamespaceNotFound(namespace.join(".")))
         }
 
         async fn list_namespaces(&self) -> Result<Vec<CatalogNamespace>, CatalogError> {
-            Ok(self.inner.namespaces.values().cloned().collect())
+            let namespaces = self.namespaces.read().await;
+            Ok(namespaces.values().cloned().collect())
         }
 
         async fn list_tables(
             &self,
             namespace: &[String],
         ) -> Result<Vec<CatalogTableSchema>, CatalogError> {
-            Ok(self
-                .inner
-                .tables
+            let tables = self.tables.read().await;
+            Ok(tables
                 .iter()
                 .filter(|(id, _)| id.namespace() == namespace)
                 .map(|(_, schema)| schema.clone())
@@ -1119,12 +1114,16 @@ async fn td_global_precision_resolver_stamps_hint_without_per_instance_wiring() 
     use crate::storage::engines::sst::compaction::set_global_precision_resolver;
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier, CatalogNamespace, CatalogError};
+    use proximadb_catalog::{
+        Catalog, CatalogError, CatalogNamespace, CatalogTableSchema, TableIdentifier,
+    };
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
 
     let cache = Arc::new(CatalogCache::new(1000, 60));
-    let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new("compaction-test-global".to_string()));
+    let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new(
+        "compaction-test-global".to_string(),
+    ));
     cat.create_namespace(&["default".to_string()], StdHashMap::new())
         .await
         .unwrap();
