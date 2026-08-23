@@ -81,7 +81,9 @@ def compare_runs(
     baseline_path: Path,
     candidate_path: Path,
     *,
-    k: int,
+    k: int | None = None,
+    baseline_k: int | None = None,
+    candidate_k: int | None = None,
     metric: str,
     bootstrap_samples: int = 10_000,
     confidence: float = 0.95,
@@ -90,8 +92,15 @@ def compare_runs(
 ) -> dict[str, Any]:
     """Return a paired delta and percentile confidence interval over queries."""
 
-    if isinstance(k, bool) or not isinstance(k, int) or k <= 0:
-        raise ValueError("k must be a positive integer")
+    if k is not None and (baseline_k is not None or candidate_k is not None):
+        raise ValueError("use either k or the baseline_k/candidate_k pair")
+    if k is not None:
+        baseline_k = candidate_k = k
+    if baseline_k is None or candidate_k is None:
+        raise ValueError("k or both baseline_k and candidate_k are required")
+    for name, depth in (("baseline_k", baseline_k), ("candidate_k", candidate_k)):
+        if isinstance(depth, bool) or not isinstance(depth, int) or depth <= 0:
+            raise ValueError(f"{name} must be a positive integer")
     if not metric.strip():
         raise ValueError("metric is required")
     if (
@@ -103,8 +112,8 @@ def compare_runs(
     if not math.isfinite(confidence) or not 0 < confidence < 1:
         raise ValueError("confidence must be between zero and one")
 
-    baseline = _load_metric(baseline_path, k=k, metric=metric)
-    candidate = _load_metric(candidate_path, k=k, metric=metric)
+    baseline = _load_metric(baseline_path, k=baseline_k, metric=metric)
+    candidate = _load_metric(candidate_path, k=candidate_k, metric=metric)
     if set(baseline) != set(candidate):
         missing = sorted(set(baseline) - set(candidate))
         extra = sorted(set(candidate) - set(baseline))
@@ -124,13 +133,15 @@ def compare_runs(
     tail = (1.0 - confidence) / 2.0
     mean_delta = sum(deltas) / query_count
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "producer_sha256": _sha256(Path(__file__).resolve()),
         "baseline_path": str(baseline_path.resolve()),
         "baseline_sha256": _sha256(baseline_path),
         "candidate_path": str(candidate_path.resolve()),
         "candidate_sha256": _sha256(candidate_path),
-        "k": k,
+        "k": baseline_k if baseline_k == candidate_k else None,
+        "baseline_k": baseline_k,
+        "candidate_k": candidate_k,
         "metric": metric,
         "query_count": query_count,
         "baseline_mean": sum(baseline.values()) / query_count,
@@ -171,7 +182,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
-    parser.add_argument("--k", type=int, required=True)
+    parser.add_argument("--k", type=int)
+    parser.add_argument("--baseline-k", type=int)
+    parser.add_argument("--candidate-k", type=int)
     parser.add_argument("--metric", required=True)
     parser.add_argument("--bootstrap-samples", type=int, default=10_000)
     parser.add_argument("--confidence", type=float, default=0.95)
@@ -188,6 +201,8 @@ def main() -> None:
                 args.baseline,
                 args.candidate,
                 k=args.k,
+                baseline_k=args.baseline_k,
+                candidate_k=args.candidate_k,
                 metric=args.metric,
                 bootstrap_samples=args.bootstrap_samples,
                 confidence=args.confidence,

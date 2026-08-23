@@ -452,6 +452,14 @@ query-complete source runs. Evaluate either through the same source-level evalua
 `compare_retrieval_runs.py` for query-aligned paired bootstrap intervals. Tune analyzers, fusion
 weights and rerankers on a development split, not the held-out test set.
 
+The development-only hybrid candidate gate in
+`docs/_internal/status/HYBRID_CANDIDATE_RECALL_GATE_2026_08_23.adoc` demonstrates why these are
+separate decisions. A complete BM25+dense union materially raised the source-membership ceiling,
+but globally sorting that union with the small MiniLM cross-encoder significantly regressed final
+Recall@100 and NDCG@100 versus dense. Candidate generation, bounded selection and downstream token
+work must therefore be measured as distinct stages; a reranker win on one first-stage distribution
+does not authorize global use on another.
+
 Chunk target and overlap are workload policies, not model-catalog defaults. A larger model context
 can reduce vector count only if the quality/citation/answer gates hold at the coarser granularity;
 context capacity alone is not a reason to fill the window. Compare each candidate on one matrix:

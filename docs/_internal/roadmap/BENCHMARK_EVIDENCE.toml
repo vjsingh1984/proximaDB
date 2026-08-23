@@ -30,6 +30,23 @@ header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_202
 # ---------------------------------------------------------------------------
 
 [[claims]]
+id = "hybrid_candidate_recall_selector_nfc_dev"
+claim = "On NFCorpus development, the complete canonical-BM25-100 plus exact-BGE-100 source union raised candidate-pool recall from dense Recall@100 0.347232 to union Recall@<=200 0.373375 (+7.53%; paired 95% interval +0.021154 to +0.031727), but global pinned-MiniLM selection regressed final Recall@100 to 0.313560 (-9.70%; interval -0.045557 to -0.022022) and NDCG@100 to 0.301350 (-6.49%; interval -0.031913 to -0.010064). Candidate generation passes; this selector fails; held-out remained sealed."
+metric = "candidate-pool and final source-aware Recall/NDCG + paired cross-depth bootstrap + candidate/window/token work + maximum pair tokens"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/HYBRID_CANDIDATE_RECALL_GATE_2026_08_23.adoc",
+  "docs/12-design/MODEL_INPUT_CONTRACT_AND_TOKEN_BUDGETED_CHUNKING_2026_08_11.adoc",
+]
+bench_source = "scripts/bench/fuse_source_runs.py"
+bench_command = "Validate the sealed canonical-BM25 and exact-BGE dev source-run manifests; fuse equal-weight RRF(k=60) at top-k 200 to retain the complete unique union; score every source with pinned MiniLM using --rerank-all and zero-truncation windows; evaluate source metrics at 10/100/200; compare dense k=100 to union-pool k=200 and dense to reranked k=100 with 10,000 paired bootstrap samples, seed 17"
+artifact = "docs/_internal/status/HYBRID_CANDIDATE_RECALL_GATE_2026_08_23.adoc"
+hardware = "Local macOS arm64 Apple Silicon, PyTorch 2.12 MPS; quality-only scoring under concurrent compilation, no latency or throughput claim"
+date = "2026-08-23"
+version = "source base 95c4f463926bbe0ca6da8f34a9e74085863c4c0a; MiniLM revision 4bebbd56fc380a66525f95b03d4ec1a4b41a4f1e; fusion 4952e489518ab2bc7c54a93f7c3e92ed3c6ee05b12190550f25b464ea6d5a18b; scorer 3a46eb321040bed907010df5670fa9f72eec2b679cc19914420beb950c8e0817; comparator 62ffa78aafef51977ed256d00091d11e918db0c88e6c8cca682c658ace1069ac"
+notes = "Development-only negative promotion gate. Durable external root /Users/vijaysingh/proximadb-bench-data/retrieval-quality-hybrid-reranker-gate-v1/nfcorpus/minilm-l6-v2/dev/. The union contained 57,306 query-source pairs (128-200/query, p50 179), expanded to 64,744 zero-truncation windows and 22,210,265 input tokens; max pair length 512. Full-pool Recall@<=200 remained 0.373375 after reranking, proving membership preservation; the failure was final top-100 selection. Held-out, citation quality, generation quality, serving ONNX parity and latency remain unmeasured."
+
+[[claims]]
 id = "open_cross_encoder_reranker_nfc"
 claim = "On a dev-first then held-out NFCorpus protocol against the complete top-100 canonical natural-language BM25 source run, a pinned 22.7M-parameter open MiniLM cross-encoder at development-selected depth 50 improved held-out NDCG@10 from 0.322709 to 0.346901 (+7.50%; paired 95% interval +0.012902 to +0.036205) and NDCG@100 from 0.270800 to 0.286911 (+5.95%; interval +0.009516 to +0.023546). Recall@10's +1.72% interval included zero; Recall@100 was exactly invariant at 0.241135. Query-aware title-propagated windows split oversized bodies and asserted max pair length 512 with zero truncation. This supports opt-in precision reranking, not a candidate-recall or default-on claim."
 metric = "complete source-aware NDCG/Recall@10/@100 + paired query-bootstrap intervals + candidate/window/token work + maximum pair tokens"

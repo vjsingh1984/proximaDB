@@ -156,3 +156,38 @@ def test_materialize_rejects_a_cache_from_a_different_candidate_prefix():
 
     with pytest.raises(ValueError, match="does not match baseline prefix"):
         RERANK.materialize_run(baseline, cached, rerank_count=1)
+
+
+def test_materialize_reranks_every_candidate_in_variable_depth_queries():
+    baseline = {
+        "q1": [
+            {"source_id": "a", "baseline_rank": 1, "baseline_score": 2.0},
+            {"source_id": "b", "baseline_rank": 2, "baseline_score": 1.0},
+        ],
+        "q2": [
+            {"source_id": "c", "baseline_rank": 1, "baseline_score": 3.0},
+            {"source_id": "d", "baseline_rank": 2, "baseline_score": 2.0},
+            {"source_id": "e", "baseline_rank": 3, "baseline_score": 1.0},
+        ],
+    }
+    cached = {
+        query_id: {
+            "candidates": [
+                {**candidate, "rerank_score": float(index)}
+                for index, candidate in enumerate(candidates, 1)
+            ]
+        }
+        for query_id, candidates in baseline.items()
+    }
+
+    output = RERANK.materialize_run(baseline, cached, rerank_count=None)
+
+    assert [row["source_id"] for row in output if row["query_id"] == "q1"] == [
+        "b",
+        "a",
+    ]
+    assert [row["source_id"] for row in output if row["query_id"] == "q2"] == [
+        "e",
+        "d",
+        "c",
+    ]
