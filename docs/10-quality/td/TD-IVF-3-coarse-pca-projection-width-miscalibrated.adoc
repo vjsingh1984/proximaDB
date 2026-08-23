@@ -1,6 +1,6 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
-= TD-IVF-3: coarse-PCA projection width is mis-calibrated — the default costs 20–21% extra GETs at the recall SLA
+= TD-IVF-3: coarse-PCA projection width is mis-calibrated — the default costs 5–20% extra GETs at the recall SLA, and the optimum is draw-dependent
 :status: Open
 :dim: D1
 :pillar: PERF
@@ -8,7 +8,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Blocked on measurement — flip precondition 1 (seed sensitivity) has been RUN and FAILED.** The 768-d 32-vs-64 ordering does not reproduce across clustering draws (<<seed-replication>>). The width floor stays plumbed and DISABLED (`ncomp_floor = 0`); the per-width optimum table is withdrawn as a basis for setting it. The *defect* — 10/14 components is far too narrow — is unaffected.
+| Status | **Blocked on measurement — flip precondition 1 (seed sensitivity) has been RUN and FAILED.** The 768-d 32-vs-64 ordering does not reproduce across clustering draws, and a width-14 control at the second draw puts the best saving at 6.1%/5.0% via width **32**, with width 64 at parity-or-worse with the shipping default (<<seed-replication>>). The width floor stays plumbed and DISABLED (`ncomp_floor = 0`); the per-width optimum table and the 20–21% magnitude are withdrawn. Widening still helps — but only at **width 32**, and by single digits at top-20.
 | Priority | **P1 — read-side cost.** Object-store round-trips are the dominant cost term under the co-design mandate. Measured 20–21% GET/query reduction at the 0.98 recall SLA, for a one-time write cost of +9…15%.
 | Component | `src/storage/engines/sst/block_cluster.rs` — `ivf_projection_dims()` :294, call sites :390 and :598. Env gates `PROXIMADB_IVF_NCOMP`, `_A`, `_B` (ENV_GATE_REGISTRY :131–133, TD-WLP-4b).
 | Evidence | 26 beds on one binary (`62677fb41686…` @ `aed724fc5`), exact top-100 ground truth, 1000-query slices. **128-d**: BIGANN prefixes, 12 beds, 100K→10M. **384-d** and **768-d**: BGE over 491,655 code/doc chunks from 17 distinct repos — multiple widths per corpus, an independent determinism replicate (sd 0.00013), two independently forced `k_c` values at 768-d, and clean serial write costs. Each bed is **one clustering draw** — and that turned out to be the load-bearing limitation: a second draw (`PROXIMADB_IVF_KMEANS_SEED=987654321`, binary `56a780e43db8…` @ `ea93b2e9c`) reverses the 768-d width ordering. See <<seed-replication>>.
@@ -41,8 +41,10 @@ point. The 768-d saving applies at top-10 and top-20 alike; the 128-d saving is
 set a default.** Every row was measured on a single clustering draw. Replicating
 the 768-d row at a second seed reverses the 32-vs-64 ordering and erases the
 top-20 advantage entirely — while a same-seed rebuild reproduces to the digit, so
-the variance is the *draw*, not the measurement. The magnitude claimed in this
-document's title inherits that doubt. Full data and what survives:
+the variance is the *draw*, not the measurement. A width-14 control at the second
+draw puts the best available saving at **6.1%/5.0%**, achieved by width **32**,
+against the 20.3%/19.6% by width **64** in this table. Both the magnitude and the
+optimal width are draw-dependent. Full data and what survives:
 <<seed-replication>>.
 ====
 
@@ -343,18 +345,44 @@ load-bearing. At the default draw, 768-d:
 | 128 | np25 / 43.54 (−10.3%) | np25 / 43.04 (−11.2%)
 |===
 
+A **width-14 control at the alternate seed** — the shipping default itself, the
+one bed the original campaign never built — was run to measure the title claim
+directly rather than infer it. It is the row that settles the section:
+
+.Alternate draw (seed 987654321), all three widths, same bed family
+[cols="1,2,2", options="header"]
+|===
+| width | top-10 floor | top-20 floor
+| **14 — shipping default** | np25 / 42.82 | np30 / 49.65
+| 32 | np25 / **40.21** (−6.1%) | np30 / **47.18** (−5.0%)
+| 64 | np25 / 42.08 (−1.7%) | np30 / 49.96 (**+0.6% — worse than the default**)
+|===
+
 * **Does not survive: the specific optimum.** "64 at 768-d" was read off a single
   draw at a resolution finer than the draw-to-draw spread. The headline −19.6% at
   top-20 came *entirely* from width 64 dropping a grid step — width 32 never
   bought more than 1% there — and that drop is exactly what failed to replicate.
+  At the alternate draw width 64 is at parity with the shipping default and
+  slightly *worse* at top-20.
+* **Does not survive: the grid-step framing.** An earlier revision of this section
+  claimed the floor drop from np30 to np25 survived as evidence of the defect.
+  The width-14 control refutes it: at the alternate draw **all three widths floor
+  at the same nprobe** (np25 at top-10, np30 at top-20), because width 14 *already*
+  floors at np25 there. The floor position is set by the draw, not by the
+  projection width, so it cannot be used as evidence for widening at all.
+* **Does not survive: the 20–21% magnitude.** Measured against the shipping
+  default at each draw, the best available width saves **20.3%/19.6%** at the
+  default draw but only **6.1%/5.0%** at the alternate one — and the width that
+  achieves it changes from 64 to 32.
 * **Does not survive unqualified: the `k_c`-robustness result** (degrading `k_c`
   90→30 costs +21% at width 32 but only +2.6% at width 64). One draw per cell; it
   inherits the same doubt and is no longer sufficient to justify "width buys
   robustness" as a policy rationale.
-* **Survives: the defect itself.** Widening from the default 14 drops the top-10
-  floor from np30 to np25, and it does so at *both* widths under *both* draws.
-  That is a grid-step effect in the same direction in four independent beds; the
-  draw-to-draw spread is nowhere near large enough to manufacture it.
+* **Survives: widening helps, but only at width 32, and only by single digits at
+  top-20.** Width 32 is the sole width measured that improves on the shipping
+  default under **both** draws and **both** top-k — −15.5%/−1.0% at the default
+  draw, −6.1%/−5.0% at the alternate one. Its sign is consistent even though its
+  magnitude swings ~3×. Width 64's sign is not.
 * **128-d BIGANN was never seed-replicated.** It is not refuted, but it rests on
   precisely the method that just failed at 768-d and must not be treated as
   settled.
@@ -367,10 +395,17 @@ spread reported**, and a decision rule over the distribution rather than a point
 a materially larger programme than the remaining flip preconditions assume.
 
 The cheaper alternative that the surviving evidence does support: ship a
-**conservative floor that every draw agrees improves on 10/14**, without claiming
-to be optimal. That trades most of the headline saving for a result that does not
-depend on which draw one measured, and it is the option this TD now recommends
-weighing first.
+**conservative floor of 32** — the only width measured that improves on the
+shipping default under every draw and every top-k, without claiming to be optimal.
+It trades most of the headline saving for a result that does not depend on which
+draw one measured. Expect **single-digit percent** at top-20, not 20%, and price
+the +9…15% one-time write cost against that smaller number rather than against the
+withdrawn one.
+
+**Explicitly not recommended: a floor of 64.** It was the original recommendation,
+and it is the width the control shows at parity-or-worse with the shipping default
+at the alternate draw. Adopting it would pay the full write cost for a saving that
+depends on which clustering draw a collection happens to land in.
 
 == Resolution
 
