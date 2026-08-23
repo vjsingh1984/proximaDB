@@ -43,9 +43,9 @@ use crate::tokenized_scorer_session::TokenizedBatch;
 /// impl below.
 ///
 /// Returns `None` when the doc has no text (e.g. a numeric-id-only
-/// handle from a hybrid retrieval result the framework can't resolve);
-/// the extractor treats `None` as the empty string so an unknown doc
-/// scores under the same model rather than failing the second phase.
+/// handle from a hybrid retrieval result the framework can't resolve).
+/// The extractor rejects missing text: scoring an empty surrogate would
+/// silently turn an incomplete hydration path into a ranking decision.
 pub trait DocTextSource: Send + Sync {
     fn doc_text(&self, doc: DocHandle) -> RankResult<Option<String>>;
 }
@@ -114,10 +114,10 @@ impl DocTextSource for HashMapDocTextSource {
 /// - `tokenizer`: shared `Arc<tokenizers::Tokenizer>` (same instance
 ///   embedding crate uses; one tokenizer file per deployment).
 /// - `doc_text_source`: resolves doc text by handle.
-/// - `max_seq_len`: hard cap on tokenized sequence length. Padding +
-///   truncation happen at this boundary so the resulting batch is
-///   rectangular (a hard requirement for the ONNX session — the
-///   tensor shape must be known at run time).
+/// - `max_seq_len`: hard cap on tokenized sequence length. Padding
+///   happens at this boundary so the resulting batch is rectangular
+///   (a hard requirement for the ONNX session). Tokenizer overflow is
+///   detected and rejected rather than silently truncated.
 /// - `emit_token_type_ids`: when true, produce `token_type_ids`
 ///   (segment ids) — required by BERT-base/MiniLM-L-12-v2 style
 ///   models; some MiniLM-derived models don't take them.
@@ -140,14 +140,11 @@ impl BertPairTokenizingDocFeatureExtractor {
         emit_token_type_ids: bool,
     ) -> Self {
         let max_seq_len = max_seq_len.max(1);
-        // R-5b.1.4: clone the shared tokenizer and configure
-        // `with_padding(Fixed, max_seq_len)` + `with_truncation(max_seq_len)`
-        // so `encode_batch` returns Encodings already at the right
-        // shape. Encoding rectangularity is now the tokenizer's
-        // responsibility; `pad_or_truncate_to_i64` downstream still
-        // runs as defense-in-depth (it's a few `Vec::push`es per row,
-        // basically free) AND because we still need the u32 → i64
-        // conversion the tokenizer doesn't do.
+        // R-5b.1.4: clone the shared tokenizer and configure fixed
+        // padding plus overflow capture at max_seq_len. The extractor
+        // rejects any captured overflow before inference. The
+        // conversion pass downstream still provides shape defense and
+        // the u32 → i64 conversion the tokenizer doesn't do.
         //
         // We clone the inner Tokenizer rather than mutate the shared
         // Arc — the same `Arc<Tokenizer>` is used by the embedding
@@ -165,12 +162,10 @@ impl BertPairTokenizingDocFeatureExtractor {
     }
 }
 
-/// Apply Fixed-length padding + matching truncation to a cloned
-/// tokenizer so `encode_batch` returns rectangular Encodings without
-/// the caller having to pre-pad. Padding token id is `0` to match
-/// the [`pad_or_truncate_to_i64`] fallback. Both directions truncate
-/// from the end ("right" strategy) — matches BERT's documented
-/// behaviour for long inputs.
+/// Apply fixed-length padding plus overflow capture to a cloned tokenizer.
+/// The tokenizer represents overflow by truncating the primary encoding and
+/// retaining overflow encodings; `extract_batch` rejects that condition before
+/// inference. Padding token id is `0` to match the conversion fallback.
 fn configure_tokenizer_for_pair_encoding(
     mut tokenizer: tokenizers::Tokenizer,
     max_seq_len: usize,
@@ -188,11 +183,9 @@ fn configure_tokenizer_for_pair_encoding(
         pad_type_id: 0,
         pad_token: "[PAD]".into(),
     }));
-    // with_truncation returns Result because the params can be
-    // self-inconsistent (max_length < stride etc.). Our config is
-    // simple enough that this never fails in practice; on the off
-    // chance it does, fall back to the unconfigured tokenizer and
-    // let pad_or_truncate_to_i64 do the work downstream.
+    // with_truncation returns Result because params can be inconsistent.
+    // If configuration ever fails, the unconfigured tokenizer emits a row
+    // wider than max_seq_len and the explicit pre-conversion guard rejects it.
     let _ = tokenizer.with_truncation(Some(TruncationParams {
         max_length: max_seq_len,
         strategy: TruncationStrategy::LongestFirst,
@@ -208,20 +201,28 @@ impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
             return Ok(TokenizedBatch::default());
         }
         // R-5b.1.3: query text comes from the per-request QueryContext.
-        // None → empty string; the model still scores the doc against
-        // an empty query (the score reflects that mismatch). Callers
-        // that want to short-circuit on missing query_text should
-        // check qctx upstream.
+        // Missing or blank query text is a request-contract failure,
+        // not a meaningful input to a query-document cross-encoder.
         let query: Arc<str> = qctx
             .query_text
             .clone()
-            .unwrap_or_else(|| Arc::<str>::from(""));
-        // Resolve doc text for each handle. Missing docs (None) become
-        // the empty string — the model still scores them, the score
-        // just reflects an empty document.
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| RankError::ModelInference {
+                model_id: "bert_pair_extractor".into(),
+                reason: "query_text is required for pair reranking".into(),
+            })?;
+        // Resolve every document before inference. Missing or blank text
+        // means candidate hydration is incomplete and must fail closed.
         let mut pairs: Vec<(String, String)> = Vec::with_capacity(docs.len());
         for &doc in docs {
-            let text = self.doc_text_source.doc_text(doc)?.unwrap_or_default();
+            let text = self
+                .doc_text_source
+                .doc_text(doc)?
+                .filter(|text| !text.trim().is_empty())
+                .ok_or_else(|| RankError::ModelInference {
+                    model_id: "bert_pair_extractor".into(),
+                    reason: format!("document text is required for handle {}", doc.0),
+                })?;
             pairs.push((query.to_string(), text));
         }
 
@@ -236,11 +237,8 @@ impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
                     reason: format!("tokenizer.encode_batch: {e}"),
                 })?;
 
-        // Pad / truncate each encoding to `max_seq_len`. Building the
-        // batch by hand here (rather than calling
-        // tokenizer.with_padding before encoding) keeps padding
-        // semantics local to the extractor — production deployments
-        // can swap the strategy without re-priming the tokenizer.
+        // Verify overflow, then convert each already padded encoding to
+        // `max_seq_len`. Production input is never truncated here.
         let mut input_ids: Vec<Vec<i64>> = Vec::with_capacity(encodings.len());
         let mut attention_mask: Vec<Vec<i64>> = Vec::with_capacity(encodings.len());
         let mut token_type_ids: Option<Vec<Vec<i64>>> = if self.emit_token_type_ids {
@@ -250,6 +248,15 @@ impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
         };
 
         for enc in &encodings {
+            if !enc.get_overflowing().is_empty() || enc.get_ids().len() > self.max_seq_len {
+                return Err(RankError::ModelInference {
+                    model_id: "bert_pair_extractor".into(),
+                    reason: format!(
+                        "query-document pair exceeds max_seq_len {}; split the document before reranking",
+                        self.max_seq_len
+                    ),
+                });
+            }
             input_ids.push(pad_or_truncate_to_i64(
                 enc.get_ids(),
                 self.max_seq_len,
@@ -274,7 +281,7 @@ impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
             attention_mask,
             token_type_ids,
         };
-        // Belt-and-braces: the pad/truncate loop guarantees
+        // Belt-and-braces: the conversion loop guarantees
         // rectangular output, but verify it before returning so a
         // future refactor that breaks the invariant fails loud.
         debug_assert!(batch.validate_rectangular().is_ok());
@@ -433,11 +440,7 @@ mod tests {
             "alpha beta",
             6,
             false,
-            &[
-                (1, "doc one"),
-                (2, "doc two"),
-                (3, "doc three with extra tokens to truncate"),
-            ],
+            &[(1, "doc one"), (2, "doc two"), (3, "doc three")],
         );
         let b = e
             .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)], &qctx)
@@ -450,6 +453,19 @@ mod tests {
             assert_eq!(row.len(), 6);
         }
         assert!(b.validate_rectangular().is_ok());
+    }
+
+    #[test]
+    fn extractor_rejects_overlength_pair_instead_of_truncating() {
+        let (e, qctx) = extractor_with(
+            "alpha beta",
+            6,
+            false,
+            &[(1, "doc three with extra tokens beyond the limit")],
+        );
+        let error = e.extract_batch(&[DocHandle(1)], &qctx).unwrap_err();
+        assert!(error.to_string().contains("exceeds max_seq_len 6"));
+        assert!(error.to_string().contains("split the document"));
     }
 
     #[test]
@@ -470,13 +486,12 @@ mod tests {
     }
 
     #[test]
-    fn extractor_handles_missing_doc_text_as_empty_string() {
+    fn extractor_rejects_missing_doc_text() {
         let (e, qctx) = extractor_with("query", 8, false, &[(1, "the real doc")]);
-        let b = e
+        let error = e
             .extract_batch(&[DocHandle(1), DocHandle(99)], &qctx)
-            .unwrap();
-        assert_eq!(b.batch_size(), 2);
-        assert_eq!(b.input_ids[1].len(), 8);
+            .unwrap_err();
+        assert!(error.to_string().contains("handle 99"));
     }
 
     #[test]
@@ -508,20 +523,17 @@ mod tests {
     }
 
     #[test]
-    fn extractor_treats_missing_query_text_as_empty_string() {
-        // qctx.query_text == None → extractor uses "" rather than
-        // erroring. The model still scores against an empty query;
-        // the score reflects the mismatch.
+    fn extractor_rejects_missing_query_text() {
         let (e, _) = extractor_with("ignored", 8, false, &[(1, "doc")]);
         let qctx = QueryContext::default(); // query_text is None
-        let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
-        assert_eq!(b.batch_size(), 1);
-        assert_eq!(b.input_ids[0].len(), 8);
+        let error = e.extract_batch(&[DocHandle(1)], &qctx).unwrap_err();
+        assert!(error.to_string().contains("query_text is required"));
     }
 
     #[test]
-    fn extractor_pads_to_at_least_seq_len_one() {
-        // Defensive: passing max_seq_len = 0 at construction clamps to 1.
+    fn extractor_clamps_zero_seq_len_then_rejects_an_unrepresentable_pair() {
+        // Defensive: passing max_seq_len = 0 at construction clamps to 1,
+        // then the pair contract fails closed because query + doc cannot fit.
         let e = BertPairTokenizingDocFeatureExtractor::new(
             synthetic_tokenizer(),
             doc_text_source(&[(1, "doc")]),
@@ -532,8 +544,8 @@ mod tests {
             query_text: Some(Arc::<str>::from("query")),
             ..QueryContext::default()
         };
-        let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
-        assert!(b.seq_len() >= 1);
+        let error = e.extract_batch(&[DocHandle(1)], &qctx).unwrap_err();
+        assert!(error.to_string().contains("max_seq_len 1"));
     }
 
     // ---------------- R-5b.1.4: tokenizer pre-padding/truncation ----------------
@@ -574,9 +586,9 @@ mod tests {
             10,
             false,
             &[
-                (1, "doc"),                               // shorter than max
-                (2, "alpha beta gamma delta alpha beta"), // longer than max
-                (3, ""),                                  // empty doc
+                (1, "doc"),                    // shorter than max
+                (2, "alpha beta gamma delta"), // still within max
+                (3, "doc alpha"),              // another short doc
             ],
         );
         let b = e

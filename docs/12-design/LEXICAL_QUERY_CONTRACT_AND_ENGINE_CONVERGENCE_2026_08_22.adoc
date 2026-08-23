@@ -139,3 +139,9 @@ Use the canonical natural-language baseline for a development-first open cross-e
 Require complete source-aware Recall@100, NDCG, citation-span precision, downstream answer quality,
 latency and cost. In parallel, design a versioned public query-mode field with engine-capability
 reporting; do not block reranker evidence on exposing advanced syntax.
+
+The ranking-only portion of this gate is now measured in
+link:../_internal/status/OPEN_CROSS_ENCODER_RERANKER_GATE_2026_08_22.adoc[the open cross-encoder
+evidence]. A pinned 22.7M-parameter MiniLM reranker at development-selected depth 50 improved
+held-out NDCG@10 by 7.50%, but Recall@100 was exactly invariant. Citation-span, generator-quality
+and production ONNX latency gates remain open, so reranking remains opt-in.

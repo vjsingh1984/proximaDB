@@ -30,6 +30,23 @@ header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_202
 # ---------------------------------------------------------------------------
 
 [[claims]]
+id = "open_cross_encoder_reranker_nfc"
+claim = "On a dev-first then held-out NFCorpus protocol against the complete top-100 canonical natural-language BM25 source run, a pinned 22.7M-parameter open MiniLM cross-encoder at development-selected depth 50 improved held-out NDCG@10 from 0.322709 to 0.346901 (+7.50%; paired 95% interval +0.012902 to +0.036205) and NDCG@100 from 0.270800 to 0.286911 (+5.95%; interval +0.009516 to +0.023546). Recall@10's +1.72% interval included zero; Recall@100 was exactly invariant at 0.241135. Query-aware title-propagated windows split oversized bodies and asserted max pair length 512 with zero truncation. This supports opt-in precision reranking, not a candidate-recall or default-on claim."
+metric = "complete source-aware NDCG/Recall@10/@100 + paired query-bootstrap intervals + candidate/window/token work + maximum pair tokens"
+status = "measured"
+asserted_in = [
+  "docs/_internal/status/OPEN_CROSS_ENCODER_RERANKER_GATE_2026_08_22.adoc",
+  "docs/12-design/LEXICAL_QUERY_CONTRACT_AND_ENGINE_CONVERGENCE_2026_08_22.adoc",
+]
+bench_source = "scripts/bench/rerank_source_candidates.py"
+bench_command = "Score and cache pinned cross-encoder query/source windows for canonical BM25 top-100 dev candidates; materialize depths 10/20/50/100; evaluate_source_retrieval.py --run-granularity source --require-complete-k 100; select depth on dev using quality and candidate/window/token work; score held-out once at depth 50; compare_retrieval_runs.py at NDCG/Recall@10/@100 with 10,000 paired bootstrap samples, seed 17"
+artifact = "docs/_internal/status/OPEN_CROSS_ENCODER_RERANKER_GATE_2026_08_22.adoc"
+hardware = "Local macOS arm64 Apple Silicon, PyTorch 2.12 MPS; quality-only model scoring, no latency or throughput claim"
+date = "2026-08-22"
+version = "source base 300876162376d10661174a483833cf3ed60d7f18; cross-encoder/ms-marco-MiniLM-L6-v2 revision 4bebbd56fc380a66525f95b03d4ec1a4b41a4f1e; scorer 98f2f3a20b3cc4f89c9bc7474f60c3694d156fb63f2093a1b4347611c03fc5d7; evaluator ce747340e565e0277bad32a7ff3cbc1480a262b31877c46364d1f6257d735c75; comparator 8d27a3dc7434611c1abda705e9314410211b526a3835e7061446afc6262918a9"
+notes = "Durable external root /Users/vijaysingh/proximadb-bench-data/retrieval-quality-reranker-gate-v1/nfcorpus/minilm-l6-v2/. Held-out score manifest/metrics 6934c332b3713b855cf0fb2ea15a642e955bc5fc007b2a03e09a5a39192dd349 / 78d3cf2faae6b32037198fc812aa519c0d3206651f465bd60d01492087d93416; held-out NDCG@10/Recall@10/NDCG@100/Recall@100 comparisons 57dc1ba0c7db4ff332287ba0bc89dae05f1a671952242212af7f4e1f5144bdc2 / 0719eacfc7e7d4f2aa53fc628c676f75ddac2c54092ea1561c296a79cca7ab03 / 05ef4a8f017c5ff1f8260a8483954619cc69ab0287e4c93e73bb6dfb863ce1e5 / 873bc196e6f6714904f7bea8ef06a8f06574248494a386e5b8850ecfd47029e2. NFCorpus has no citation-span labels; generation quality and serving ONNX latency remain unmeasured. Max-over-window reduction may favor sources with more windows."
+
+[[claims]]
 id = "lexical_query_contract_engine_convergence_nfc"
 claim = "On a dev-first then held-out NFCorpus protocol, explicit natural-language mode eliminated document Tantivy's prior strict-parser failures: document Tantivy and canonical hybrid BM25 each completed all 324 dev and 323 held-out queries with exactly 100 sources. On held-out test, canonical-minus-Tantivy Recall@100 was -0.000079 (paired 95% interval -0.011129 to +0.008930), while canonical NDCG@10 improved +0.019002 (+0.009360 to +0.029213) and NDCG@100 improved +0.012716 (+0.006104 to +0.019871). This supports semantic/capability convergence, not a blind engine replacement."
 metric = "natural-query error rate + complete source-aware NDCG/Recall@10/@100 + paired query-bootstrap intervals"

@@ -1780,7 +1780,8 @@ mod tests {
     async fn handler_with_scorer_runs_second_phase_and_rerank_top_k() {
         // Pass a ConstantMultiplier(0.1) — top-3 first-phase scores
         // (5, 4, 3) become (0.5, 0.4, 0.3); tail (2, 1) keeps first-
-        // phase scores 2.0, 1.0; final sort: 2.0, 1.0, 0.5, 0.4, 0.3.
+        // phase scores 2.0, 1.0. The rescored prefix remains ahead of
+        // the tail because first/second score scales are incomparable.
         use proximadb_rank_core::ConstantMultiplierSecondPhaseScorer;
 
         let registry = ProfileRegistry::new();
@@ -1802,20 +1803,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.hits.len(), 5);
-        // Top hit was originally doc 5 (score 5.0). After second phase
-        // rescore, doc 2 with score 2.0 (untouched tail) tops the list.
-        assert_eq!(resp.hits[0].id, "2");
-        assert!((resp.hits[0].score - 2.0).abs() < 1e-5);
-        assert_eq!(resp.hits[1].id, "1");
-        assert_eq!(resp.hits[2].id, "5"); // top first-phase, rescored to 0.5
-        // The top-3 (rescored) now carry PhaseId::SECOND, the tail keeps FIRST.
-        // After final sort: positions 0,1 are tail (FIRST), positions 2,3,4 are rescored (SECOND).
+        assert_eq!(resp.hits[0].id, "5");
+        assert!((resp.hits[0].score - 0.5).abs() < 1e-5);
+        assert_eq!(resp.hits[1].id, "4");
+        assert_eq!(resp.hits[2].id, "3");
+        assert_eq!(resp.hits[3].id, "2");
+        assert_eq!(resp.hits[4].id, "1");
+        // The reranked prefix carries PhaseId::SECOND; the appended tail keeps FIRST.
         let svs: Vec<u8> = resp
             .hits
             .iter()
             .map(|h| h.score_vector.as_ref().unwrap().phase)
             .collect();
-        assert_eq!(svs, vec![0, 0, 1, 1, 1]); // FIRST, FIRST, SECOND, SECOND, SECOND
+        assert_eq!(svs, vec![1, 1, 1, 0, 0]);
     }
 
     #[test]
