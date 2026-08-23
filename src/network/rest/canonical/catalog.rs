@@ -31,15 +31,13 @@ use proximadb_data_model::ProximaType;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::catalog::{Catalog, CatalogManager, TableIdentifier};
+use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::errors::{ApiError, ApiResult};
 use crate::proto::proximadb_v1::{
-    CatalogConfig, CatalogListNamespacesRequest, CatalogListNamespacesResponse, CatalogType,
-    CreateCatalogRequest, CreateCatalogResponse, CreateNamespaceRequest, CreateNamespaceResponse,
-    CreateTableRequest, CreateTableResponse, DropCatalogRequest, DropCatalogResponse,
-    DropNamespaceRequest, DropNamespaceResponse, DropTableRequest, DropTableResponse,
-    GetCatalogRequest, GetCatalogResponse, GetTableRequest, GetTableResponse, ListCatalogsRequest,
-    ListCatalogsResponse, ListTablesRequest, ListTablesResponse, Namespace, TableSchema,
+    CatalogConfig, CatalogListNamespacesResponse, CreateCatalogRequest, CreateCatalogResponse,
+    CreateNamespaceRequest, CreateNamespaceResponse, CreateTableRequest, CreateTableResponse,
+    DropCatalogResponse, DropNamespaceResponse, DropTableResponse, GetCatalogResponse,
+    GetTableResponse, ListCatalogsResponse, ListTablesResponse, Namespace, TableSchema,
 };
 use crate::security::rbac_service::{UnifiedPermission, UnifiedUserContext};
 use axum::Extension;
