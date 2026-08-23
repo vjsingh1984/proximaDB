@@ -389,12 +389,21 @@ def test_get_outgoing_edges_traversal_fallback():
     assert edges[0]["from_node"] == "a"
 
 
-def test_get_outgoing_edges_both_paths_fail():
+def test_get_outgoing_edges_both_paths_fail_raises_rather_than_truncating():
+    """When both edge-read paths fail, the traversal must not look empty.
+
+    This previously asserted `== []`, matching what the code did. But "this node
+    has no outgoing edges" is an ordinary answer, and three traversal callers
+    walk this primitive -- so returning [] silently TRUNCATED every traversal
+    built on it, with nothing able to tell the difference. A private primitive
+    should not make that call for its callers.
+    """
     client = MagicMock()
     client.get_outgoing_edges.side_effect = RuntimeError("x")
     client.traverse_graph.side_effect = RuntimeError("y")
     g = ProximaDBGraph(client, "gid")
-    assert g._get_outgoing_edges_raw("a") == []
+    with pytest.raises(RuntimeError, match="could not read outgoing edges"):
+        g._get_outgoing_edges_raw("a")
 
 
 def test_get_incoming_edges_direct():

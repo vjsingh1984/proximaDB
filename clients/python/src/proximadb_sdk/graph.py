@@ -251,8 +251,10 @@ class ProximaDBGraph:
             return [
                 dict(edge) if isinstance(edge, dict) else edge for edge in (edges or [])
             ]
-        except Exception:
-            pass
+        except Exception as direct_exc:  # noqa: BLE001 - deliberate fallback below
+            # Legitimate: not every server exposes get_outgoing_edges, so fall
+            # back to a depth-1 traversal. Kept for the chain on the raise below.
+            first_error = direct_exc
 
         try:
             traversal = self._client.traverse_graph(
@@ -262,8 +264,17 @@ class ProximaDBGraph:
                 edge_types=edge_types,
                 limit=None,
             )
-        except Exception:
-            return []
+        except Exception as exc:
+            # BOTH ways of reading edges failed. Returning [] here silently
+            # TRUNCATED every traversal built on this primitive -- three callers
+            # walk it -- and "this node has no outgoing edges" is a perfectly
+            # ordinary answer, so nothing downstream could tell the difference.
+            # A private primitive should not decide that policy for its callers.
+            raise RuntimeError(
+                f"could not read outgoing edges for node {node_id!r} in graph "
+                f"{self._graph_id!r}: get_outgoing_edges failed ({first_error!r}) "
+                f"and the traverse_graph fallback failed too"
+            ) from exc
 
         edges = []
         for edge in traversal.get("edges", []) or []:

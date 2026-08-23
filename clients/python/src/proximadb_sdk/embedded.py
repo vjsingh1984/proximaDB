@@ -536,7 +536,11 @@ def read_runtime_state(data_dir: "str | Path") -> dict[str, Any] | None:
         raw = (Path(data_dir) / RUNTIME_STATE_FILE).read_text()
         state = json.loads(raw)
         return state if isinstance(state, dict) else None
-    except Exception:
+    except Exception as exc:
+        # A probe: an unreadable/absent state file legitimately means "no state".
+        # Logged so an unexpected cause (permissions, corruption) is visible
+        # rather than reading as a clean absence.
+        logger.debug("could not read runtime state from %s: %s", data_dir, exc)
         return None
 
 
@@ -1716,7 +1720,10 @@ prefetch_budget = 4
                     timeout=5.0,
                 )
                 return response.status_code == 200
-        except Exception:
+        except Exception as exc:
+            # Unhealthy is the correct answer here. Logging is what separates
+            # "the server said no" from "the check itself could not run".
+            logger.debug("health check failed: %s", exc)
             return False
 
     # =============================================================================
@@ -2307,6 +2314,7 @@ class EmbeddedMultiModalQueryExecutor:
 
         start_time = time.time()
         component_times: dict[str, float] = {}
+        component_errors: dict[str, str] = {}
         component_results: list[list[dict[str, Any]]] = []
 
         # Execute each component
@@ -2314,29 +2322,67 @@ class EmbeddedMultiModalQueryExecutor:
             comp_start = time.time()
 
             comp_type = component.get("type")
-            if comp_type == "vector":
-                results = await self._execute_vector(component)
-            elif comp_type == "graph":
-                # Check if this depends on previous results
-                if component.get("_from_previous") and component_results:
-                    prev_results = component_results[-1]
-                    id_field = component.get("_id_field", "id")
-                    start_nodes = [
-                        r.get(id_field) for r in prev_results if r.get(id_field)
-                    ]
-                    component["start_nodes"] = start_nodes
-                results = await self._execute_graph(component)
-            elif comp_type == "document":
-                results = await self._execute_document(component)
-            elif comp_type == "logs":
-                results = await self._execute_logs(component)
-            elif comp_type == "metrics":
-                results = await self._execute_metrics(component)
-            else:
+            comp_key = f"{comp_type}_{i}"
+            try:
+                results = await self._run_component(
+                    comp_type, component, component_results
+                )
+            except Exception as exc:  # noqa: BLE001 - recorded, not discarded
+                # Best-effort fusion is intended: one failing leg must not lose
+                # the others. What is not acceptable is the caller being unable
+                # to tell, so the failure is named on the result.
+                logger.warning(
+                    "embedded multi-modal component %s failed: %s",
+                    comp_key,
+                    exc,
+                    exc_info=True,
+                )
+                component_errors[comp_key] = f"{type(exc).__name__}: {exc}"
                 results = []
 
             component_results.append(results)
-            component_times[f"{comp_type}_{i}"] = (time.time() - comp_start) * 1000
+            component_times[comp_key] = (time.time() - comp_start) * 1000
+
+        return await self._fuse_and_package(
+            query, component_results, component_times, component_errors, start_time
+        )
+
+    async def _run_component(
+        self,
+        comp_type: str | None,
+        component: dict[str, Any],
+        component_results: list[list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """Run one leg. Raises; `execute` decides what a failure means."""
+        if comp_type == "vector":
+            return await self._execute_vector(component)
+        elif comp_type == "graph":
+            # Check if this depends on previous results
+            if component.get("_from_previous") and component_results:
+                prev_results = component_results[-1]
+                id_field = component.get("_id_field", "id")
+                start_nodes = [r.get(id_field) for r in prev_results if r.get(id_field)]
+                component["start_nodes"] = start_nodes
+            return await self._execute_graph(component)
+        elif comp_type == "document":
+            return await self._execute_document(component)
+        elif comp_type == "logs":
+            return await self._execute_logs(component)
+        elif comp_type == "metrics":
+            return await self._execute_metrics(component)
+        else:
+            return []
+
+    async def _fuse_and_package(
+        self,
+        query: "MultiModalQuery",
+        component_results: list[list[dict[str, Any]]],
+        component_times: dict[str, float],
+        component_errors: dict[str, str],
+        start_time: float,
+    ) -> "MultiModalQueryResult":
+        """Join, fuse and package, so `execute` reads as its own policy."""
+        from .multimodal_query import MultiModalQueryResult
 
         # Apply joins if specified
         if query.joins:
@@ -2370,6 +2416,7 @@ class EmbeddedMultiModalQueryExecutor:
             query_time_ms=total_time,
             component_times=component_times,
             fusion_strategy=query.fusion_strategy,
+            component_errors=component_errors,
             metadata={
                 "component_count": len(query.components),
                 "join_count": len(query.joins),
@@ -2403,9 +2450,12 @@ class EmbeddedMultiModalQueryExecutor:
                 }
                 for r in results
             ]
-        except Exception:
-            # Log error but return empty results to allow other components to proceed
-            return []
+        except Exception as exc:
+            # Re-raised, not swallowed. This comment used to say "log error but
+            # return empty results" -- and it did not log, so a failed leg was
+            # indistinguishable from one that matched nothing. `execute` owns
+            # the best-effort policy and records which component failed.
+            raise exc
 
     async def _execute_graph(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute graph traversal component against embedded database.
@@ -2494,8 +2544,10 @@ class EmbeddedMultiModalQueryExecutor:
 
             return results[:limit]
 
-        except Exception:
-            return []
+        except Exception as exc:
+            # Re-raised; see _execute_vector. A truncated traversal that returns
+            # [] is indistinguishable from a node with no edges.
+            raise exc
 
     async def _execute_document(
         self, component: dict[str, Any]
@@ -2548,7 +2600,11 @@ class EmbeddedMultiModalQueryExecutor:
 
             return []
 
-        except Exception:
+        except Exception as exc:
+            # A read leg returning [] on failure is indistinguishable from a
+            # query that matched nothing. Logged at warning because, unlike the
+            # probes above, an empty answer here will be acted on as data.
+            logger.warning("embedded document query failed: %s", exc, exc_info=True)
             return []
 
     async def _execute_logs(self, component: dict[str, Any]) -> list[dict[str, Any]]:

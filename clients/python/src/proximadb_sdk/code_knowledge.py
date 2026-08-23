@@ -984,8 +984,14 @@ class CodeKnowledgeBuilder:
 
             return True
 
-        except Exception:
-            return False
+        except Exception as exc:
+            # NOT False. False here meant "the file was not indexed", which is a
+            # normal outcome a caller acts on by moving along. A delete that
+            # FAILED must not be reported as a delete that found nothing --
+            # otherwise cleanup silently does not happen and nothing says so.
+            raise RuntimeError(
+                f"failed to delete the index entry for {file_path!r}: {exc}"
+            ) from exc
 
     def get_indexed_files(self) -> list[str]:
         """Get list of currently indexed files."""
