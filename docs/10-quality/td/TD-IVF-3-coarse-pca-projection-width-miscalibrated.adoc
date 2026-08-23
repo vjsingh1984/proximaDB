@@ -8,10 +8,10 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In Progress — measured at three dimensionalities; the width floor is plumbed and ships DISABLED (`ncomp_floor = 0`). The default flip is gated on the bake below.**
+| Status | **Blocked on measurement — flip precondition 1 (seed sensitivity) has been RUN and FAILED.** The 768-d 32-vs-64 ordering does not reproduce across clustering draws (<<seed-replication>>). The width floor stays plumbed and DISABLED (`ncomp_floor = 0`); the per-width optimum table is withdrawn as a basis for setting it. The *defect* — 10/14 components is far too narrow — is unaffected.
 | Priority | **P1 — read-side cost.** Object-store round-trips are the dominant cost term under the co-design mandate. Measured 20–21% GET/query reduction at the 0.98 recall SLA, for a one-time write cost of +9…15%.
 | Component | `src/storage/engines/sst/block_cluster.rs` — `ivf_projection_dims()` :294, call sites :390 and :598. Env gates `PROXIMADB_IVF_NCOMP`, `_A`, `_B` (ENV_GATE_REGISTRY :131–133, TD-WLP-4b).
-| Evidence | 26 beds on one binary (`62677fb41686…` @ `aed724fc5`), exact top-100 ground truth, 1000-query slices. **128-d**: BIGANN prefixes, 12 beds, 100K→10M. **384-d** and **768-d**: BGE over 491,655 code/doc chunks from 17 distinct repos — multiple widths per corpus, an independent determinism replicate (sd 0.00013), two independently forced `k_c` values at 768-d, and clean serial write costs. Each bed is **one clustering draw**; seed sensitivity is measurable via `PROXIMADB_IVF_KMEANS_SEED` but not yet measured.
+| Evidence | 26 beds on one binary (`62677fb41686…` @ `aed724fc5`), exact top-100 ground truth, 1000-query slices. **128-d**: BIGANN prefixes, 12 beds, 100K→10M. **384-d** and **768-d**: BGE over 491,655 code/doc chunks from 17 distinct repos — multiple widths per corpus, an independent determinism replicate (sd 0.00013), two independently forced `k_c` values at 768-d, and clean serial write costs. Each bed is **one clustering draw** — and that turned out to be the load-bearing limitation: a second draw (`PROXIMADB_IVF_KMEANS_SEED=987654321`, binary `56a780e43db8…` @ `ea93b2e9c`) reverses the 768-d width ordering. See <<seed-replication>>.
 |===
 
 == The defect
@@ -34,6 +34,17 @@ Measured cost of that under-projection, at the recall-0.98 SLA:
 Both optima beat *every* other width measured at their scale, on every shared
 point. The 768-d saving applies at top-10 and top-20 alike; the 128-d saving is
 −21%/−23%.
+
+[WARNING]
+====
+**The specific optima in this table are not reproducible and must not be used to
+set a default.** Every row was measured on a single clustering draw. Replicating
+the 768-d row at a second seed reverses the 32-vs-64 ordering and erases the
+top-20 advantage entirely — while a same-seed rebuild reproduces to the digit, so
+the variance is the *draw*, not the measurement. The magnitude claimed in this
+document's title inherits that doubt. Full data and what survives:
+<<seed-replication>>.
+====
 
 [IMPORTANT]
 ====
@@ -265,6 +276,102 @@ The cap decision itself belongs to **TD-SEARCH-3**, which owns the promotion gat
 and still requires the `k_c=90` repeat at an eligible cap. Nothing here
 authorizes a default change.
 
+[[seed-replication]]
+== Seed replication — the 768-d width ordering does NOT reproduce (measured 2026-08-22)
+
+Flip precondition 1 has been run and it **fails**. At 768-d the 32-vs-64 ordering
+is a property of the clustering draw, not of the geometry.
+
+Both beds were rebuilt at `PROXIMADB_IVF_KMEANS_SEED=987654321` with everything
+else held: same corpus, `k_c`=90, same binary (`56a780e43db8…` @ `ea93b2e9c`), same
+1000-query slice against exact top-100 ground truth, same nprobe grid. The
+persisted `coarse_seed` was **asserted on each bed before sweeping** — this repo
+has already shipped one env gate (`PROXIMADB_IVF_NCOMP`) that was accepted and
+silently ignored, and an unverified gate here would have produced two identical
+beds and a confident, meaningless "no sensitivity" result.
+
+.Floor = lowest nprobe on the grid reaching recall ≥ 0.98; cells are `recall / GET-per-query`
+[cols="1,2,2,2,2", options="header"]
+|===
+| | w32, default seed | w64, default seed | w32, seed 987654321 | w64, seed 987654321
+| top-10 floor | np25 — 0.9821 / 41.03 | np25 — 0.9858 / **38.68** | np25 — 0.9837 / **40.21** | np25 — 0.9820 / 42.08
+| top-20 floor | np30 — 0.9864 / 48.01 | **np25** — 0.9835 / 39.00 | np30 — 0.9862 / 47.18 | np30 — 0.9855 / 49.96
+|===
+
+Two independent reversals:
+
+* **The top-20 floor advantage disappears.** At the default draw width 64 clears
+  0.98 a full grid step earlier than width 32 (np25 vs np30) — the single
+  strongest number behind the width recommendation, and the whole of the −19.6%
+  top-20 saving. At the alternate draw both widths floor at np30.
+* **The top-10 request ordering inverts.** Width 64 is 5.7% *cheaper* than width
+  32 at the default draw and 4.6% *dearer* at the alternate one. This is not a
+  near-tie that tipped: at the default seed width 64 has lower GET/query at
+  **every** nprobe measured, and at the alternate seed it has higher GET/query at
+  **every** nprobe measured. The entire curve moves, not one point.
+
+=== This is not measurement noise
+
+`bge768-wc64-r1` is an independent rebuild of the width-64 bed at the *same* seed.
+It reproduces `bge768-ncomp64` to the digit — GET/query identical to two decimals
+at all twelve nprobe points, recall within 0.0004:
+
+[cols="1,2,2", options="header"]
+|===
+| | `bge768-ncomp64` | `bge768-wc64-r1` (same seed, rebuilt)
+| top-10 np25 | 0.9858 / 38.68 | 0.9860 / **38.68**
+| top-20 np25 | 0.9835 / 39.00 | 0.9835 / **39.00**
+|===
+
+So rebuild-to-rebuild variance at a fixed seed is ~0 in requests and ≤0.0004 in
+recall, while changing only the seed moves width-64's cost by **8.8%**. **The seed
+effect is larger than the width effect it was being used to measure.** Every
+per-width number in this TD carries that spread; none of them carry an error bar,
+because until now there was no reason to think one was needed.
+
+=== What survives, and what does not
+
+The comparison against the *shipping* default reframes which claim was ever
+load-bearing. At the default draw, 768-d:
+
+[cols="1,2,2", options="header"]
+|===
+| width | top-10 floor | top-20 floor
+| **14 — shipping default** | np30 / 48.55 | np30 / 48.48
+| 32 | np25 / 41.03 (−15.5%) | np30 / 48.01 (**−1.0%**)
+| 64 | np25 / 38.68 (−20.3%) | np25 / 39.00 (−19.6%)
+| 128 | np25 / 43.54 (−10.3%) | np25 / 43.04 (−11.2%)
+|===
+
+* **Does not survive: the specific optimum.** "64 at 768-d" was read off a single
+  draw at a resolution finer than the draw-to-draw spread. The headline −19.6% at
+  top-20 came *entirely* from width 64 dropping a grid step — width 32 never
+  bought more than 1% there — and that drop is exactly what failed to replicate.
+* **Does not survive unqualified: the `k_c`-robustness result** (degrading `k_c`
+  90→30 costs +21% at width 32 but only +2.6% at width 64). One draw per cell; it
+  inherits the same doubt and is no longer sufficient to justify "width buys
+  robustness" as a policy rationale.
+* **Survives: the defect itself.** Widening from the default 14 drops the top-10
+  floor from np30 to np25, and it does so at *both* widths under *both* draws.
+  That is a grid-step effect in the same direction in four independent beds; the
+  draw-to-draw spread is nowhere near large enough to manufacture it.
+* **128-d BIGANN was never seed-replicated.** It is not refuted, but it rests on
+  precisely the method that just failed at 768-d and must not be treated as
+  settled.
+
+=== Consequence for the flip
+
+Setting a compiled default from per-width point estimates is not sound at this
+resolution. To do it at all, the comparison needs **≥3 draws per width with the
+spread reported**, and a decision rule over the distribution rather than a point —
+a materially larger programme than the remaining flip preconditions assume.
+
+The cheaper alternative that the surviving evidence does support: ship a
+**conservative floor that every draw agrees improves on 10/14**, without claiming
+to be optimal. That trades most of the headline saving for a result that does not
+depend on which draw one measured, and it is the option this TD now recommends
+weighing first.
+
 == Resolution
 
 The factorial called for below has now been run: 26 beds across **three**
@@ -275,7 +382,9 @@ from it shape the policy.
 and `k_c`=90, so the policy needs **no `k_c` term** — which also means the `max()`
 masking noted above is not the thing to fix first.
 
-**Width buys robustness, and that is the decisive property.** Degrading `k_c`
+**Width buys robustness, and that is the decisive property.** [Superseded — this
+rationale rests on one clustering draw per cell and does not survive
+<<seed-replication>>; retained for the record.] Degrading `k_c`
 90→30 costs **+21% GET/query at width 32 but only +2.6% at width 64**. Production
 `k_c` is derived from corpus size (`(n_usable·dim)/4 MiB`, clamped 2..4096) and
 therefore varies over orders of magnitude across collections and LSM levels, while
@@ -298,9 +407,13 @@ So the resolution is a **floor**, not a formula:
   It is emitted as a diagnostic under `PROXIMADB_TRACE_IVF_FLUSH` so evidence keeps
   accruing without the policy depending on it.
 . **Flip preconditions** — all four must pass before the compiled default moves:
-  .. **Seed sensitivity.** Every bed to date is one clustering draw. Replicate the
-     32-vs-64 ordering across ≥2 `PROXIMADB_IVF_KMEANS_SEED` values. If the
-     ordering flips, the table is an artifact of one draw and nothing ships.
+  .. **Seed sensitivity — CHECKED 2026-08-22; FAILED.** Replicated the 32-vs-64
+     ordering at a second `PROXIMADB_IVF_KMEANS_SEED`. **The ordering flips**: the
+     top-20 grid-step advantage vanishes and the top-10 request ordering inverts,
+     while a same-seed rebuild reproduces to the digit. Per the rule stated when
+     this precondition was written, **nothing ships** on the strength of the
+     per-width table. Full data: <<seed-replication>>. The remaining preconditions
+     are moot until a distribution-based comparison replaces the point estimates.
   .. **Re-check the width optimum at the eligible read cap.** *Every width
      measurement in this TD was taken under the fixed 4 MiB planner* — the same
      conditioning the cell-size caveat below records for `k_c`. That is not a
