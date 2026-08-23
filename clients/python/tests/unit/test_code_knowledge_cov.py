@@ -870,11 +870,20 @@ def test_delete_file_index_path_object():
     assert run(b.delete_file_index(Path("/a.py"))) is True
 
 
-def test_delete_file_index_failure():
+def test_delete_file_index_failure_is_raised_not_reported_as_false():
+    """A failed delete must not look like "the file was not indexed".
+
+    This test previously asserted `is False`, which is what the code did -- a
+    characterization test, not a specification. False is the answer for a file
+    that was never indexed, and a caller acts on it by moving along. Reporting a
+    FAILED delete the same way leaves data behind and tells nobody, so the two
+    outcomes must not share a value.
+    """
     client, collection, _ = make_client()
     collection.delete = AsyncMock(side_effect=RuntimeError("delete failed"))
     b = make_builder(client, config=CodeIndexConfig(vector_dimension=8))
-    assert run(b.delete_file_index("/a.py")) is False
+    with pytest.raises(RuntimeError, match="failed to delete"):
+        run(b.delete_file_index("/a.py"))
 
 
 def test_get_indexed_files_and_hash():

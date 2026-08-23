@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: env-gate-check all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check mvp-contract-check mvp-smoke-test context-benchmark-check workspace-boundaries-check tenant-path-check tenant-ingress-check catalog-seal-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check query-conformance-check docs-claim-check design-status-check status-asof-check release-smoke cloud-emulator-test
+.PHONY: env-gate-check all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check mvp-contract-check mvp-smoke-test context-benchmark-check workspace-boundaries-check tenant-path-check tenant-ingress-check catalog-seal-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline silent-failure-report silent-failure-no-regression silent-failure-baseline v1-proto-usage-report v1-proto-usage-no-regression v1-proto-usage-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check query-conformance-check docs-claim-check design-status-check status-asof-check release-smoke cloud-emulator-test
 
 # Default target
 all: build test
@@ -210,7 +210,7 @@ tenant-ingress-check:
 	@echo "Validating deployment-aware tenant ingress..."
 	python3 scripts/check_tenant_ingress_contract.py
 
-work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check design-status-check status-asof-check capability-matrix-check mvp-contract-check mvp-smoke-test context-benchmark-check workspace-boundaries-check tenant-path-check tenant-ingress-check catalog-seal-check panic-policy-module-guard hygiene-check env-gate-check
+work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check design-status-check status-asof-check capability-matrix-check mvp-contract-check mvp-smoke-test context-benchmark-check workspace-boundaries-check tenant-path-check tenant-ingress-check catalog-seal-check panic-policy-module-guard silent-failure-no-regression hygiene-check env-gate-check
 	@echo "✅ work-commit-check: deterministic architecture and commit guardrails passed"
 
 validated-commit-check: work-commit-check
@@ -219,6 +219,17 @@ validated-commit-check: work-commit-check
 workspace-rebuild-baseline:
 	@echo "⏱️ Measuring targeted workspace rebuild baseline..."
 	python3 scripts/measure_workspace_rebuild.py --keep-going
+
+silent-failure-report:
+	@echo "🔇 Counting Python silent-failure sites..."
+	python3 scripts/count_silent_failures.py --mode report
+
+silent-failure-no-regression:
+	@echo "🔇 Enforcing the Python silent-failure ratchet..."
+	python3 scripts/count_silent_failures.py --mode no-regression
+
+silent-failure-baseline:
+	python3 scripts/count_silent_failures.py --mode baseline
 
 panic-policy-report:
 	@echo "🧯 WS-2 panic policy report (non-blocking)..."
