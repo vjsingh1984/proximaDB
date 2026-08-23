@@ -102,6 +102,23 @@ lazy_static! {
         "Armed v3 probes that fell back to a whole Region-A scan (TD-RDSTRAT-8)",
         &["tenant_id"]
     );
+    /// TD-RDSTRAT-12: per-tenant parallel read-rounds counter — the count of
+    /// concurrent rounds issued by `FileSystem::read_ranges` when bounded parallelism
+    /// is enabled (`PROXIMADB_FS_READ_RANGES_PARALLEL > 1`). Surface for the
+    /// "waves-not-sums" latency model: `latency ≈ rounds × RTT + ...`.
+    pub static ref READ_RANGES_FETCH_ROUNDS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_read_ranges_fetch_rounds_total",
+        "Parallel read-rounds issued by bounded-concurrent FileSystem::read_ranges (TD-RDSTRAT-12)",
+        &["tenant_id"]
+    );
+    /// TD-RDSTRAT-12: per-tenant max-inflight gauge — peak concurrent reads in
+    /// a single `read_ranges` call. Shows the actual parallelism achieved vs the
+    /// `PROXIMADB_FS_READ_RANGES_PARALLEL` cap.
+    pub static ref READ_RANGES_MAX_INFLIGHT: GaugeVec = registered_gauge_vec(
+        "proximadb_read_ranges_max_inflight",
+        "Peak concurrent reads in a FileSystem::read_ranges call (TD-RDSTRAT-12)",
+        &["tenant_id"]
+    );
     pub static ref STORAGE_BYTES_SECONDS: GaugeVec = registered_gauge_vec(
         "proximadb_storage_bytes_seconds",
         "GB-seconds or raw bytes stored per tenant",
@@ -875,6 +892,34 @@ pub fn record_cache_tenant_stats(cache: &str, stats: &[proximadb_cache::TenantCa
         g("misses", s.misses as f64);
         g("evictions", s.evictions as f64);
         g("hit_ratio", s.hit_ratio);
+    }
+}
+
+/// TD-RDSTRAT-12: Record bounded-concurrent `FileSystem::read_ranges` metrics.
+///
+/// Called by the SST engine (or other callers with tenant context) after draining
+/// the thread-local `read_ranges` metrics via `drain_read_ranges_metrics()`.
+/// Emits to the per-tenant Prometheus counters.
+pub fn record_read_ranges_metrics(tenant_id: &str, fetch_rounds: u64, max_inflight: u64) {
+    READ_RANGES_FETCH_ROUNDS_TOTAL
+        .with_label_values(&[tenant_id])
+        .inc_by(fetch_rounds as f64);
+    READ_RANGES_MAX_INFLIGHT
+        .with_label_values(&[tenant_id])
+        .set(max_inflight as f64);
+}
+
+/// TD-RDSTRAT-12: Drain and emit bounded-concurrent `FileSystem::read_ranges` metrics.
+///
+/// Convenience function that combines `drain_read_ranges_metrics()` (from
+/// `proximadb_storage_filesystem_types`) and `record_read_ranges_metrics()`.
+/// Call this after operations that use `FileSystem::read_ranges` with parallelism
+/// enabled (`PROXIMADB_FS_READ_RANGES_PARALLEL > 1`). No-op if no metrics were
+/// recorded (e.g., sequential reads or no `read_ranges` calls since last drain).
+pub fn drain_and_emit_read_ranges_metrics(tenant_id: &str) {
+    use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
+    if let Some(metrics) = drain_read_ranges_metrics() {
+        record_read_ranges_metrics(tenant_id, metrics.fetch_rounds, metrics.max_inflight);
     }
 }
 
