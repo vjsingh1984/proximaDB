@@ -5,10 +5,8 @@ use crate::storage::engines::sst::blocks::SstRecord;
 use crate::storage::engines::sst::{
     Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,
 };
-use std::collections::HashMap as StdHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_compaction_basic() {
@@ -906,10 +904,11 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
     use proximadb_catalog::{
-        Catalog, CatalogError, CatalogNamespace, CatalogTableSchema, TableIdentifier,
+        Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier,
     };
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     /// TD-CAT-7.4: Minimal in-memory test catalog.
     ///
@@ -941,11 +940,15 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             "test-memory"
         }
 
+        fn identity_authority(&self) -> Option<&dyn proximadb_catalog::CatalogAuthority> {
+            None
+        }
+
         async fn create_namespace(
             &self,
             namespace: &[String],
             properties: StdHashMap<String, String>,
-        ) -> Result<CatalogNamespace, CatalogError> {
+        ) -> anyhow::Result<CatalogNamespace> {
             let mut ns = CatalogNamespace::new(namespace.to_vec());
             ns.properties = properties;
             ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
@@ -958,7 +961,7 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             &self,
             identifier: &TableIdentifier,
             schema: CatalogTableSchema,
-        ) -> Result<CatalogTableSchema, CatalogError> {
+        ) -> anyhow::Result<CatalogTableSchema> {
             let mut tables = self.tables.write().await;
             tables.insert(identifier.clone(), schema.clone());
             Ok(schema)
@@ -967,34 +970,29 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
         async fn get_table(
             &self,
             identifier: &TableIdentifier,
-        ) -> Result<CatalogTableSchema, CatalogError> {
+        ) -> anyhow::Result<CatalogTableSchema> {
             let tables = self.tables.read().await;
             tables
                 .get(identifier)
                 .cloned()
-                .ok_or_else(|| CatalogError::TableNotFound(identifier.to_string()))
-        }
-
-        fn identity_authority(&self) -> Option<&dyn proximadb_catalog::CatalogAuthority> {
-            None
-        }
-
-        async fn drop_table(&self, _identifier: &TableIdentifier) -> Result<(), CatalogError> {
-            Ok(())
+                .ok_or_else(|| anyhow::anyhow!("Table not found: {}", identifier))
         }
 
         async fn get_namespace(
             &self,
             namespace: &[String],
-        ) -> Result<CatalogNamespace, CatalogError> {
+        ) -> anyhow::Result<CatalogNamespace> {
             let namespaces = self.namespaces.read().await;
             namespaces
                 .get(namespace)
                 .cloned()
-                .ok_or_else(|| CatalogError::NamespaceNotFound(namespace.join(".")))
+                .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}", namespace.join(".")))
         }
 
-        async fn list_namespaces(&self) -> Result<Vec<CatalogNamespace>, CatalogError> {
+        async fn list_namespaces(
+            &self,
+            _parent: Option<&[String]>,
+        ) -> anyhow::Result<Vec<CatalogNamespace>> {
             let namespaces = self.namespaces.read().await;
             Ok(namespaces.values().cloned().collect())
         }
@@ -1002,44 +1000,22 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
         async fn list_tables(
             &self,
             namespace: &[String],
-        ) -> Result<Vec<CatalogTableSchema>, CatalogError> {
+        ) -> anyhow::Result<Vec<TableIdentifier>> {
             let tables = self.tables.read().await;
             Ok(tables
-                .iter()
-                .filter(|(id, _)| id.namespace() == namespace)
-                .map(|(_, schema)| schema.clone())
+                .keys()
+                .filter(|id| id.namespace() == namespace)
+                .cloned()
                 .collect())
         }
 
-        async fn alter_table(
+        async fn drop_table(
             &self,
-            _identifier: &TableIdentifier,
-            _changes: Vec<proximadb_catalog::TableChange>,
-        ) -> Result<CatalogTableSchema, CatalogError> {
-            Err(CatalogError::UnsupportedOperation(
-                "alter_table not implemented in test catalog".to_string(),
-            ))
-        }
-
-        async fn create_namespace_inner(
-            &self,
-            _namespace: &[String],
-            _properties: StdHashMap<String, String>,
-            _tenant_id: Option<String>,
-        ) -> Result<CatalogNamespace, CatalogError> {
-            Err(CatalogError::UnsupportedOperation(
-                "create_namespace_inner not implemented in test catalog".to_string(),
-            ))
-        }
-
-        async fn create_table_inner(
-            &self,
-            _identifier: &TableIdentifier,
-            _schema: CatalogTableSchema,
-        ) -> Result<CatalogTableSchema, CatalogError> {
-            Err(CatalogError::UnsupportedOperation(
-                "create_table_inner not implemented in test catalog".to_string(),
-            ))
+            identifier: &TableIdentifier,
+            _purge: bool,
+        ) -> anyhow::Result<bool> {
+            let mut tables = self.tables.write().await;
+            Ok(tables.remove(identifier).is_some())
         }
     }
 
@@ -1115,10 +1091,11 @@ async fn td_global_precision_resolver_stamps_hint_without_per_instance_wiring() 
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
     use proximadb_catalog::{
-        Catalog, CatalogError, CatalogNamespace, CatalogTableSchema, TableIdentifier,
+        Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier,
     };
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     let cache = Arc::new(CatalogCache::new(1000, 60));
     let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new(

@@ -50,7 +50,6 @@
 //!   prevent two replicas from competing; assignment via partition
 //!   ranges or rendezvous-hash is a follow-up.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -61,7 +60,6 @@ use proximadb_embedding::scheduler::IngestMode;
 use proximadb_embedding::service::{EmbedBatch, EmbedRecord};
 use proximadb_queue::QueueClient;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
@@ -1161,8 +1159,10 @@ mod tests {
         use proximadb_catalog::cache::CatalogCache;
         use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
         use proximadb_catalog::{
-            Catalog, CatalogError, CatalogNamespace, CatalogTableSchema, TableIdentifier,
+            Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier,
         };
+        use std::collections::HashMap;
+        use tokio::sync::RwLock;
 
         ensure_embedding_singleton();
         let tmp = TempDir::new().expect("tempdir");
@@ -1210,11 +1210,15 @@ mod tests {
                 "test-memory"
             }
 
+            fn identity_authority(&self) -> Option<&dyn proximadb_catalog::CatalogAuthority> {
+                None
+            }
+
             async fn create_namespace(
                 &self,
                 namespace: &[String],
                 properties: HashMap<String, String>,
-            ) -> Result<CatalogNamespace, CatalogError> {
+            ) -> anyhow::Result<CatalogNamespace> {
                 let mut ns = CatalogNamespace::new(namespace.to_vec());
                 ns.properties = properties;
                 ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
@@ -1227,7 +1231,7 @@ mod tests {
                 &self,
                 identifier: &TableIdentifier,
                 schema: CatalogTableSchema,
-            ) -> Result<CatalogTableSchema, CatalogError> {
+            ) -> anyhow::Result<CatalogTableSchema> {
                 let mut tables = self.tables.write().await;
                 tables.insert(identifier.clone(), schema.clone());
                 Ok(schema)
@@ -1236,34 +1240,29 @@ mod tests {
             async fn get_table(
                 &self,
                 identifier: &TableIdentifier,
-            ) -> Result<CatalogTableSchema, CatalogError> {
+            ) -> anyhow::Result<CatalogTableSchema> {
                 let tables = self.tables.read().await;
                 tables
                     .get(identifier)
                     .cloned()
-                    .ok_or_else(|| CatalogError::TableNotFound(identifier.to_string()))
-            }
-
-            fn identity_authority(&self) -> Option<&dyn proximadb_catalog::CatalogAuthority> {
-                None
-            }
-
-            async fn drop_table(&self, _identifier: &TableIdentifier) -> Result<(), CatalogError> {
-                Ok(())
+                    .ok_or_else(|| anyhow::anyhow!("Table not found: {}", identifier))
             }
 
             async fn get_namespace(
                 &self,
                 namespace: &[String],
-            ) -> Result<CatalogNamespace, CatalogError> {
+            ) -> anyhow::Result<CatalogNamespace> {
                 let namespaces = self.namespaces.read().await;
                 namespaces
                     .get(namespace)
                     .cloned()
-                    .ok_or_else(|| CatalogError::NamespaceNotFound(namespace.join(".")))
+                    .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}", namespace.join(".")))
             }
 
-            async fn list_namespaces(&self) -> Result<Vec<CatalogNamespace>, CatalogError> {
+            async fn list_namespaces(
+                &self,
+                _parent: Option<&[String]>,
+            ) -> anyhow::Result<Vec<CatalogNamespace>> {
                 let namespaces = self.namespaces.read().await;
                 Ok(namespaces.values().cloned().collect())
             }
@@ -1271,44 +1270,22 @@ mod tests {
             async fn list_tables(
                 &self,
                 namespace: &[String],
-            ) -> Result<Vec<CatalogTableSchema>, CatalogError> {
+            ) -> anyhow::Result<Vec<TableIdentifier>> {
                 let tables = self.tables.read().await;
                 Ok(tables
-                    .iter()
-                    .filter(|(id, _)| id.namespace() == namespace)
-                    .map(|(_, schema)| schema.clone())
+                    .keys()
+                    .filter(|id| id.namespace() == namespace)
+                    .cloned()
                     .collect())
             }
 
-            async fn alter_table(
+            async fn drop_table(
                 &self,
-                _identifier: &TableIdentifier,
-                _changes: Vec<proximadb_catalog::TableChange>,
-            ) -> Result<CatalogTableSchema, CatalogError> {
-                Err(CatalogError::UnsupportedOperation(
-                    "alter_table not implemented in test catalog".to_string(),
-                ))
-            }
-
-            async fn create_namespace_inner(
-                &self,
-                _namespace: &[String],
-                _properties: HashMap<String, String>,
-                _tenant_id: Option<String>,
-            ) -> Result<CatalogNamespace, CatalogError> {
-                Err(CatalogError::UnsupportedOperation(
-                    "create_namespace_inner not implemented in test catalog".to_string(),
-                ))
-            }
-
-            async fn create_table_inner(
-                &self,
-                _identifier: &TableIdentifier,
-                _schema: CatalogTableSchema,
-            ) -> Result<CatalogTableSchema, CatalogError> {
-                Err(CatalogError::UnsupportedOperation(
-                    "create_table_inner not implemented in test catalog".to_string(),
-                ))
+                identifier: &TableIdentifier,
+                _purge: bool,
+            ) -> anyhow::Result<bool> {
+                let mut tables = self.tables.write().await;
+                Ok(tables.remove(identifier).is_some())
             }
         }
 
