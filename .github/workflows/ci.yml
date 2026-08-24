@@ -215,6 +215,13 @@ jobs:
               - 'src/query/**'
               - 'tests/*query*'
               - 'tests/*federated*'
+              # TD-SELECTOR-1: the selector/answer-quality gates are #[path]-included
+              # modules of this test file; editing the harness is editing the test.
+              - 'tests/retrieval_quality_gates.rs'
+              - 'benches/bench_selector_benchmark.rs'
+              - 'benches/selector_benchmark_data.rs'
+              - 'benches/bench_answer_quality.rs'
+              - 'benches/answer_quality_data.rs'
               # The unflushed-tail search path feeds vector recall — changes here
               # must run the recall+leaks E2E (vector_ann_recall_e2e) in the query
               # integration job, which the storage-only filter would otherwise miss.
@@ -1941,7 +1948,7 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Query Integration Tests
         run: |
-          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs tests/filtered_ann_recall_bands.rs tests/query_cache_test.rs tests/vector_ann_recall_e2e.rs; do
+          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs tests/filtered_ann_recall_bands.rs tests/query_cache_test.rs tests/vector_ann_recall_e2e.rs tests/retrieval_quality_gates.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
