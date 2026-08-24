@@ -996,7 +996,7 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             let tables = self.tables.read().await;
             Ok(tables
                 .keys()
-                .filter(|id| id.namespace() == namespace)
+                .filter(|id| &id.namespace == namespace)
                 .cloned()
                 .collect())
         }
@@ -1008,6 +1008,94 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
         ) -> anyhow::Result<bool> {
             let mut tables = self.tables.write().await;
             Ok(tables.remove(identifier).is_some())
+        }
+
+        // Minimal stubs for remaining trait methods (test double)
+        async fn get_schema_version(&self, _identifier: &TableIdentifier) -> anyhow::Result<i32> {
+            Ok(0)
+        }
+
+        async fn get_schema_by_version(
+            &self,
+            _identifier: &TableIdentifier,
+            _version: i32,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            anyhow::bail!("get_schema_by_version not implemented in test double")
+        }
+
+        async fn create_index(
+            &self,
+            _identifier: &TableIdentifier,
+            _index: proximadb_catalog::CatalogIndex,
+        ) -> anyhow::Result<proximadb_catalog::CatalogIndex> {
+            anyhow::bail!("create_index not implemented in test double")
+        }
+
+        async fn drop_index(
+            &self,
+            _identifier: &TableIdentifier,
+            _index_name: &str,
+        ) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn list_indexes(
+            &self,
+            _identifier: &TableIdentifier,
+        ) -> anyhow::Result<Vec<proximadb_catalog::CatalogIndex>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_statistics(
+            &self,
+            _identifier: &TableIdentifier,
+        ) -> anyhow::Result<proximadb_catalog::CatalogTableStatistics> {
+            anyhow::bail!("get_statistics not implemented in test double")
+        }
+
+        async fn update_statistics(
+            &self,
+            _identifier: &TableIdentifier,
+            _stats: proximadb_catalog::CatalogTableStatistics,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn drop_namespace(&self, _namespace: &[String], _cascade: bool) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn namespace_exists(&self, _namespace: &[String]) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn update_namespace_properties(
+            &self,
+            _namespace: &[String],
+            _updates: StdHashMap<String, String>,
+            _removals: Vec<String>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn table_exists(&self, _identifier: &TableIdentifier) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn rename_table(
+            &self,
+            _from: &TableIdentifier,
+            _to: &TableIdentifier,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("rename_table not implemented in test double")
+        }
+
+        async fn evolve_schema(
+            &self,
+            _identifier: &TableIdentifier,
+            _evolution: proximadb_catalog::CatalogSchemaEvolution,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            anyhow::bail!("evolve_schema not implemented in test double")
         }
     }
 
