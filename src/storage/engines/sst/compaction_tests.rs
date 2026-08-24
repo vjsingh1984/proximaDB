@@ -17,7 +17,9 @@ use tokio::sync::RwLock;
 struct InMemoryTestCatalog {
     name: String,
     namespaces: RwLock<StdHashMap<Vec<String>, proximadb_catalog::CatalogNamespace>>,
-    tables: RwLock<StdHashMap<proximadb_catalog::TableIdentifier, proximadb_catalog::CatalogTableSchema>>,
+    tables: RwLock<
+        StdHashMap<proximadb_catalog::TableIdentifier, proximadb_catalog::CatalogTableSchema>,
+    >,
 }
 
 impl InMemoryTestCatalog {
@@ -78,7 +80,10 @@ impl proximadb_catalog::Catalog for InMemoryTestCatalog {
             .ok_or_else(|| anyhow::anyhow!("Table not found: {}", identifier))
     }
 
-    async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<proximadb_catalog::CatalogNamespace> {
+    async fn get_namespace(
+        &self,
+        namespace: &[String],
+    ) -> anyhow::Result<proximadb_catalog::CatalogNamespace> {
         let namespaces = self.namespaces.read().await;
         namespaces
             .get(namespace)
@@ -94,7 +99,10 @@ impl proximadb_catalog::Catalog for InMemoryTestCatalog {
         Ok(namespaces.values().cloned().collect())
     }
 
-    async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<proximadb_catalog::TableIdentifier>> {
+    async fn list_tables(
+        &self,
+        namespace: &[String],
+    ) -> anyhow::Result<Vec<proximadb_catalog::TableIdentifier>> {
         let tables = self.tables.read().await;
         Ok(tables
             .keys()
@@ -112,7 +120,10 @@ impl proximadb_catalog::Catalog for InMemoryTestCatalog {
         Ok(tables.remove(identifier).is_some())
     }
 
-    async fn get_schema_version(&self, _identifier: &proximadb_catalog::TableIdentifier) -> anyhow::Result<i32> {
+    async fn get_schema_version(
+        &self,
+        _identifier: &proximadb_catalog::TableIdentifier,
+    ) -> anyhow::Result<i32> {
         Ok(0)
     }
 
@@ -179,7 +190,10 @@ impl proximadb_catalog::Catalog for InMemoryTestCatalog {
         Ok(())
     }
 
-    async fn table_exists(&self, _identifier: &proximadb_catalog::TableIdentifier) -> anyhow::Result<bool> {
+    async fn table_exists(
+        &self,
+        _identifier: &proximadb_catalog::TableIdentifier,
+    ) -> anyhow::Result<bool> {
         Ok(false)
     }
 

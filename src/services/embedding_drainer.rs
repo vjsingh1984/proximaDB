@@ -649,7 +649,9 @@ fn build_external_embedding_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_catalog::{Catalog, CatalogAuthority, CatalogNamespace, CatalogTableSchema, TableIdentifier};
+    use proximadb_catalog::{
+        Catalog, CatalogAuthority, CatalogNamespace, CatalogTableSchema, TableIdentifier,
+    };
     use proximadb_embedding::config::{ByoAuth, EmbeddingConfig};
     use proximadb_embedding::scheduler::EmbedSchedulerConfig;
     use proximadb_queue::{Message, QueueConfig, TopicConfig};
@@ -811,7 +813,11 @@ mod tests {
             Ok(())
         }
 
-        async fn drop_namespace(&self, _namespace: &[String], _cascade: bool) -> anyhow::Result<bool> {
+        async fn drop_namespace(
+            &self,
+            _namespace: &[String],
+            _cascade: bool,
+        ) -> anyhow::Result<bool> {
             Ok(false)
         }
 
