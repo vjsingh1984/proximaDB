@@ -34,6 +34,8 @@
 //!   PROXIMADB_SIFT_COALESCED_BYTE_BUDGET optional bytes/query ceiling for the
 //!                                coalesced end-to-end eval (unset = report only)
 //!   PROXIMADB_RECALL_DATASET_REQUIRED fail instead of skip when corpus is absent
+//!   PROXIMADB_OBJECT_STORE_URL optional registered cloud-emulator/real-cloud
+//!                                base; unset keeps the paired cohort local
 //!
 //! nextest isolates each test in its own process, so the PAX env vars set here
 //! don't leak. `set_var` is `unsafe` (edition 2024).
@@ -164,6 +166,20 @@ fn dataset_required() -> bool {
         .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on"))
 }
 
+fn paired_storage_base(local_base: &Path, configured: Option<&str>, run_id: &str) -> String {
+    match configured {
+        Some(base) => {
+            let base = base.trim();
+            assert!(
+                !base.is_empty(),
+                "PROXIMADB_OBJECT_STORE_URL must be unset or a non-empty storage URL"
+            );
+            format!("{}/td-xmodal-4-paired/{run_id}", base.trim_end_matches('/'))
+        }
+        None => local_base.to_string_lossy().into_owned(),
+    }
+}
+
 /// Squared L2 distance (order-preserving — fine for ranking).
 fn l2_sq(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
@@ -223,7 +239,7 @@ fn vid(i: u32) -> String {
     format!("v{i}")
 }
 
-fn collection(id: &str, temp_dir: &TempDir) -> Collection {
+fn collection(id: &str, base_location: String) -> Collection {
     Collection {
         id: id.to_string(),
         config: Some(CollectionConfig {
@@ -234,7 +250,7 @@ fn collection(id: &str, temp_dir: &TempDir) -> Collection {
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
-            base_location: temp_dir.path().to_str().unwrap().to_string(),
+            base_location,
             ..Default::default()
         }),
         ..Default::default()
@@ -352,6 +368,7 @@ fn assert_single_vector_access(
     measured: &MeasuredSearch,
     expected_intent: VectorSearchIntent,
     expected_path: VectorAccessPath,
+    expected_storage_scope: VectorStorageScope,
 ) {
     assert_eq!(
         measured.snapshot.vector_accesses.len(),
@@ -372,9 +389,8 @@ fn assert_single_vector_access(
     assert_eq!(access.top_k, TOP_K as u64);
     assert!(!access.has_filter);
     assert_eq!(
-        access.storage_scope,
-        VectorStorageScope::Local,
-        "the local SIFT fixture must not train a remote storage cell"
+        access.storage_scope, expected_storage_scope,
+        "the SIFT fixture must attribute the scope derived from its storage URL"
     );
 }
 
@@ -431,7 +447,19 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         .unwrap_or(0.90);
 
     let temp_dir = TempDir::new().unwrap();
-    let collection = collection("sift_pax_ratchet", &temp_dir);
+    let object_store_url = std::env::var("PROXIMADB_OBJECT_STORE_URL").ok();
+    let storage_base = paired_storage_base(
+        temp_dir.path(),
+        object_store_url.as_deref(),
+        &uuid::Uuid::new_v4().simple().to_string(),
+    );
+    let expected_storage_scope = VectorStorageScope::from_storage_url(&storage_base);
+    assert_ne!(
+        expected_storage_scope,
+        VectorStorageScope::Unknown,
+        "paired SIFT evidence requires a known local or remote storage URL: {storage_base}"
+    );
+    let collection = collection("sift_pax_ratchet", storage_base);
     // Admission evidence uses a controlled cache-free cohort. Exact does not
     // consult the survivor cache, so comparing it with a warmed ANN path would
     // pool different execution regimes and teach the route model a lie.
@@ -556,7 +584,12 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
             )
         };
 
-        assert_single_vector_access(&ann, VectorSearchIntent::Approximate, VectorAccessPath::Ann);
+        assert_single_vector_access(
+            &ann,
+            VectorSearchIntent::Approximate,
+            VectorAccessPath::Ann,
+            expected_storage_scope,
+        );
         ann_us.push(ann.elapsed_us);
         ann_gets = ann_gets.saturating_add(ann.snapshot.get_ops);
         ann_range_gets = ann_range_gets.saturating_add(ann.snapshot.range_gets);
@@ -564,7 +597,12 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         ann_compute_ms = ann_compute_ms.saturating_add(ann.snapshot.total_compute_ms());
 
         if let Some(exact) = exact {
-            assert_single_vector_access(&exact, VectorSearchIntent::Exact, VectorAccessPath::Exact);
+            assert_single_vector_access(
+                &exact,
+                VectorSearchIntent::Exact,
+                VectorAccessPath::Exact,
+                expected_storage_scope,
+            );
             let exact_shape =
                 vector_access_shape(&exact.snapshot.vector_accesses[0], &exact.snapshot);
             let ann_shape = vector_access_shape(&ann.snapshot.vector_accesses[0], &ann.snapshot);
@@ -658,6 +696,33 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
 // ---------------------------------------------------------------------------
 // Loader unit tests — synthetic .fvecs/.ivecs round-trip (no dataset needed).
 // ---------------------------------------------------------------------------
+
+#[test]
+fn paired_storage_base_uses_local_fixture_when_object_store_is_unset() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    assert_eq!(
+        paired_storage_base(temp_dir.path(), None, "run-a"),
+        temp_dir.path().to_string_lossy()
+    );
+}
+
+#[test]
+fn paired_storage_base_isolates_remote_measurement_prefix() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let base = paired_storage_base(
+        temp_dir.path(),
+        Some("az://proximadb-test/vector-evidence/"),
+        "run-a",
+    );
+    assert_eq!(
+        base,
+        "az://proximadb-test/vector-evidence/td-xmodal-4-paired/run-a"
+    );
+    assert_eq!(
+        VectorStorageScope::from_storage_url(&base),
+        VectorStorageScope::Remote
+    );
+}
 
 #[test]
 fn fvecs_round_trip_parses_dim_and_values() {
@@ -795,7 +860,10 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
     // file, isolating the per-file "~1 RaBitQ GET" win from the PR2 GET-budget
     // compaction (the flush→compaction scheduler is unwired).
     let temp_dir = TempDir::new().unwrap();
-    let collection = collection("sift_coalesced_eval", &temp_dir);
+    let collection = collection(
+        "sift_coalesced_eval",
+        temp_dir.path().to_string_lossy().into_owned(),
+    );
     let engine = SstEngine::new().await.unwrap()
         .with_directory_cache(Arc::new(
             proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),

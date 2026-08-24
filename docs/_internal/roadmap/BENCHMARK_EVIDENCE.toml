@@ -21,7 +21,7 @@
 # DO NOT promote an entry to `measured` without real provenance. Numbers in
 # README/BENCHMARKS are claims, not evidence, until an artifact backs them.
 
-as_of_date = "2026-08-23"
+as_of_date = "2026-08-24"
 source_of_truth = "benches/ + checked-in dated artifacts"
 header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_2026_06_16.adoc): object_economy_e2e promoted to measured; the other e2e claims' benches measure COMPONENT kernels (fusion-merge µs, recall computation, quantization speed) or small-scale per-engine search, NOT the claimed end-to-end metric/scale — they stay unverified with corrected notes; real e2e benches are the follow-up"
 
@@ -1064,3 +1064,19 @@ hardware = "Local macOS 26.2 arm64 Apple Silicon, serialized release-profile run
 date = "2026-08-23"
 version = "develop e9420fcc4d6fc2b349f29c5b8f27145c8aad08b5"
 notes = "All three runs used brute-force subset ground truth for the same 30 queries and admitted 30/30 pairs to vector/engine=sst/dim=128/k=10/filter=no/storage=local/cache=bypass. p95 ranges: exact 189.525-251.811 ms, ANN 15.701-20.053 ms; compute/query ranges: exact 177.73-210.70 ms, ANN 13.47-15.83 ms. Exact/ANN I/O counts and bytes were identical across replicas. Test executable SHA-256 30ba11e197e0f4ad6469483835e957815559e85af18d3ab8cb4bfc4308d35519; base/query SHA-256 d5293a00e8ced7fcbd4d6ed505c99ea28c1e2628d9526c8ea1739cdc5f79d997 / 4e686785082f56916a6422b120ad4c54b4110701195c17fa582391156bcb32cc. The installed server binary and editable Python SDK were independently verified before measurement even though this in-process Rust gate does not invoke either surface."
+
+[[claims]]
+id = "vector_exact_ann_remote_bypass_sift100k_2026_08_24"
+claim = "Three fresh-process SIFT-100k runs (30 paired queries/run) through the production Azure Blob filesystem against dedicated Azurite held exact top-10 oracle equality and ANN recall@10 0.9867 in one remote/cache-bypass regime. Exact p50 was 222.015-230.390 ms with 5.00 whole GETs and 77,192,428 bytes/query; ANN p50 was 157.733-169.221 ms with 35.43 ranged GETs and 59,228,982 bytes/query. This validates remote HTTP request shape, not Azure service latency, and does not admit automatic routing."
+metric = "paired exact/ANN recall + p50/p95 latency + physical GETs + bytes + attributed compute on the Azure HTTP implementation, partitioned by execution regime"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-XMODAL-4-unified-vector-sql-routing-pgwire-udtf-and-operator.adoc",
+]
+bench_source = "tests/sift_pax_recall_ratchet_test.rs"
+bench_command = "PROXIMADB_AZURE_EMULATOR=1 AZURITE_BLOB_STORAGE_URL=<owned-azurite-url> AZURE_STORAGE_ACCOUNT=devstoreaccount1 PROXIMADB_OBJECT_STORE_URL=az://<container>/<prefix> PROXIMADB_SIFT_DATASET_DIR=<sift-dir> PROXIMADB_SIFT_N=100000 PROXIMADB_SIFT_QUERIES=30 PROXIMADB_SIFT_RECALL_FLOOR=0.85 cargo test --release --features io-trace,azure --test sift_pax_recall_ratchet_test sift_pax_cascade_recall_at_10_ratchet -- --nocapture  # repeat in three fresh processes"
+artifact = "docs/10-quality/td/TD-XMODAL-4-unified-vector-sql-routing-pgwire-udtf-and-operator.adoc"
+hardware = "Local macOS 26.2 arm64 Apple Silicon, serialized release-profile runs; dedicated Azurite 3.36.0 on localhost"
+date = "2026-08-24"
+version = "develop 09c3620bf0d6f7dd9afa671e368dceaef3e4690b"
+notes = "All three runs used brute-force subset ground truth for the same 30 queries and admitted 30/30 pairs to vector/engine=sst/dim=128/k=10/filter=no/storage=remote/cache=bypass. p95 ranges: exact 233.327-252.092 ms, ANN 180.414-237.124 ms; compute/query ranges: exact 221.53-233.80 ms, ANN 155.93-174.83 ms. Exact/ANN I/O counts and bytes were identical across replicas. Azurite's independent HTTP log showed whole-object Exact responses and ranged 206 ANN responses. Test executable SHA-256 1bd7782a9a51d0c089efd8a2bc9082e62314073cedb9c7c6c1313b30d541a418; base/query SHA-256 d5293a00e8ced7fcbd4d6ed505c99ea28c1e2628d9526c8ea1739cdc5f79d997 / 4e686785082f56916a6422b120ad4c54b4110701195c17fa582391156bcb32cc. Localhost Azurite establishes production-backend HTTP request shape and relative operation/byte economics, not real Azure RTT, throttling, contention, or an SLA. The installed server binary and editable Python SDK were verified before the preceding local measurement; this in-process Rust gate invokes neither surface."
