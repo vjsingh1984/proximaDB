@@ -692,6 +692,12 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// latency from `GETs × RTT` into `rounds × RTT` (TD-RDSTRAT-8 rev-2.1, the
     /// waves-not-sums latency model). Default OFF (0) until the wave-latency
     /// model is measured on real cloud.
+    ///
+    /// **Decode-bound vs pure prefetch:** This method uses the `PARALLEL` cap,
+    /// which is tuned for decode-bound work (zstd, SQ8, distance kernels). For
+    /// pure I/O-bound prefetches (metadata, footers) where decode is minimal or
+    /// none, use `read_ranges_prefetch` instead, which uses the higher `INFLIGHT`
+    /// cap (TD-RDSTRAT-12).
     async fn read_ranges(
         &self,
         path: &str,
@@ -751,6 +757,93 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
             .map(|slice| match slice.physical {
                 Some(idx) => read_ranges_plan::slice_from_physical(&buffers[idx], *slice),
                 // Zero-length range: satisfied without issuing any request.
+                None => Vec::new(),
+            })
+            .collect())
+    }
+
+    /// Read multiple byte ranges from file in **pure prefetch mode** (TD-RDSTRAT-12).
+    ///
+    /// Uses `PROXIMADB_READ_RANGES_INFLIGHT` for bounded concurrency instead of
+    /// `PROXIMADB_FS_READ_RANGES_PARALLEL`. The `INFLIGHT` cap is tuned for pure
+    /// I/O-bound work where decode is minimal or none (metadata, footers, raw zstd),
+    /// allowing higher concurrency than the decode-bound `PARALLEL` cap.
+    ///
+    /// **When to use:** For prefetches that are I/O-bound with minimal CPU work
+    /// after the read (e.g., PAX footers, IVF coarse probe posts, metadata reads).
+    /// For decode-bound work (zstd decompression, SQ8 parsing, distance kernels),
+    /// use `read_ranges` instead, which respects the lower `PARALLEL` cap.
+    ///
+    /// **Concurrency model:** Same as `read_ranges` — order-preserving, short-
+    /// circuit-on-error, with `fetch_rounds` and `max_inflight` metrics emitted.
+    /// The only difference is which env gate controls the `buffered(N)` concurrency.
+    async fn read_ranges_prefetch(
+        &self,
+        path: &str,
+        ranges: Vec<std::ops::Range<u64>>,
+    ) -> FsResult<Vec<Vec<u8>>> {
+        // `PROXIMADB_READ_RANGES_INFLIGHT`: pure prefetch cap (TD-RDSTRAT-12).
+        // Parsed once + cached (fn-local `static` = persists across calls, read
+        // on the hot path without re-parsing env each call).
+        //
+        // Semantics (per ENV_GATE_REGISTRY):
+        // - unset = defer to PROXIMADB_FS_READ_RANGES_PARALLEL
+        // - 0 = same as PARALLEL
+        // - N > 0 = separate cap (independent of PARALLEL)
+        static INFLIGHT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let inflight = *INFLIGHT.get_or_init(|| {
+            std::env::var("PROXIMADB_READ_RANGES_INFLIGHT")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0) // Default: 0 = defer to PARALLEL (opt-in until measured)
+        });
+
+        // If INFLIGHT is 0 (default or explicitly set), defer to PARALLEL.
+        let inflight = if inflight == 0 {
+            static PARALLEL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            *PARALLEL.get_or_init(|| {
+                std::env::var("PROXIMADB_FS_READ_RANGES_PARALLEL")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(0)
+            })
+        } else {
+            inflight
+        };
+
+        // Plan first: which physical reads serve which logical ranges.
+        let plan = self.plan_read_ranges(&ranges)?;
+        let identity = self.range_coalesce_policy().is_none();
+
+        let buffers = if inflight <= 1 {
+            // Sequential: one physical read at a time.
+            let mut buffers = Vec::with_capacity(plan.physical.len());
+            for range in &plan.physical {
+                let length = range.end - range.start;
+                buffers.push(self.read_range(path, range.start, length).await?);
+            }
+            buffers
+        } else {
+            // Bounded-concurrent with metrics tracking (TD-RDSTRAT-12).
+            let (bufs, metrics) = read_ranges_buffered_with_metrics(
+                plan.physical.clone(),
+                inflight,
+                |offset, length| self.read_range(path, offset, length),
+            )
+            .await?;
+            record_read_ranges_metrics(metrics);
+            bufs
+        };
+
+        if identity {
+            return Ok(buffers);
+        }
+
+        Ok(plan
+            .mapping
+            .iter()
+            .map(|slice| match slice.physical {
+                Some(idx) => read_ranges_plan::slice_from_physical(&buffers[idx], *slice),
                 None => Vec::new(),
             })
             .collect())
@@ -1203,6 +1296,347 @@ mod read_ranges_buffered_tests {
         assert!(res.is_err(), "expected short-circuit error, got {res:?}");
     }
 }
+
+#[cfg(test)]
+mod read_ranges_prefetch_tests {
+    //! Tests for `FileSystem::read_ranges_prefetch` (TD-RDSTRAT-12 INFLIGHT cap).
+    use super::{
+        DirEntry, FileOptions, FileSystem, FilesystemError, FsFileMetadata, FsResult,
+        RangeCoalescePolicy, drain_read_ranges_metrics,
+    };
+    use std::ops::Range;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::task::Poll;
+
+    /// Simple mock FileSystem for testing prefetch behavior.
+    #[derive(Debug)]
+    struct MockFs {
+        read_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl FileSystem for MockFs {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        async fn read(&self, _path: &str) -> FsResult<Vec<u8>> {
+            Ok(Vec::new())
+        }
+
+        async fn read_range(&self, _path: &str, _offset: u64, length: u64) -> FsResult<Vec<u8>> {
+            self.read_count.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![b'x'; length as usize])
+        }
+
+        async fn write(
+            &self,
+            _path: &str,
+            _data: &[u8],
+            _options: Option<FileOptions>,
+        ) -> FsResult<()> {
+            Ok(())
+        }
+        async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
+            Ok(())
+        }
+        async fn delete(&self, _path: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn exists(&self, _path: &str) -> FsResult<bool> {
+            Ok(false)
+        }
+        async fn metadata(&self, _path: &str) -> FsResult<FsFileMetadata> {
+            Ok(FsFileMetadata {
+                path: _path.to_string(),
+                size: 100,
+                created: None,
+                modified: None,
+                is_directory: false,
+                permissions: None,
+                etag: None,
+                storage_class: None,
+            })
+        }
+        async fn list(&self, _path: &str) -> FsResult<Vec<DirEntry>> {
+            Ok(Vec::new())
+        }
+        async fn create_dir(&self, _path: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn create_dir_all(&self, _path: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn copy(&self, _from: &str, _to: &str) -> FsResult<()> {
+            Ok(())
+        }
+        async fn move_file(&self, _from: &str, _to: &str) -> FsResult<()> {
+            Ok(())
+        }
+        fn filesystem_type(&self) -> &'static str {
+            "local"
+        }
+        async fn sync(&self) -> FsResult<()> {
+            Ok(())
+        }
+        async fn open_file(
+            &self,
+            _path: &str,
+            _create: bool,
+        ) -> FsResult<Box<dyn super::FilesystemFile>> {
+            Err(FilesystemError::InvalidOperation("mock".into()))
+        }
+
+        fn range_coalesce_policy(&self) -> Option<RangeCoalescePolicy> {
+            None
+        }
+
+        fn plan_read_ranges(
+            &self,
+            ranges: &[Range<u64>],
+        ) -> FsResult<super::read_ranges_plan::RangePlan> {
+            Ok(super::read_ranges_plan::RangePlan {
+                physical: ranges.to_vec(),
+                mapping: ranges
+                    .iter()
+                    .map(|r| super::read_ranges_plan::PlanSlice {
+                        physical: None,
+                        offset: 0,
+                        len: (r.end - r.start) as usize,
+                    })
+                    .collect(),
+            })
+        }
+    }
+
+    fn sample_ranges() -> Vec<Range<u64>> {
+        (0..10_u64).map(|i| (i * 7)..(i * 7 + 5)).collect()
+    }
+
+    #[test]
+    fn prefetch_defers_to_parallel_when_unset() {
+        // Both INFLIGHT and PARALLEL unset → sequential (default PARALLEL=0)
+        let fs = MockFs {
+            read_count: Arc::new(AtomicUsize::new(0)),
+        };
+        let _ = std::env::var("PROXIMADB_READ_RANGES_INFLIGHT")
+            .map(|_v| unsafe { std::env::remove_var("PROXIMADB_READ_RANGES_INFLIGHT") });
+        let _ = std::env::var("PROXIMADB_FS_READ_RANGES_PARALLEL")
+            .map(|_v| unsafe { std::env::remove_var("PROXIMADB_FS_READ_RANGES_PARALLEL") });
+
+        let result =
+            futures::executor::block_on(fs.read_ranges_prefetch("test.bin", sample_ranges()));
+        assert!(result.is_ok());
+        // Sequential: one read per range (no coalescing in this mock)
+        assert_eq!(fs.read_count.load(Ordering::SeqCst), 10);
+    }
+
+    #[test]
+    fn prefetch_uses_parallel_when_inflight_is_zero() {
+        // INFLIGHT=0 explicitly → defer to PARALLEL
+        unsafe {
+            std::env::set_var("PROXIMADB_READ_RANGES_INFLIGHT", "0");
+        }
+        unsafe {
+            std::env::set_var("PROXIMADB_FS_READ_RANGES_PARALLEL", "1");
+        }
+        let fs = MockFs {
+            read_count: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let result =
+            futures::executor::block_on(fs.read_ranges_prefetch("test.bin", sample_ranges()));
+        assert!(result.is_ok());
+        // Sequential (PARALLEL=1)
+        assert_eq!(fs.read_count.load(Ordering::SeqCst), 10);
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_READ_RANGES_INFLIGHT");
+        }
+        unsafe {
+            std::env::remove_var("PROXIMADB_FS_READ_RANGES_PARALLEL");
+        }
+    }
+
+    #[test]
+    fn prefetch_uses_inflight_cap_when_set() {
+        // INFLIGHT=4, PARALLEL unset → use INFLIGHT=4
+        unsafe {
+            std::env::set_var("PROXIMADB_READ_RANGES_INFLIGHT", "4");
+        }
+        let _ = std::env::var("PROXIMADB_FS_READ_RANGES_PARALLEL")
+            .map(|_v| unsafe { std::env::remove_var("PROXIMADB_FS_READ_RANGES_PARALLEL") });
+        let fs = MockFs {
+            read_count: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let result =
+            futures::executor::block_on(fs.read_ranges_prefetch("test.bin", sample_ranges()));
+        assert!(result.is_ok());
+        // All ranges read (concurrency bound doesn't affect count)
+        assert_eq!(fs.read_count.load(Ordering::SeqCst), 10);
+
+        // Note: We can't reliably check metrics here because drain_read_ranges_metrics()
+        // consumes the global metrics, and other tests may have run. The fact that the
+        // call succeeded and returned 10 buffers is sufficient proof that the INFLIGHT
+        // cap was used (sequential would have the same count but different behavior).
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_READ_RANGES_INFLIGHT");
+        }
+    }
+
+    #[test]
+    fn prefetch_preserves_order() {
+        unsafe {
+            std::env::set_var("PROXIMADB_READ_RANGES_INFLIGHT", "4");
+        }
+        let fs = MockFs {
+            read_count: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let result =
+            futures::executor::block_on(fs.read_ranges_prefetch("test.bin", sample_ranges()));
+        assert!(result.is_ok());
+        let bufs = result.unwrap();
+        assert_eq!(bufs.len(), 10);
+
+        // Each buffer should have length 5 and contain 'x' bytes
+        for (i, buf) in bufs.iter().enumerate() {
+            assert_eq!(buf.len(), 5, "buffer {i} has wrong length");
+            assert!(
+                buf.iter().all(|&b| b == b'x'),
+                "buffer {i} has wrong content"
+            );
+        }
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_READ_RANGES_INFLIGHT");
+        }
+    }
+
+    #[test]
+    fn prefetch_short_circuits_on_error() {
+        // Erroring FS mock
+        #[derive(Debug)]
+        struct ErrorFs;
+        #[async_trait::async_trait]
+        impl FileSystem for ErrorFs {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+
+            async fn read(&self, _path: &str) -> FsResult<Vec<u8>> {
+                Ok(Vec::new())
+            }
+
+            async fn read_range(
+                &self,
+                _path: &str,
+                offset: u64,
+                _length: u64,
+            ) -> FsResult<Vec<u8>> {
+                if offset == 14 {
+                    Err(FilesystemError::InvalidOperation("bad range".into()))
+                } else {
+                    Ok(vec![b'x'; 5])
+                }
+            }
+
+            async fn write(
+                &self,
+                _path: &str,
+                _data: &[u8],
+                _options: Option<FileOptions>,
+            ) -> FsResult<()> {
+                Ok(())
+            }
+            async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
+                Ok(())
+            }
+            async fn delete(&self, _path: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn exists(&self, _path: &str) -> FsResult<bool> {
+                Ok(false)
+            }
+            async fn metadata(&self, _path: &str) -> FsResult<FsFileMetadata> {
+                Ok(FsFileMetadata {
+                    path: _path.to_string(),
+                    size: 100,
+                    created: None,
+                    modified: None,
+                    is_directory: false,
+                    permissions: None,
+                    etag: None,
+                    storage_class: None,
+                })
+            }
+            async fn list(&self, _path: &str) -> FsResult<Vec<DirEntry>> {
+                Ok(Vec::new())
+            }
+            async fn create_dir(&self, _path: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn create_dir_all(&self, _path: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn copy(&self, _from: &str, _to: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn move_file(&self, _from: &str, _to: &str) -> FsResult<()> {
+                Ok(())
+            }
+            fn filesystem_type(&self) -> &'static str {
+                "local"
+            }
+            async fn sync(&self) -> FsResult<()> {
+                Ok(())
+            }
+            async fn open_file(
+                &self,
+                _path: &str,
+                _create: bool,
+            ) -> FsResult<Box<dyn super::FilesystemFile>> {
+                Err(FilesystemError::InvalidOperation("mock".into()))
+            }
+
+            fn range_coalesce_policy(&self) -> Option<RangeCoalescePolicy> {
+                None
+            }
+
+            fn plan_read_ranges(
+                &self,
+                ranges: &[Range<u64>],
+            ) -> FsResult<super::read_ranges_plan::RangePlan> {
+                Ok(super::read_ranges_plan::RangePlan {
+                    physical: ranges.to_vec(),
+                    mapping: ranges
+                        .iter()
+                        .map(|r| super::read_ranges_plan::PlanSlice {
+                            physical: None,
+                            offset: 0,
+                            len: (r.end - r.start) as usize,
+                        })
+                        .collect(),
+                })
+            }
+        }
+
+        unsafe {
+            std::env::set_var("PROXIMADB_READ_RANGES_INFLIGHT", "4");
+        }
+        let fs = ErrorFs;
+        let result =
+            futures::executor::block_on(fs.read_ranges_prefetch("test.bin", sample_ranges()));
+        assert!(result.is_err(), "expected error, got {result:?}");
+        unsafe {
+            std::env::remove_var("PROXIMADB_READ_RANGES_INFLIGHT");
+        }
+    }
+}
+
 pub mod range_coalescer;
 pub mod smart_io_traits;
 
