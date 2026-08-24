@@ -233,10 +233,51 @@ sample may be generalized across query distributions. A paired remote/cold
 cohort and an independently observable starting-cache regime remain admission
 requirements.
 
+=== Remote HTTP/bypass replication and cache-boundary correction (2026-08-24)
+
+The same harness now accepts the registered test-only
+`PROXIMADB_OBJECT_STORE_URL`, derives the expected storage scope from that URL,
+and isolates every run below a unique object prefix. No second benchmark or env
+gate was added. Three fresh-process `N=100,000`, 30-pair runs exercised the
+production Azure Blob filesystem implementation against a dedicated Azurite
+3.36 instance. Azurite's HTTP log independently showed whole-object responses
+for Exact and byte-range `206` responses for ANN. All 90 Exact arms matched the
+brute-force oracle; all three ANN runs measured recall@10 = 0.9867 and admitted
+30/30 pairs to
+`vector/engine=sst/dim=128/k=10/filter=no/storage=remote/cache=bypass`.
+
+[cols="1,2,2", options="header"]
+|===
+| Measure | Exact raw-f32 scan | PAX ANN cascade
+| Latency p50 range across three runs | 222,015--230,390 us | 157,733--169,221 us
+| Latency p95 range across three runs | 233,327--252,092 us | 180,414--237,124 us
+| Physical GETs per query | 5.00 whole reads | 35.43 ranged reads
+| Bytes per query | 77,192,428 | 59,228,982
+| Attributed compute per query range | 221.53--233.80 ms | 155.93--174.83 ms
+|===
+
+This remote-HTTP result narrows ANN's observed p50 advantage to 1.36--1.43x
+while ANN issues about 7.1x as many physical requests for about 23% fewer bytes.
+It validates Azure request shape and application accounting; localhost Azurite
+does **not** represent Azure service RTT, contention, throttling, or egress, so
+these latency values are not a cloud SLA and still cannot admit a route flip.
+
+The run also breaks the earlier phrase "paired remote/cold" as an admission
+requirement. `cache=cold` is a completed serving outcome: ANN can consult the
+survivor cache and miss, but Exact currently does not consult that cache and is
+therefore truthfully `cache=bypass`. Requiring equal outcome keys makes a
+cache-enabled Exact/ANN cold pair structurally impossible. The route-time model
+needs a shared, independently observable starting condition or cache policy
+(for example, cache disabled versus enabled under a deployment-scoped policy),
+while preserving each arm's completed cold/warm/mixed/bypass outcome as
+arm-specific evidence. Those are distinct facts and must not be collapsed into
+one label.
+
 This slice still does not authorize automatic exact/ANN selection. Cache outcome
 is completed-execution evidence, not a route-time promise. A live decision needs
-an independently observable starting regime or an admission policy whose
-deployment scope guarantees it, plus paired remote/cold and warm measurements.
+an independently observable starting condition or an admission policy whose
+deployment scope guarantees it, plus cache-enabled paired measurements and a
+representative remote-RTT cohort.
 
 == Constraints
 
