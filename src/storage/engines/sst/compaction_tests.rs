@@ -955,7 +955,7 @@ async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
             Ok(ns)
         }
 
-        async fn create_table(
+        async fn create_table_inner(
             &self,
             identifier: &TableIdentifier,
             schema: CatalogTableSchema,

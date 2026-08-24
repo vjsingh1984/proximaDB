@@ -139,7 +139,7 @@ mod tests {
             Ok(ns)
         }
 
-        async fn create_table(
+        async fn create_table_inner(
             &self,
             identifier: &TableIdentifier,
             schema: CatalogTableSchema,
