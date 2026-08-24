@@ -1095,7 +1095,7 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
 async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::{CatalogTableSchema, TableIdentifier};
+    use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
 
