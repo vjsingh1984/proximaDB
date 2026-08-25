@@ -212,6 +212,9 @@ struct CompactRow {
 /// Bloom filter builder for row group
 struct BloomFilterBuilder {
     ids: Vec<String>,
+    /// Membership mirror of `ids` — dedup was a linear scan of the Vec per
+    /// record (O(R²) string compares per row group build).
+    seen: std::collections::HashSet<String>,
     target_false_positive_rate: f64,
 }
 
@@ -219,14 +222,16 @@ impl BloomFilterBuilder {
     fn new(target_false_positive_rate: f64) -> Self {
         Self {
             ids: Vec::new(),
+            seen: std::collections::HashSet::new(),
             target_false_positive_rate,
         }
     }
 
     /// Add VectorRecord ID to the bloom filter
     fn add_id(&mut self, id: String) {
-        if !self.ids.contains(&id) {
-            // Avoid duplicates
+        // Avoid duplicates (a bloom filter is duplicate-insensitive, but the
+        // unique count sizes the filter and `num_entries`).
+        if self.seen.insert(id.clone()) {
             self.ids.push(id);
         }
     }
@@ -258,6 +263,7 @@ impl BloomFilterBuilder {
     #[allow(dead_code)]
     fn clear(&mut self) {
         self.ids.clear();
+        self.seen.clear();
     }
 }
 
@@ -808,6 +814,10 @@ impl IvfClusteringBuilder {
         let mut intra_cluster_edges = 0;
         let mut inter_cluster_edges = 0;
 
+        // Dense node→cluster index, built once (was: a linear scan of every
+        // cluster's member Vec per node AND per edge below).
+        let node_to_cluster = Self::build_node_to_cluster_index(clusters);
+
         // Step 2: Process each node and apply boosting to all its outgoing edges
         // Collect information first to avoid borrow checker issues
         let node_info: Vec<_> = self
@@ -825,7 +835,7 @@ impl IvfClusteringBuilder {
                         return None;
                     }
                 };
-                let source_cluster = Self::find_cluster_for_node_static(source_idx, clusters);
+                let source_cluster = Self::cluster_of(&node_to_cluster, source_idx);
                 Some((node_idx, source_idx, source_cluster))
             })
             .collect();
@@ -840,7 +850,7 @@ impl IvfClusteringBuilder {
             // Step 3: Process each edge with component boosting
             for (edge_idx, edge) in node.edges.iter().enumerate() {
                 let target_idx = edge.target_node_id as usize;
-                let target_cluster = Self::find_cluster_for_node_static(target_idx, clusters);
+                let target_cluster = Self::cluster_of(&node_to_cluster, target_idx);
                 let target_centroid = &self.centroids[target_cluster];
 
                 // Track edge type for monitoring cluster connectivity
@@ -1060,19 +1070,36 @@ impl IvfClusteringBuilder {
         }
     }
 
-    /// Helper: Find which cluster a node belongs to (static version)
-    fn find_cluster_for_node_static(node_idx: usize, clusters: &[Vec<usize>]) -> usize {
+    /// Dense node→cluster lookup built in ONE pass, replacing the per-edge
+    /// a linear member-Vec scan does (every cluster's member Vec per
+    /// edge → O(E×N) for the boosting pass). First-match semantics: a node in
+    /// multiple clusters resolves to the lowest cluster id; `u32::MAX` marks
+    /// not-assigned and resolves to 0 — both exactly like the linear scan.
+    fn build_node_to_cluster_index(clusters: &[Vec<usize>]) -> Vec<u32> {
+        let max_idx = clusters.iter().flat_map(|m| m.iter().copied()).max();
+        let mut index = match max_idx {
+            Some(max) => vec![u32::MAX; max + 1],
+            None => return Vec::new(),
+        };
         for (cluster_id, members) in clusters.iter().enumerate() {
-            if members.contains(&node_idx) {
-                return cluster_id;
+            for &node in members {
+                if node < index.len() && index[node] == u32::MAX {
+                    index[node] = cluster_id as u32;
+                }
             }
         }
-        0 // Default to first cluster if not found
+        index
     }
 
-    /// Helper: Find which cluster a node belongs to
-    fn find_cluster_for_node(&self, node_idx: usize, clusters: &[Vec<usize>]) -> usize {
-        Self::find_cluster_for_node_static(node_idx, clusters)
+    /// O(1) cluster lookup against [`Self::build_node_to_cluster_index`]'s
+    /// output; out-of-range and unassigned nodes resolve to cluster 0, the
+    /// not-found default of the linear scan this replaces.
+    #[inline]
+    fn cluster_of(node_to_cluster: &[u32], node_idx: usize) -> usize {
+        match node_to_cluster.get(node_idx) {
+            Some(&cluster) if cluster != u32::MAX => cluster as usize,
+            _ => 0,
+        }
     }
 
     /// Helper: Calculate global average distance for normalization
@@ -5106,8 +5133,11 @@ impl RaptorWriter {
                     })
                     .collect();
 
-                // Sort by distance and take top M edges
-                distances.sort_by(|a, b| {
+                // Take the top M edges by partial selection then sort only
+                // that prefix — O(n + M log M) per node instead of sorting all
+                // n neighbor distances (O(n log n)). Same set, same ascending
+                // order, same NaN handling as the full sort it replaces.
+                let by_distance_nan_aware = |a: &(usize, f32), b: &(usize, f32)| {
                     a.1.partial_cmp(&b.1).unwrap_or_else(|| {
                         // Handle NaN values by treating them as less than any number
                         if a.1.is_nan() && b.1.is_nan() {
@@ -5118,8 +5148,12 @@ impl RaptorWriter {
                             std::cmp::Ordering::Greater
                         }
                     })
-                });
+                };
+                if distances.len() > edges_per_node {
+                    distances.select_nth_unstable_by(edges_per_node, by_distance_nan_aware);
+                }
                 distances.truncate(edges_per_node);
+                distances.sort_by(by_distance_nan_aware);
 
                 // Create edge structures
                 for (target_idx, distance) in distances {

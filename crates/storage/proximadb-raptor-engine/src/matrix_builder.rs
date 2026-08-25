@@ -584,11 +584,19 @@ impl MatrixBuilder {
                         })
                         .collect();
 
-                    distances
-                        .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                    // Partial selection: partition so the k nearest centroids
+                    // are in front, then sort only that prefix — O(n + k log k)
+                    // per vector instead of sorting every centroid distance
+                    // (O(n log n)). Same entries, same ascending order.
+                    let by_distance = |a: &(usize, f32), b: &(usize, f32)| a.1.total_cmp(&b.1);
+                    if distances.len() > k {
+                        distances.select_nth_unstable_by(k, by_distance);
+                    }
+                    distances.truncate(k);
+                    distances.sort_by(by_distance);
 
                     // For SparseEntry, we need to store individual entries per centroid
-                    for &(centroid_idx, dist) in distances.iter().take(k) {
+                    for &(centroid_idx, dist) in distances.iter() {
                         let quantized = ((dist * 255.0 / global_max.max(1.0)).min(255.0)) as u8;
                         sparse_entries.push(SparseEntry {
                             vector_idx: i as u32,
