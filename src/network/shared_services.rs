@@ -2669,7 +2669,7 @@ impl SharedServices {
         // A6: build the storage-write fence adapter over the SAME lease manager
         // before it is moved into RecordOpsService below, so the shutdown flush
         // path and the network write-gates share one ownership view. `None` ⇒ lease
-        // store unavailable ⇒ fence fails open. Default-OFF until enforced.
+        // store unavailable ⇒ single-pod deployment (allowed). Default-ON.
         let storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>> =
             lease_manager_for_writes.as_ref().map(|manager| {
                 Arc::new(

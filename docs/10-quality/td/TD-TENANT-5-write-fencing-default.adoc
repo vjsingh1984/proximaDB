@@ -1,0 +1,168 @@
+= TD-TENANT-5: Write Fencing (A6) - Enable by Default
+:toc:
+:toclevels: 3
+:date: 2026-08-25
+:status: [OPEN] | [IN_PROGRESS] | [RESOLVED] | [WONTFIX]
+
+== Context
+
+Per TD-ARCH-ALIGN-1 (Critical Production Hardening), the A6 storage-write fence was identified as default-OFF, risking stale data during lease transitions. This TD tracks enabling A6 by default for production safety.
+
+**Industry Leadership Context:**
+- **Neon Lakebase**: Production-hardened with fencing and quorum enforcement
+- **Google Spanner**: Production-hardened with TrueTime Paxos enforcement
+- **Aurora**: Production-hardened with 6-way replication, fault tolerance
+
+**ProximaDB Current State:**
+- Write fencing (A6) implementation exists and is well-tested
+- Core seam: `StorageWriteFence` trait at storage layer
+- Ground truth: `PartitionLeaseManager` at cluster layer
+- Enforcement sites exist (flush boundaries)
+- ❌ **Default OFF** (`PROXIMADB_WRITE_FENCING` env var)
+- ❌ Two unfenced paths break if enabled (inline/manual flush)
+- ❌ Single-pod deployments fail closed (no lease store)
+
+== Problem
+
+1. **Default OFF**: Write fencing disabled by default, risking stale data
+2. **Unfenced Paths**: Inline and manual flush don't receive fence handles
+3. **Single-Pod Fails Closed**: Deployments without lease manager fail
+4. **Production Safety Risk**: Stale data can durably resurrect after lease takeover
+
+**Customer Impact:**
+- Production stability risk (stale data after lease transitions)
+- Multi-pod deployments not protected by default
+- Single-pod deployments blocked when fence enabled
+
+**Trace-Based Evidence:**
+Per OLAP_OLTP_ARCHITECTURE_REVIEW_2026_08_25.adoc, Lakebase and Spanner both enforce fencing by default for production safety.
+
+== Solution
+
+Enable A6 write fencing by default with kill-switch for testing, wire fence handles to all flush paths, and allow single-pod deployments without lease manager.
+
+=== Implementation
+
+**Change 1: Flip Default to ON**
+- Function: `write_fencing_enabled()` in `src/storage/write_fence.rs`
+- Change: `unwrap_or(false)` → `unwrap_or(true)` (default ON)
+- Kill-switch: `PROXIMADB_WRITE_FENCING=0` disables
+- Registry: Updated ENV_GATE_REGISTRY.adoc entry
+
+**Change 2: Single-Pod Policy**
+- Function: `evaluate_fence()` in `src/storage/write_fence.rs`
+- Logic: `None` fence (no lease manager) → proceed (single-pod allowed)
+- Only fail closed on missing tenant_id (bug) or fenced-out decision
+
+**Change 3: Documentation Updates**
+- Module doc: Updated from "Default-OFF (D5)" to "Default-ON (production-safe)"
+- SharedServices comment: Updated from "Default-OFF until enforced" to "Default-ON"
+
+=== Test Coverage
+
+**Test 1.1: Gate ON by default** ✅
+```rust
+#[test]
+fn write_fencing_enabled_by_default() {
+    std::env::remove_var("PROXIMADB_WRITE_FENCING");
+    assert!(write_fencing_enabled());
+}
+```
+
+**Test 1.2: Kill-switch disables** ✅
+```rust
+#[test]
+fn write_fencing_kill_switch_disables() {
+    std::env::set_var("PROXIMADB_WRITE_FENCING", "0");
+    assert!(!write_fencing_enabled());
+}
+```
+
+**Test 1.3: Single-pod allowed without lease manager** ✅
+```rust
+#[tokio::test]
+async fn single_pod_flush_allowed_without_lease_manager() {
+    let fence = None;
+    let decision = evaluate_fence(true, fence, Some("t"), "c", 0).await;
+    assert_eq!(decision, FenceDecision::Proceed);
+}
+```
+
+**Test 1.4: Inline flush with fence handle** ⏳ (TODO)
+- Verify inline size-flush path receives fence handle
+- Currently passes `None`, should receive `Some(fence)`
+
+**Test 1.5: Manual flush with fence handle** ⏳ (TODO)
+- Verify `flush_collection` receives fence handle
+- Currently passes `None`, should receive `Some(fence)`
+
+**Test 1.6: Multi-pod takeover rejects stale flush** ⏳ (TODO)
+- E2E test: Pod A holds lease, Pod B takes over
+- Pod A flush should be rejected
+
+=== Remaining Work
+
+**High Priority:**
+1. Wire fence handles to inline flush path (Test 1.4)
+2. Wire fence handles to manual flush path (Test 1.5)
+3. Create E2E multi-pod takeover test (Test 1.6)
+
+**Documentation:**
+1. Update operator documentation with default-ON behavior
+2. Document kill-switch usage for testing
+3. Document single-pod deployment behavior
+
+== Success Criteria
+
+1. ✅ Gate ON by default
+2. ✅ Kill-switch works (`PROXIMADB_WRITE_FENCING=0`)
+3. ✅ Single-pod deployments proceed
+4. ⏳ Inline flush receives fence handle
+5. ⏳ Manual flush receives fence handle
+6. ⏳ Multi-pod takeover test passes
+7. ⏳ All existing tests still pass
+8. ⏳ Documentation updated
+
+== Tradeoffs
+
+**Single-Pod Policy:**
+- No fence (no lease manager) proceeds by default
+- Mitigation: Document that single-pod has no fencing protection
+- Rationale: Single-pod has no multi-pod scenarios to fence against
+
+**Reactivation Latency:**
+- None (fencing is synchronous decision, no network call)
+- Mitigation: Not applicable (decision is in-memory)
+
+== Alternatives Considered
+
+=== Alternative 1: Keep Default OFF (Rejected)
+**Pros:** No breaking changes
+**Cons:** Production safety risk, competitive gap
+**Decision:** Rejected - Lakebase/Spanner enforce by default
+
+=== Alternative 2: Require Lease Manager (Rejected)
+**Pros:** Stronger safety guarantee
+**Cons:** Blocks single-pod deployments
+**Decision:** Rejected - Single-pod is common deployment model
+
+=== Alternative 3: Separate Single-Pod Gate (Rejected)
+**Pros:** Explicit control
+**Cons:** More configuration surface
+**Decision:** Rejected - Auto-detection is simpler
+
+== Dependencies
+
+- **TD-ARCH-ALIGN-1**: Parent TD for Phase 1 production hardening
+- **A6 (ADR-025)**: Deletion vectors are a dependent of write fencing
+
+== Related TDs
+
+- **TD-ARCH-ALIGN-1**: Critical Production Hardening (parent)
+- **ADR-025**: Deletion vectors (dependent feature)
+
+== References
+
+- **OLAP_OLTP_ARCHITECTURE_REVIEW_2026_08_25.adoc**: Comprehensive competitive analysis
+- **src/storage/write_fence.rs**: Core fence implementation
+- **ENV_GATE_REGISTRY.adoc**: Updated registry entry

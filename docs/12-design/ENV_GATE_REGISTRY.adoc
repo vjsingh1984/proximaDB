@@ -274,7 +274,7 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_VECTOR_SQ8_DISABLE` | Kill-switch: vector stripes fall back to raw f32 instead of SQ8. | OFF (SQ8 on) | kill-switch; — | crates/storage/proximadb-block-format/src/writer.rs:1821
 | `PROXIMADB_WAL_LOCAL_DIR` | Local WAL root (e.g. `file:///waldisk`); routes per-collection WAL to `{dir}/{id}/wal/` on local disk, decoupled from the object-store data assignment (ADR-069 S1). Governs write + Bincode replay. Env override of TOML `[storage.wal_config].wal_local_dir`. | OFF (WAL co-located with data) | opt-in; ADR-069 S1 | src/storage/persistence/write_ahead_log/mod.rs
 | `PROXIMADB_WAL_OBJECT_ID_KEY` | Master gate keying WAL `collection_id` by stable object_id (dual-read safe). | OFF (name-keyed) | opt-in; ADR-031 O2 | src/services/record_store.rs:705
-| `PROXIMADB_WRITE_FENCING` | storage-write fence enforcement | OFF (fail-open) | A6 | `src/database.rs (+6)`
+| `PROXIMADB_WRITE_FENCING` | A6 storage-write fence enforcement; set `=0` to disable for testing only. Single-pod deployments (no lease manager) proceed without fencing. | ON (production-safe); kill-switch | TD-ARCH-ALIGN-1 | src/storage/write_fence.rs:59
 |===
 
 == Misregistered / dead entries (26 — the TD-ENVGATE-1 S3 prune worklist)
