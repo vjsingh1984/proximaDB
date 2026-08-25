@@ -567,6 +567,7 @@ impl SstEngine {
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
+        let cache_policy = self.vector_cache_policy();
 
         info!(
             "🚀 SST: Starting unified search for collection {} with {} dimensions",
@@ -618,6 +619,7 @@ impl SstEngine {
                     k,
                     filter_expression.is_some(),
                     crate::observability::io_trace::VectorAccessPath::Exact,
+                    cache_policy,
                 );
             }
             return result;
@@ -684,6 +686,7 @@ impl SstEngine {
                 k,
                 filter_expression.is_some(),
                 crate::observability::io_trace::VectorAccessPath::Ann,
+                cache_policy,
             );
         }
         result
@@ -1677,6 +1680,13 @@ impl SstEngine {
     /// requested mode remains separate from `actual_path`: Adaptive and
     /// Approximate may fall back to exact, and such ambiguous executions must
     /// never warm an ANN cost cell without an engagement proof.
+    fn vector_cache_policy(&self) -> crate::observability::io_trace::VectorCachePolicy {
+        crate::observability::io_trace::VectorCachePolicy::from_tiers(
+            self.segment_invariants_cache.is_some(),
+            self.survivor_cache.is_some(),
+        )
+    }
+
     fn record_completed_vector_access(
         ctx: &StorageQueryContext,
         storage_url: &str,
@@ -1684,6 +1694,7 @@ impl SstEngine {
         top_k: usize,
         has_filter: bool,
         actual_path: crate::observability::io_trace::VectorAccessPath,
+        cache_policy: crate::observability::io_trace::VectorCachePolicy,
     ) {
         use crate::core::search::SearchMode;
         use crate::observability::io_trace::{
@@ -1703,6 +1714,7 @@ impl SstEngine {
             requested_mode,
             actual_path,
             storage_scope: VectorStorageScope::from_storage_url(storage_url),
+            cache_policy,
         });
     }
 
@@ -2095,6 +2107,7 @@ impl SstEngine {
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
+        let cache_policy = self.vector_cache_policy();
 
         if self
             .want_exact_search(ctx, query_vector, &storage_url)
@@ -2119,6 +2132,7 @@ impl SstEngine {
                     k,
                     filter_expression.is_some(),
                     crate::observability::io_trace::VectorAccessPath::Exact,
+                    cache_policy,
                 );
             }
             return result;
@@ -2167,6 +2181,7 @@ impl SstEngine {
                 k,
                 filter_expression.is_some(),
                 crate::observability::io_trace::VectorAccessPath::Ann,
+                cache_policy,
             );
         }
         result

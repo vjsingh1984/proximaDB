@@ -630,6 +630,8 @@ fn vector_access_schema() -> SchemaRef {
         // Appended/nullable: vector-access satellites written before this
         // dimension existed do not contain the column.
         opt("storage_scope", DataType::Utf8),
+        // Appended/nullable for mixed-read safety with pre-policy satellites.
+        opt("cache_policy", DataType::Utf8),
     ]))
 }
 
@@ -944,6 +946,7 @@ fn build_vector_access_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatc
     let mut requested_mode = Vec::new();
     let mut actual_path = Vec::new();
     let mut storage_scope = Vec::new();
+    let mut cache_policy = Vec::new();
     for envelope in envs {
         if let TracePayload::VectorAnn(payload) = &envelope.payload {
             for (index, access) in payload.access_paths.iter().enumerate() {
@@ -958,6 +961,7 @@ fn build_vector_access_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatc
                 requested_mode.push(access.requested_mode.as_str().to_string());
                 actual_path.push(access.actual_path.as_str().to_string());
                 storage_scope.push(access.storage_scope.as_str().to_string());
+                cache_policy.push(access.cache_policy.as_str().to_string());
             }
         }
     }
@@ -976,6 +980,7 @@ fn build_vector_access_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatc
         str_arr(requested_mode),
         str_arr(actual_path),
         str_arr(storage_scope),
+        str_arr(cache_policy),
     ];
     RecordBatch::try_new(vector_access_schema(), cols)
         .map(Some)
@@ -1103,8 +1108,8 @@ mod tests {
     }
 
     #[test]
-    fn vector_access_batch_carries_storage_scope() {
-        use proximadb_observability_engine::io_trace::VectorStorageScope;
+    fn vector_access_batch_carries_route_time_dimensions() {
+        use proximadb_observability_engine::io_trace::{VectorCachePolicy, VectorStorageScope};
 
         let e = env(
             "w",
@@ -1118,6 +1123,7 @@ mod tests {
                     requested_mode: VectorSearchIntent::Exact,
                     actual_path: VectorAccessPath::Exact,
                     storage_scope: VectorStorageScope::Remote,
+                    cache_policy: VectorCachePolicy::Full,
                 }],
                 ..Default::default()
             }),
@@ -1131,6 +1137,14 @@ mod tests {
             .downcast_ref::<StringArray>()
             .unwrap();
         assert_eq!(values.value(0), "remote");
+        let index = batch.schema().index_of("cache_policy").unwrap();
+        assert!(batch.schema().field(index).is_nullable());
+        let values = batch
+            .column(index)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(values.value(0), "full");
     }
 
     fn relational(writer: &str, seq: u64, n_exec: usize) -> TraceEnvelope {
@@ -1228,6 +1242,7 @@ mod tests {
                                 requested_mode: VectorSearchIntent::Exact,
                                 actual_path: VectorAccessPath::Exact,
                                 storage_scope: proximadb_observability_engine::io_trace::VectorStorageScope::Local,
+                                cache_policy: proximadb_observability_engine::io_trace::VectorCachePolicy::Disabled,
                             },
                             VectorAccessTrace {
                                 engine: "sst".to_string(),
@@ -1237,6 +1252,7 @@ mod tests {
                                 requested_mode: VectorSearchIntent::Approximate,
                                 actual_path: VectorAccessPath::Ann,
                                 storage_scope: proximadb_observability_engine::io_trace::VectorStorageScope::Remote,
+                                cache_policy: proximadb_observability_engine::io_trace::VectorCachePolicy::Full,
                             },
                         ],
                         centroid_total_blocks: 64,
