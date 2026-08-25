@@ -78,10 +78,86 @@
 //! # }
 //! ```
 
+use crate::core::search::bounded_queue::TopKHeap;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// Lazily resolves per-record filter metadata under the collection read
+/// guard, memoizing each id on first touch. Replaces the previous
+/// whole-collection `metadata_by_id` prebuild in `query_hnsw_with_predicate`:
+/// the HNSW predicate traversal probes ~ef·M nodes, so building
+/// `record_filter_metadata` (a fresh map + ≥3 String allocs) for every record
+/// in the collection was O(N) work per filtered query disproportionate to
+/// what the traversal touches. Verdicts are identical — same maps, same
+/// filter — only WHEN the maps are built changes.
+struct LazyFilterMetadata<'a> {
+    /// Read guard over `AxisManager::collection_vectors`; `None` when no
+    /// metadata expression was compiled (resolve then always returns `None`,
+    /// exactly like the previous empty-map lookup).
+    records:
+        Option<tokio::sync::RwLockReadGuard<'a, HashMap<String, HashMap<String, ProximaRecord>>>>,
+    /// Collection whose inner id→record map is resolved.
+    collection_id: String,
+    manager: &'a AxisManager,
+    memo: std::sync::Mutex<MetadataMemo>,
+}
+
+#[derive(Default)]
+struct MetadataMemo {
+    resolved: HashMap<String, Arc<HashMap<String, Value>>>,
+    absent: HashSet<String>,
+}
+
+impl<'a> LazyFilterMetadata<'a> {
+    async fn new(manager: &'a AxisManager, collection_id: &str, needed: bool) -> Self {
+        let records = if needed {
+            Some(manager.collection_vectors.read().await)
+        } else {
+            None
+        };
+        Self {
+            records,
+            collection_id: collection_id.to_string(),
+            manager,
+            memo: std::sync::Mutex::new(MetadataMemo::default()),
+        }
+    }
+
+    /// Resolve the filter-metadata map for `id`. Returns `None` when the id
+    /// is not resident in the collection (or when no metadata expression was
+    /// compiled) — the same `Option` the previous eager map produced.
+    fn resolve(&self, id: &str) -> Option<Arc<HashMap<String, Value>>> {
+        let Some(records) = self.records.as_ref() else {
+            return None;
+        };
+        let Some(collection) = records.get(&self.collection_id) else {
+            return None;
+        };
+        let mut memo = self
+            .memo
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(hit) = memo.resolved.get(id) {
+            return Some(Arc::clone(hit));
+        }
+        if memo.absent.contains(id) {
+            return None;
+        }
+        match collection.get(id) {
+            Some(record) => {
+                let metadata = Arc::new(self.manager.record_filter_metadata(record));
+                memo.resolved.insert(id.to_string(), Arc::clone(&metadata));
+                Some(metadata)
+            }
+            None => {
+                memo.absent.insert(id.to_string());
+                None
+            }
+        }
+    }
+}
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
@@ -1678,6 +1754,7 @@ impl AxisManager {
         algorithm: Option<&IndexAlgorithm>,
     ) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
+
         use crate::index::axis::index_factory::AxisVectorIndex;
         use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
 
@@ -1902,22 +1979,16 @@ impl AxisManager {
             Some(self.metadata_filters_to_expression(&query.metadata_filters))
         };
 
-        let metadata_by_id = if metadata_expression.is_some() {
-            let collection_vectors = self.collection_vectors.read().await;
-            Arc::new(
-                collection_vectors
-                    .get(collection_id)
-                    .map(|records| {
-                        records
-                            .iter()
-                            .map(|(id, record)| (id.clone(), self.record_filter_metadata(record)))
-                            .collect::<HashMap<_, _>>()
-                    })
-                    .unwrap_or_default(),
-            )
-        } else {
-            Arc::new(HashMap::new())
-        };
+        // Lazy per-candidate metadata resolution: the traversal probes only
+        // ~ef·M nodes, so materializing `record_filter_metadata` for EVERY
+        // record in the collection per query was O(N) map builds + String
+        // clones disproportionate to use. The resolver borrows the collection
+        // under its read guard and memoizes each id on first touch — verdicts
+        // are identical (same maps, same filter); only WHEN they are built
+        // changes. Worst case (a sparse predicate draining the whole graph)
+        // degenerates to the previous O(N) cost, never worse.
+        let lazy_metadata =
+            LazyFilterMetadata::new(self, collection_id, metadata_expression.is_some()).await;
 
         // F7 / TD-HYBRID-1 D2: one compiled predicate (id filters + metadata
         // expression) shared by the traversal closure below and the residual
@@ -1926,10 +1997,13 @@ impl AxisManager {
             query.id_filters.clone(),
             metadata_expression.clone(),
         );
-        let predicate_metadata = Arc::clone(&metadata_by_id);
         let predicate_filter = compiled_filter.clone();
-        let predicate =
-            move |id: &str| -> bool { predicate_filter.matches(id, predicate_metadata.get(id)) };
+        let predicate = {
+            let resolver = &lazy_metadata;
+            move |id: &str| -> bool {
+                predicate_filter.matches(id, resolver.resolve(id).as_deref())
+            }
+        };
 
         // TD-064 / ADR-011 §4.3: oversample to absorb post-filter recall loss.
         // PostFilter uses the catalog policy's effective_top_k_for_post_filter
@@ -1968,10 +2042,28 @@ impl AxisManager {
         // honors the higher=better contract.
         use crate::compute::distance_computation::engine::{DistanceMetricExt, SimilarityResult};
         let metric = index.distance_metric();
-        let results: Vec<ScoredResult> = raw
+        // Every raw result passed `predicate`, so each id below is already
+        // memoized in the resolver — the residual re-filter costs only map
+        // hits. Dropping the resolver (and its collection read guard) here
+        // keeps `lookup_record_expiration`'s try_read seeing the same lock
+        // state it did before this change.
+        // Every raw result passed `predicate`, so each id below is already
+        // memoized in the resolver — the residual re-filter costs only map
+        // hits.
+        let filtered: Vec<(String, f32)> = {
+            let resolver = &lazy_metadata;
+            raw.into_iter()
+                .filter(|(id, _)| compiled_filter.matches(id, resolver.resolve(id).as_deref()))
+                .take(query.top_k)
+                .collect()
+        };
+        // Release the collection read guard BEFORE the expiration lookups:
+        // `lookup_record_expiration` try_reads the same lock, and holding the
+        // guard here would flip those lookups to the fallback path.
+        drop(lazy_metadata);
+
+        let results: Vec<ScoredResult> = filtered
             .into_iter()
-            .filter(|(id, _)| compiled_filter.matches(id, metadata_by_id.get(id)))
-            .take(query.top_k)
             .map(|(id, raw_distance)| {
                 let raw_for_similarity = if metric.is_similarity() {
                     -raw_distance
@@ -4347,15 +4439,7 @@ impl AxisManager {
         collection_id: &str,
         query: &AxisHybridQuery,
     ) -> Result<Vec<ScoredResult>> {
-        let records = {
-            let collection_vectors = self.collection_vectors.read().await;
-            collection_vectors
-                .get(collection_id)
-                .map(|vectors| vectors.values().cloned().collect::<Vec<_>>())
-                .unwrap_or_default()
-        };
-
-        if records.is_empty() {
+        if query.top_k == 0 {
             return Ok(Vec::new());
         }
 
@@ -4376,10 +4460,54 @@ impl AxisManager {
             metadata_expression,
         );
 
-        let mut results = Vec::new();
+        // Borrow the records under the read guard instead of deep-cloning the
+        // whole collection per filtered query (the `lookup_record_expiration`
+        // fix documents a 45× latency gap for this exact defect class). The
+        // guard is taken AFTER the awaits above and the loop body has none,
+        // so the hold-time is the scoring loop only — strictly shorter than
+        // the clone it replaces; `oid` is cloned only for final top-k records.
+        let collection_vectors = self.collection_vectors.read().await;
+        let Some(vectors) = collection_vectors.get(collection_id) else {
+            return Ok(Vec::new());
+        };
+        if vectors.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        for record in records {
-            let metadata = self.record_filter_metadata(&record);
+        // Bounded top-k entry: "better" ranks Greater = higher similarity
+        // first, then lexicographically smaller vector_id — the exact total
+        // order the previous full sort + truncate applied.
+        struct ExactScored {
+            similarity: f32,
+            vector_id: String,
+            expires_at: Option<DateTime<Utc>>,
+        }
+        impl Eq for ExactScored {}
+        impl PartialEq for ExactScored {
+            fn eq(&self, other: &Self) -> bool {
+                self.cmp(other) == std::cmp::Ordering::Equal
+            }
+        }
+        impl Ord for ExactScored {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                self.similarity
+                    .partial_cmp(&other.similarity)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| other.vector_id.cmp(&self.vector_id))
+            }
+        }
+        impl PartialOrd for ExactScored {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        let mut top_k = TopKHeap::with_capacity(query.top_k);
+        // One clock read per query instead of per surviving record.
+        let now = Utc::now();
+
+        for record in vectors.values() {
+            let metadata = self.record_filter_metadata(record);
             if !compiled_filter.matches(&record.oid, Some(&metadata)) {
                 continue;
             }
@@ -4409,26 +4537,27 @@ impl AxisManager {
 
             if !query.include_expired
                 && let Some(expiration) = expires_at.as_ref()
-                && Utc::now() >= *expiration
+                && now >= *expiration
             {
                 continue;
             }
 
-            results.push(ScoredResult {
-                vector_id: record.oid,
+            top_k.try_push(ExactScored {
                 similarity,
+                vector_id: record.oid.clone(),
                 expires_at,
             });
         }
 
-        results.sort_by(|left, right| {
-            right
-                .similarity
-                .partial_cmp(&left.similarity)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| left.vector_id.cmp(&right.vector_id))
-        });
-        results.truncate(query.top_k);
+        let results: Vec<ScoredResult> = top_k
+            .into_sorted_desc()
+            .into_iter()
+            .map(|entry| ScoredResult {
+                vector_id: entry.vector_id,
+                similarity: entry.similarity,
+                expires_at: entry.expires_at,
+            })
+            .collect();
 
         Ok(results)
     }
