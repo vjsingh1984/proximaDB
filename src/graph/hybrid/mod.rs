@@ -154,8 +154,198 @@ use crate::services::vector_operations_service::VectorOperationsService;
 use proximadb_kernel::error::{ProximaDBError, QueryError, VectorDBError};
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+/// Per-query outgoing-adjacency index: source node → its outgoing edges in
+/// global edge-table iteration order.
+type AdjacencyIndex = HashMap<NodeId, Vec<Arc<Edge>>>;
+
+/// Breadth-first traversal over a prebuilt adjacency index. Extracted from
+/// `HybridQueryEngine::execute_bfs_traversal` so the algorithm core is
+/// testable without the full engine; the method is a thin wrapper that builds
+/// the index once per query and binds the engine's filter helpers.
+fn bfs_over_adjacency(
+    adjacency: &AdjacencyIndex,
+    start_node_id: &NodeId,
+    max_depth: u32,
+    allowed_edge_types: &HashSet<&str>,
+    edge_ok: &dyn Fn(&Edge) -> QueryResult<bool>,
+) -> QueryResult<Vec<GraphCandidate>> {
+    let mut candidates = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    let mut visited = HashSet::new();
+
+    queue.push_back((start_node_id.clone(), 0));
+    visited.insert(start_node_id.clone());
+
+    while let Some((current_node_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            continue;
+        }
+
+        candidates.push(GraphCandidate {
+            node_id: current_node_id.clone(),
+            distance: depth,
+            path_length: depth as usize,
+            centrality_score: None,
+        });
+
+        if let Some(outgoing) = adjacency.get(&current_node_id) {
+            for edge in outgoing {
+                if !allowed_edge_types.is_empty()
+                    && !allowed_edge_types.contains(edge.edge_type.as_str())
+                {
+                    continue;
+                }
+                if !edge_ok(edge)? {
+                    continue;
+                }
+                if !visited.contains(&edge.to_node_id) {
+                    visited.insert(edge.to_node_id.clone());
+                    queue.push_back((edge.to_node_id.clone(), depth + 1));
+                }
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+/// Dijkstra traversal over a prebuilt adjacency index, min-heap frontier with
+/// lazy deletion. Extracted from `execute_dijkstra_traversal` for the same
+/// testability reason as [`bfs_over_adjacency`]. Entries settle in
+/// (distance, node_id) order — equal distances settle lexicographically,
+/// matching the previous BTreeMap-iteration tie behavior.
+fn dijkstra_over_adjacency(
+    adjacency: &AdjacencyIndex,
+    start_node_id: &NodeId,
+    max_depth: f32,
+) -> Vec<GraphCandidate> {
+    struct FrontierEntry {
+        distance: f32,
+        node_id: NodeId,
+    }
+    impl Eq for FrontierEntry {}
+    impl PartialEq for FrontierEntry {
+        fn eq(&self, other: &Self) -> bool {
+            self.cmp(other) == std::cmp::Ordering::Equal
+        }
+    }
+    impl Ord for FrontierEntry {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.distance
+                .partial_cmp(&other.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| self.node_id.cmp(&other.node_id))
+        }
+    }
+    impl PartialOrd for FrontierEntry {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    let mut candidates = Vec::new();
+    let mut distances: HashMap<NodeId, f32> = HashMap::new();
+    let mut settled: HashSet<NodeId> = HashSet::new();
+    let mut frontier: std::collections::BinaryHeap<std::cmp::Reverse<FrontierEntry>> =
+        std::collections::BinaryHeap::new();
+
+    distances.insert(start_node_id.clone(), 0.0);
+    frontier.push(std::cmp::Reverse(FrontierEntry {
+        distance: 0.0,
+        node_id: start_node_id.clone(),
+    }));
+
+    while let Some(std::cmp::Reverse(entry)) = frontier.pop() {
+        // Lazy deletion: skip entries already settled or superseded by a
+        // shorter known distance.
+        if settled.contains(&entry.node_id)
+            || distances
+                .get(&entry.node_id)
+                .is_some_and(|d| *d < entry.distance)
+        {
+            continue;
+        }
+        let current_node_id = entry.node_id;
+        let current_distance = entry.distance;
+        settled.insert(current_node_id.clone());
+
+        if current_distance > max_depth {
+            break;
+        }
+
+        candidates.push(GraphCandidate {
+            node_id: current_node_id.clone(),
+            distance: current_distance as u32,
+            path_length: current_distance as usize,
+            centrality_score: None,
+        });
+
+        if let Some(outgoing) = adjacency.get(&current_node_id) {
+            for edge in outgoing {
+                let edge_weight = 1.0; // Default weight, could be from edge properties
+                let new_distance = current_distance + edge_weight;
+
+                match distances.get(&edge.to_node_id) {
+                    Some(known) if *known <= new_distance => {}
+                    _ => {
+                        distances.insert(edge.to_node_id.clone(), new_distance);
+                        frontier.push(std::cmp::Reverse(FrontierEntry {
+                            distance: new_distance,
+                            node_id: edge.to_node_id.clone(),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    candidates
+}
+
+/// BFS parent-map construction for path finding over a prebuilt adjacency
+/// index (extracted from `semantic_path_finding`): returns the parent map
+/// when `end` is reachable within `max_depth`, else `None`.
+fn bfs_parent_map(
+    adjacency: &AdjacencyIndex,
+    start_node_id: &NodeId,
+    end_node_id: &NodeId,
+    max_depth: u32,
+) -> Option<HashMap<NodeId, (NodeId, EdgeId)>> {
+    let mut queue = std::collections::VecDeque::new();
+    let mut visited = HashSet::new();
+    let mut parent: HashMap<NodeId, (NodeId, EdgeId)> = HashMap::new();
+
+    queue.push_back((start_node_id.clone(), 0));
+    visited.insert(start_node_id.clone());
+
+    while let Some((current_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            continue;
+        }
+
+        if current_id == *end_node_id {
+            return Some(parent);
+        }
+
+        if let Some(outgoing) = adjacency.get(&current_id) {
+            for edge in outgoing {
+                if !visited.contains(&edge.to_node_id) {
+                    visited.insert(edge.to_node_id.clone());
+                    parent.insert(
+                        edge.to_node_id.clone(),
+                        (current_id.clone(), edge.id.clone()),
+                    );
+                    queue.push_back((edge.to_node_id.clone(), depth + 1));
+                }
+            }
+        }
+    }
+
+    None
+}
 
 /// Hybrid query engine for vector-graph integration
 pub struct HybridQueryEngine {
@@ -764,62 +954,43 @@ impl HybridQueryEngine {
     }
 
     /// Execute BFS traversal
+    /// One O(E) pass over the edge table → adjacency index for this query,
+    /// replacing the per-expanded-node FULL edge-table scans in the
+    /// traversals below (O(V·E) per query). The pool stores `Arc<Edge>`, so
+    /// the values are refcount bumps, and each node's neighbor list preserves
+    /// the global DashMap iteration order the per-node scans were filtering —
+    /// identical BFS queue order / candidate order.
+    fn build_outgoing_adjacency(&self) -> AdjacencyIndex {
+        let mut adjacency: AdjacencyIndex = HashMap::with_capacity(self.graph_memory.nodes.len());
+        for edge_entry in self.graph_memory.edges.iter() {
+            let edge = edge_entry.value();
+            adjacency
+                .entry(edge.from_node_id.clone())
+                .or_default()
+                .push(Arc::clone(edge));
+        }
+        adjacency
+    }
+
     async fn execute_bfs_traversal(
         &self,
         start_node_id: &NodeId,
         max_depth: u32,
         graph_comp: &GraphQueryComponent,
     ) -> QueryResult<Vec<GraphCandidate>> {
-        let mut candidates = Vec::new();
-        let mut queue = std::collections::VecDeque::new();
-        let mut visited = HashSet::new();
-
-        // Initialize with start node
-        queue.push_back((start_node_id.clone(), 0));
-        visited.insert(start_node_id.clone());
-
-        while let Some((current_node_id, depth)) = queue.pop_front() {
-            if depth >= max_depth {
-                continue;
-            }
-
-            // Add current node as candidate
-            candidates.push(GraphCandidate {
-                node_id: current_node_id.clone(),
-                distance: depth,
-                path_length: depth as usize,
-                centrality_score: None, // Could be computed based on node degree
-            });
-
-            // Find outgoing edges
-            for edge_entry in self.graph_memory.edges.iter() {
-                let edge = edge_entry.value();
-
-                if edge.from_node_id != current_node_id {
-                    continue;
-                }
-
-                // Check edge type filter
-                if !graph_comp.edge_types.is_empty()
-                    && !graph_comp.edge_types.contains(&edge.edge_type)
-                {
-                    continue;
-                }
-
-                // Check edge filters
-                if !self.edge_matches_filters(edge, &graph_comp.edge_filters)? {
-                    continue;
-                }
-
-                // Add target node to queue if not visited
-                if !visited.contains(&edge.to_node_id) {
-                    visited.insert(edge.to_node_id.clone());
-                    queue.push_back((edge.to_node_id.clone(), depth + 1));
-                }
-            }
-        }
-
-        Ok(candidates)
+        // O(E) adjacency index + edge-type set, built once per query (was: a
+        // full edge-table scan per expanded node).
+        let adjacency = self.build_outgoing_adjacency();
+        let allowed_edge_types: HashSet<&str> =
+            graph_comp.edge_types.iter().map(|t| t.as_str()).collect();
+        let filters = &graph_comp.edge_filters;
+        bfs_over_adjacency(
+            &adjacency,
+            start_node_id,
+            max_depth,
+            &allowed_edge_types,
+            &|edge| self.edge_matches_filters(edge, filters),
+        )
     }
 
     /// Execute DFS traversal (simplified implementation)
@@ -874,6 +1045,10 @@ impl HybridQueryEngine {
             visited.insert(start_node_id.clone());
         }
 
+        // One adjacency index for the whole traversal (was: a full edge-table
+        // scan per visited node inside get_semantic_neighbors).
+        let adjacency = self.build_outgoing_adjacency();
+
         while let Some(current) = semantic_queue.pop() {
             if current.depth >= max_depth {
                 continue;
@@ -891,7 +1066,13 @@ impl HybridQueryEngine {
 
             // Explore neighbors with semantic ranking
             let neighbors = self
-                .get_semantic_neighbors(&current.node_id, &query_vector, graph_comp, &visited)
+                .get_semantic_neighbors(
+                    &current.node_id,
+                    &query_vector,
+                    graph_comp,
+                    &visited,
+                    &adjacency,
+                )
                 .await?;
 
             // Add semantically relevant neighbors to the queue
@@ -946,6 +1127,10 @@ impl HybridQueryEngine {
             .unwrap_or_default();
         let similarity_threshold = self.get_similarity_threshold_from_context().unwrap_or(0.3);
 
+        // One adjacency index for the whole traversal (was: a full edge-table
+        // scan per visited node inside get_semantic_neighbors).
+        let adjacency = self.build_outgoing_adjacency();
+
         // Start DFS from the initial node
         self.semantic_dfs_recursive(
             start_node_id,
@@ -957,6 +1142,7 @@ impl HybridQueryEngine {
             &mut visited,
             &mut candidates,
             1.0, // Initial path similarity
+            &adjacency,
         )
         .await?;
 
@@ -985,6 +1171,7 @@ impl HybridQueryEngine {
         visited: &mut HashSet<NodeId>,
         candidates: &mut Vec<GraphCandidate>,
         path_similarity: f32,
+        adjacency: &AdjacencyIndex,
     ) -> QueryResult<()> {
         // Stop if max depth reached
         if current_depth >= max_depth {
@@ -1013,7 +1200,13 @@ impl HybridQueryEngine {
 
         // Get semantically ranked neighbors
         let neighbors = self
-            .get_semantic_neighbors(current_node_id, query_vector, graph_comp, visited)
+            .get_semantic_neighbors(
+                current_node_id,
+                query_vector,
+                graph_comp,
+                visited,
+                adjacency,
+            )
             .await?;
 
         // Recursively explore neighbors in order of semantic similarity (DFS with semantic ordering)
@@ -1034,6 +1227,7 @@ impl HybridQueryEngine {
                     visited,
                     candidates,
                     new_path_similarity,
+                    adjacency,
                 ))
                 .await?;
             }
@@ -1052,53 +1246,15 @@ impl HybridQueryEngine {
         max_depth: u32,
         _graph_comp: &GraphQueryComponent,
     ) -> QueryResult<Vec<GraphCandidate>> {
-        let mut candidates = Vec::new();
-        let mut distances = BTreeMap::new();
-        let mut visited = HashSet::new();
-
-        // Initialize distances
-        distances.insert(start_node_id.clone(), 0.0);
-
-        while let Some((current_node_id, current_distance)) = distances
-            .iter()
-            .filter(|(node_id, _)| !visited.contains(*node_id))
-            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(k, v)| (k.clone(), *v))
-        {
-            visited.insert(current_node_id.clone());
-
-            if current_distance > max_depth as f32 {
-                break;
-            }
-
-            // Add to candidates
-            candidates.push(GraphCandidate {
-                node_id: current_node_id.clone(),
-                distance: current_distance as u32,
-                path_length: current_distance as usize,
-                centrality_score: None,
-            });
-
-            // Update distances to neighbors
-            for edge_entry in self.graph_memory.edges.iter() {
-                let edge = edge_entry.value();
-
-                if edge.from_node_id != current_node_id {
-                    continue;
-                }
-
-                let edge_weight = 1.0; // Default weight, could be from edge properties
-                let new_distance = current_distance + edge_weight;
-
-                if !distances.contains_key(&edge.to_node_id)
-                    || distances[&edge.to_node_id] > new_distance
-                {
-                    distances.insert(edge.to_node_id.clone(), new_distance);
-                }
-            }
-        }
-
-        Ok(candidates)
+        // O(E) adjacency index, built once per query (was: a full edge-table
+        // scan per settled node on top of a linear min-scan over the whole
+        // distance map per iteration).
+        let adjacency = self.build_outgoing_adjacency();
+        Ok(dijkstra_over_adjacency(
+            &adjacency,
+            start_node_id,
+            max_depth as f32,
+        ))
     }
 
     /// Check if edge matches filters
@@ -1313,32 +1469,32 @@ impl HybridQueryEngine {
         query_vector: &[f32],
         graph_comp: &GraphQueryComponent,
         visited: &HashSet<NodeId>,
+        adjacency: &AdjacencyIndex,
     ) -> QueryResult<Vec<SemanticNeighbor>> {
         let mut semantic_neighbors = Vec::new();
 
-        // Get all outgoing edges from current node by iterating through edges
-        let mut outgoing_edges = Vec::new();
-        for edge_entry in self.graph_memory.edges.iter() {
-            let edge = edge_entry.value();
-            if &edge.from_node_id == node_id {
-                outgoing_edges.push(edge.clone());
-            }
-        }
+        // O(degree) expansion via the caller's per-query adjacency index (was:
+        // a full edge-table scan per visited node, cloning every matching
+        // Edge including its properties map — values here are Arc refs).
+        let allowed_edge_types: HashSet<&str> =
+            graph_comp.edge_types.iter().map(|t| t.as_str()).collect();
 
-        for edge in outgoing_edges {
+        let outgoing = adjacency.get(node_id).map_or(&[][..], |v| v.as_slice());
+        for edge in outgoing {
             // Skip if already visited
             if visited.contains(&edge.to_node_id) {
                 continue;
             }
 
             // Check edge type filter
-            if !graph_comp.edge_types.is_empty() && !graph_comp.edge_types.contains(&edge.edge_type)
+            if !allowed_edge_types.is_empty()
+                && !allowed_edge_types.contains(edge.edge_type.as_str())
             {
                 continue;
             }
 
             // Check edge filters
-            if !self.edge_matches_filters(&edge, &graph_comp.edge_filters)? {
+            if !self.edge_matches_filters(edge, &graph_comp.edge_filters)? {
                 continue;
             }
 
@@ -1783,44 +1939,13 @@ impl HybridQueryEngine {
         // Current: BFS finds shortest path. Semantic scoring (weighting edges
         // by embedding similarity) layered on top when vector index is available.
 
-        // BFS to find path between start and end nodes
-        let mut queue = std::collections::VecDeque::new();
-        let mut visited = HashSet::new();
-        let mut parent: HashMap<NodeId, (NodeId, EdgeId)> = HashMap::new();
-
-        queue.push_back((start_node_id.clone(), 0));
-        visited.insert(start_node_id.clone());
-
-        while let Some((current_id, depth)) = queue.pop_front() {
-            if depth >= max_depth {
-                continue;
-            }
-
-            if current_id == *end_node_id {
-                // Found path - reconstruct it
-                return Ok(Some(self.reconstruct_path(&current_id, &parent)?));
-            }
-
-            // Find neighbors
-            for edge_entry in self.graph_memory.edges.iter() {
-                let edge = edge_entry.value();
-
-                if edge.from_node_id != current_id {
-                    continue;
-                }
-
-                if !visited.contains(&edge.to_node_id) {
-                    visited.insert(edge.to_node_id.clone());
-                    parent.insert(
-                        edge.to_node_id.clone(),
-                        (current_id.clone(), edge.id.clone()),
-                    );
-                    queue.push_back((edge.to_node_id.clone(), depth + 1));
-                }
-            }
+        // O(E) adjacency index, built once per query (was: a full edge-table
+        // scan per expanded node).
+        let adjacency = self.build_outgoing_adjacency();
+        match bfs_parent_map(&adjacency, start_node_id, end_node_id, max_depth) {
+            Some(parent) => Ok(Some(self.reconstruct_path(end_node_id, &parent)?)),
+            None => Ok(None),
         }
-
-        Ok(None) // No path found
     }
 
     /// Reconstruct path from parent map
@@ -1906,5 +2031,235 @@ mod tests {
             FilterOperator::Equal => assert!(true),
             _ => assert!(false),
         }
+    }
+
+    // ── Data-structure efficiency guards (per-query adjacency index) ────────
+    //
+    // NOTE: HybridQueryEngine is currently exported library surface with no
+    // in-repo production caller (v2 FusionSearch goes through
+    // fusion_service.rs); these guards hold the LIBRARY contract — the
+    // traversal core must stay O(V+E), not the O(V·E) full-edge-scan-per-node
+    // shape these functions had before the adjacency index.
+
+    use std::time::Instant;
+
+    /// Ring + deterministic chords, every node out-degree `1 + chords`.
+    /// Deterministic — no RNG dependency.
+    fn test_pool(nodes: usize, chords: usize) -> Arc<GraphMemoryPool> {
+        let pool = Arc::new(GraphMemoryPool::new());
+        for i in 0..nodes {
+            pool.insert_node(Node {
+                id: format!("n{i}"),
+                labels: vec!["T".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            });
+        }
+        for i in 0..nodes {
+            // ring edge
+            let to = (i + 1) % nodes;
+            pool.insert_edge(Edge {
+                id: format!("e{i}-ring"),
+                from_node_id: format!("n{i}"),
+                to_node_id: format!("n{to}"),
+                edge_type: "T".to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            });
+            for j in 1..=chords {
+                let to = (i * 7 + j) % nodes;
+                if to != i {
+                    pool.insert_edge(Edge {
+                        id: format!("e{i}-c{j}"),
+                        from_node_id: format!("n{i}"),
+                        to_node_id: format!("n{to}"),
+                        edge_type: "T".to_string(),
+                        properties: HashMap::new(),
+                        weight: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    });
+                }
+            }
+        }
+        pool
+    }
+
+    /// Build the per-query adjacency index the way
+    /// `HybridQueryEngine::build_outgoing_adjacency` does.
+    fn adjacency_of(pool: &GraphMemoryPool) -> AdjacencyIndex {
+        let mut adjacency: AdjacencyIndex = HashMap::with_capacity(pool.nodes.len());
+        for edge_entry in pool.edges.iter() {
+            let edge = edge_entry.value();
+            adjacency
+                .entry(edge.from_node_id.clone())
+                .or_default()
+                .push(Arc::clone(edge));
+        }
+        adjacency
+    }
+
+    /// Textbook BFS reference over an id→neighbors map.
+    fn reference_bfs(
+        neighbors: &HashMap<String, Vec<String>>,
+        start: &str,
+    ) -> HashMap<String, u32> {
+        let mut depths = HashMap::new();
+        let mut queue = std::collections::VecDeque::new();
+        depths.insert(start.to_string(), 0);
+        queue.push_back(start.to_string());
+        while let Some(current) = queue.pop_front() {
+            let d = depths[&current];
+            if let Some(nexts) = neighbors.get(&current) {
+                for next in nexts {
+                    if !depths.contains_key(next) {
+                        depths.insert(next.clone(), d + 1);
+                        queue.push_back(next.clone());
+                    }
+                }
+            }
+        }
+        depths
+    }
+
+    fn neighbor_ids(adjacency: &AdjacencyIndex) -> HashMap<String, Vec<String>> {
+        adjacency
+            .iter()
+            .map(|(from, edges)| {
+                (
+                    from.clone(),
+                    edges.iter().map(|e| e.to_node_id.clone()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bfs_over_adjacency_matches_reference() {
+        let pool = test_pool(200, 3);
+        let adjacency = adjacency_of(&pool);
+        let allowed: HashSet<&str> = HashSet::new();
+        let candidates =
+            bfs_over_adjacency(&adjacency, &"n0".to_string(), u32::MAX, &allowed, &|_| {
+                Ok(true)
+            })
+            .expect("bfs");
+
+        let reference = reference_bfs(&neighbor_ids(&adjacency), "n0");
+
+        let mut got: Vec<(String, u32)> = candidates
+            .into_iter()
+            .map(|c| (c.node_id, c.distance))
+            .collect();
+        got.sort();
+        let mut want: Vec<(String, u32)> = reference.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        want.sort();
+        assert_eq!(got, want, "BFS diverged from textbook reference");
+    }
+
+    #[test]
+    fn dijkstra_over_adjacency_matches_reference_and_settles_in_order() {
+        let pool = test_pool(200, 3);
+        let adjacency = adjacency_of(&pool);
+        let candidates = dijkstra_over_adjacency(&adjacency, &"n0".to_string(), f32::MAX);
+
+        // Unit weights ⇒ Dijkstra distances == BFS depths.
+        let reference = reference_bfs(&neighbor_ids(&adjacency), "n0");
+        assert_eq!(candidates.len(), reference.len());
+
+        // Settle order: (distance, node_id) non-decreasing.
+        for pair in candidates.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            assert!(
+                a.distance < b.distance || (a.distance == b.distance && a.node_id <= b.node_id),
+                "settle order violated at {} -> {}",
+                a.node_id,
+                b.node_id
+            );
+        }
+        for candidate in &candidates {
+            assert_eq!(
+                candidate.distance as u32, reference[&candidate.node_id],
+                "distance mismatch for {}",
+                candidate.node_id
+            );
+        }
+    }
+
+    #[test]
+    fn bfs_parent_map_finds_shortest_path_and_reports_unreachable() {
+        let pool = test_pool(50, 2);
+        let adjacency = adjacency_of(&pool);
+
+        let parent = bfs_parent_map(&adjacency, &"n0".to_string(), &"n5".to_string(), u32::MAX)
+            .expect("reachable on a connected graph");
+        // Walk the chain back to the start.
+        let mut current = "n5".to_string();
+        let mut hops = 0;
+        while let Some((prev, _edge)) = parent.get(&current) {
+            current = prev.clone();
+            hops += 1;
+            assert!(hops < 100, "parent chain must terminate");
+        }
+        assert_eq!(current, "n0");
+        assert!(hops > 0);
+
+        // Disconnected target → None.
+        let mut lonely: AdjacencyIndex = HashMap::new();
+        lonely.insert(
+            "a".to_string(),
+            vec![Arc::new(Edge {
+                id: "x".to_string(),
+                from_node_id: "a".to_string(),
+                to_node_id: "b".to_string(),
+                edge_type: "T".to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })],
+        );
+        assert!(bfs_parent_map(&lonely, &"a".to_string(), &"zzz".to_string(), 10).is_none());
+    }
+
+    /// Asymptotic ratchet (same shape as tests/ivf_ingest_asymptotic_test.rs
+    /// and tests/graph_ingest_asymptotic_integration_test.rs): traversal cost
+    /// must grow ~linearly with graph size at fixed degree. The
+    /// full-edge-scan-per-node shape this blocks is quadratic (≈64× at an 8×
+    /// graph); the adjacency-indexed shape measures ≈8×. Ratio bound 20 gives
+    /// ~2.5× headroom for CI noise. Both halves run in-process moments apart,
+    /// so the comparison self-normalizes.
+    #[test]
+    fn traversal_cost_grows_linearly_not_quadratically_with_graph_size() {
+        fn timed_full_traversal(nodes: usize) -> f64 {
+            let pool = test_pool(nodes, 4);
+            let start = Instant::now();
+            let adjacency = adjacency_of(&pool);
+            let allowed: HashSet<&str> = HashSet::new();
+            let bfs =
+                bfs_over_adjacency(&adjacency, &"n0".to_string(), u32::MAX, &allowed, &|_| {
+                    Ok(true)
+                })
+                .expect("bfs");
+            let dijkstra = dijkstra_over_adjacency(&adjacency, &"n0".to_string(), f32::MAX);
+            assert_eq!(bfs.len(), nodes);
+            assert_eq!(dijkstra.len(), nodes);
+            start.elapsed().as_secs_f64() * 1000.0
+        }
+
+        let small = timed_full_traversal(500);
+        let large = timed_full_traversal(4000);
+        let ratio = large / small.max(0.001);
+        eprintln!(
+            "hybrid traversal: 500 nodes {small:.2} ms, 4000 nodes {large:.2} ms, ratio {ratio:.1}"
+        );
+        assert!(
+            ratio <= 20.0,
+            "traversal cost grew super-linearly with graph size              (ratio {ratio:.1} at 8x nodes) — the per-expanded-node              full-edge-scan shape may be back"
+        );
     }
 }
