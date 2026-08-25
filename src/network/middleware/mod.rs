@@ -35,7 +35,10 @@
 //! // Production security configuration
 //! let cors = CorsConfig::production()
 //!     .allow_origin("https://app.example.com");
-//! let rate_limit = RateLimitConfig::default(); // Enabled by default
+//! let rate_limit = RateLimitConfig::default(); // field defaults enabled=true,
+//!                                              // but the layer is NOT mounted —
+//!                                              // TD-RATE-1: constructing this
+//!                                              // configures nothing today
 //! let timeout = TimeoutConfig::default(); // 30 second timeout
 //! ```
 
