@@ -129,12 +129,8 @@ impl<'a> LazyFilterMetadata<'a> {
     /// is not resident in the collection (or when no metadata expression was
     /// compiled) — the same `Option` the previous eager map produced.
     fn resolve(&self, id: &str) -> Option<Arc<HashMap<String, Value>>> {
-        let Some(records) = self.records.as_ref() else {
-            return None;
-        };
-        let Some(collection) = records.get(&self.collection_id) else {
-            return None;
-        };
+        let records = self.records.as_ref()?;
+        let collection = records.get(&self.collection_id)?;
         let mut memo = self
             .memo
             .lock()
