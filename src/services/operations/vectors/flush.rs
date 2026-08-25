@@ -31,6 +31,8 @@ pub(crate) struct FlushCompactionCoordinator {
     wal_manager: Arc<WriteAheadLogManager>,
     storage_engine: Arc<dyn UnifiedStorageFormat>,
     collection_cache: Arc<DashMap<crate::core::stable_id::CollectionObjectId, Arc<Collection>>>,
+    /// A6 storage-write fence for multi-pod deployment safety
+    storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
 }
 
 impl FlushCompactionCoordinator {
@@ -38,11 +40,13 @@ impl FlushCompactionCoordinator {
         wal_manager: Arc<WriteAheadLogManager>,
         storage_engine: Arc<dyn UnifiedStorageFormat>,
         collection_cache: Arc<DashMap<crate::core::stable_id::CollectionObjectId, Arc<Collection>>>,
+        storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
     ) -> Self {
         Self {
             wal_manager,
             storage_engine,
             collection_cache,
+            storage_write_fence,
         }
     }
 
@@ -98,9 +102,9 @@ impl FlushCompactionCoordinator {
     pub(crate) async fn force_flush_collection(&self, collection_id: &str) -> Result<()> {
         info!("🔄 Force flushing collection: {}", collection_id);
 
-        // Flush the WAL manager for this collection
+        // Flush the WAL manager for this collection with fence check
         self.wal_manager
-            .force_flush_collection(collection_id, None)
+            .force_flush_collection(collection_id, self.storage_write_fence.as_deref())
             .await?;
 
         // SST flush publication owns its follow-up training/compaction morsel.

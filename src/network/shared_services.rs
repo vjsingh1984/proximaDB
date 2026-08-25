@@ -1750,6 +1750,18 @@ impl SharedServices {
             // the SharedServices field so search-path recordings and
             // operator inspection share state.
             .with_affinity_registry(affinity_registry.clone());
+            // TD-TENANT-5: wire the A6 storage-write fence into the vector
+            // service so manual flush operations consult the fence before proceeding.
+            // Default-ON (production-safe); None ⇒ single-pod deployment proceeds.
+            let svc = match storage_write_fence {
+                Some(fence) => {
+                    debug!(
+                        "✅ SharedServices::new - A6 storage-write fence wired into VectorOperationsService"
+                    );
+                    svc.with_storage_write_fence(fence)
+                }
+                None => svc,
+            };
             #[cfg(feature = "axis")]
             let svc = svc.with_axis_runtime_enabled(axis_runtime_enabled);
             // FA-2 (abac-policy): wire the durable ABAC enforcer into the vector
@@ -2672,11 +2684,16 @@ impl SharedServices {
         // store unavailable ⇒ single-pod deployment (allowed). Default-ON.
         let storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>> =
             lease_manager_for_writes.as_ref().map(|manager| {
-                Arc::new(
+                let fence = Arc::new(
                     crate::network::storage_write_fence::LeaseStorageWriteFence::new(
                         manager.clone(),
                     ),
-                ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>
+                ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>;
+                // Set global fence for inline flush paths
+                crate::storage::persistence::write_ahead_log::set_global_write_fence(
+                    fence.clone(),
+                );
+                fence
             });
 
         // F5 / TD-OLTP-WIRING-1: open the ONE process-shared fenced

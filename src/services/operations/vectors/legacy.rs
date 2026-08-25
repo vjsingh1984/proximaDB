@@ -580,6 +580,8 @@ pub struct VectorOperationsService {
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
     /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
+    /// A6 storage-write fence for multi-pod deployment safety
+    storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
 
     /// FA-2 vector ABAC enforcer (default-OFF behind `abac-policy`). When
     /// present, `unified_search_native` pushes the subject's accessibility
@@ -686,6 +688,10 @@ impl VectorOperationsService {
         }
         if let Some(ref rbac_enforcer) = ctx.rbac_enforcer {
             svc.rbac_enforcer = Some(rbac_enforcer.clone());
+        }
+        // Write fencing integration from shared context
+        if let Some(ref fence) = ctx.storage_write_fence {
+            svc.storage_write_fence = Some(fence.clone());
         }
         svc
     }
@@ -1990,6 +1996,16 @@ impl VectorOperationsService {
         rbac_enforcer: Arc<crate::storage::tenant::EnhancedRBACManager>,
     ) -> Self {
         self.rbac_enforcer = Some(rbac_enforcer);
+        self
+    }
+
+    /// A6 storage-write fence for multi-pod deployment safety.
+    /// Called by `SharedServices::new` after the fence has been constructed.
+    pub fn with_storage_write_fence(
+        mut self,
+        fence: Arc<dyn crate::storage::write_fence::StorageWriteFence>,
+    ) -> Self {
+        self.storage_write_fence = Some(fence);
         self
     }
 
@@ -5012,6 +5028,7 @@ impl VectorOperationsService {
             self.wal_manager.clone(),
             self.unified_engine(),
             self.collection_cache.clone(),
+            self.storage_write_fence.clone(),
         )
     }
 

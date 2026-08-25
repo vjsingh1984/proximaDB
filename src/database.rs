@@ -430,13 +430,13 @@ impl ProximaDB {
         // A6: inject the storage-write fence (over the SAME PartitionLeaseManager
         // the network write-gates use) into the storage engine's shutdown flush
         // path. Post-construction, mirroring set_precision_resolver: the engine is
-        // built before SharedServices/the lease stack exist. Default-OFF; absent
-        // lease store ⇒ None ⇒ fail-open. Enforced only with PROXIMADB_WRITE_FENCING=1.
+        // built before SharedServices/the lease stack exist. Default-ON (production-safe);
+        // absent lease store ⇒ None ⇒ single-pod deployment proceeds without fencing.
         if let Some(fence) = shared_services.storage_write_fence.clone() {
             storage_engine.set_storage_write_fence(fence);
             tracing::info!(
                 "✅ ProximaDB::new - A6 storage-write fence wired to StorageEngine \
-                 (default-OFF; set PROXIMADB_WRITE_FENCING=1 to enforce)"
+                 (default-ON; set PROXIMADB_WRITE_FENCING=0 to disable)"
             );
         }
 

@@ -1001,6 +1001,28 @@ static GLOBAL_WRITE_BUFFER_BEHAVIOR: GlobalWriteBufferBehaviorSingleton =
         wal_behavior: ResettableOnceLock::new(),
     };
 
+/// Global A6 storage-write fence singleton for multi-pod deployment safety.
+/// When set, inline and manual flush operations consult the fence before
+/// proceeding. When unset (single-pod deployment), flushes proceed without fencing.
+static GLOBAL_WRITE_FENCE: ResettableOnceLock<
+    Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
+> = ResettableOnceLock::new();
+
+/// Set the global A6 storage-write fence instance.
+/// Called during bootstrap (shared_services) to wire the fence into flush paths.
+pub fn set_global_write_fence(fence: Arc<dyn crate::storage::write_fence::StorageWriteFence>) {
+    GLOBAL_WRITE_FENCE.set(Some(fence));
+}
+
+/// Get the global A6 storage-write fence instance if available.
+/// Returns `None` for single-pod deployments (no lease manager).
+pub fn get_global_write_fence() -> Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>> {
+    GLOBAL_WRITE_FENCE
+        .get()
+        .as_ref()
+        .cloned()
+}
+
 /// Global registry instance for WriteAheadLogManager per collection architecture
 static WAL_MANAGER_REGISTRY: ResettableOnceLock<WriteAheadLogManagerRegistry> =
     ResettableOnceLock::new();
@@ -1010,6 +1032,7 @@ pub unsafe fn reset_global_wal_state_for_tests() {
     unsafe {
         GLOBAL_CATALOG.reset();
         GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.reset();
+        GLOBAL_WRITE_FENCE.reset();
         WAL_MANAGER_REGISTRY.reset();
     }
 }
@@ -1271,7 +1294,9 @@ fn spawn_inline_flush(collection_id: String) {
         let axis_arg = axis.as_deref();
         #[cfg(not(feature = "axis"))]
         let axis_arg: Option<&()> = None;
-        match materialize_collection_if_idle(&write_buffer, &plan, None, None, true, axis_arg).await
+        // Use global fence for multi-pod safety (None = single-pod, proceeds without fencing)
+        let fence = get_global_write_fence();
+        match materialize_collection_if_idle(&write_buffer, &plan, fence.as_deref(), None, true, axis_arg).await
         {
             Ok(Some(outcome)) => tracing::info!(
                 "✅ inline size-flush '{}': {} entries, {} bytes in {:.3}s",
@@ -2085,7 +2110,11 @@ impl WriteAheadLogManager {
     /// enter the same canonical materializer asynchronously, while this method
     /// waits on its per-collection gate and returns only after publication and
     /// exact WAL-claim retirement complete.
-    pub async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
+    pub async fn flush_collection(
+        &self,
+        collection_id: &str,
+        fence: Option<&Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
+    ) -> Result<FlushResult> {
         use crate::storage::flush_materializer::{
             flush_plan_from_collection_meta, materialize_collection,
         };
@@ -2106,7 +2135,7 @@ impl WriteAheadLogManager {
         let axis_arg: Option<&()> = None;
         let started = std::time::Instant::now();
         let outcome =
-            materialize_collection(&write_buffer, &plan, None, None, true, axis_arg).await?;
+            materialize_collection(&write_buffer, &plan, fence, None, true, axis_arg).await?;
 
         let (entries_flushed, bytes_written) = outcome
             .map(|outcome| (outcome.entries_flushed, outcome.bytes))
@@ -2154,10 +2183,10 @@ impl WriteAheadLogManager {
     pub async fn force_flush_collection(
         &self,
         collection_id: &str,
-        _storage_engine: Option<&str>,
+        fence: Option<&Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
     ) -> Result<()> {
         tracing::info!("WAL manager: force-flush collection {}", collection_id);
-        self.flush_collection(collection_id).await?;
+        self.flush_collection(collection_id, fence).await?;
         Ok(())
     }
 

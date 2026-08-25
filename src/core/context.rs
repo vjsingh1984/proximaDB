@@ -19,6 +19,8 @@ pub struct SharedContext {
     pub tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
     /// RBAC enforcer for permission validation
     pub rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
+    /// A6 storage-write fence for multi-pod deployment safety
+    pub storage_write_fence: Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>>,
 }
 
 /// Runtime settings for graph traversal prefetch optimization
