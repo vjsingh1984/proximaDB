@@ -2688,11 +2688,10 @@ impl SharedServices {
                     crate::network::storage_write_fence::LeaseStorageWriteFence::new(
                         manager.clone(),
                     ),
-                ) as Arc<dyn crate::storage::write_fence::StorageWriteFence>;
+                )
+                    as Arc<dyn crate::storage::write_fence::StorageWriteFence>;
                 // Set global fence for inline flush paths
-                crate::storage::persistence::write_ahead_log::set_global_write_fence(
-                    fence.clone(),
-                );
+                crate::storage::persistence::write_ahead_log::set_global_write_fence(fence.clone());
                 fence
             });
 

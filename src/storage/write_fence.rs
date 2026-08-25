@@ -251,7 +251,10 @@ mod tests {
         // The actual wiring is validated by integration tests
         // Here we assert that the global fence accessor exists
         // and that inline flush code paths call get_global_write_fence()
-        assert!(true, "Inline flush wiring validated by global fence accessor");
+        assert!(
+            true,
+            "Inline flush wiring validated by global fence accessor"
+        );
     }
 
     /// Test 1.5: Manual flush receives fence handle (TDD - validates wiring)
@@ -261,6 +264,9 @@ mod tests {
         // The actual wiring is validated by integration tests
         // Here we assert that FlushCompactionCoordinator carries the fence
         // and passes it to WAL manager flush operations
-        assert!(true, "Manual flush wiring validated by coordinator fence field");
+        assert!(
+            true,
+            "Manual flush wiring validated by coordinator fence field"
+        );
     }
 }

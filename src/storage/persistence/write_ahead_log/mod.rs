@@ -1017,10 +1017,7 @@ pub fn set_global_write_fence(fence: Arc<dyn crate::storage::write_fence::Storag
 /// Get the global A6 storage-write fence instance if available.
 /// Returns `None` for single-pod deployments (no lease manager).
 pub fn get_global_write_fence() -> Option<Arc<dyn crate::storage::write_fence::StorageWriteFence>> {
-    GLOBAL_WRITE_FENCE
-        .get()
-        .as_ref()
-        .cloned()
+    GLOBAL_WRITE_FENCE.get().as_ref().cloned()
 }
 
 /// Global registry instance for WriteAheadLogManager per collection architecture
@@ -1296,7 +1293,15 @@ fn spawn_inline_flush(collection_id: String) {
         let axis_arg: Option<&()> = None;
         // Use global fence for multi-pod safety (None = single-pod, proceeds without fencing)
         let fence = get_global_write_fence();
-        match materialize_collection_if_idle(&write_buffer, &plan, fence.as_deref(), None, true, axis_arg).await
+        match materialize_collection_if_idle(
+            &write_buffer,
+            &plan,
+            fence.as_deref(),
+            None,
+            true,
+            axis_arg,
+        )
+        .await
         {
             Ok(Some(outcome)) => tracing::info!(
                 "✅ inline size-flush '{}': {} entries, {} bytes in {:.3}s",
