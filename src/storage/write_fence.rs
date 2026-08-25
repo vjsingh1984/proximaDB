@@ -57,8 +57,8 @@ pub trait StorageWriteFence: Send + Sync {
 /// without touching process env (CLAUDE.md #13).
 pub fn write_fencing_enabled() -> bool {
     std::env::var("PROXIMADB_WRITE_FENCING")
-        .map(|v| v != "0")  // "0" is the kill-switch; anything else enables
-        .unwrap_or(true)   // Default ON when unset
+        .map(|v| v != "0") // "0" is the kill-switch; anything else enables
+        .unwrap_or(true) // Default ON when unset
 }
 
 /// Outcome of the boundary fence check at a flush.
@@ -209,14 +209,20 @@ mod tests {
         // Clear env var to test default behavior
         std::env::remove_var("PROXIMADB_WRITE_FENCING");
         // Should be enabled by default (this will fail initially)
-        assert!(write_fencing_enabled(), "Write fencing should be enabled by default");
+        assert!(
+            write_fencing_enabled(),
+            "Write fencing should be enabled by default"
+        );
     }
 
     /// Test 1.2: Kill-switch disables (TDD - this test fails initially)
     #[test]
     fn write_fencing_kill_switch_disables() {
         std::env::set_var("PROXIMADB_WRITE_FENCING", "0");
-        assert!(!write_fencing_enabled(), "Kill-switch '0' should disable write fencing");
+        assert!(
+            !write_fencing_enabled(),
+            "Kill-switch '0' should disable write fencing"
+        );
         std::env::remove_var("PROXIMADB_WRITE_FENCING");
     }
 
@@ -231,6 +237,10 @@ mod tests {
 
         // Should proceed (no lease manager = no multi-pod fencing needed)
         let decision = evaluate_fence(true, fence, tenant_id, collection_id, now_ms).await;
-        assert_eq!(decision, FenceDecision::Proceed, "Single-pod should proceed without lease manager");
+        assert_eq!(
+            decision,
+            FenceDecision::Proceed,
+            "Single-pod should proceed without lease manager"
+        );
     }
 }
