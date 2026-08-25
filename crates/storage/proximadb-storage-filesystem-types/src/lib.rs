@@ -831,7 +831,12 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
                 |offset, length| self.read_range(path, offset, length),
             )
             .await?;
+
+            // Record to global metrics for downstream emission (TD-RDSTRAT-12).
+            // A higher layer (e.g., observability-engine) drains these and forwards to
+            // Prometheus and the per-query io_trace, respecting layer boundaries.
             record_read_ranges_metrics(metrics);
+
             bufs
         };
 

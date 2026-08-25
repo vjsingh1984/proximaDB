@@ -168,6 +168,13 @@ pub struct IoTrace {
     /// for. Cache hits contribute zero.
     ivf_region_a_bytes: AtomicU64,
     ivf_region_b_bytes: AtomicU64,
+    /// General bounded-concurrent `read_ranges` metrics (TD-RDSTRAT-12).
+    /// Populated by any `read_ranges` or `read_ranges_prefetch` call with
+    /// `parallel > 1` / `inflight > 1`. Unlike IVF-specific fields, these
+    /// cover ALL ranged-read paths: footer fetches, Region-A/B reads, and
+    /// general multi-range reads (not just IVF coarse probe).
+    read_ranges_fetch_rounds: AtomicU64,
+    read_ranges_max_inflight: AtomicU64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): how often the probe scan's
     /// `wait_complete()` rendezvous resolved with the filter arrived (pruning
     /// enabled) vs timed out (filterless, conservative), plus the wall ms spent
@@ -620,6 +627,17 @@ impl IoTrace {
             .fetch_add(region_b, Ordering::Relaxed);
     }
 
+    /// Record a general bounded-concurrent `read_ranges` outcome (TD-RDSTRAT-12):
+    /// `fetch_rounds` = number of parallel rounds issued, `max_inflight` = peak
+    /// in-flight reads in any round. Covers ALL ranged-read paths (footer fetches,
+    /// Region-A/B reads, and general multi-range reads), not just IVF probe.
+    pub fn record_read_ranges(&self, fetch_rounds: u64, max_inflight: u64) {
+        self.read_ranges_fetch_rounds
+            .fetch_add(fetch_rounds, Ordering::Relaxed);
+        self.read_ranges_max_inflight
+            .fetch_max(max_inflight, Ordering::Relaxed);
+    }
+
     /// Record a runtime-filter wait outcome (ADR-056 AQE-S11): `arrived` = the
     /// filter completed within the wait budget (pruning enabled); otherwise it
     /// timed out (splits read filterless, conservative). `waited_ms` = the wall
@@ -820,6 +838,8 @@ impl IoTrace {
             ivf_whole_region_fallback: self.ivf_whole_region_fallback.load(Ordering::Relaxed),
             ivf_region_a_bytes: self.ivf_region_a_bytes.load(Ordering::Relaxed),
             ivf_region_b_bytes: self.ivf_region_b_bytes.load(Ordering::Relaxed),
+            read_ranges_fetch_rounds: self.read_ranges_fetch_rounds.load(Ordering::Relaxed),
+            read_ranges_max_inflight: self.read_ranges_max_inflight.load(Ordering::Relaxed),
             runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
             runtime_filter_timed_out: self.runtime_filter_timed_out.load(Ordering::Relaxed),
             runtime_filter_wait_ms: self.runtime_filter_wait_ms.load(Ordering::Relaxed),
@@ -926,6 +946,15 @@ pub struct IoTraceSnapshot {
     pub ivf_region_a_bytes: u64,
     #[serde(default)]
     pub ivf_region_b_bytes: u64,
+    /// General bounded-concurrent `read_ranges` metrics (TD-RDSTRAT-12).
+    /// Populated by any `read_ranges` or `read_ranges_prefetch` call with
+    /// `parallel > 1` / `inflight > 1`. Unlike IVF-specific fields, these
+    /// cover ALL ranged-read paths: footer fetches, Region-A/B reads, and
+    /// general multi-range reads (not just IVF coarse probe).
+    #[serde(default)]
+    pub read_ranges_fetch_rounds: u64,
+    #[serde(default)]
+    pub read_ranges_max_inflight: u64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): arrived vs timed-out +
     /// the wall ms spent waiting. `arrived / (arrived + timed_out)` is the
     /// per-workload signal the route cost model learns to tune the wait budget.
@@ -1219,6 +1248,27 @@ pub fn record_ivf_coarse_probe(
 /// query scope. See [`IoTrace::record_pax_region_bytes`].
 pub fn record_pax_region_bytes(region_a: u64, region_b: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_pax_region_bytes(region_a, region_b));
+}
+
+/// Record general bounded-concurrent `read_ranges` metrics for the active query
+/// (TD-RDSTRAT-12). No-ops outside a query scope. See [`IoTrace::record_read_ranges`].
+pub fn record_read_ranges(fetch_rounds: u64, max_inflight: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_read_ranges(fetch_rounds, max_inflight));
+}
+
+/// Drain general bounded-concurrent `read_ranges` metrics from the storage layer
+/// and forward to the active query trace (TD-RDSTRAT-12).
+///
+/// This bridges the layer boundary: the storage layer records metrics globally
+/// (avoiding upward dependencies), and this function (in the observability layer)
+/// drains them and forwards to the per-query io_trace. Call this after operations
+/// that use `FileSystem::read_ranges` with parallelism enabled. No-op if no
+/// metrics were recorded or outside an active io_trace scope.
+pub fn drain_and_forward_read_ranges_metrics() {
+    use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
+    if let Some(metrics) = drain_read_ranges_metrics() {
+        record_read_ranges(metrics.fetch_rounds, metrics.max_inflight);
+    }
 }
 
 /// Record a runtime-filter wait outcome for the active query (ADR-056 AQE-S11).
