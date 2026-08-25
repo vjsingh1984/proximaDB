@@ -128,10 +128,21 @@ fn descriptor() -> ModelDescriptor {
     }
 }
 
+/// Pad per-row extracts to a common width so separately-extracted rows merge
+/// into one rectangular batch. Since the batch-longest width change, a
+/// single-row extract is padded only to its own length, so merging requires
+/// this step. Values match what the tokenizer would have padded with: the
+/// model's pad id for `input_ids`, 0 (masked) for attention/type rows.
+fn pad_to_width(rows: &mut [Vec<i64>], width: usize, pad: i64) {
+    for row in rows.iter_mut() {
+        row.resize(width, pad);
+    }
+}
+
 /// Tokenize every fixture pair through the production extractor and score them
 /// in one 64-row batch. Each pair has its own query, and the extractor pairs one
 /// query against many docs, so each pair becomes a single-row extract; rows are
-/// merged manually (all rectangular at MAX_SEQ_LEN) into one batch.
+/// merged manually (padded to the fixture-wide max, ≤ MAX_SEQ_LEN) into one batch.
 fn score_fixture(fixture: &Fixture, tokenizer_path: &PathBuf, model_path: &PathBuf) -> Vec<f32> {
     let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
         .unwrap_or_else(|e| panic!("tokenizer load {tokenizer_path:?}: {e}"));
@@ -169,6 +180,17 @@ fn score_fixture(fixture: &Fixture, tokenizer_path: &PathBuf, model_path: &PathB
                 .clone(),
         );
     }
+
+    let width = input_ids
+        .iter()
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0);
+    assert!(width <= MAX_SEQ_LEN, "merged width {width} exceeds the {MAX_SEQ_LEN} budget");
+    // BERT-family pad id is 0; attention/type pad with 0 (masked) regardless.
+    pad_to_width(&mut input_ids, width, 0);
+    pad_to_width(&mut attention_mask, width, 0);
+    pad_to_width(&mut token_type_ids, width, 0);
 
     let batch = TokenizedBatch {
         input_ids,
@@ -325,8 +347,10 @@ fn serving_onnx_latency_profile() {
         );
     }
 
-    // Inference-only throughput at the max batch size (64×128) — the session's
-    // compute ceiling, with tokenization excluded.
+    // Inference-only throughput at the max batch size — the session's compute
+    // ceiling, with tokenization excluded. Rows come from separate single-row
+    // extracts, so merge-pad them to the fixture-wide max (dominated by the two
+    // long docs); the reported width makes the padding cost visible.
     let mut batch = TokenizedBatch::default();
     for (i, _pair) in fixture.pairs.iter().enumerate() {
         let row = extractor
@@ -341,6 +365,12 @@ fn serving_onnx_latency_profile() {
                 .push(tti[0].clone());
         }
     }
+    let width = batch.input_ids.iter().map(Vec::len).max().unwrap_or(0);
+    pad_to_width(&mut batch.input_ids, width, 0);
+    pad_to_width(&mut batch.attention_mask, width, 0);
+    if let Some(tti) = batch.token_type_ids.as_mut() {
+        pad_to_width(tti, width, 0);
+    }
     let mut samples = Vec::new();
     for _ in 0..50 {
         let start = Instant::now();
@@ -351,7 +381,7 @@ fn serving_onnx_latency_profile() {
     samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let mean: f64 = samples.iter().sum::<f64>() / samples.len() as f64;
     println!(
-        "inference-only 64×{MAX_SEQ_LEN}: mean {mean:6.2} ms  p50 {:6.2} ms  p95 {:6.2} ms  ({:.0} pairs/s)",
+        "inference-only 64×{width}: mean {mean:6.2} ms  p50 {:6.2} ms  p95 {:6.2} ms  ({:.0} pairs/s)",
         samples[samples.len() / 2],
         samples[(samples.len() as f64 * 0.95) as usize],
         64.0 / (samples[samples.len() / 2] / 1000.0),
