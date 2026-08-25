@@ -2851,8 +2851,16 @@ impl VectorOperationsService {
         let mut validated_results = Vec::new();
 
         for search_result in results {
-            let mut validated_search_result = search_result.clone();
-            validated_search_result.results.clear();
+            // Fresh envelope instead of clone-and-clear: the old path cloned
+            // the FULL envelope — every result record, vectors included — and
+            // immediately dropped the records. Kept results are cloned once;
+            // dropped results are never cloned. Verdicts, log lines, and the
+            // empty-envelope skip below are unchanged.
+            let mut validated_search_result = crate::proto::proximadb_v1::SearchResult {
+                results: Vec::with_capacity(search_result.results.len()),
+                total_found: search_result.total_found,
+                collection_id: search_result.collection_id.clone(),
+            };
 
             // Corroborate tenant labelling on each result.
             //

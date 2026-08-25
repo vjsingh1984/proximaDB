@@ -10,13 +10,35 @@ use proximadb_data_model::ProximaValue;
 pub const PROXIMADB_PSEUDO_QUERY_FIELD: &str = "proximadb.pseudo_query";
 pub const PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD: &str = "proximadb.pseudo_query_source_fields";
 
+/// Field accessor pseudo-query generation reads from. Implemented for the
+/// canonical `ProximaTree` record props (Value nodes only — the same filter
+/// the previous flatten step applied) and for the pre-flattened
+/// `HashMap<String, ProximaValue>` form, so generators no longer force
+/// callers to clone every prop key and value per record.
+pub trait MetadataFieldSource {
+    /// Scalar value stored under `field`, if any.
+    fn scalar(&self, field: &str) -> Option<&ProximaValue>;
+}
+
+impl MetadataFieldSource for HashMap<String, ProximaValue> {
+    fn scalar(&self, field: &str) -> Option<&ProximaValue> {
+        self.get(field)
+    }
+}
+
+impl MetadataFieldSource for proximadb_records::ProximaTree {
+    fn scalar(&self, field: &str) -> Option<&ProximaValue> {
+        match self.get(field) {
+            Some(proximadb_records::ProximaTreeNode::Value(v)) => Some(v),
+            _ => None,
+        }
+    }
+}
+
 /// Generate derived metadata entries for bounded, auditable dataset lookup.
 pub trait PseudoQueryGenerator: Send + Sync {
     /// Build additional metadata entries from source metadata.
-    fn generate_metadata(
-        &self,
-        metadata: &HashMap<String, ProximaValue>,
-    ) -> HashMap<String, ProximaValue>;
+    fn generate_metadata(&self, source: &dyn MetadataFieldSource) -> HashMap<String, ProximaValue>;
 }
 
 #[derive(Debug, Default)]
@@ -54,10 +76,7 @@ impl DefaultPseudoQueryGenerator {
 }
 
 impl PseudoQueryGenerator for DefaultPseudoQueryGenerator {
-    fn generate_metadata(
-        &self,
-        metadata: &HashMap<String, ProximaValue>,
-    ) -> HashMap<String, ProximaValue> {
+    fn generate_metadata(&self, source: &dyn MetadataFieldSource) -> HashMap<String, ProximaValue> {
         let candidate_fields = [
             "title",
             "content",
@@ -72,7 +91,7 @@ impl PseudoQueryGenerator for DefaultPseudoQueryGenerator {
         let mut terms = Vec::new();
 
         for field in candidate_fields {
-            if let Some(value) = metadata.get(field).and_then(Self::extract_text) {
+            if let Some(value) = source.scalar(field).and_then(Self::extract_text) {
                 let normalized = Self::sanitize_terms(&value);
                 if !normalized.is_empty() {
                     source_fields.push(field.to_string());
@@ -110,18 +129,10 @@ pub fn apply_pseudo_query_metadata(
     pseudo_query_generator: &dyn PseudoQueryGenerator,
 ) {
     for record in records.iter_mut() {
-        let flat: HashMap<String, ProximaValue> = record
-            .props
-            .iter()
-            .filter_map(|(k, node)| {
-                if let proximadb_records::ProximaTreeNode::Value(v) = node {
-                    Some((k.clone(), v.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let generated = pseudo_query_generator.generate_metadata(&flat);
+        // Read through the borrowing field-source: the generator touches <= 7
+        // fixed fields, so the previous per-record flatten (cloning EVERY prop
+        // key and value into a HashMap) was pure waste on every insert batch.
+        let generated = pseudo_query_generator.generate_metadata(&record.props);
         for (key, value) in generated {
             record
                 .props
@@ -149,6 +160,23 @@ mod tests {
         );
 
         let result = generator.generate_metadata(&metadata);
+
+        // Same record through the canonical ProximaTree form (Object nodes
+        // ignored, Value nodes read in place) must produce byte-identical
+        // output — the borrow path replaced the flatten, not the semantics.
+        let mut tree: proximadb_records::ProximaTree = Default::default();
+        for (k, v) in &metadata {
+            tree.insert(
+                k.clone(),
+                proximadb_records::ProximaTreeNode::Value(v.clone()),
+            );
+        }
+        tree.insert(
+            "nested".to_string(),
+            proximadb_records::ProximaTreeNode::Object(Default::default()),
+        );
+        let via_tree = generator.generate_metadata(&tree);
+        assert_eq!(result, via_tree);
 
         assert!(result.contains_key(PROXIMADB_PSEUDO_QUERY_FIELD));
         assert!(result.contains_key(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD));
