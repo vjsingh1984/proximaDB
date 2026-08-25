@@ -1,0 +1,164 @@
+= TD-SELECTOR-1: Calibrated Open-Weight Selector Benchmark
+
+Status:: Implemented (harness + gates 2 and 4), synthetic evidence only
+Date:: 2026-08-23
+Worktree:: `feat/selector-benchmark` (off `79fa985dc`)
+
+== Context
+
+PR #1726 (merged as `574e66021`) established that *candidate generation* is no longer
+the binding constraint: Recall@100 reached a 0.3734 pool ceiling, but the *selector*
+delivered only 0.3136. The next gains live in selection, and selecting requires
+comparing selectors fairly — which requires a harness whose comparisons mean
+something.
+
+== Problem Statement
+
+Ad-hoc selector evaluation conflates three things that must be separated:
+
+1. **Generation vs selection.** If each candidate strategy retrieves its own pool,
+   a measured difference could be the retriever, the selector, or an interaction.
+2. **Point estimates vs evidence.** "0.35 vs 0.34 recall" without an interval or a
+   paired test is noise-shaping, especially at n = 50 queries.
+3. **Recall vs downstream answer quality.** A selector that loses Recall@100 may
+   lose the *specific documents that carry answers*, which is what users feel.
+
+== Solution
+
+A harness in `benches/` plus an integration-test suite, both consuming **synthetic,
+seeded beds**:
+
+[cols="2,4"]
+|===
+|File |Contents
+
+|`benches/bench_selector_benchmark.rs`
+|Selector strategies (NoOp, weighted fusion, RRF, cascades, modelled
+cross-encoder, hybrid), paired sign-flip permutation tests, percentile bootstrap
+CIs, recall/MRR/NDCG, and a promotion gate that refuses to recommend without
+significance
+
+|`benches/selector_benchmark_data.rs`
+|Seeded pool generation: two retriever rankings with independent relevant-subset
+draws, deduplicated union pool, controllable coverage / separation / noise
+
+|`benches/bench_answer_quality.rs`
+|Gate 4: SQuAD-style EM, bag-of-tokens F1/precision/recall, span IoU + exact
+boundaries, `AnswerExtractor` trait (`WholeTopDocument`, `BestSentence`)
+
+|`benches/answer_quality_data.rs`
+|QA bed with gold spans; the gold document's rank in each retriever is the
+controlled independent variable
+
+|`tests/retrieval_quality_gates.rs`
+|40 property tests + two printable reports (`selector_sweep_report`,
+|`answer_quality_report`)
+|===
+
+=== Protocol invariants (each enforced by a test)
+
+1. **Pool preservation** — `noop` measures identically whether run alone or beside
+   four rival selectors; no selector can exceed the pool's coverage ceiling.
+2. **Recall is recall** — divided by |relevant|, not by k (the first revision
+   divided by k and was reporting precision@k).
+3. **Truncation is measurable** — a reranker with a 50-deep window scores exactly
+   the upstream's Recall@50; widening the window recovers recall monotonically.
+4. **Real statistics** — percentile bootstrap CIs; paired sign-flip p-values with a
+   `+1` correction so p is never exactly 0; a selector against itself is never
+   significant.
+5. **Promotion gate** — a point-estimate leader that is not significantly better
+   than every rival yields no promotable recommendation.
+
+== Verified results (synthetic bed)
+
+All numbers below are from seeded synthetic beds (40 queries, 2 000 docs,
+200 relevant/query, pool 300, seed `0x0DEF_ACED_0000_0001`) and are reproducible
+via `cargo nextest run --no-capture selector_sweep_report answer_quality_report`.
+They validate the *mechanism*, not production quality.
+
+=== Gate 2 — selector sweep (Recall@100, 95% CI)
+
+[cols="3,2,2,1"]
+|===
+|Selector |R@100 |95% CI |Latency ms
+
+|rrf_k60 |0.4487 |[0.4340, 0.4622] |0.67
+|noop_raw_union |0.4444 |[0.4302, 0.4575] |0.05
+|weighted_50_50 |0.4286 |[0.4138, 0.4424] |0.66
+|xenc_w100_q90 |0.4144 |[0.3994, 0.4290] |0.67
+|weighted_60_40 |0.4144 |[0.3994, 0.4290] |0.63
+|xenc_w400_q90 |0.4135 |[0.3986, 0.4282] |0.80
+|cascade_vector_first |0.3939 |[0.3808, 0.4059] |0.17
+|cascade_bm25_first |0.3405 |[0.3305, 0.3502] |0.16
+|xenc_w50_q90 |0.2577 |[0.2474, 0.2684] |0.65
+|===
+
+Findings:
+
+* **RRF leads on the point estimate but was NOT promoted** — the difference vs
+  `noop_raw_union` did not reach significance, and the gate correctly withheld the
+  recommendation ("Not promotable on this evidence — collect more queries or
+  accept the incumbent"). This is gate 3 working as designed.
+* **The narrow rerank window is catastrophic** — w50 scores 0.2577 vs the 0.4286 of
+  the 50/50 fusion (p = 0.0010). Window size dominates model quality in this
+  regime, exactly the PR #1726 shape (0.3734 pool → 0.3136 delivered).
+* **Cascades pay structurally** — gating on one retriever's top-100 forfeits the
+  union's coverage advantage; `cascade_bm25_first` is worst of the non-truncating
+  selectors.
+* Latency in this harness is in-process sort/scan time and is not comparable to
+  production latency; it is retained only to flag asymptotics (e.g. w400 rerank).
+
+=== Gate 4 — answer quality on the selectors' real rankings
+
+The QA bed pins each question's gold document at a controlled rank (top-10
+reachable for 10.0%, top-25 for 18.3%, top-100 for 66.7% of questions). The
+selectors from gate 2 produce the rankings; the extractors read them. No
+re-simulation.
+
+[cols="3,2,2,2,2"]
+|===
+|Selector / extractor |EM |F1 |Span IoU |Gold-doc retrieved
+
+|rrf_k60 / best_sentence |1.0000 |1.0000 |1.0000 |1.0000
+|weighted_60_40 / best_sentence |1.0000 |1.0000 |1.0000 |1.0000
+|keeps_everything / best_sentence |0.9167 |0.9342 |0.9167 |1.0000
+|xenc_w100 / best_sentence |0/F1 0.9079 |0.9079 |0.8833 |0.8833
+|xenc_w25 / best_sentence |0.4667 |0.5509 |0.4667 |0.4667
+|xenc_w10 / best_sentence |0.1833 |0.2868 |0.1833 |0.1833
+|whole_top_document (any selector) |0.0000 |≈0.035 |≈0.003 |varies
+|===
+
+Findings:
+
+* **EM ≤ gold-doc retrieval always holds**, and is enforced as a test: an extractor
+  cannot produce the gold answer from a ranking that does not contain the gold
+  document. This bound is what makes the gate interpretable.
+* **The cost of truncation reaches the answer.** w10 → 0.1833 EM vs 1.0 for the
+  fusions (p = 0.0050). Recall@k loss and answer loss are the same loss, seen from
+  different ends.
+* **NoOp is NOT optimal on answer quality** — it retrieves every gold document but
+  scores 0.9167 EM vs 1.0000 for the fusions, because ordering matters downstream:
+  the extractor reads depth first. A selector can be recall-perfect and still cost
+  answer quality by putting distractors on top. (Not significant at n=60;
+  reported, not promoted.)
+* The `whole_top_document` extractor floor (~0.035 F1) quantifies what "return the
+  whole chunk" costs vs sentence-level extraction on this bed.
+
+== Scope and honesty boundary
+
+* Synthetic beds, modelled reranker (finite window + quality parameter), lexical
+  extractors. **None of these numbers are admissible in `BENCHMARK_EVIDENCE.toml`**
+  or as claims about production retrieval. The harness is the deliverable; the
+  numbers prove the harness discriminates.
+* `recall_utils.rs` computes recall for ANN ground truth typed by distance
+  (`GroundTruthResult`); this harness scores IR relevance *sets*. The two do not
+  share a ground-truth type, so reuse would be a redefinition, not a deduplication.
+  Reuse of `stats` (bootstrap / sign-flip) is direct, within this harness.
+
+== Next gates
+
+* **Gate 3 (production)**: run the same protocol on development data with the real
+  retrievers and sealed held-out queries; promote only on paired significance.
+* **Gate 5**: replace the modelled cross-encoder with `proximadb-rank-onnx`
+  invocations (MiniLM vs BGE-reranker) under the same protocol, and add latency
+  measurement in a runner with a realistic clock (not in-process sort time).
