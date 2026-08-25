@@ -117,6 +117,7 @@
 //! api_keys = ["key1", "key2"]
 //!
 //! # Rate limiting
+//! # TD-RATE-1: this section parses but is read by no code (silent no-op).
 //! [network.rate_limit]
 //! enabled = true
 //! requests_per_second = 1000
@@ -246,7 +247,13 @@ pub struct NetworkServerConfig {
     /// Authentication configuration
     pub auth: NetworkAuthConfig,
 
-    /// Rate limiting configuration
+    /// Rate limiting configuration.
+    ///
+    /// TD-RATE-1: **currently read by no code** — this section parses but
+    /// feeds nothing, so setting it is a silent no-op. The only live request
+    /// limiter is pgwire's (`PROXIMADB_PGWIRE_RATE_LIMIT_RPM`); the REST
+    /// middleware this field was meant to configure is unmounted. See
+    /// `docs/10-quality/td/TD-RATE-1-inert-request-rate-limiting.adoc`.
     pub rate_limit: RateLimitConfig,
 
     /// Request timeout in seconds
@@ -477,7 +484,9 @@ mod config_tests {
         assert!(config.enable_rest);
         assert!(config.enable_dashboard);
         assert!(!config.auth.enabled);
-        assert!(config.rate_limit.enabled); // ENABLED by default (secure by default)
+        // TD-RATE-1: asserts the field default only — `rate_limit` is read
+        // by no code, so no limiting is "enabled" by this. See the TD.
+        assert!(config.rate_limit.enabled); // field default (TD-RATE-1)
         assert_eq!(config.request_timeout_secs, 30);
         assert_eq!(config.max_request_size, 64 * 1024 * 1024);
         assert_eq!(config.keep_alive_timeout_secs, 60);
@@ -539,7 +548,10 @@ mod config_tests {
     async fn test_rate_limit_config_default() {
         let config = RateLimitConfig::default();
 
-        assert!(config.enabled); // ENABLED by default (secure by default)
+        // TD-RATE-1: this asserts the FIELD's default, not a behavior —
+        // nothing consumes `enabled`, so "secure by default" is not yet true.
+        // Kept as the contract for when the middleware is mounted.
+        assert!(config.enabled); // field default (see TD-RATE-1)
         assert_eq!(config.requests_per_minute, 1000);
         assert_eq!(config.burst_size, 100);
         assert!(config.by_ip);
