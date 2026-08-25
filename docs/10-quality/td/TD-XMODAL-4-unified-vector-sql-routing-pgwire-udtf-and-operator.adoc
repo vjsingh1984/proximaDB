@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision; successful SST exact/ANN executions land attributable trace/warehouse samples and observe-only cost cells. Vector cost cells now partition truthful storage locality and completed cache outcome, and the bounded paired SIFT gate rejects unknown or mixed cohorts. Automatic cost selection remains closed pending representative remote/cold and warm cohorts; cross-surface parity also remains open.
+| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision; successful SST exact/ANN executions land attributable trace/warehouse samples and observe-only cost cells. Vector cost cells now partition truthful storage locality and the route-time cache policy, while completed cache outcome remains arm-specific evidence. The bounded paired SIFT gate rejects unknown policy or outcome. Automatic cost selection remains closed pending replicated cache-enabled measurements under representative remote RTT; cross-surface parity also remains open.
 | Severity | Medium-High (surface consistency + moat: one internal vector-search intent behind every SQL surface; removes the hardcoded pgwire `<->` bypass and the pgwire/UDTF reachability gap)
 | Component | pgwire (`src/network/postgres/relational_pipeline.rs`, `pgvector_params.rs`) ; router (`src/query/compute_scheduler.rs` `VectorQueryShape`/`route_vector_search`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
 | Governs / derives from | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — "no new DSL; reuse SQL + table functions") ; the reserved TD-XMODAL-4 forward-reference therein.
@@ -278,6 +278,68 @@ is completed-execution evidence, not a route-time promise. A live decision needs
 an independently observable starting condition or an admission policy whose
 deployment scope guarantees it, plus cache-enabled paired measurements and a
 representative remote-RTT cohort.
+
+=== Route-time cache-policy contract and real-corpus wiring proof (2026-08-25)
+
+The follow-up separates the two facts that the prior cell key collapsed:
+
+* `VectorCachePolicy` is captured once, before `want_exact_search` or either
+  physical arm executes. It describes the two existing SST warm-tier seams as
+  `disabled`, `invariants_only`, `survivor_only`, or `full`; legacy or
+  uninstrumented traces deserialize to fail-closed `unknown`. The policy is
+  passed into the existing successful-access recorder, including the
+  `Arc<Self>` path that consumes the engine during parallel ANN execution.
+* `VectorCacheOutcome` is still derived after completion from physical GETs and
+  query-local invariants/DRAM-survivor/L2 hit/miss counters. Its
+  `cold`/`warm`/`mixed`/`bypass` value remains arm-specific evidence and must be
+  admissible, but it no longer participates in the route-time shape key.
+* The cost identity is now constructible before execution:
+  `vector/engine=<engine>/dim=<n>/k=<n>/filter=<yes|no>/storage=<scope>/cache_policy=<policy>`.
+  Unknown storage, policy, or completed outcome cannot train the model. Exact
+  and ANN can therefore share one policy cell without pretending that they
+  consulted the same caches.
+* The existing `vector_access` warehouse satellite gains one nullable
+  `cache_policy` column. This is an additive mixed-read-safe projection;
+  serialized pre-field traces remain readable. The route-cost JSON remains
+  schema version 2: the serialized cell structure did not change, and the new
+  `cache_policy=` key cannot collide with the unreleased historical `cache=`
+  keys. No product version or compatibility alias was added.
+* The one SIFT gate now reuses the already registered invariants and survivor
+  budget gates for controlled policy selection. Unset or zero keeps the prior
+  cache-disabled baseline; explicit nonzero values inject those same cache
+  implementations. No second benchmark or new environment gate exists.
+
+Two fresh debug-profile wiring runs used the authoritative TEXMEX SIFT archive
+(archive MD5 `b23d1b3b2ee8469d819b61ca900ef0ed`), `N=1,000`, three queries, and
+brute-force subset ground truth. Both measured recall@10 = 1.0 and admitted all
+three pairs:
+
+[cols="1,2,2", options="header"]
+|===
+| Explicit policy | Shared admitted cohort | Completed arm outcomes
+| both budgets `0` | `storage=local/cache_policy=disabled` | Exact bypass / ANN bypass: 3 pairs
+| both budgets `64` MiB | `storage=local/cache_policy=full` | Exact bypass / ANN cold: 1 pair; Exact bypass / ANN warm: 2 pairs
+|===
+
+This is a behavioral wiring proof, not performance evidence: debug timings at
+`N=1,000` are not decision-grade and are deliberately excluded from the
+benchmark ledger. It does, however, reproduce the formerly impossible cohort:
+one shared route-time policy with different truthful completed outcomes.
+
+Dataset provenance exposed a separate audit concern. The freshly downloaded
+canonical archive had full-file SHA-256 values
+`21f66e2975057b5728ba56de1c825bac4f4d89d596609ae985741c6242631816`
+(base) and
+`f7fc9be140accdfd64116c2fa2365ecdb69b8f084970c6b0532db5ff79ac8fdc`
+(query). Neither those full files nor their `N=100,000` / 30-query byte prefixes
+match the hashes recorded for the 2026-08-23/24 runs. The old within-run paired
+comparisons remain internally valid, but byte-identical cross-run corpus
+provenance is unproven. Future decision-grade replicas must record both the
+authoritative archive checksum and the exact extracted-file checksums.
+
+Automatic routing remains closed. The next admission evidence is replicated
+`cache_policy=full` Exact/ANN measurement on a representative remote-RTT bed,
+with the arm-specific outcome distribution reported rather than forced equal.
 
 == Constraints
 

@@ -20,9 +20,10 @@
 //!   - `sift_query.fvecs`      (10 000 × 128)     — query set
 //!   - `sift_groundtruth.ivecs`(10 000 × 100)     — true neighbours (full 1M only)
 //!
-//! Download (qa-gate `sift-pax-recall` job or local):
+//! Download (qa-gate `sift-pax-recall` job or local; TEXMEX archive MD5
+//! `b23d1b3b2ee8469d819b61ca900ef0ed`):
 //! ```text
-//! curl -L -O https://huggingface.co/datasets/qbo-odp/sift1m/resolve/main/<file>
+//! curl -fL -O ftp://ftp.irisa.fr/local/texmex/corpus/sift.tar.gz
 //! ```
 //!
 //! Env knobs:
@@ -36,6 +37,10 @@
 //!   PROXIMADB_RECALL_DATASET_REQUIRED fail instead of skip when corpus is absent
 //!   PROXIMADB_OBJECT_STORE_URL optional registered cloud-emulator/real-cloud
 //!                                base; unset keeps the paired cohort local
+//!   PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB / PROXIMADB_SURVIVOR_CACHE_BUDGET_MB
+//!                                explicit nonzero values opt the paired gate
+//!                                into those existing warm tiers; unset/0 keeps
+//!                                its controlled cache-disabled baseline
 //!
 //! nextest isolates each test in its own process, so the PAX env vars set here
 //! don't leak. `set_var` is `unsafe` (edition 2024).
@@ -43,12 +48,12 @@
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchMode, SearchParams};
 use proximadb::observability::io_trace::{
-    VectorAccessPath, VectorSearchIntent, VectorStorageScope,
+    VectorAccessPath, VectorCachePolicy, VectorSearchIntent, VectorStorageScope,
 };
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine, VectorRecord,
 };
-use proximadb::query::route_cost_model::{VectorCacheRegime, vector_access_shape};
+use proximadb::query::route_cost_model::{VectorCacheOutcome, vector_access_shape};
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::engines::sst::segment_format::{
     CacheTier, SegmentInvariantsCache, drain_get_trace, rabitq_search_segment_coalesced,
@@ -62,7 +67,7 @@ use proximadb::storage::traits::{
 use proximadb_block_format::{RankMetric, VectorQuant};
 use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -177,6 +182,22 @@ fn paired_storage_base(local_base: &Path, configured: Option<&str>, run_id: &str
             format!("{}/td-xmodal-4-paired/{run_id}", base.trim_end_matches('/'))
         }
         None => local_base.to_string_lossy().into_owned(),
+    }
+}
+
+fn explicit_cache_budget_bytes(configured: Option<&str>, gate: &str) -> Option<u64> {
+    let raw = configured?;
+    let mb = raw
+        .trim()
+        .parse::<u64>()
+        .unwrap_or_else(|_| panic!("{gate} must be an unsigned MiB value, got {raw:?}"));
+    if mb == 0 {
+        None
+    } else {
+        Some(
+            mb.checked_mul(1024 * 1024)
+                .unwrap_or_else(|| panic!("{gate} MiB value overflows bytes: {mb}")),
+        )
     }
 }
 
@@ -369,6 +390,7 @@ fn assert_single_vector_access(
     expected_intent: VectorSearchIntent,
     expected_path: VectorAccessPath,
     expected_storage_scope: VectorStorageScope,
+    expected_cache_policy: VectorCachePolicy,
 ) {
     assert_eq!(
         measured.snapshot.vector_accesses.len(),
@@ -391,6 +413,10 @@ fn assert_single_vector_access(
     assert_eq!(
         access.storage_scope, expected_storage_scope,
         "the SIFT fixture must attribute the scope derived from its storage URL"
+    );
+    assert_eq!(
+        access.cache_policy, expected_cache_policy,
+        "the SIFT fixture must stamp the cache policy visible before routing"
     );
 }
 
@@ -460,13 +486,29 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         "paired SIFT evidence requires a known local or remote storage URL: {storage_base}"
     );
     let collection = collection("sift_pax_ratchet", storage_base);
-    // Admission evidence uses a controlled cache-free cohort. Exact does not
-    // consult the survivor cache, so comparing it with a warmed ANN path would
-    // pool different execution regimes and teach the route model a lie.
-    let engine = SstEngine::new()
-        .await
-        .unwrap()
-        .with_warm_tier_caches(None, None);
+    // Unset cache-budget gates preserve the controlled cache-free baseline.
+    // Explicit existing budgets opt this same harness into the corresponding
+    // route-time policy; no parallel benchmark or new env gate is needed.
+    let invariants_raw = std::env::var("PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB").ok();
+    let survivor_raw = std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB").ok();
+    let invariants_budget = explicit_cache_budget_bytes(
+        invariants_raw.as_deref(),
+        "PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB",
+    );
+    let survivor_budget = explicit_cache_budget_bytes(
+        survivor_raw.as_deref(),
+        "PROXIMADB_SURVIVOR_CACHE_BUDGET_MB",
+    );
+    let expected_cache_policy =
+        VectorCachePolicy::from_tiers(invariants_budget.is_some(), survivor_budget.is_some());
+    let engine = SstEngine::new().await.unwrap().with_warm_tier_caches(
+        invariants_budget.map(|bytes| {
+            Arc::new(SegmentInvariantsCache::new(
+                usize::try_from(bytes).expect("invariants cache budget fits usize"),
+            ))
+        }),
+        survivor_budget.map(|bytes| Arc::new(SurvivorRangeCache::new(bytes))),
+    );
 
     // --- Load base (subset or full) ---------------------------------------------------
     eprintln!("loading base vectors ({})", {
@@ -547,6 +589,7 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     let mut exact_compute_ms = 0u64;
     let mut ann_compute_ms = 0u64;
     let mut comparable_regime_pairs: HashMap<String, usize> = HashMap::new();
+    let mut completed_outcome_pairs: BTreeMap<String, usize> = BTreeMap::new();
     for (qi, query) in queries.iter().enumerate() {
         let paired = qi < paired_queries;
         let (ann, exact) = if paired && qi.is_multiple_of(2) {
@@ -589,6 +632,7 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
             VectorSearchIntent::Approximate,
             VectorAccessPath::Ann,
             expected_storage_scope,
+            expected_cache_policy,
         );
         ann_us.push(ann.elapsed_us);
         ann_gets = ann_gets.saturating_add(ann.snapshot.get_ops);
@@ -602,12 +646,19 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
                 VectorSearchIntent::Exact,
                 VectorAccessPath::Exact,
                 expected_storage_scope,
+                expected_cache_policy,
             );
-            let exact_shape =
-                vector_access_shape(&exact.snapshot.vector_accesses[0], &exact.snapshot);
-            let ann_shape = vector_access_shape(&ann.snapshot.vector_accesses[0], &ann.snapshot);
-            let exact_cache = VectorCacheRegime::from_snapshot(&exact.snapshot);
-            let ann_cache = VectorCacheRegime::from_snapshot(&ann.snapshot);
+            let exact_shape = vector_access_shape(&exact.snapshot.vector_accesses[0]);
+            let ann_shape = vector_access_shape(&ann.snapshot.vector_accesses[0]);
+            let exact_cache = VectorCacheOutcome::from_snapshot(&exact.snapshot);
+            let ann_cache = VectorCacheOutcome::from_snapshot(&ann.snapshot);
+            *completed_outcome_pairs
+                .entry(format!(
+                    "exact={}/ann={}",
+                    exact_cache.as_str(),
+                    ann_cache.as_str()
+                ))
+                .or_default() += 1;
             let known_scope = exact.snapshot.vector_accesses[0].storage_scope
                 != VectorStorageScope::Unknown
                 && ann.snapshot.vector_accesses[0].storage_scope != VectorStorageScope::Unknown;
@@ -618,7 +669,12 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
             {
                 *comparable_regime_pairs.entry(exact_shape).or_default() += 1;
             } else {
-                eprintln!("  regime mismatch query {qi}: exact={exact_shape}, ANN={ann_shape}");
+                eprintln!(
+                    "  cohort mismatch query {qi}: exact={exact_shape}/outcome={}, \
+                     ANN={ann_shape}/outcome={}",
+                    exact_cache.as_str(),
+                    ann_cache.as_str()
+                );
             }
             let exact_ids: std::collections::HashSet<String> =
                 exact.ids.iter().take(TOP_K).cloned().collect();
@@ -681,9 +737,12 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         .map(|(regime, pairs)| (regime.as_str(), *pairs))
         .unwrap_or(("none", 0));
     eprintln!("SIFT comparable regime cohort: regime={admitted_regime}, pairs={admitted_pairs}");
+    for (outcomes, pairs) in completed_outcome_pairs {
+        eprintln!("SIFT completed cache outcomes: {outcomes}, pairs={pairs}");
+    }
     assert!(
         admitted_pairs >= MIN_PAIRED_SAMPLES,
-        "exact/ANN evidence must contain at least {MIN_PAIRED_SAMPLES} pairs from the same known storage/cache regime; best cohort={admitted_regime} ({admitted_pairs})"
+        "exact/ANN evidence must contain at least {MIN_PAIRED_SAMPLES} pairs from the same known storage/cache policy with admissible arm outcomes; best cohort={admitted_regime} ({admitted_pairs})"
     );
     assert!(
         recall >= floor,
@@ -722,6 +781,21 @@ fn paired_storage_base_isolates_remote_measurement_prefix() {
         VectorStorageScope::from_storage_url(&base),
         VectorStorageScope::Remote
     );
+}
+
+#[test]
+fn paired_cache_policy_uses_existing_explicit_tier_budgets() {
+    let policy = |invariants, survivor| {
+        VectorCachePolicy::from_tiers(
+            explicit_cache_budget_bytes(invariants, "invariants").is_some(),
+            explicit_cache_budget_bytes(survivor, "survivor").is_some(),
+        )
+    };
+    assert_eq!(policy(None, None), VectorCachePolicy::Disabled);
+    assert_eq!(policy(Some("64"), None), VectorCachePolicy::InvariantsOnly);
+    assert_eq!(policy(None, Some("64")), VectorCachePolicy::SurvivorOnly);
+    assert_eq!(policy(Some("64"), Some("64")), VectorCachePolicy::Full);
+    assert_eq!(policy(Some("0"), Some("0")), VectorCachePolicy::Disabled);
 }
 
 #[test]

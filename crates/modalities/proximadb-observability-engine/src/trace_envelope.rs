@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn vector_access_alone_classifies_and_round_trips_durably() {
-        use crate::io_trace::{VectorAccessPath, VectorSearchIntent};
+        use crate::io_trace::{VectorAccessPath, VectorCachePolicy, VectorSearchIntent};
 
         let access = VectorAccessTrace {
             engine: "sst".to_string(),
@@ -480,6 +480,7 @@ mod tests {
             requested_mode: VectorSearchIntent::Adaptive,
             actual_path: VectorAccessPath::Exact,
             storage_scope: crate::io_trace::VectorStorageScope::Local,
+            cache_policy: VectorCachePolicy::Disabled,
         };
         let snap = IoTraceSnapshot {
             vector_accesses: vec![access.clone()],

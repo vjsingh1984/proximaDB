@@ -430,6 +430,52 @@ impl VectorStorageScope {
     }
 }
 
+/// Query-side cache policy visible before a vector access is routed.
+///
+/// This records which of SST's two warm-tier dependencies are available. It
+/// does not predict whether a particular query will hit them; completed
+/// `cold`/`warm`/`mixed`/`bypass` outcomes remain derived from the query-local
+/// I/O counters. Keeping policy and outcome separate lets Exact and ANN share a
+/// truthful route-time cell even when Exact bypasses a cache that ANN consults.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorCachePolicy {
+    Disabled,
+    InvariantsOnly,
+    SurvivorOnly,
+    Full,
+    /// Legacy or uninstrumented access. Unknown policy is durable evidence but
+    /// must not train an automatic route decision.
+    #[default]
+    Unknown,
+}
+
+impl VectorCachePolicy {
+    /// Derive the bounded policy from the two existing SST cache seams.
+    pub fn from_tiers(invariants_enabled: bool, survivor_enabled: bool) -> Self {
+        match (invariants_enabled, survivor_enabled) {
+            (false, false) => Self::Disabled,
+            (true, false) => Self::InvariantsOnly,
+            (false, true) => Self::SurvivorOnly,
+            (true, true) => Self::Full,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::InvariantsOnly => "invariants_only",
+            Self::SurvivorOnly => "survivor_only",
+            Self::Full => "full",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn is_admissible(self) -> bool {
+        self != Self::Unknown
+    }
+}
+
 /// One successfully completed physical vector access. Exact numeric geometry
 /// is retained for offline analysis; it is not emitted as a metrics label.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -445,6 +491,10 @@ pub struct VectorAccessTrace {
     /// Defaulted so traces written before this field remain readable.
     #[serde(default)]
     pub storage_scope: VectorStorageScope,
+    /// Cache availability known before execution. Defaulted so traces written
+    /// before this additive field remain readable and fail closed for learning.
+    #[serde(default)]
+    pub cache_policy: VectorCachePolicy,
 }
 
 impl IoTrace {
@@ -1925,6 +1975,7 @@ mod tests {
             requested_mode: VectorSearchIntent::Adaptive,
             actual_path: VectorAccessPath::Exact,
             storage_scope: VectorStorageScope::Unknown,
+            cache_policy: VectorCachePolicy::Unknown,
         }); // outside scope: no-op
 
         let snap = scope(async {
@@ -1936,6 +1987,7 @@ mod tests {
                 requested_mode: VectorSearchIntent::Adaptive,
                 actual_path: VectorAccessPath::Exact,
                 storage_scope: VectorStorageScope::Local,
+                cache_policy: VectorCachePolicy::Disabled,
             });
             record_vector_access(VectorAccessTrace {
                 engine: "sst".to_string(),
@@ -1945,6 +1997,7 @@ mod tests {
                 requested_mode: VectorSearchIntent::Approximate,
                 actual_path: VectorAccessPath::Ann,
                 storage_scope: VectorStorageScope::Remote,
+                cache_policy: VectorCachePolicy::Full,
             });
             IO_TRACE.try_with(|t| t.snapshot()).unwrap()
         })
@@ -1954,6 +2007,10 @@ mod tests {
         assert_eq!(snap.vector_accesses[0].actual_path, VectorAccessPath::Exact);
         assert_eq!(snap.vector_accesses[1].dimensions, 768);
         assert_eq!(snap.vector_accesses[1].actual_path, VectorAccessPath::Ann);
+        assert_eq!(
+            snap.vector_accesses[1].cache_policy,
+            VectorCachePolicy::Full
+        );
         assert!(!snap.is_empty(), "an access-only trace is durable evidence");
     }
 
@@ -1990,7 +2047,28 @@ mod tests {
     }
 
     #[test]
-    fn legacy_vector_access_defaults_storage_scope_to_unknown() {
+    fn vector_cache_policy_maps_both_route_time_tier_seams() {
+        assert_eq!(
+            VectorCachePolicy::from_tiers(false, false),
+            VectorCachePolicy::Disabled
+        );
+        assert_eq!(
+            VectorCachePolicy::from_tiers(true, false),
+            VectorCachePolicy::InvariantsOnly
+        );
+        assert_eq!(
+            VectorCachePolicy::from_tiers(false, true),
+            VectorCachePolicy::SurvivorOnly
+        );
+        assert_eq!(
+            VectorCachePolicy::from_tiers(true, true),
+            VectorCachePolicy::Full
+        );
+        assert!(!VectorCachePolicy::Unknown.is_admissible());
+    }
+
+    #[test]
+    fn legacy_vector_access_defaults_route_time_dimensions_to_unknown() {
         let legacy = r#"{
             "engine":"sst",
             "dimensions":384,
@@ -2001,6 +2079,7 @@ mod tests {
         }"#;
         let access: VectorAccessTrace = serde_json::from_str(legacy).expect("legacy access");
         assert_eq!(access.storage_scope, VectorStorageScope::Unknown);
+        assert_eq!(access.cache_policy, VectorCachePolicy::Unknown);
     }
 
     #[tokio::test]
@@ -2024,6 +2103,7 @@ mod tests {
                 requested_mode: VectorSearchIntent::Exact,
                 actual_path: VectorAccessPath::Exact,
                 storage_scope: VectorStorageScope::Local,
+                cache_policy: VectorCachePolicy::Disabled,
             });
         })
         .await;

@@ -83,7 +83,7 @@ pub fn install_route_cost_observer() {
 /// evidence, not a pre-execution prediction: it may partition learned cells,
 /// but must not be treated as a route-time cache promise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VectorCacheRegime {
+pub enum VectorCacheOutcome {
     Cold,
     Warm,
     Mixed,
@@ -93,7 +93,7 @@ pub enum VectorCacheRegime {
     Unknown,
 }
 
-impl VectorCacheRegime {
+impl VectorCacheOutcome {
     pub fn from_snapshot(snap: &IoTraceSnapshot) -> Self {
         let hits = snap
             .footer_hits
@@ -139,19 +139,19 @@ impl VectorCacheRegime {
 }
 
 /// Exact, unbucketed physical geometry for one vector access-path cost cell.
-/// The engine, physical storage locality, and observed cache regime belong in
-/// the shape so exact and ANN cells are compared only within one truthful
-/// execution regime. Caller intent is durable evidence but not a cell
-/// dimension: partitioning on intent would prevent exact-vs-ANN comparison.
-pub fn vector_access_shape(access: &VectorAccessTrace, snap: &IoTraceSnapshot) -> String {
+/// The engine, physical storage locality, and route-time cache policy belong in
+/// the shape so the same identity can be constructed before execution. Caller
+/// intent and completed cache outcome are durable evidence but not cell
+/// dimensions: either would prevent a truthful exact-vs-ANN comparison.
+pub fn vector_access_shape(access: &VectorAccessTrace) -> String {
     format!(
-        "vector/engine={}/dim={}/k={}/filter={}/storage={}/cache={}",
+        "vector/engine={}/dim={}/k={}/filter={}/storage={}/cache_policy={}",
         access.engine,
         access.dimensions,
         access.top_k,
         if access.has_filter { "yes" } else { "no" },
         access.storage_scope.as_str(),
-        VectorCacheRegime::from_snapshot(snap).as_str(),
+        access.cache_policy.as_str(),
     )
 }
 
@@ -163,14 +163,15 @@ fn observe_vector_access_snapshot(model: &RouteCostModel, snap: &IoTraceSnapshot
     let [access] = snap.vector_accesses.as_slice() else {
         return false;
     };
-    let cache_regime = VectorCacheRegime::from_snapshot(snap);
+    let cache_outcome = VectorCacheOutcome::from_snapshot(snap);
     if access.storage_scope == crate::observability::io_trace::VectorStorageScope::Unknown
-        || !cache_regime.is_admissible()
+        || !access.cache_policy.is_admissible()
+        || !cache_outcome.is_admissible()
     {
         return false;
     }
     model.observe_by_label(
-        &vector_access_shape(access, snap),
+        &vector_access_shape(access),
         access.actual_path.as_str(),
         snap,
     );
@@ -1415,12 +1416,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vector_cost_cells_separate_storage_and_cache_regimes() {
+    fn vector_cost_cells_use_route_time_cache_policy_not_completed_outcome() {
         use crate::observability::io_trace::{
-            VectorAccessPath, VectorSearchIntent, VectorStorageScope,
+            VectorAccessPath, VectorCachePolicy, VectorSearchIntent, VectorStorageScope,
         };
 
-        let access = VectorAccessTrace {
+        let enabled = VectorAccessTrace {
             engine: "sst".to_string(),
             dimensions: 384,
             top_k: 10,
@@ -1428,6 +1429,7 @@ mod tests {
             requested_mode: VectorSearchIntent::Exact,
             actual_path: VectorAccessPath::Exact,
             storage_scope: VectorStorageScope::Remote,
+            cache_policy: VectorCachePolicy::Full,
         };
         let cold = IoTraceSnapshot {
             get_ops: 1,
@@ -1442,17 +1444,60 @@ mod tests {
         };
 
         assert_eq!(
-            vector_access_shape(&access, &cold),
-            "vector/engine=sst/dim=384/k=10/filter=no/storage=remote/cache=cold"
+            vector_access_shape(&enabled),
+            "vector/engine=sst/dim=384/k=10/filter=no/storage=remote/cache_policy=full"
         );
         assert_eq!(
-            vector_access_shape(&access, &warm),
-            "vector/engine=sst/dim=384/k=10/filter=no/storage=remote/cache=warm"
+            VectorCacheOutcome::from_snapshot(&cold),
+            VectorCacheOutcome::Cold
+        );
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&warm),
+            VectorCacheOutcome::Warm
+        );
+
+        let ann = VectorAccessTrace {
+            requested_mode: VectorSearchIntent::Approximate,
+            actual_path: VectorAccessPath::Ann,
+            ..enabled.clone()
+        };
+        assert_eq!(
+            vector_access_shape(&enabled),
+            vector_access_shape(&ann),
+            "caller intent and completed access path must not split the paired cell"
+        );
+        let model = RouteCostModel::new();
+        assert!(observe_vector_access_snapshot(
+            &model,
+            &IoTraceSnapshot {
+                vector_accesses: vec![enabled.clone()],
+                ..cold.clone()
+            }
+        ));
+        assert!(observe_vector_access_snapshot(
+            &model,
+            &IoTraceSnapshot {
+                vector_accesses: vec![ann],
+                ..warm.clone()
+            }
+        ));
+        let shape = vector_access_shape(&enabled);
+        assert!(model.estimate_by_label(&shape, "exact").is_some());
+        assert!(model.estimate_by_label(&shape, "ann").is_some());
+
+        let disabled = VectorAccessTrace {
+            cache_policy: VectorCachePolicy::Disabled,
+            ..enabled.clone()
+        };
+        assert_ne!(
+            vector_access_shape(&disabled),
+            vector_access_shape(&enabled),
+            "route-time cache policies must not train one pooled cell"
         );
     }
 
     #[test]
-    fn vector_cache_regime_uses_physical_io_as_authority() {
+    fn vector_cache_outcome_uses_physical_io_as_authority() {
         let warm = IoTraceSnapshot {
             survivor_l1_hits: 2,
             survivor_l1_misses: 1,
@@ -1460,8 +1505,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            VectorCacheRegime::from_snapshot(&warm),
-            VectorCacheRegime::Warm
+            VectorCacheOutcome::from_snapshot(&warm),
+            VectorCacheOutcome::Warm
         );
 
         let mixed = IoTraceSnapshot {
@@ -1471,8 +1516,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            VectorCacheRegime::from_snapshot(&mixed),
-            VectorCacheRegime::Mixed
+            VectorCacheOutcome::from_snapshot(&mixed),
+            VectorCacheOutcome::Mixed
         );
 
         let cold = IoTraceSnapshot {
@@ -1482,14 +1527,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            VectorCacheRegime::from_snapshot(&cold),
-            VectorCacheRegime::Cold
+            VectorCacheOutcome::from_snapshot(&cold),
+            VectorCacheOutcome::Cold
         );
 
         let no_activity = IoTraceSnapshot::default();
         assert_eq!(
-            VectorCacheRegime::from_snapshot(&no_activity),
-            VectorCacheRegime::Unknown
+            VectorCacheOutcome::from_snapshot(&no_activity),
+            VectorCacheOutcome::Unknown
         );
 
         let uncached_read = IoTraceSnapshot {
@@ -1497,21 +1542,23 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            VectorCacheRegime::from_snapshot(&uncached_read),
+            VectorCacheOutcome::from_snapshot(&uncached_read),
             if cfg!(feature = "io-trace") {
-                VectorCacheRegime::Bypass
+                VectorCacheOutcome::Bypass
             } else {
-                VectorCacheRegime::Unknown
+                VectorCacheOutcome::Unknown
             }
         );
     }
 
     #[test]
-    fn unknown_vector_execution_regime_does_not_train_cost_model() {
-        use crate::observability::io_trace::{VectorAccessPath, VectorSearchIntent};
+    fn unknown_vector_route_dimensions_or_outcome_do_not_train_cost_model() {
+        use crate::observability::io_trace::{
+            VectorAccessPath, VectorCachePolicy, VectorSearchIntent,
+        };
 
         let model = RouteCostModel::new();
-        let unknown = IoTraceSnapshot {
+        let unknown_policy = IoTraceSnapshot {
             vector_accesses: vec![VectorAccessTrace {
                 engine: "sst".to_string(),
                 dimensions: 384,
@@ -1519,13 +1566,22 @@ mod tests {
                 has_filter: false,
                 requested_mode: VectorSearchIntent::Exact,
                 actual_path: VectorAccessPath::Exact,
-                storage_scope: crate::observability::io_trace::VectorStorageScope::Unknown,
+                storage_scope: crate::observability::io_trace::VectorStorageScope::Local,
+                cache_policy: VectorCachePolicy::Unknown,
             }],
             get_ops: 1,
             ..Default::default()
         };
 
-        assert!(!observe_vector_access_snapshot(&model, &unknown));
+        assert!(!observe_vector_access_snapshot(&model, &unknown_policy));
+        let unknown_outcome = IoTraceSnapshot {
+            vector_accesses: vec![VectorAccessTrace {
+                cache_policy: VectorCachePolicy::Disabled,
+                ..unknown_policy.vector_accesses[0].clone()
+            }],
+            ..Default::default()
+        };
+        assert!(!observe_vector_access_snapshot(&model, &unknown_outcome));
         assert!(model.learned_cell_keys().is_empty());
     }
 
@@ -2008,7 +2064,7 @@ mod tests {
     #[test]
     fn vector_access_cost_cells_admit_only_unambiguous_single_operator_queries() {
         use crate::observability::io_trace::{
-            VectorAccessPath, VectorAccessTrace, VectorSearchIntent,
+            VectorAccessPath, VectorAccessTrace, VectorCachePolicy, VectorSearchIntent,
         };
 
         let access = VectorAccessTrace {
@@ -2019,6 +2075,7 @@ mod tests {
             requested_mode: VectorSearchIntent::Adaptive,
             actual_path: VectorAccessPath::Exact,
             storage_scope: crate::observability::io_trace::VectorStorageScope::Local,
+            cache_policy: VectorCachePolicy::Disabled,
         };
         let model = RouteCostModel::new();
         let single = IoTraceSnapshot {
@@ -2029,7 +2086,7 @@ mod tests {
             ..Default::default()
         };
         assert!(observe_vector_access_snapshot(&model, &single));
-        let shape = vector_access_shape(&access, &single);
+        let shape = vector_access_shape(&access);
         let estimate = model
             .estimate_by_label(&shape, "exact")
             .expect("single access is attributable");
