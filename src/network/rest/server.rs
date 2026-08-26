@@ -506,6 +506,26 @@ impl RestServer {
             crate::network::middleware::v1_sunset::v1_sunset_middleware,
         ));
 
+        // TD-RATE-1: mount the REST request limiter, default OFF — the gate
+        // being unset adds NO layer, so the default deployment is unchanged.
+        // Keyed on the TD-TENANT-4 observed client address; `/health*` is
+        // exempt (the middleware checks `limit_health_endpoints`, false by
+        // default). Positioned beside the v1-sunset layer, i.e. inside the
+        // auth/tenant layers: floods are counted after authentication, which
+        // keeps per-IP accounting aligned with the authenticated principal.
+        if let Some(limiter) =
+            crate::network::middleware::rate_limit::rest_rate_limit_state_from_env()
+        {
+            tracing::info!(
+                rpm_env = crate::network::middleware::rate_limit::REST_RATE_LIMIT_RPM_ENV,
+                "REST request rate limiting enabled (TD-RATE-1)"
+            );
+            base_router = base_router.layer(middleware::from_fn_with_state(
+                limiter,
+                crate::network::middleware::rate_limit::rate_limit_middleware,
+            ));
+        }
+
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
             base_router = base_router.nest("/metrics", metrics);
@@ -851,6 +871,26 @@ impl RestServer {
             rest_v1_compat,
             crate::network::middleware::v1_sunset::v1_sunset_middleware,
         ));
+
+        // TD-RATE-1: mount the REST request limiter, default OFF — the gate
+        // being unset adds NO layer, so the default deployment is unchanged.
+        // Keyed on the TD-TENANT-4 observed client address; `/health*` is
+        // exempt (the middleware checks `limit_health_endpoints`, false by
+        // default). Positioned beside the v1-sunset layer, i.e. inside the
+        // auth/tenant layers: floods are counted after authentication, which
+        // keeps per-IP accounting aligned with the authenticated principal.
+        if let Some(limiter) =
+            crate::network::middleware::rate_limit::rest_rate_limit_state_from_env()
+        {
+            tracing::info!(
+                rpm_env = crate::network::middleware::rate_limit::REST_RATE_LIMIT_RPM_ENV,
+                "REST request rate limiting enabled (TD-RATE-1)"
+            );
+            base_router = base_router.layer(middleware::from_fn_with_state(
+                limiter,
+                crate::network::middleware::rate_limit::rate_limit_middleware,
+            ));
+        }
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {

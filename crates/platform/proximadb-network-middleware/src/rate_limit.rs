@@ -239,6 +239,38 @@ impl RateLimitState {
     }
 }
 
+/// Env gate mounting the REST request limiter (TD-RATE-1): per-IP requests
+/// per minute. Unset/0/garbage ⇒ no limiter is built — the default deployment
+/// (single-node, embedded) keeps today's unlimited behavior. Mirrors
+/// `PROXIMADB_PGWIRE_RATE_LIMIT_RPM` on the pgwire path, so both request
+/// surfaces gate the same way.
+pub const REST_RATE_LIMIT_RPM_ENV: &str = "PROXIMADB_REST_RATE_LIMIT_RPM";
+
+/// Pure parse of the env-gate value: `Some(rpm)` only for a positive integer.
+/// Kept pure (takes the raw string) so the gate is testable without env races.
+pub fn parse_rest_rate_limit_rpm(raw: Option<&str>) -> Option<u32> {
+    raw?.trim().parse::<u32>().ok().filter(|rpm| *rpm > 0)
+}
+
+/// Build the REST request limiter from [`REST_RATE_LIMIT_RPM_ENV`], or `None`
+/// when the gate is unset — in which case **no layer is added at all** (zero
+/// hot-path cost, zero behavior change; that is the TD-RATE-1 default-off).
+///
+/// Configuration mirrors the pgwire mount exactly (`production(rpm, rpm)`:
+/// per-IP `rpm`/window, burst `rpm`, and a process-global ceiling of
+/// `rpm * 10` across all clients), so both request surfaces have the same
+/// semantics and one tuning vocabulary.
+///
+/// Keys on the client address resolved by `get_client_ip` — the TD-TENANT-4
+/// observed peer (or a trusted-proxy assertion under
+/// `PROXIMADB_TRUSTED_PROXY_CIDRS`); never a raw client-supplied header.
+pub fn rest_rate_limit_state_from_env() -> Option<Arc<RateLimitState>> {
+    let rpm = parse_rest_rate_limit_rpm(std::env::var(REST_RATE_LIMIT_RPM_ENV).ok().as_deref())?;
+    Some(Arc::new(RateLimitState::new(
+        RateLimitConfig::production(rpm, rpm).to_middleware_config(),
+    )))
+}
+
 /// Rate limit error response
 #[derive(Debug, Serialize)]
 pub struct RateLimitErrorResponse {
@@ -536,6 +568,142 @@ mod tests {
         let layer = RateLimitLayer::disabled();
         // Should not panic
         let _ = layer;
+    }
+
+    // ---- TD-RATE-1: the mount ----
+
+    /// The gate's truth table: only a positive integer mounts a limiter.
+    #[test]
+    fn rest_rate_limit_gate_truth_table() {
+        assert_eq!(parse_rest_rate_limit_rpm(None), None, "unset = off");
+        assert_eq!(parse_rest_rate_limit_rpm(Some("")), None);
+        assert_eq!(parse_rest_rate_limit_rpm(Some("0")), None, "0 = off");
+        assert_eq!(parse_rest_rate_limit_rpm(Some("-5")), None);
+        assert_eq!(parse_rest_rate_limit_rpm(Some("wat")), None);
+        assert_eq!(parse_rest_rate_limit_rpm(Some("600")), Some(600));
+        assert_eq!(parse_rest_rate_limit_rpm(Some(" 600 ")), Some(600));
+    }
+
+    /// A mounted limiter 429s an over-limit observed peer. This drives the
+    /// REAL middleware through a real router (oneshot), not the bucket alone —
+    /// the mount's contract is the 429 envelope, and that lives here.
+    #[tokio::test]
+    async fn mounted_middleware_429s_the_over_limit_peer() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let state = Arc::new(RateLimitState::new(MiddlewareRateLimitConfig {
+            enabled: true,
+            max_requests: 2,
+            window_duration: Duration::from_secs(60),
+            limit_health_endpoints: false,
+            global_max_requests: None,
+        }));
+        let app = axum::Router::new()
+            .route("/", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                rate_limit_middleware,
+            ));
+
+        let peer = "203.0.113.9:5000".parse::<std::net::SocketAddr>().unwrap();
+        for expected in [200u16, 200, 429] {
+            let mut req = axum::http::Request::builder()
+                .uri("/")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo(peer));
+            let res = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(res.status().as_u16(), expected);
+        }
+    }
+
+    /// `/health` stays reachable when the bucket is exhausted — the default
+    /// `limit_health_endpoints: false` exemption. A flooded node must remain
+    /// observable.
+    #[tokio::test]
+    async fn health_endpoints_exempt_from_the_limit() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let state = Arc::new(RateLimitState::new(MiddlewareRateLimitConfig {
+            enabled: true,
+            max_requests: 1,
+            window_duration: Duration::from_secs(60),
+            limit_health_endpoints: false,
+            global_max_requests: None,
+        }));
+        let app = axum::Router::new()
+            .route("/", get(|| async { "ok" }))
+            .route("/health", get(|| async { "healthy" }))
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                rate_limit_middleware,
+            ));
+
+        let peer = "203.0.113.9:5000".parse::<std::net::SocketAddr>().unwrap();
+        let send = |path: &'static str| {
+            let mut req = axum::http::Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo(peer));
+            req
+        };
+
+        // Exhaust the bucket on "/" ...
+        assert_eq!(app.clone().oneshot(send("/")).await.unwrap().status(), 200);
+        assert_eq!(app.clone().oneshot(send("/")).await.unwrap().status(), 429);
+        // ... health still answers.
+        assert_eq!(app.oneshot(send("/health")).await.unwrap().status(), 200);
+    }
+
+    /// Per-IP isolation: one noisy peer's exhaustion must not deny a second
+    /// observed peer (the noisy-neighbor contract; keys are the observed
+    /// address, so this also proves spoofed-header rotation buys nothing).
+    #[tokio::test]
+    async fn a_second_observed_peer_is_unaffected() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let state = Arc::new(RateLimitState::new(MiddlewareRateLimitConfig {
+            enabled: true,
+            max_requests: 1,
+            window_duration: Duration::from_secs(60),
+            limit_health_endpoints: false,
+            global_max_requests: None,
+        }));
+        let app = axum::Router::new()
+            .route("/", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                rate_limit_middleware,
+            ));
+
+        let noisy = "203.0.113.9:5000".parse::<std::net::SocketAddr>().unwrap();
+        let quiet = "198.51.100.4:5000".parse::<std::net::SocketAddr>().unwrap();
+        let send = |addr: std::net::SocketAddr| {
+            let mut req = axum::http::Request::builder()
+                .uri("/")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            req.extensions_mut()
+                .insert(axum::extract::ConnectInfo(addr));
+            req
+        };
+
+        assert_eq!(
+            app.clone().oneshot(send(noisy)).await.unwrap().status(),
+            200
+        );
+        assert_eq!(
+            app.clone().oneshot(send(noisy)).await.unwrap().status(),
+            429
+        );
+        // Same request, different observed peer: unaffected.
+        assert_eq!(app.oneshot(send(quiet)).await.unwrap().status(), 200);
     }
 
     #[test]
