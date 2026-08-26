@@ -338,8 +338,7 @@ mod tests {
         // When: Checking vector role identifier
         // Then: Should match the expected value (5)
         assert_eq!(
-            vector_role as u8,
-            5,
+            vector_role as u8, 5,
             "ColumnRole::Vector should have ID 5 for stripe identification"
         );
     }

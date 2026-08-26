@@ -35,8 +35,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use arrow_array::{ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array, ListBuilder, PrimitiveArray, RecordBatch, StringArray};
 use arrow_array::builder::Float32Builder;
+use arrow_array::{
+    ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array, ListBuilder,
+    PrimitiveArray, RecordBatch, StringArray,
+};
 use arrow_schema::{DataType, Field, SchemaRef};
 use async_trait::async_trait;
 use datafusion::error::{DataFusionError, Result as DFResult};
@@ -453,9 +456,14 @@ impl PaxSplitReader {
             (0xff, ColumnRole::Vector) => {
                 // TD-OLAP-1 Test 2.4: f32 vector stripe decode
                 let vectors = reader.decode_f32_vec_stripe(cid).ok_or_else(|| {
-                    DataFusionError::Execution(format!("PAX: vector column {name} (id {cid}) decode failed"))
+                    DataFusionError::Execution(format!(
+                        "PAX: vector column {name} (id {cid}) decode failed"
+                    ))
                 })?;
-                Arc::new(Self::decode_f32_vectors_to_arrow(vectors, field.data_type())?)
+                Arc::new(Self::decode_f32_vectors_to_arrow(
+                    vectors,
+                    field.data_type(),
+                )?)
             }
             (0xff, _) => Arc::new(StringArray::from(decode_str(reader, cid, name)?)),
             (other, _) => {
@@ -490,7 +498,9 @@ impl PaxSplitReader {
                 }
                 Ok(Arc::new(builder.finish()))
             }
-            DataType::FixedSizeList(field, size) if matches!(*field.data_type(), DataType::Float32) => {
+            DataType::FixedSizeList(field, size)
+                if matches!(*field.data_type(), DataType::Float32) =>
+            {
                 // Fixed-size vectors: FixedSizeList<Float32, N>
                 let mut values = Vec::new();
                 let valid_count = vectors.iter().filter(|v| v.is_some()).count();
