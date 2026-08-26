@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open (filed from the catalog design review, 2026-07-14)
+| Status | Closed 2026-08-25 — options 2+3 implemented on `perf/ds-efficiency-hot-paths` (DashMap lock shape + bounded ring-sampled eviction); see link:TD-DSEFF-1-data-structure-efficiency-audit.adoc[TD-DSEFF-1]
 | Severity | Low-Medium — latent hot-path cost, only bites at cache capacity
 | Component | `crates/control/proximadb-catalog/src/cache.rs` (`maybe_evict`)
 | Tracked-by | Catalog design review `docs/12-design/CATALOG_OBJECT_STORE_DESIGN_REVIEW_2026_07_14.adoc`

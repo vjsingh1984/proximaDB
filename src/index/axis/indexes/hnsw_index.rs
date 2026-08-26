@@ -522,8 +522,23 @@ impl AxisHnswIndex {
                             && let Some(vector_data) = view.as_f32()
                         {
                             let dist = self.metric_aware_distance(query, vector_data);
-                            // Always push to frontier (skip-through traversal)
-                            frontier.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                            // Skip-through traversal — but skip entries that
+                            // can never be expanded: once `ef` passing results
+                            // exist, `result_candidates`' worst is monotone
+                            // non-increasing (it only ever evicts its max), so
+                            // an entry strictly worse than the current worst
+                            // satisfies the early-termination break above at
+                            // pop time and is never expanded — pushing it only
+                            // grew the frontier. Equal distances still push
+                            // (the break is strictly-greater). This changes
+                            // neither the result set nor the visit order.
+                            if result_candidates.len() < ef
+                                || result_candidates
+                                    .peek()
+                                    .is_none_or(|(worst, _)| dist <= worst.0)
+                            {
+                                frontier.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                            }
                             // Only add to results if predicate passes
                             if predicate(neighbor) {
                                 result_candidates.push((OrderedFloat(dist), neighbor));
@@ -2448,5 +2463,129 @@ mod tests {
 
         assert_eq!(standard.len(), 4);
         assert_eq!(expanded.len(), 8, "gamma=2.0 * m=4 → 8 neighbors");
+    }
+
+    /// Frontier-prune guard: with a PERMISSIVE predicate, the predicate walk
+    /// must return exactly what the plain `search_layer` finds on the same
+    /// graph — the prune added to `search_layer_predicate` skips only entries
+    /// that could never be expanded (strictly worse than the current worst of
+    /// a full `ef` result set), so it can change neither the result set nor
+    /// the visit order.
+    #[tokio::test]
+    async fn test_search_layer_predicate_matches_plain_layer_when_permissive() {
+        // Initialize hardware capabilities
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let config = AxisHnswConfig::default();
+        let index = AxisHnswIndex::new(config, 4).expect("create HNSW index");
+
+        // Deterministic spread of distinct-distance vectors (no ties).
+        let mut rng: u64 = 0x243F6A8885A308D3;
+        let mut next = || {
+            rng ^= rng >> 12;
+            rng ^= rng << 25;
+            rng ^= rng >> 27;
+            let v: Vec<f32> = (0..4)
+                .map(|i| ((rng >> (i * 8)) & 0xFF) as f32 / 255.0)
+                .collect();
+            v
+        };
+        for i in 0..80 {
+            index
+                .add(format!("v{i}"), next())
+                .await
+                .expect("add vector");
+        }
+
+        let entry = index
+            .get_entry_point()
+            .expect("entry point exists after inserts");
+        let query = next();
+        let ef = 16;
+
+        let plain = index.search_layer(&query, &[entry], ef, 0);
+        let permissive = index.search_layer_predicate(&query, &[entry], ef, 0, &|_| true);
+
+        // Both return ascending-distance Vec<(node, dist)>.
+        let plain_set: Vec<(usize, f32)> = {
+            let mut v = plain.clone();
+            v.sort_by(|a, b| a.0.cmp(&b.0));
+            v
+        };
+        let permissive_set: Vec<(usize, f32)> = {
+            let mut v = permissive.clone();
+            v.sort_by(|a, b| a.0.cmp(&b.0));
+            v
+        };
+        assert_eq!(
+            plain_set, permissive_set,
+            "permissive predicate walk diverged from plain search_layer"
+        );
+    }
+
+    /// Sparse-predicate drain guard: when NOTHING near the query passes the
+    /// predicate, the ACORN skip-through walk must still drain through
+    /// non-matching nodes and find the far matches. The frontier prune only
+    /// activates once `ef` PASSING results exist, so a sparse walk keeps its
+    /// full-reachable-graph recall behaviour. Guards against anyone turning
+    /// the prune into a hard beam cap (documented as a recall regression in
+    /// the 1.3 investigation comment above `oversample_k`).
+    #[tokio::test]
+    async fn test_search_layer_predicate_drains_to_far_matches_when_sparse() {
+        // Initialize hardware capabilities
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let config = AxisHnswConfig::default();
+        let index = AxisHnswIndex::new(config, 2).expect("create HNSW index");
+
+        // Two tight clusters: "near" vectors around (0,0), passing "far"
+        // vectors around (1000,1000). The query sits in the near cluster, so
+        // every node near the query FAILS the predicate and the walk must
+        // skip through them to reach the far matches.
+        for i in 0..30 {
+            let jitter = i as f32 * 0.01;
+            index
+                .add(format!("near{i}"), vec![jitter, jitter])
+                .await
+                .expect("add near vector");
+        }
+        for i in 0..10 {
+            let jitter = i as f32 * 0.01;
+            index
+                .add(format!("far{i}"), vec![1000.0 + jitter, 1000.0 + jitter])
+                .await
+                .expect("add far vector");
+        }
+
+        let entry = index
+            .get_entry_point()
+            .expect("entry point exists after inserts");
+        let query = [0.0_f32, 0.0_f32];
+        let ef = 4;
+
+        let passing: std::collections::HashSet<String> =
+            (0..10).map(|i| format!("far{i}")).collect();
+        let results = index.search_layer_predicate(&query, &[entry], ef, 0, &|node| {
+            index
+                .id_mapping
+                .external(node)
+                .is_some_and(|id| passing.contains(&id))
+        });
+
+        assert!(
+            !results.is_empty(),
+            "sparse predicate must still reach far matches via skip-through"
+        );
+        // Everything returned must PASS the predicate (far-cluster nodes).
+        for (node, _) in &results {
+            let id = index
+                .id_mapping
+                .external(*node)
+                .expect("internal id resolves");
+            assert!(
+                passing.contains(&id),
+                "predicate-failing node {id} leaked into results"
+            );
+        }
     }
 }

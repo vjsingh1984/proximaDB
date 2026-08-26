@@ -602,12 +602,16 @@ impl GlobalManifestService {
         // on the next boot.
         self.drain_pending().await;
 
+        // Batch-id membership as a set (was: a linear scan per manifest
+        // entry on every flush acknowledgement).
+        let batch_id_set: std::collections::HashSet<&String> = batch_ids.iter().collect();
+
         // Update in-memory state
         let mut entries = self.entries.write().await;
         let mut status_updates = Vec::new();
 
         for entry in entries.iter_mut() {
-            if batch_ids.contains(&entry.batch_id) && entry.status == WalEntryStatus::Active {
+            if batch_id_set.contains(&entry.batch_id) && entry.status == WalEntryStatus::Active {
                 entry.status = WalEntryStatus::Flushed;
 
                 // Create status update entry for append-only cloud storage
@@ -649,12 +653,17 @@ impl GlobalManifestService {
         // L0_recovery segment.
         self.drain_pending().await;
 
+        // Batch-id membership as a set (was: a linear scan per manifest entry).
+        let batch_id_set: std::collections::HashSet<&String> = batch_ids.iter().collect();
+
         // Collect file URLs before marking as flushed (need Active status entries)
         let file_urls: Vec<String> = {
             let entries = self.entries.read().await;
             entries
                 .iter()
-                .filter(|e| batch_ids.contains(&e.batch_id) && e.status == WalEntryStatus::Active)
+                .filter(|e| {
+                    batch_id_set.contains(&e.batch_id) && e.status == WalEntryStatus::Active
+                })
                 .map(|e| {
                     // Construct full file URL from storage_url + file_path
                     format!("{}/{}", e.storage_url.trim_end_matches('/'), e.file_path)

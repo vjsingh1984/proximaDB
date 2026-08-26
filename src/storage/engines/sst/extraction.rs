@@ -124,11 +124,24 @@ impl VectorExtractor for SstExtractor {
         let mut vectors = Vec::with_capacity(records.len());
         let mut bytes_read = 0usize;
 
+        // ID filter as a set, built once per extraction (was: a linear scan
+        // of the requested-id Vec for EVERY record in every block).
+        let id_filter: Option<std::collections::HashSet<&String>> =
+            request.vector_ids.as_ref().map(|ids| ids.iter().collect());
+
         for record in records {
             let record_id = record
                 .local_id
                 .clone()
                 .unwrap_or_else(|| record.oid.clone());
+            // Apply the ID filter BEFORE any materialization (was: after the
+            // props→JSON conversion and the fp32 copy, so excluded records
+            // paid the full conversion cost). `bytes_read` below still
+            // accounts every scanned vector's fp32 bytes exactly as before.
+            let should_include = match &id_filter {
+                Some(ids) => ids.contains(&record_id),
+                None => true,
+            };
             // Handle vector filtering based on mode
             let fp32_vector = match request.mode {
                 ExtractionMode::Fp32Only | ExtractionMode::Both | ExtractionMode::Auto => {
@@ -141,11 +154,18 @@ impl VectorExtractor for SstExtractor {
                         None
                     } else {
                         bytes_read += vector.len() * 4;
-                        Some(vector.to_vec())
+                        if should_include {
+                            Some(vector.to_vec())
+                        } else {
+                            None
+                        }
                     }
                 }
                 ExtractionMode::QuantizedOnly => None,
             };
+            if !should_include {
+                continue;
+            }
 
             // SST doesn't store quantized vectors inline in VectorRecord
             // Quantization is handled at the storage layer
@@ -180,13 +200,7 @@ impl VectorExtractor for SstExtractor {
                 None
             };
 
-            // Apply ID filter if selective extraction
-            let should_include = match &request.vector_ids {
-                Some(ids) => ids.contains(&record_id),
-                None => true,
-            };
-
-            if should_include && fp32_vector.is_some() {
+            if fp32_vector.is_some() {
                 vectors.push(ExtractedVector {
                     id: record_id,
                     fp32_vector,
