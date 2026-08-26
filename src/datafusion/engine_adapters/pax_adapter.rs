@@ -35,7 +35,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use arrow_array::{ArrayRef, BinaryArray, Float64Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::{ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array, ListBuilder, PrimitiveArray, PrimitiveBuilder, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, SchemaRef};
 use async_trait::async_trait;
 use datafusion::error::{DataFusionError, Result as DFResult};
@@ -47,6 +47,7 @@ use tracing::trace;
 
 use proximadb_block_format::{
     BLOCK_FOOTER_SIZE, BlockFooter, BlockLayout, BlockZoneSource, ColumnRole, PaxBlockReader,
+    StripeMetadata,
     metadata_ranges,
 };
 use proximadb_storage_common::format_splits::{ScalarPredicate, ScalarValue};
@@ -423,6 +424,8 @@ impl PaxSplitReader {
     /// The target Arrow type is type-directed for the `props` tail: a `Utf8` field
     /// reconstructs the document JSON object from the msgpack tail (the `documents()`
     /// surface, TD-DOC-PUSHDOWN-1); a `Binary` field emits the raw msgpack bytes.
+    ///
+    /// TD-OLAP-1 Test 2.4: Vector stripe decode for f32 vectors (ColumnRole::Vector).
     fn decode_column(&self, reader: &PaxBlockReader, field: &Field) -> DFResult<ArrayRef> {
         let name = field.name();
         let cid = *self
@@ -438,23 +441,88 @@ impl PaxSplitReader {
             })?;
         // TypeId bytes (proximadb_codec): I64=0x03, F64=0x02, F32=0x01;
         // 0xff = variable-length (string/bytes).
-        Ok(match meta.data_type_id {
-            0x03 => Arc::new(Int64Array::from(decode_i64(reader, cid, name)?)),
-            0x02 => Arc::new(Float64Array::from(decode_f64(reader, cid, name)?)),
-            0xff if meta.role == ColumnRole::Props && field.data_type() == &DataType::Utf8 => {
+        Ok(match (meta.data_type_id, meta.role) {
+            (0x03, _) => Arc::new(Int64Array::from(decode_i64(reader, cid, name)?)),
+            (0x02, _) => Arc::new(Float64Array::from(decode_f64(reader, cid, name)?)),
+            (0xff, ColumnRole::Props) if field.data_type() == &DataType::Utf8 => {
                 Arc::new(StringArray::from(decode_props_json(reader, cid, name)?))
             }
-            0xff if meta.role == ColumnRole::Props => {
+            (0xff, ColumnRole::Props) => {
                 Arc::new(BinaryArray::from_iter(decode_bytes(reader, cid, name)?))
             }
-            0xff => Arc::new(StringArray::from(decode_str(reader, cid, name)?)),
-            other => {
+            (0xff, ColumnRole::Vector) => {
+                // TD-OLAP-1 Test 2.4: f32 vector stripe decode
+                let vectors = reader.decode_f32_vec_stripe(cid).ok_or_else(|| {
+                    DataFusionError::Execution(format!("PAX: vector column {name} (id {cid}) decode failed"))
+                })?;
+                Arc::new(Self::decode_f32_vectors_to_arrow(vectors, field.data_type())?)
+            }
+            (0xff, _) => Arc::new(StringArray::from(decode_str(reader, cid, name)?)),
+            (other, _) => {
                 return Err(DataFusionError::NotImplemented(format!(
                     "PAX data_type_id {other:#x} for {name} (slice 1 covers i64/f64/str/bytes; \
-                     f32 vector decode is slice 2)"
+                     f32 vector decode is now implemented)"
                 )));
             }
         })
+    }
+
+    /// TD-OLAP-1 Test 2.4: Convert f32 vector data to Arrow arrays.
+    ///
+    /// Takes `Vec<Option<Vec<f32>>>` from `PaxBlockReader::decode_f32_vec_stripe`
+    /// and converts it to the appropriate Arrow array type (List<Float32> or
+    /// FixedSizeList<Float32>).
+    fn decode_f32_vectors_to_arrow(
+        vectors: Vec<Option<Vec<f32>>>,
+        target_type: &DataType,
+    ) -> DFResult<ArrayRef> {
+        use arrow_array::{ListBuilder, PrimitiveArray, PrimitiveBuilder};
+        use arrow_schema::DataType;
+
+        match target_type {
+            DataType::List(field) if matches!(*field.data_type(), DataType::Float32) => {
+                // Variable-length vectors: List<Float32>
+                let mut builder = ListBuilder::new(PrimitiveBuilder::<f32>::new());
+                for vec_opt in vectors {
+                    if let Some(vec) = vec_opt {
+                        let values = builder.values().append_slice(&vec);
+                        builder.append(true, values)
+                    } else {
+                        builder.append(false)
+                    }
+                }
+                Ok(Arc::new(builder.finish()))
+            }
+            DataType::FixedSizeList(field, size) if matches!(*field.data_type(), DataType::Float32) => {
+                // Fixed-size vectors: FixedSizeList<Float32, N>
+                let mut offsets = vec![0i32];
+                let mut values = Vec::new();
+                for vec_opt in vectors {
+                    if let Some(vec) = vec_opt {
+                        if vec.len() != *size as usize {
+                            return Err(DataFusionError::Execution(format!(
+                                "Vector size mismatch: expected {}, got {}",
+                                size,
+                                vec.len()
+                            )));
+                        }
+                        values.extend_from_slice(&vec);
+                        offsets.push(offsets.last().unwrap() + *size as i32);
+                    } else {
+                        return Err(DataFusionError::Execution(
+                            "Null vectors not supported in FixedSizeList".to_string(),
+                        ));
+                    }
+                }
+                let values_array = Arc::new(PrimitiveArray::<f32>::from(values));
+                use arrow_array::FixedSizeListArray;
+                Ok(Arc::new(FixedSizeListArray::new(*size, values_array, offsets)))
+            }
+            _ => Err(DataFusionError::Execution(format!(
+                "Unsupported target type for vectors: {}",
+                target_type
+            ))),
+        }
     }
 }
 
