@@ -169,15 +169,18 @@ mod tests {
         );
         assert!(
             resolved_path.contains(tenant_id),
-            "Path should contain tenant_id for isolation: {}", resolved_path
+            "Path should contain tenant_id for isolation: {}",
+            resolved_path
         );
         assert!(
             resolved_path.contains(namespace_id),
-            "Path should contain namespace_id for isolation: {}", resolved_path
+            "Path should contain namespace_id for isolation: {}",
+            resolved_path
         );
         assert!(
             resolved_path.contains(collection_name),
-            "Path should contain collection name: {}", resolved_path
+            "Path should contain collection name: {}",
+            resolved_path
         );
     }
 
