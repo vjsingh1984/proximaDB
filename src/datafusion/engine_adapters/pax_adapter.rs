@@ -762,7 +762,7 @@ mod tests {
         filters: Vec<Arc<dyn PhysicalExpr>>,
     ) -> PaxSplitReader {
         let fs = Arc::new(FilesystemFactory::create_default().await.unwrap());
-        PaxSplitReader::new(schema, fs, map, filters)
+        PaxSplitReader::new(schema, fs, map, filters, None, None)
     }
 
     #[tokio::test]
@@ -858,7 +858,7 @@ mod tests {
             Operator::GtEq,
             lit(150_000i64),
         ));
-        let reader = PaxSplitReader::new(schema.clone(), fs.clone(), map, vec![filter]);
+        let reader = PaxSplitReader::new(schema.clone(), fs.clone(), map, vec![filter], None, None);
 
         let (ranged_rows, snap) = io_trace::scope(async {
             let batches = reader
@@ -967,7 +967,7 @@ mod tests {
             Operator::GtEq,
             lit(1_500_000i64),
         ));
-        let reader = PaxSplitReader::new(schema.clone(), fs.clone(), map, vec![filter]);
+        let reader = PaxSplitReader::new(schema.clone(), fs.clone(), map, vec![filter], None, None);
         assert!(
             reader.needs_footer_prune(),
             "a shredded user-column predicate must engage Stage B footer pruning"
