@@ -113,6 +113,12 @@ pub struct PaxSplitReader {
     /// Translated once at construction from the resolved physical filters.
     /// Empty ⇒ no pruning (correctness-safe). AND-semantics at `block_pruned`.
     prune_predicates: Vec<(String, ScalarPredicate)>,
+    /// TD-OLAP-1 Test 2.3: Tenant ID for predicate filtering (optional).
+    /// When set, blocks are pruned at scan time if tenant hash doesn't match.
+    tenant_id: Option<String>,
+    /// TD-OLAP-1 Test 2.3: Time range for predicate filtering (optional).
+    /// When set, blocks are pruned if they don't overlap with [from_ns, to_ns].
+    time_range: Option<(i64, i64)>,
 }
 
 impl PaxSplitReader {
@@ -120,11 +126,17 @@ impl PaxSplitReader {
     /// build time. `filters` are the resolved physical filters (logical `Expr`s
     /// must be lowered to physical first — the caller's job in slice 2 routing;
     /// pass empty for the decode-only / test path).
+    ///
+    /// TD-OLAP-1 Test 2.3: `tenant_id` and `time_range` enable tenant/time
+    /// predicate filtering at the storage layer. When `None`, no filtering is
+    /// applied (backward-compatible with `ScanPredicate::default()`).
     pub fn new(
         schema: SchemaRef,
         filesystem_factory: Arc<FilesystemFactory>,
         name_to_col_id: HashMap<String, i32>,
         filters: Vec<Arc<dyn PhysicalExpr>>,
+        tenant_id: Option<String>,
+        time_range: Option<(i64, i64)>,
     ) -> Self {
         let mut prune_predicates = Vec::new();
         for f in &filters {
@@ -135,6 +147,8 @@ impl PaxSplitReader {
             filesystem_factory,
             name_to_col_id,
             prune_predicates,
+            tenant_id,
+            time_range,
         }
     }
 
@@ -358,7 +372,15 @@ impl PaxSplitReader {
     /// `PaxBlockReader::open(whole_file)` CRC-fails on them, so the segment
     /// scanner is mandatory (slice 1.5 fix to #706).
     fn decode_segment(&self, bytes: &[u8], out_schema: &SchemaRef) -> DFResult<Vec<RecordBatch>> {
-        let predicate = ScanPredicate::default(); // tenant/time wired in slice 2
+        // TD-OLAP-1 Test 2.3: Wire tenant/time predicates instead of default
+        let mut predicate = ScanPredicate::default();
+        if let Some(ref tenant_id) = self.tenant_id {
+            predicate = predicate.with_tenant(tenant_id);
+        }
+        if let Some((from_ns, to_ns)) = self.time_range {
+            predicate = predicate.with_time_range(from_ns, to_ns);
+        }
+
         let mut scanner = PaxSegmentScanner::from_bytes(bytes.to_vec(), predicate)
             .map_err(|e| DataFusionError::Execution(format!("PAX segment open failed: {e}")))?;
         let mut batches = Vec::new();

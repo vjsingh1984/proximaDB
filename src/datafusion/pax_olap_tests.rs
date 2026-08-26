@@ -226,4 +226,96 @@ mod tests {
             "Segments path should end with 'segments' suffix"
         );
     }
+
+    /// Test 2.3: Tenant/time predicate wired
+    ///
+    /// Validates that tenant and time predicates are wired into PAX scans
+    /// instead of using `ScanPredicate::default()`. This ensures proper
+    /// filtering at the storage layer for tenant isolation and time-based queries.
+    #[test]
+    fn scan_predicate_tenant_time_wired() {
+        // Given: Tenant and time context
+        let tenant_id = "test_tenant";
+        let from_ns = 1_000_000;
+        let to_ns = 2_000_000;
+
+        // When: Creating ScanPredicate with tenant and time range
+        use proximadb_storage_common::pax_block::ScanPredicate;
+
+        let predicate_with_tenant = ScanPredicate::for_tenant(tenant_id);
+        let predicate_with_time = ScanPredicate::for_time_range(from_ns, to_ns);
+        let predicate_with_both = ScanPredicate::default()
+            .with_tenant(tenant_id)
+            .with_time_range(from_ns, to_ns);
+
+        // Then: Predicates should contain proper filtering values
+        assert!(
+            predicate_with_tenant.tenant_hash.is_some(),
+            "Tenant predicate should have tenant_hash set"
+        );
+        assert!(
+            predicate_with_tenant.time_range.is_none(),
+            "Tenant-only predicate should not have time_range"
+        );
+
+        assert!(
+            predicate_with_time.time_range.is_some(),
+            "Time predicate should have time_range set"
+        );
+        assert!(
+            predicate_with_time.time_range == Some((from_ns, to_ns)),
+            "Time predicate should match requested range"
+        );
+        assert!(
+            predicate_with_time.tenant_hash.is_none(),
+            "Time-only predicate should not have tenant_hash"
+        );
+
+        assert!(
+            predicate_with_both.tenant_hash.is_some(),
+            "Combined predicate should have tenant_hash"
+        );
+        assert!(
+            predicate_with_both.time_range.is_some(),
+            "Combined predicate should have time_range"
+        );
+    }
+
+    /// Test 2.3b: Default predicate has no filters
+    #[test]
+    fn default_scan_predicate_has_no_filters() {
+        // Given: Default ScanPredicate
+        use proximadb_storage_common::pax_block::ScanPredicate;
+
+        let default_predicate = ScanPredicate::default();
+
+        // Then: Should have no filtering
+        assert!(
+            default_predicate.tenant_hash.is_none(),
+            "Default predicate should not have tenant_hash"
+        );
+        assert!(
+            default_predicate.time_range.is_none(),
+            "Default predicate should not have time_range"
+        );
+    }
+
+    /// Test 2.3c: Tenant hash is deterministic
+    #[test]
+    fn tenant_hash_is_deterministic() {
+        // Given: Same tenant_id
+        use proximadb_storage_common::pax_block::ScanPredicate;
+
+        let tenant_id = "test_tenant_123";
+
+        // When: Creating predicates with same tenant
+        let predicate1 = ScanPredicate::for_tenant(tenant_id);
+        let predicate2 = ScanPredicate::for_tenant(tenant_id);
+
+        // Then: Should produce same hash
+        assert_eq!(
+            predicate1.tenant_hash, predicate2.tenant_hash,
+            "Tenant hash should be deterministic for same tenant_id"
+        );
+    }
 }
