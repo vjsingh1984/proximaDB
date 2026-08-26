@@ -7,10 +7,15 @@
 
 #[cfg(test)]
 mod tests {
-    use proximadb_catalog::{CatalogAuthorityMode, CatalogPhysicalFormat, CatalogTableSchema, CatalogStorageLayout};
+    use proximadb_catalog::{
+        CatalogAuthorityMode, CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema,
+    };
 
     /// Helper to create a test storage layout
-    fn test_storage_layout(physical_format: CatalogPhysicalFormat, authority: CatalogAuthorityMode) -> CatalogStorageLayout {
+    fn test_storage_layout(
+        physical_format: CatalogPhysicalFormat,
+        authority: CatalogAuthorityMode,
+    ) -> CatalogStorageLayout {
         CatalogStorageLayout {
             location: "/test/location".to_string(),
             physical_format,
@@ -49,9 +54,10 @@ mod tests {
         let schema = test_table_schema(vec![pax_layout]);
 
         // When: Checking if table is PAX-backed
-        let is_pax = schema.storage_layouts.iter().any(|layout| {
-            matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock)
-        });
+        let is_pax = schema
+            .storage_layouts
+            .iter()
+            .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock));
 
         // Then: Should return true (PAX format detected)
         assert!(
@@ -71,9 +77,10 @@ mod tests {
         let schema = test_table_schema(vec![parquet_layout]);
 
         // When: Checking if table is PAX-backed
-        let is_pax = schema.storage_layouts.iter().any(|layout| {
-            matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock)
-        });
+        let is_pax = schema
+            .storage_layouts
+            .iter()
+            .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock));
 
         // Then: Should return false (Parquet is not PAX)
         assert!(
@@ -89,9 +96,10 @@ mod tests {
         let schema = test_table_schema(vec![]);
 
         // When: Checking if table is PAX-backed
-        let is_pax = schema.storage_layouts.iter().any(|layout| {
-            matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock)
-        });
+        let is_pax = schema
+            .storage_layouts
+            .iter()
+            .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock));
 
         // Then: Should return false (no layouts = not PAX)
         assert!(
@@ -115,9 +123,10 @@ mod tests {
         let schema = test_table_schema(vec![parquet_layout, pax_layout]);
 
         // When: Checking if table is PAX-backed
-        let is_pax = schema.storage_layouts.iter().any(|layout| {
-            matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock)
-        });
+        let is_pax = schema
+            .storage_layouts
+            .iter()
+            .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock));
 
         // Then: Should return true (PAX layout present)
         assert!(
