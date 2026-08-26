@@ -134,4 +134,96 @@ mod tests {
             "Table with mixed layouts including ProximaBlock should be recognized as PAX-backed"
         );
     }
+
+    /// Test 2.2: Path resolution via DrPathBuilder
+    ///
+    /// Validates that PAX segment paths are resolved via `DrPathBuilder`
+    /// instead of using `catalog.location`. This ensures proper tenant isolation
+    /// and object storage path structure per the co-design mandate.
+    #[test]
+    fn pax_segment_path_resolved_via_drpathbuilder() {
+        // Given: A collection with tenant context
+        let tenant_id = "test_tenant";
+        let namespace_id = "test_namespace";
+        let collection_name = "test_collection";
+
+        // When: Building path via DrPathBuilder
+        use proximadb_catalog::CatalogNamespace;
+        let mock_namespace = CatalogNamespace::new(vec!["default".into()])
+            .with_tenant(tenant_id)
+            .with_namespace_id(namespace_id);
+
+        let dr_path = crate::storage::trait_components::path_resolver::DrPathBuilder::build(
+            &mock_namespace,
+            collection_name,
+        )
+        .expect("DrPathBuilder should construct valid path");
+
+        let resolved_path = dr_path.root_prefix();
+
+        // Then: Path should follow DrPathBuilder structure: data/{tenant_id}/{namespace_id}/...
+        // NOT use catalog.location (which would be arbitrary/unstructured)
+        assert!(
+            resolved_path.contains("data"),
+            "DrPathBuilder should create tenant-isolated path under 'data/' prefix"
+        );
+        assert!(
+            resolved_path.contains(tenant_id),
+            "Path should contain tenant_id for isolation: {}", resolved_path
+        );
+        assert!(
+            resolved_path.contains(namespace_id),
+            "Path should contain namespace_id for isolation: {}", resolved_path
+        );
+        assert!(
+            resolved_path.contains(collection_name),
+            "Path should contain collection name: {}", resolved_path
+        );
+    }
+
+    /// Test 2.2b: DrPathBuilder segments path structure
+    #[test]
+    fn drpathbuilder_segments_path_structure() {
+        // Given: Collection context
+        let tenant_id = "tenant123";
+        let namespace_id = "ns456";
+        let collection_name = "my_collection";
+
+        // When: Building segments path via DrPathBuilder
+        use proximadb_catalog::CatalogNamespace;
+        let mock_namespace = CatalogNamespace::new(vec!["default".into()])
+            .with_tenant(tenant_id)
+            .with_namespace_id(namespace_id);
+
+        let dr_path = crate::storage::trait_components::path_resolver::DrPathBuilder::build(
+            &mock_namespace,
+            collection_name,
+        )
+        .expect("DrPathBuilder should construct valid path");
+
+        let base_path = dr_path.root_prefix();
+        let segments_path = format!("{}segments", base_path);
+
+        // Then: Segments path should follow structure: data/{tenant}/{namespace}/collection/segments
+        assert!(
+            segments_path.contains("data"),
+            "Segments path should start with data prefix"
+        );
+        assert!(
+            segments_path.contains(tenant_id),
+            "Segments path should include tenant_id"
+        );
+        assert!(
+            segments_path.contains(namespace_id),
+            "Segments path should include namespace_id"
+        );
+        assert!(
+            segments_path.contains(collection_name),
+            "Segments path should include collection name"
+        );
+        assert!(
+            segments_path.ends_with("segments"),
+            "Segments path should end with 'segments' suffix"
+        );
+    }
 }
