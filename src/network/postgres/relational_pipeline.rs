@@ -2089,7 +2089,7 @@ fn catalog_table_is_parquet_backed(
 /// `false` otherwise. This is the PAX analog of `catalog_table_is_parquet_backed`
 /// but returns a bool instead of an optional location (PAX location is derived
 /// via `DrPathBuilder`, not catalog.location).
-fn catalog_table_is_pax_backed(schema: &proximadb_catalog::CatalogTableSchema) -> bool {
+pub(crate) fn catalog_table_is_pax_backed(schema: &proximadb_catalog::CatalogTableSchema) -> bool {
     use proximadb_catalog::CatalogPhysicalFormat;
     schema
         .storage_layouts

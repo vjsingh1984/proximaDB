@@ -13,32 +13,34 @@ mod tests {
         CatalogAuthorityMode, CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema,
     };
 
-    /// Helper to create a test storage layout
+    /// Test 2.1: Route flip from catalog signals
+    ///
+    /// Validates that `pax_backed` is determined from catalog signals
+    /// (specifically, whether a table has ProximaBlock format storage layout)
+    /// rather than being hard-coded to `false`. Exercises the REAL production
+    /// predicate (`relational_pipeline::catalog_table_is_pax_backed`) — not an
+    /// inline reimplementation of it.
+    fn catalog_table_is_pax_backed(schema: &CatalogTableSchema) -> bool {
+        crate::network::postgres::relational_pipeline::catalog_table_is_pax_backed(schema)
+    }
+
+    /// Helper: a storage layout with the given physical format + authority mode.
     fn test_storage_layout(
         physical_format: CatalogPhysicalFormat,
         authority: CatalogAuthorityMode,
     ) -> CatalogStorageLayout {
         CatalogStorageLayout {
-            location: "/test/location".to_string(),
             physical_format,
             authority,
-            format_options: std::collections::HashMap::new(),
-            created_at: 0,
-            updated_at: 0,
+            ..CatalogStorageLayout::default()
         }
     }
 
-    /// Helper to create a test table schema
+    /// Helper: a test table schema carrying the given storage layouts.
     fn test_table_schema(layouts: Vec<CatalogStorageLayout>) -> CatalogTableSchema {
-        CatalogTableSchema {
-            table_name: "test_table".to_string(),
-            columns: vec![],
-            storage_layouts: layouts,
-            primary_key: vec![],
-            partition_keys: vec![],
-            clustering_keys: vec![],
-            table_properties: std::collections::HashMap::new(),
-        }
+        let mut schema = CatalogTableSchema::new("test_table");
+        schema.storage_layouts = layouts;
+        schema
     }
 
     /// Test 2.1: Route flip from catalog signals
@@ -51,15 +53,12 @@ mod tests {
         // Given: A table with ProximaBlock format storage layout
         let pax_layout = test_storage_layout(
             CatalogPhysicalFormat::ProximaBlock,
-            CatalogAuthorityMode::Wal,
+            CatalogAuthorityMode::InternalCanonical,
         );
         let schema = test_table_schema(vec![pax_layout]);
 
-        // When: Checking if table is PAX-backed
-        let is_pax = schema
-            .storage_layouts
-            .iter()
-            .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock));
+        // When: Checking if table is PAX-backed via the PRODUCTION predicate
+        let is_pax = catalog_table_is_pax_backed(&schema);
 
         // Then: Should return true (PAX format detected)
         assert!(
@@ -78,11 +77,8 @@ mod tests {
         );
         let schema = test_table_schema(vec![parquet_layout]);
 
-        // When: Checking if table is PAX-backed
-        let is_pax = schema
-            .storage_layouts
-            .iter()
-            .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock));
+        // When: Checking if table is PAX-backed via the PRODUCTION predicate
+        let is_pax = catalog_table_is_pax_backed(&schema);
 
         // Then: Should return false (Parquet is not PAX)
         assert!(
@@ -97,11 +93,8 @@ mod tests {
         // Given: A table with no storage layouts
         let schema = test_table_schema(vec![]);
 
-        // When: Checking if table is PAX-backed
-        let is_pax = schema
-            .storage_layouts
-            .iter()
-            .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock));
+        // When: Checking if table is PAX-backed via the PRODUCTION predicate
+        let is_pax = catalog_table_is_pax_backed(&schema);
 
         // Then: Should return false (no layouts = not PAX)
         assert!(
@@ -120,15 +113,12 @@ mod tests {
         );
         let pax_layout = test_storage_layout(
             CatalogPhysicalFormat::ProximaBlock,
-            CatalogAuthorityMode::Wal,
+            CatalogAuthorityMode::InternalCanonical,
         );
         let schema = test_table_schema(vec![parquet_layout, pax_layout]);
 
-        // When: Checking if table is PAX-backed
-        let is_pax = schema
-            .storage_layouts
-            .iter()
-            .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock));
+        // When: Checking if table is PAX-backed via the PRODUCTION predicate
+        let is_pax = catalog_table_is_pax_backed(&schema);
 
         // Then: Should return true (PAX layout present)
         assert!(
