@@ -2188,7 +2188,10 @@ impl CatalogLookup for EngineCatalog {
 #[derive(Clone, Debug)]
 struct PreparedTable {
     table_name: String,
-    schema: RelationalSchema,
+    /// Shared per-connection snapshot: readers clone the Arc, not the whole
+    /// column list, on every open (the schema Vec was deep-cloned per
+    /// reader-open and per planner lookup before).
+    schema: std::sync::Arc<RelationalSchema>,
     pk_columns: Vec<usize>,
     /// TD-127: names of this table's single-column non-PK secondary indexes
     /// (from `schema_secondary_index_columns`). Threaded into the planner's
@@ -2212,7 +2215,7 @@ impl PreparedTable {
         }
         Self {
             table_name: name.to_string(),
-            schema: RelationalSchema::new(cols),
+            schema: std::sync::Arc::new(RelationalSchema::new(cols)),
             pk_columns: pk,
             secondary_columns: crate::services::record_store::schema_secondary_index_columns(
                 schema,
@@ -2237,7 +2240,8 @@ impl CatalogLookup for SnapshotCatalog {
     fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
         self.tables
             .get(&normalize_table_key(name))
-            .map(|t| t.schema.clone())
+            // Port trait returns an owned schema; clone through the Arc.
+            .map(|t| (*t.schema).clone())
     }
 }
 
@@ -2251,7 +2255,7 @@ impl ReaderFactory for SnapshotCatalog {
         Ok(Box::new(DmlTableReader {
             dml: self.dml.clone(),
             table_name: prepared.table_name.clone(),
-            full_schema: prepared.schema.clone(),
+            full_schema: std::sync::Arc::clone(&prepared.schema),
             pk_columns: prepared.pk_columns.clone(),
             tenant: self.tenant.clone(),
             identity: self.identity.clone(),
@@ -2309,7 +2313,7 @@ impl CapabilityResolver for SnapshotCapabilities {
 /// Per-scan state captured at `open`: the projected output schema + the rows
 /// already fetched (predicate-filtered + projected + limited at the store).
 struct ReaderOpenState {
-    output_schema: RelationalSchema,
+    output_schema: Arc<RelationalSchema>,
     rows: Vec<RelationalRow>,
     cursor: usize,
 }
@@ -2317,7 +2321,7 @@ struct ReaderOpenState {
 struct DmlTableReader {
     dml: Arc<DmlService>,
     table_name: String,
-    full_schema: RelationalSchema,
+    full_schema: Arc<RelationalSchema>,
     /// Single-column PK ordinal(s) for the PK-lookup arity check (empty when the
     /// planner won't pick PkLookup for this table).
     pk_columns: Vec<usize>,
@@ -2334,9 +2338,9 @@ impl DmlTableReader {
     fn resolve_output_schema(
         &self,
         projection: &Option<Vec<String>>,
-    ) -> Result<RelationalSchema, ReaderError> {
+    ) -> Result<Arc<RelationalSchema>, ReaderError> {
         let Some(names) = projection else {
-            return Ok(self.full_schema.clone());
+            return Ok(Arc::clone(&self.full_schema));
         };
         let mut cols = Vec::with_capacity(names.len());
         for n in names {
@@ -2346,7 +2350,7 @@ impl DmlTableReader {
                 .ok_or_else(|| ReaderError::InvalidProjection(n.clone()))?;
             cols.push(info.clone());
         }
-        Ok(RelationalSchema::new(cols))
+        Ok(Arc::new(RelationalSchema::new(cols)))
     }
 }
 

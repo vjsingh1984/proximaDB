@@ -226,25 +226,32 @@ impl SequoiaEngine {
 // Filter evaluation helper
 // ---------------------------------------------------------------------------
 
-/// Recursively evaluate a `RowFilter` against a single row.
-fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFilter) -> bool {
+/// Recursively evaluate a `RowFilter` against a single row. `column_index`
+/// maps column name → value position in `TypedRow::values`, built once per
+/// query (this previously took the schema slice and ran a linear
+/// `position(...)` scan PER PREDICATE PER ROW).
+fn evaluate_filter(
+    row: &TypedRow,
+    column_index: &std::collections::HashMap<&str, usize>,
+    filter: &RowFilter,
+) -> bool {
     match filter {
         RowFilter::Eq(col, val) => {
-            if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
+            if let Some(&idx) = column_index.get(col.as_str()) {
                 row.values.get(idx) == Some(val)
             } else {
                 false
             }
         }
         RowFilter::Ne(col, val) => {
-            if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
+            if let Some(&idx) = column_index.get(col.as_str()) {
                 row.values.get(idx).is_some_and(|v| v != val)
             } else {
                 false
             }
         }
         RowFilter::Gt(col, val) => {
-            if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
+            if let Some(&idx) = column_index.get(col.as_str()) {
                 row.values.get(idx).and_then(|v| v.partial_cmp_typed(val))
                     == Some(std::cmp::Ordering::Greater)
             } else {
@@ -252,7 +259,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
             }
         }
         RowFilter::Lt(col, val) => {
-            if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
+            if let Some(&idx) = column_index.get(col.as_str()) {
                 row.values.get(idx).and_then(|v| v.partial_cmp_typed(val))
                     == Some(std::cmp::Ordering::Less)
             } else {
@@ -260,7 +267,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
             }
         }
         RowFilter::Gte(col, val) => {
-            if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
+            if let Some(&idx) = column_index.get(col.as_str()) {
                 row.values
                     .get(idx)
                     .and_then(|v| v.partial_cmp_typed(val))
@@ -272,7 +279,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
             }
         }
         RowFilter::Lte(col, val) => {
-            if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
+            if let Some(&idx) = column_index.get(col.as_str()) {
                 row.values
                     .get(idx)
                     .and_then(|v| v.partial_cmp_typed(val))
@@ -283,10 +290,14 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
                 false
             }
         }
-        RowFilter::And(filters) => filters.iter().all(|f| evaluate_filter(row, columns, f)),
-        RowFilter::Or(filters) => filters.iter().any(|f| evaluate_filter(row, columns, f)),
+        RowFilter::And(filters) => filters
+            .iter()
+            .all(|f| evaluate_filter(row, column_index, f)),
+        RowFilter::Or(filters) => filters
+            .iter()
+            .any(|f| evaluate_filter(row, column_index, f)),
         RowFilter::IsNull(col) => {
-            if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
+            if let Some(&idx) = column_index.get(col.as_str()) {
                 row.values
                     .get(idx)
                     .is_none_or(|v| matches!(v, TypedValue::Null))
@@ -295,7 +306,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
             }
         }
         RowFilter::IsNotNull(col) => {
-            if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
+            if let Some(&idx) = column_index.get(col.as_str()) {
                 row.values
                     .get(idx)
                     .is_some_and(|v| !matches!(v, TypedValue::Null))
@@ -399,33 +410,51 @@ impl RelationalStorageEngine for SequoiaEngine {
             .schemas
             .get(&table)
             .ok_or_else(|| anyhow::anyhow!("Table '{}' does not exist", table))?;
-        let columns: Vec<(String, String)> = schema.value().clone();
+        // Borrow the schema (was: a full Vec clone per query) and resolve
+        // column positions ONCE — the filter below previously ran a linear
+        // schema scan per predicate per row, and the order-by comparator per
+        // comparison.
+        let columns: &[(String, String)] = schema.value();
+        let column_index: std::collections::HashMap<&str, usize> = columns
+            .iter()
+            .enumerate()
+            .map(|(idx, (name, _))| (name.as_str(), idx))
+            .collect();
+        // Order-by keys resolved up front; an absent column keeps `None` and
+        // is skipped by the comparator, exactly like the old inline scan.
+        let order_keys: Vec<(Option<usize>, bool)> = params
+            .order_by
+            .iter()
+            .map(|(col_name, ascending)| (column_index.get(col_name.as_str()).copied(), *ascending))
+            .collect();
 
         let table_data = self
             .tables
             .get(&table)
             .ok_or_else(|| anyhow::anyhow!("Table '{}' data store missing", table))?;
 
-        // 1. Filter
-        let mut matched: Vec<TypedRow> = if let Some(ref filter) = params.filter {
+        // 1. Filter — matched rows are BORROWED: the no-filter branch
+        // previously cloned the entire table just to have an owned Vec to
+        // sort. Sorting refs and cloning only the returned page preserves
+        // the stable-sort order and result exactly.
+        let mut matched: Vec<&TypedRow> = if let Some(ref filter) = params.filter {
             table_data
                 .iter()
-                .filter(|row| evaluate_filter(row, &columns, filter))
-                .cloned()
+                .filter(|row| evaluate_filter(row, &column_index, filter))
                 .collect()
         } else {
-            table_data.clone()
+            table_data.iter().collect()
         };
 
         let total_count = matched.len() as u64;
 
         // 2. Order By
-        if !params.order_by.is_empty() {
+        if !order_keys.is_empty() {
             matched.sort_by(|a, b| {
-                for (col_name, ascending) in &params.order_by {
-                    if let Some(idx) = columns.iter().position(|(n, _)| n == col_name) {
-                        let va = a.values.get(idx);
-                        let vb = b.values.get(idx);
+                for (idx, ascending) in &order_keys {
+                    if let Some(idx) = idx {
+                        let va = a.values.get(*idx);
+                        let vb = b.values.get(*idx);
                         if let (Some(va), Some(vb)) = (va, vb)
                             && let Some(ord) = va.partial_cmp_typed(vb)
                         {
@@ -440,13 +469,13 @@ impl RelationalStorageEngine for SequoiaEngine {
             });
         }
 
-        // 3. Offset and Limit
+        // 3. Offset and Limit — clone only the returned page.
         let offset = params.offset as usize;
-        let rows_after_offset: Vec<TypedRow> = matched.into_iter().skip(offset).collect();
+        let rows_after_offset = matched.into_iter().skip(offset);
         let rows_limited: Vec<TypedRow> = if let Some(limit) = params.limit {
-            rows_after_offset.into_iter().take(limit as usize).collect()
+            rows_after_offset.take(limit as usize).cloned().collect()
         } else {
-            rows_after_offset
+            rows_after_offset.cloned().collect()
         };
 
         // 4. Projection
@@ -494,7 +523,12 @@ impl RelationalStorageEngine for SequoiaEngine {
             .schemas
             .get(&table)
             .ok_or_else(|| anyhow::anyhow!("Table '{}' does not exist", table))?;
-        let columns: Vec<(String, String)> = schema.value().clone();
+        let column_index: std::collections::HashMap<&str, usize> = schema
+            .value()
+            .iter()
+            .enumerate()
+            .map(|(idx, (name, _))| (name.as_str(), idx))
+            .collect();
 
         let mut table_data = self
             .tables
@@ -505,10 +539,9 @@ impl RelationalStorageEngine for SequoiaEngine {
         let update_indices: Vec<(usize, TypedValue)> = updates
             .iter()
             .filter_map(|(col, val)| {
-                columns
-                    .iter()
-                    .position(|(n, _)| n == col)
-                    .map(|idx| (idx, val.clone()))
+                column_index
+                    .get(col.as_str())
+                    .map(|idx| (*idx, val.clone()))
             })
             .collect();
 
@@ -516,7 +549,7 @@ impl RelationalStorageEngine for SequoiaEngine {
 
         for row in table_data.iter_mut() {
             let matches = match &filter {
-                Some(f) => evaluate_filter(row, &columns, f),
+                Some(f) => evaluate_filter(row, &column_index, f),
                 None => true,
             };
             if matches {
@@ -537,7 +570,12 @@ impl RelationalStorageEngine for SequoiaEngine {
             .schemas
             .get(&table)
             .ok_or_else(|| anyhow::anyhow!("Table '{}' does not exist", table))?;
-        let columns: Vec<(String, String)> = schema.value().clone();
+        let column_index: std::collections::HashMap<&str, usize> = schema
+            .value()
+            .iter()
+            .enumerate()
+            .map(|(idx, (name, _))| (name.as_str(), idx))
+            .collect();
 
         let mut table_data = self
             .tables
@@ -548,7 +586,7 @@ impl RelationalStorageEngine for SequoiaEngine {
 
         match &filter {
             Some(f) => {
-                table_data.retain(|row| !evaluate_filter(row, &columns, f));
+                table_data.retain(|row| !evaluate_filter(row, &column_index, f));
             }
             None => {
                 table_data.clear();

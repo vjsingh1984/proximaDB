@@ -4253,7 +4253,14 @@ impl DmlService {
     /// Count distinct values per column in a batch.
     /// Returns a map of column → distinct count within this batch.
     fn compute_column_ndv_from_records(records: &[ProximaRecord]) -> HashMap<String, u64> {
-        let mut seen: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        // HLL sketch per column instead of an exact HashSet<String> holding
+        // EVERY distinct value (unbounded memory for high-cardinality
+        // columns on large batches). The consumer (`bump_column_ndv`)
+        // already merges batches additively as an estimate — "seed NDV
+        // before ANALYZE" — so the sketch's small relative error is within
+        // the design's approximation.
+        use crate::core::statistics::sketches::HyperLogLog;
+        let mut sketches: HashMap<String, HyperLogLog> = HashMap::new();
         for record in records {
             for (col, node) in record.props.iter() {
                 let ProximaTreeNode::Value(val) = node else {
@@ -4262,11 +4269,15 @@ impl DmlService {
                 let Some(key) = Self::value_to_ndv_key(val) else {
                     continue;
                 };
-                seen.entry(col.clone()).or_default().insert(key);
+                sketches
+                    .entry(col.clone())
+                    .or_default()
+                    .insert_bytes(key.as_bytes());
             }
         }
-        seen.into_iter()
-            .map(|(col, set)| (col, set.len() as u64))
+        sketches
+            .into_iter()
+            .map(|(col, sketch)| (col, sketch.estimate()))
             .collect()
     }
 

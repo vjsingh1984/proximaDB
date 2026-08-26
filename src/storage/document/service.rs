@@ -2276,26 +2276,39 @@ impl DocumentService {
             .await?
             .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
 
-        // Get all documents from the collection
-        let documents: Vec<DocumentRecord> = {
+        // Score BORROWED documents (the previous path cloned the entire
+        // collection per query — the scorer also cloned every props tree and
+        // record — and then truncated to `limit`). Survivors are cloned once.
+        // The DashMap shard guard must outlive the borrowed documents, so
+        // scoring, sorting, truncation, AND survivor materialization all
+        // happen inside its scope.
+        let top: Vec<(DocumentRecord, f32)> = {
             let docs = &*self.documents;
             match docs.get(collection) {
-                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                Some(collection_docs) => {
+                    let documents: Vec<&DocumentRecord> = collection_docs.values().collect();
+                    // Calculate scores
+                    let executor = AggregationExecutor::new();
+                    let mut scored =
+                        executor.calculate_fulltext_scores(&documents, &query_terms, &text_paths);
+
+                    // Sort by score descending
+                    scored
+                        .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+                    // Apply limit
+                    scored.truncate(limit);
+
+                    scored
+                        .into_iter()
+                        .map(|(score, doc)| ((*doc).clone(), score))
+                        .collect()
+                }
                 None => Vec::new(),
             }
         };
 
-        // Calculate scores
-        let executor = AggregationExecutor::new();
-        let mut scored = executor.calculate_fulltext_scores(&documents, &query_terms, &text_paths);
-
-        // Sort by score descending
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Apply limit
-        scored.truncate(limit);
-
-        Ok(scored)
+        Ok(top)
     }
 }
 

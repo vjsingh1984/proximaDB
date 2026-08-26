@@ -92,9 +92,9 @@ explicit sequence key in the entry's `Ord`). Root re-export:
   `try_mutate_sync(&mut (dyn FnMut(..) + '_))` form with an explicit
   async-backend `None` fallback is object-safe and compiles.
 
-== Deferred inventory (open)
+== Deferred inventory (CLOSED 2026-08-26 — #1737 experimental engines, #1738 GA lower-tier)
 
-Experimental engines (feature-gated, no production traffic):
+Experimental engines (feature-gated, no production traffic) — FIXED in #1737:
 
 * raptor `writer.rs:1064` — O(E×N) cluster-membership lookup per edge
   (`find_cluster_for_node_static` scans all clusters' member Vecs per edge);
@@ -110,7 +110,7 @@ Experimental engines (feature-gated, no production traffic):
 * swift `engine.rs:1333` — compaction merge clones every record version
   (locator map + survivor materialization is the fix shape, TD-188 pattern).
 
-Lower-tier GA follow-ups:
+Lower-tier GA follow-ups — FIXED in #1738, except the CatalogLookup trait noted below:
 
 * `src/storage/memtable/implementations/global_partitioned.rs:745` — MVCC
   dedup clones full records per query (TD-188 locator pattern applies).
@@ -129,3 +129,9 @@ Lower-tier GA follow-ups:
 * `src/storage/memtable/implementations/skiplist.rs` — DashMap-backed with
   collect+sort range scans; a BTreeMap (see `global_partitioned.rs`
   `scan_index`) gives ordered scans natively.
+
+Still open (deliberately deferred, needs its own cross-crate PR): the
+`CatalogLookup::lookup_table` port trait still returns an owned
+`RelationalSchema` per planner lookup (5+ implementors across 3 crates);
+#1738 Arc-ified the snapshot/reader side it could reach without changing
+the trait.
