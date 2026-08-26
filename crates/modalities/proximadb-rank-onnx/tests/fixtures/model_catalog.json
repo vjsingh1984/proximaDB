@@ -1,0 +1,28 @@
+{
+  "_comment": "Pinned open-weight reranker catalog (TD-SELECTOR-1 gate 5). One entry per (model, version) provenance pin: the artifact sha256/size are the content-addressed identity, the uri records where the export lives (outside the repo — models are 22.7M-parameter binaries), and the io spec is the serving contract OrtTokenizedScorerSession binds. version pins the UPSTREAM revision the export was produced from, so an evidence claim (BENCHMARK_EVIDENCE.toml) and the serving artifact stay joined at the hip.",
+  "models": [
+    {
+      "key": {
+        "model_id": "cross-encoder/ms-marco-MiniLM-L6-v2",
+        "version": "4bebbd56"
+      },
+      "tenant": null,
+      "uri": "file:///Users/vijaysingh/proximadb-bench-data/retrieval-quality-onnx-parity-v1/minilm-l6-v2/onnx/model.onnx",
+      "sha256": "891b594d2e8161026e5c1efafa873718629fde67dcf6d868323553fcf3651dde",
+      "size_bytes": 90970605,
+      "framework": "Onnx",
+      "dtype": "Fp32",
+      "input_spec": [
+        { "name": "input_ids", "shape": [null, 512], "dtype": "Fp32" },
+        { "name": "attention_mask", "shape": [null, 512], "dtype": "Fp32" },
+        { "name": "token_type_ids", "shape": [null, 512], "dtype": "Fp32" }
+      ],
+      "output_spec": [
+        { "name": "logits", "shape": [null], "dtype": "Fp32" }
+      ],
+      "max_batch_size": 64,
+      "seq": 0,
+      "created_at_ms": 0
+    }
+  ]
+}
