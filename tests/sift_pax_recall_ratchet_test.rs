@@ -364,6 +364,77 @@ struct MeasuredSearch {
     snapshot: proximadb::observability::io_trace::IoTraceSnapshot,
 }
 
+#[derive(Debug, Default)]
+struct OutcomeMeasurements {
+    elapsed_us: Vec<u64>,
+    get_ops: u64,
+    range_gets: u64,
+    bytes_read: u64,
+    compute_ms: u64,
+    footer_hits: u64,
+    footer_misses: u64,
+    survivor_l1_hits: u64,
+    survivor_l1_misses: u64,
+    l2_hits: u64,
+    l2_misses: u64,
+}
+
+fn record_outcome_measurement(
+    cohorts: &mut BTreeMap<&'static str, OutcomeMeasurements>,
+    elapsed_us: u64,
+    snapshot: &proximadb::observability::io_trace::IoTraceSnapshot,
+) {
+    let cohort = cohorts
+        .entry(VectorCacheOutcome::from_snapshot(snapshot).as_str())
+        .or_default();
+    cohort.elapsed_us.push(elapsed_us);
+    cohort.get_ops = cohort.get_ops.saturating_add(snapshot.get_ops);
+    cohort.range_gets = cohort.range_gets.saturating_add(snapshot.range_gets);
+    cohort.bytes_read = cohort.bytes_read.saturating_add(snapshot.bytes_read);
+    cohort.compute_ms = cohort
+        .compute_ms
+        .saturating_add(snapshot.total_compute_ms());
+    cohort.footer_hits = cohort.footer_hits.saturating_add(snapshot.footer_hits);
+    cohort.footer_misses = cohort.footer_misses.saturating_add(snapshot.footer_misses);
+    cohort.survivor_l1_hits = cohort
+        .survivor_l1_hits
+        .saturating_add(snapshot.survivor_l1_hits);
+    cohort.survivor_l1_misses = cohort
+        .survivor_l1_misses
+        .saturating_add(snapshot.survivor_l1_misses);
+    cohort.l2_hits = cohort.l2_hits.saturating_add(snapshot.l2_hits);
+    cohort.l2_misses = cohort.l2_misses.saturating_add(snapshot.l2_misses);
+}
+
+fn report_outcome_measurements(
+    arm: &str,
+    cohorts: &mut BTreeMap<&'static str, OutcomeMeasurements>,
+) {
+    for (outcome, cohort) in cohorts {
+        cohort.elapsed_us.sort_unstable();
+        let samples = cohort.elapsed_us.len();
+        let denominator = samples as f64;
+        eprintln!(
+            "SIFT {arm} cache-outcome evidence: outcome={outcome}, samples={samples}, \
+             p50/p95={}/{} us; GET/range-GET/bytes/compute-ms per sample=\
+             {:.2}/{:.2}/{:.0}/{:.2}; footer hit/miss={:.2}/{:.2}, \
+             survivor-L1 hit/miss={:.2}/{:.2}, L2 hit/miss={:.2}/{:.2}",
+            percentile_us(&cohort.elapsed_us, 50),
+            percentile_us(&cohort.elapsed_us, 95),
+            cohort.get_ops as f64 / denominator,
+            cohort.range_gets as f64 / denominator,
+            cohort.bytes_read as f64 / denominator,
+            cohort.compute_ms as f64 / denominator,
+            cohort.footer_hits as f64 / denominator,
+            cohort.footer_misses as f64 / denominator,
+            cohort.survivor_l1_hits as f64 / denominator,
+            cohort.survivor_l1_misses as f64 / denominator,
+            cohort.l2_hits as f64 / denominator,
+            cohort.l2_misses as f64 / denominator,
+        );
+    }
+}
+
 async fn measured_search(
     engine: &SstEngine,
     collection: &Collection,
@@ -579,7 +650,7 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     let mut recall_sum = 0.0f64;
     let mut measured = 0usize;
     let mut exact_us = Vec::with_capacity(paired_queries);
-    let mut ann_us = Vec::with_capacity(qcount);
+    let mut ann_us = Vec::with_capacity(paired_queries);
     let mut exact_gets = 0u64;
     let mut ann_gets = 0u64;
     let mut exact_range_gets = 0u64;
@@ -590,6 +661,8 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     let mut ann_compute_ms = 0u64;
     let mut comparable_regime_pairs: HashMap<String, usize> = HashMap::new();
     let mut completed_outcome_pairs: BTreeMap<String, usize> = BTreeMap::new();
+    let mut exact_outcome_measurements = BTreeMap::new();
+    let mut ann_outcome_measurements = BTreeMap::new();
     for (qi, query) in queries.iter().enumerate() {
         let paired = qi < paired_queries;
         let (ann, exact) = if paired && qi.is_multiple_of(2) {
@@ -634,12 +707,6 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
             expected_storage_scope,
             expected_cache_policy,
         );
-        ann_us.push(ann.elapsed_us);
-        ann_gets = ann_gets.saturating_add(ann.snapshot.get_ops);
-        ann_range_gets = ann_range_gets.saturating_add(ann.snapshot.range_gets);
-        ann_bytes = ann_bytes.saturating_add(ann.snapshot.bytes_read);
-        ann_compute_ms = ann_compute_ms.saturating_add(ann.snapshot.total_compute_ms());
-
         if let Some(exact) = exact {
             assert_single_vector_access(
                 &exact,
@@ -652,6 +719,16 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
             let ann_shape = vector_access_shape(&ann.snapshot.vector_accesses[0]);
             let exact_cache = VectorCacheOutcome::from_snapshot(&exact.snapshot);
             let ann_cache = VectorCacheOutcome::from_snapshot(&ann.snapshot);
+            record_outcome_measurement(
+                &mut exact_outcome_measurements,
+                exact.elapsed_us,
+                &exact.snapshot,
+            );
+            record_outcome_measurement(
+                &mut ann_outcome_measurements,
+                ann.elapsed_us,
+                &ann.snapshot,
+            );
             *completed_outcome_pairs
                 .entry(format!(
                     "exact={}/ann={}",
@@ -692,6 +769,11 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
             exact_range_gets = exact_range_gets.saturating_add(exact.snapshot.range_gets);
             exact_bytes = exact_bytes.saturating_add(exact.snapshot.bytes_read);
             exact_compute_ms = exact_compute_ms.saturating_add(exact.snapshot.total_compute_ms());
+            ann_us.push(ann.elapsed_us);
+            ann_gets = ann_gets.saturating_add(ann.snapshot.get_ops);
+            ann_range_gets = ann_range_gets.saturating_add(ann.snapshot.range_gets);
+            ann_bytes = ann_bytes.saturating_add(ann.snapshot.bytes_read);
+            ann_compute_ms = ann_compute_ms.saturating_add(ann.snapshot.total_compute_ms());
         }
 
         if ann.ids.is_empty() {
@@ -721,16 +803,18 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
          top_k={TOP_K}; exact p50/p95={exact_p50_us}/{exact_p95_us} us, \
          ANN p50/p95={ann_p50_us}/{ann_p95_us} us; \
          exact GET/range-GET/bytes/compute-ms per pair={:.2}/{:.2}/{:.0}/{:.2}, \
-         ANN GET/range-GET/bytes/compute-ms per query={:.2}/{:.2}/{:.0}/{:.2}",
+         ANN GET/range-GET/bytes/compute-ms per pair={:.2}/{:.2}/{:.0}/{:.2}",
         exact_gets as f64 / paired_queries as f64,
         exact_range_gets as f64 / paired_queries as f64,
         exact_bytes as f64 / paired_queries as f64,
         exact_compute_ms as f64 / paired_queries as f64,
-        ann_gets as f64 / measured as f64,
-        ann_range_gets as f64 / measured as f64,
-        ann_bytes as f64 / measured as f64,
-        ann_compute_ms as f64 / measured as f64,
+        ann_gets as f64 / paired_queries as f64,
+        ann_range_gets as f64 / paired_queries as f64,
+        ann_bytes as f64 / paired_queries as f64,
+        ann_compute_ms as f64 / paired_queries as f64,
     );
+    report_outcome_measurements("exact", &mut exact_outcome_measurements);
+    report_outcome_measurements("ANN", &mut ann_outcome_measurements);
     let (admitted_regime, admitted_pairs) = comparable_regime_pairs
         .iter()
         .max_by_key(|(_, pairs)| **pairs)
@@ -796,6 +880,42 @@ fn paired_cache_policy_uses_existing_explicit_tier_budgets() {
     assert_eq!(policy(None, Some("64")), VectorCachePolicy::SurvivorOnly);
     assert_eq!(policy(Some("64"), Some("64")), VectorCachePolicy::Full);
     assert_eq!(policy(Some("0"), Some("0")), VectorCachePolicy::Disabled);
+}
+
+#[test]
+fn cache_outcome_measurements_remain_stratified() {
+    let cold = proximadb::observability::io_trace::IoTraceSnapshot {
+        get_ops: 3,
+        range_gets: 2,
+        bytes_read: 30,
+        survivor_l1_misses: 4,
+        ..Default::default()
+    };
+    let mixed = proximadb::observability::io_trace::IoTraceSnapshot {
+        get_ops: 1,
+        range_gets: 1,
+        bytes_read: 10,
+        survivor_l1_hits: 5,
+        survivor_l1_misses: 1,
+        ..Default::default()
+    };
+    let mut cohorts = BTreeMap::new();
+
+    record_outcome_measurement(&mut cohorts, 300, &cold);
+    record_outcome_measurement(&mut cohorts, 200, &mixed);
+    record_outcome_measurement(&mut cohorts, 100, &cold);
+
+    let cold = cohorts.get("cold").expect("cold cohort");
+    assert_eq!(cold.elapsed_us, vec![300, 100]);
+    assert_eq!(cold.get_ops, 6);
+    assert_eq!(cold.bytes_read, 60);
+    assert_eq!(cold.survivor_l1_misses, 8);
+
+    let mixed = cohorts.get("mixed").expect("mixed cohort");
+    assert_eq!(mixed.elapsed_us, vec![200]);
+    assert_eq!(mixed.get_ops, 1);
+    assert_eq!(mixed.survivor_l1_hits, 5);
+    assert_eq!(mixed.survivor_l1_misses, 1);
 }
 
 #[test]
