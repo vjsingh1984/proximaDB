@@ -495,6 +495,26 @@ impl SurvivorRangeCache {
         result.map(|(value, _)| value)
     }
 
+    /// TD-RDSTRAT-12 §3: side-effect-free residency probe for batch-prefetch
+    /// planning — `Some(bytes)` iff a subsequent [`Self::get_or_fetch`] with
+    /// these exact coordinates would be served from DRAM (pinned or L1)
+    /// WITHOUT running its loader. No `track_hot_key`, no hit/miss counters,
+    /// no inserts, no persistent-tier reads. Deliberately conservative: an
+    /// `None` answer may still be served from a lower tier by the eventual
+    /// consume call, so callers must treat every batched range as payable I/O
+    /// they intended to issue anyway.
+    pub async fn peek_memory_exact(
+        &self,
+        kind: CacheKind,
+        path: &str,
+        off: u64,
+        len: u64,
+    ) -> Option<Arc<[u8]>> {
+        let scope = request_cache_scope();
+        let key = CacheKey::with_scope(scope, kind, format!("{path}:{off}:{len}"));
+        self.inner.peek_memory(&key).await
+    }
+
     /// TD-CACHE-1 S2: the top-`k` hot ranges per tenant by hit count — the
     /// shutdown manifest payload. Cheap snapshot under the tracking lock.
     pub fn warm_set(&self, top_k: usize) -> Vec<(String, Vec<WarmKey>)> {

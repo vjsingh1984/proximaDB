@@ -832,6 +832,25 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         self.lookup(key).await.map(|(value, _)| value)
     }
 
+    /// TD-RDSTRAT-12 §3: RAM-residency probe with NO hit/miss accounting and
+    /// NO inserts — answers "would `get_or_load` for this key be served from
+    /// DRAM without running its loader?". Checks the pinned floor set and the
+    /// shared L1 only; persistent L2 is deliberately unchecked so callers
+    /// treat `None` as "a fetch may still be needed" (conservative: a resident
+    /// disk-tier range could then be re-fetched once through the caller's own
+    /// consume path — never double-billed at the object-store boundary twice
+    /// per query, because the consumer that owns the persistent tier is the
+    /// same caller). The moka recency of a probed entry is refreshed; there is
+    /// no other observable effect.
+    pub async fn peek_memory(&self, key: &CacheKey) -> Option<V> {
+        if let Some(pinned) = &self.pinned
+            && let Some(v) = pinned.get(key)
+        {
+            return Some(v);
+        }
+        self.inner.get(key).await.map(|cv| cv.value)
+    }
+
     /// Lookup with the physical cache tier that satisfied it. Engine wrappers
     /// use this to forward truthful per-query evidence without making the
     /// foundation cache depend on an observability crate.
