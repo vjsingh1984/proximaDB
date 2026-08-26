@@ -35,7 +35,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use arrow_array::{ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array, ListBuilder, PrimitiveArray, PrimitiveBuilder, RecordBatch, StringArray};
+use arrow_array::{ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array, ListBuilder, PrimitiveArray, RecordBatch, StringArray};
+use arrow_array::builder::Float32Builder;
 use arrow_schema::{DataType, Field, SchemaRef};
 use async_trait::async_trait;
 use datafusion::error::{DataFusionError, Result as DFResult};
@@ -47,7 +48,6 @@ use tracing::trace;
 
 use proximadb_block_format::{
     BLOCK_FOOTER_SIZE, BlockFooter, BlockLayout, BlockZoneSource, ColumnRole, PaxBlockReader,
-    StripeMetadata,
     metadata_ranges,
 };
 use proximadb_storage_common::format_splits::{ScalarPredicate, ScalarValue};
@@ -476,28 +476,27 @@ impl PaxSplitReader {
         vectors: Vec<Option<Vec<f32>>>,
         target_type: &DataType,
     ) -> DFResult<ArrayRef> {
-        use arrow_array::{ListBuilder, PrimitiveArray, PrimitiveBuilder};
-        use arrow_schema::DataType;
-
         match target_type {
             DataType::List(field) if matches!(*field.data_type(), DataType::Float32) => {
                 // Variable-length vectors: List<Float32>
-                let mut builder = ListBuilder::new(PrimitiveBuilder::<f32>::new());
+                let mut builder = ListBuilder::new(Float32Builder::new());
                 for vec_opt in vectors {
                     if let Some(vec) = vec_opt {
-                        let values = builder.values().append_slice(&vec);
-                        builder.append(true, values)
+                        builder.values().append_slice(&vec);
+                        builder.append(true);
                     } else {
-                        builder.append(false)
+                        builder.append(false);
                     }
                 }
                 Ok(Arc::new(builder.finish()))
             }
             DataType::FixedSizeList(field, size) if matches!(*field.data_type(), DataType::Float32) => {
                 // Fixed-size vectors: FixedSizeList<Float32, N>
-                let mut offsets = vec![0i32];
                 let mut values = Vec::new();
-                for vec_opt in vectors {
+                let valid_count = vectors.iter().filter(|v| v.is_some()).count();
+                let num_rows = vectors.len();
+
+                for vec_opt in &vectors {
                     if let Some(vec) = vec_opt {
                         if vec.len() != *size as usize {
                             return Err(DataFusionError::Execution(format!(
@@ -506,17 +505,21 @@ impl PaxSplitReader {
                                 vec.len()
                             )));
                         }
-                        values.extend_from_slice(&vec);
-                        offsets.push(offsets.last().unwrap() + *size as i32);
+                        values.extend_from_slice(vec);
                     } else {
                         return Err(DataFusionError::Execution(
                             "Null vectors not supported in FixedSizeList".to_string(),
                         ));
                     }
                 }
-                let values_array = Arc::new(PrimitiveArray::<f32>::from(values));
-                use arrow_array::FixedSizeListArray;
-                Ok(Arc::new(FixedSizeListArray::new(*size, values_array, offsets)))
+
+                let values_array = Arc::new(Float32Array::from(values));
+                Ok(Arc::new(FixedSizeListArray::new(
+                    field.as_ref().clone(),
+                    *size,
+                    values_array,
+                    None, // nulls
+                )))
             }
             _ => Err(DataFusionError::Execution(format!(
                 "Unsupported target type for vectors: {}",

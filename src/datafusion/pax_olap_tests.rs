@@ -7,6 +7,8 @@
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use proximadb_catalog::{
         CatalogAuthorityMode, CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema,
     };
