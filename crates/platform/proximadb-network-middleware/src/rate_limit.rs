@@ -279,40 +279,6 @@ pub struct RateLimitErrorResponse {
     retry_after: u64, // seconds
 }
 
-/// Rate limiting layer for Axum
-pub struct RateLimitLayer {
-    _state: Arc<RateLimitState>,
-}
-
-impl RateLimitLayer {
-    /// Create a new rate limiting layer with the given configuration
-    pub fn new(config: RateLimitConfig) -> Self {
-        Self {
-            _state: Arc::new(RateLimitState::new(config.to_middleware_config())),
-        }
-    }
-
-    /// Create a disabled rate limiting layer (all requests pass through)
-    pub fn disabled() -> Self {
-        Self::new(RateLimitConfig {
-            enabled: false,
-            ..Default::default()
-        })
-    }
-
-    /// Create a rate limiting layer with specific limits
-    pub fn with_limits(requests_per_minute: u32, burst_size: u32) -> Self {
-        Self::new(RateLimitConfig {
-            enabled: true,
-            requests_per_minute,
-            burst_size,
-            by_ip: true,
-            limit_health_endpoints: false,
-            global_requests_per_minute: None,
-        })
-    }
-}
-
 /// Rate limiting middleware function
 pub async fn rate_limit_middleware(
     State(rate_limit_state): State<Arc<RateLimitState>>,
@@ -563,13 +529,6 @@ mod tests {
         assert!(!bucket.is_within_limit(10, window));
     }
 
-    #[test]
-    fn test_rate_limit_layer_disabled() {
-        let layer = RateLimitLayer::disabled();
-        // Should not panic
-        let _ = layer;
-    }
-
     // ---- TD-RATE-1: the mount ----
 
     /// The gate's truth table: only a positive integer mounts a limiter.
@@ -704,12 +663,6 @@ mod tests {
         );
         // Same request, different observed peer: unaffected.
         assert_eq!(app.oneshot(send(quiet)).await.unwrap().status(), 200);
-    }
-
-    #[test]
-    fn test_rate_limit_layer_with_limits() {
-        let layer = RateLimitLayer::with_limits(500, 50);
-        let _ = layer;
     }
 
     #[test]

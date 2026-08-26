@@ -3,8 +3,9 @@
 = TD-RATE-1: REST request rate limiting is inert — a config field nothing reads, certified by a test
 :icons: font
 
-**Status:** Filed 2026-08-24. **Option 1 (mount, default-off) SHIPPED
-2026-08-25** via `PROXIMADB_REST_RATE_LIMIT_RPM` — see "Resolution" below.
+**Status:** RESOLVED. Option 1 (mount, default-off) shipped 2026-08-25 via
+`PROXIMADB_REST_RATE_LIMIT_RPM`; stub retirement + section decision shipped
+2026-08-26 — see "Resolution".
 **Origin:** TD-TENANT-4 (PR #1705) surfaced `rate_limit_middleware` as unmounted
 dead code and explicitly scoped it out as a non-goal. This TD records the full
 inventory so the mount-vs-retire decision is made on evidence, not impression.
@@ -112,10 +113,19 @@ was negative-controlled (`if false &&` sabotage => `left: 429, right: 200`).
 Not shipped, deliberately: wiring the `[network.rate_limit]` TOML section — its
 parent `NetworkConfig` is itself unread by the boot path, so resurrecting that
 plumbing is a separate decomposition question, and an env gate mirrors the
-pgwire surface exactly. The section keeps its truth annotation. Also noted:
-`RateLimitLayer` implements no tower `Layer` trait at all — a constructible
-stub, the fourth artifact of the same false-assurance class; retiring it is a
-follow-up cleanup recorded here rather than silently left.
+pgwire surface exactly. The section keeps its truth annotation. `RateLimitLayer` (which
+implemented no tower `Layer` trait at all — a constructible stub, the fourth
+false-assurance artifact) was **retired 2026-08-26**: struct, impl, re-export,
+and its two constructor-only tests deleted; the middleware doc example now
+shows the real mount path instead of constructing a config that did nothing.
+
+**`[network.rate_limit]` section decision: KEEP, annotated.** Removing the
+field is a config-compat break for any deployment whose TOML carries the
+section, and the truth annotation shipped with this TD already prevents
+misreading it as function. If `NetworkConfig` is ever resurrected into the
+boot path (a decomposition question, not this TD's), the section becomes the
+natural config rung alongside the env gate — at which point the annotation
+comes off. This closes the TD.
 
 == Non-goals
 
