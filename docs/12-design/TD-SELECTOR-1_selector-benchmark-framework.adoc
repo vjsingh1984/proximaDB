@@ -1,8 +1,8 @@
 = TD-SELECTOR-1: Calibrated Open-Weight Selector Benchmark
 
-Status:: Implemented (harness + gates 2 and 4), synthetic evidence only
-Date:: 2026-08-23
-Worktree:: `feat/selector-benchmark` (off `79fa985dc`)
+Status:: Implemented — harness + gates 2, 4, 5 (synthetic evidence only)
+Date:: 2026-08-23 (gates 2/4, #1730); 2026-08-25..26 (gate 5 + follow-ups)
+Worktree:: `feat/selector-benchmark` (#1730); `feat/selector-onnx-parity` (gate 5 + follow-ups)
 
 == Context
 
@@ -187,57 +187,104 @@ including 359-token long docs.
    tokenizer to truncate. Serving is stricter, which is the safe direction:
    window-splitting of oversized documents is a caller responsibility. Parity is
    asserted within-budget; the fixture's max pair is 359 of 512 tokens.
-2. **Fixed-length padding costs ~11× compute.** The extractor pads every pair to
-   `Fixed(max_seq_len=512)`, but the fixture's median pair is 37 tokens (p90 39;
-   one long tail at 359). Padding waste = 512·n/Σlen ≈ **11.0×**. Measured
-   latency below is therefore a *ceiling*; longest-in-batch padding (still
-   rectangular per batch, which is all the session contract requires) is the
-   obvious follow-up and would cut a typical rerank window's cost by roughly the
-   same factor. Not changed here — padding policy is production behavior and
-   deserves its own change with the same parity fixture re-run as the gate.
+2. **Fixed-length padding cost ~11× compute — FIXED.** The conversion layer
+   padded every pair to `max_seq_len`; the fixture's median pair is 37 tokens
+   (p90 39, long tail 359), so waste was 512·n/Σlen ≈ **11.0×**. Rows now keep
+   their true length and the conversion pads to the longest row in the batch
+   (still rectangular, which is all the session contract requires). The pad id
+   is resolved from the tokenizer (XLM-R pads with 1; the old hardcoded 0 was
+   wrong for non-BERT families). Gate: the parity fixture re-run — max |Δ| =
+   6.795e-06, Spearman = 1.000000, *identical to before the change*. Window-25
+   latency: 1243 ms → 68.8 ms (~18×). Remaining cost structure: one long
+   document sets its whole window's width (window 50 with the 359-token doc
+   stays ~1.5 s) — heterogeneous windows want length bucketing or the same
+   query-aware window-splitting #1726 used for correctness, now for cost too.
 
-=== Latency (release build, macOS arm64, ort CPU EP — machine-specific, NOT ledger material)
+=== Latency (macOS arm64, ort CPU EP — machine-specific, NOT ledger material)
 
-[cols="3,2,2,2"]
+Pre-fix (release, fixed-512 padding): window 10/25/50 = 491 / 1243 / 2584 ms —
+~50 ms/pair, the padding signature; debug ≈ release (ort graph execution, not
+codegen), which itself corroborated that padding dominated.
+
+Post-fix (batch-longest padding):
+
+[cols="4,2,2,2"]
 |===
-|Shape |mean |p50 |p95
+|Model / shape |mean |p50 |p95
 
-|rerank window 10 (tokenize+infer, 1×10, pad 512)
-|491 ms |486 ms |507 ms
+|MiniLM window 10 (tokenize+infer)
+|30 ms |31 ms |32 ms
 
-|rerank window 25 (tokenize+infer, 1×25, pad 512)
-|1243 ms |1244 ms |1281 ms
+|MiniLM window 25
+|66 ms |69 ms |70 ms
 
-|rerank window 50 (tokenize+infer, 1×50, pad 512)
-|2584 ms |2592 ms |2684 ms
+|MiniLM window 50 (contains the 359-token doc)
+|1486 ms |1487 ms |1507 ms
 
-|inference only, 64×512
-|3244 ms |3238 ms |3400 ms
+|BGE-reranker-large window 10
+|640 ms |654 ms |686 ms
+
+|BGE-reranker-large window 25
+|1578 ms |1574 ms |1682 ms
+
+|BGE-reranker-large window 50 (359-token doc in window)
+|36.1 s |35.0 s |41.7 s
 |===
 
-~50 ms/pair, linear in window size — the fixed-512 padding signature. Debug-build
-numbers were within noise of release (the cost is ort graph execution, not
-codegen), which itself corroborates that padding dominates.
+Model comparison: BGE ≈ **21×** MiniLM's cost at matched windows (560M XLM-R vs
+22.7M BERT), and the long-doc tail multiplies it further — a heterogeneous
+window's cost is set by its longest member for every row. That makes MiniLM the
+latency-class serving default and BGE a precision option behind a budget gate,
+pending a production-data quality comparison that justifies its cost.
 
 === Model catalog
 
 `tests/fixtures/model_catalog.json` + `tests/model_catalog.rs` (runs ungated in
 every CI configuration): one entry per pinned reranker, carrying the artifact's
-real sha256 (90,970,605 bytes), the upstream revision as the version key, the
-serving io-spec contract, and `max_batch_size`. Enforced invariants: registration
-round-trips through `InMemoryModelRegistry`; duplicate registration is refused (a
-silent overwrite would let a swapped artifact keep old provenance); sha256 is not
-the null placeholder; **the catalog hash must equal the parity fixture's
-`onnx_sha256` byte-for-byte**, so the two files cannot drift apart. Adding a model
-to the evidence ledger without a catalog entry (or with a stale hash) now fails a
-test rather than a review.
+real content hash (MiniLM 90,970,605 bytes; BGE 2,240,184,300 bytes across graph +
+external weights, hashed as the combined digest of both files), the upstream
+revision as the version key, the serving io-spec contract, and `max_batch_size`.
+Enforced invariants: registration round-trips through `InMemoryModelRegistry`;
+duplicate registration is refused (a silent overwrite would let a swapped
+artifact keep old provenance); sha256 is not the null placeholder; **each catalog
+hash must equal its parity fixture's `onnx_sha256` byte-for-byte, and each parity
+fixture must have a catalog entry** — drift in either direction fails a test.
+
+Two pinned models now cover both halves of the session contract:
+
+[cols="3,2,2,2,2"]
+|===
+|Model |Revision |Slots |Parity max |Δ / Spearman |Env gate
+
+|`cross-encoder/ms-marco-MiniLM-L6-v2` |`4bebbd56` |3 (BERT, tti) |6.8e-06 / 1.000000
+|`PROXIMADB_TEST_BERT_ONNX_PATH`
+
+|`BAAI/bge-reranker-large` |`55611d7b` |2 (XLM-R, external weights) |1.4e-05 / 1.000000
+|`PROXIMADB_TEST_BGE_ONNX_PATH`
+|===
+
+BGE uses the upstream-shipped ONNX (graph + `model.onnx_data`), which
+`commit_from_file` loads directly — external-data artifacts need no special
+handling on the serving path.
+
+=== Harness integration
+
+`tests/retrieval_quality_gates.rs` grows a `#[cfg(feature = "onnx")]` module that
+runs the REAL production scorer as one more selector under the gate-4 protocol:
+same preserved pools, same `AnswerQualityEvaluator`, same paired statistics as
+the modelled strategies — the comparison isolates real-vs-modelled *scoring*,
+not window policy. Long docs are sentence-window split with max-over-window (the
+#1726 protocol) rather than rejected. Default CI compiles nothing from the module
+(root `onnx` feature off); it runs manually with the registered env gates.
 
 == Remaining gates
 
 * **Gate 3 (production)**: run the selector protocol on development data with the
   real retrievers and sealed held-out queries; promote only on paired significance.
-  With parity proven, the ONNX path can now *be* the scoring engine for that run.
-* **Follow-up (from the 11× finding)**: longest-in-batch padding in
-  `BertPairTokenizingDocFeatureExtractor`, gated by re-running the parity fixture.
-* **BGE-reranker-large**: same treatment (export → parity fixture → catalog entry)
-  when a gate needs a second model; the harness is now mechanical to extend.
+  With parity proven and the harness able to drive the real scorer, the ONNX path
+  can now *be* the scoring engine for that run.
+* **Length bucketing for heterogeneous windows**: one long document sets the whole
+  window's batch width (see the latency table). Bucketing or window-splitting
+  recovers it; the parity fixtures re-run as the gate.
+* **A third model** (e.g. an int8-quantized MiniLM): export → parity fixture →
+  catalog row — the harness is mechanical to extend now.
