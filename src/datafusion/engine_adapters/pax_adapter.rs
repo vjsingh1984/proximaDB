@@ -37,8 +37,8 @@ use std::sync::{Arc, OnceLock};
 
 use arrow_array::builder::{Float32Builder, ListBuilder};
 use arrow_array::{
-    ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array,
-    RecordBatch, StringArray,
+    ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array, RecordBatch,
+    StringArray,
 };
 use arrow_schema::{DataType, Field, SchemaRef};
 use async_trait::async_trait;
