@@ -35,10 +35,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use arrow_array::builder::Float32Builder;
+use arrow_array::builder::{Float32Builder, ListBuilder};
 use arrow_array::{
-    ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array, ListBuilder,
-    PrimitiveArray, RecordBatch, StringArray,
+    ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array,
+    RecordBatch, StringArray,
 };
 use arrow_schema::{DataType, Field, SchemaRef};
 use async_trait::async_trait;
@@ -525,7 +525,7 @@ impl PaxSplitReader {
 
                 let values_array = Arc::new(Float32Array::from(values));
                 Ok(Arc::new(FixedSizeListArray::new(
-                    field.as_ref().clone(),
+                    field.clone(),
                     *size,
                     values_array,
                     None, // nulls
