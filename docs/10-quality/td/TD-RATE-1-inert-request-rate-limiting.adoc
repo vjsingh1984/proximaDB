@@ -3,7 +3,8 @@
 = TD-RATE-1: REST request rate limiting is inert — a config field nothing reads, certified by a test
 :icons: font
 
-**Status:** Filed 2026-08-24. Mount/retire decision pending (owner: Vijay).
+**Status:** Filed 2026-08-24. **Option 1 (mount, default-off) SHIPPED
+2026-08-25** via `PROXIMADB_REST_RATE_LIMIT_RPM` — see "Resolution" below.
 **Origin:** TD-TENANT-4 (PR #1705) surfaced `rate_limit_middleware` as unmounted
 dead code and explicitly scoped it out as a non-goal. This TD records the full
 inventory so the mount-vs-retire decision is made on evidence, not impression.
@@ -94,6 +95,27 @@ incidentally.
 * TD annotations at the three deception points — the config field, the
   "secure by default" test, and the doc-example — each pointing here, so a
   reader meets the truth where the lie was.
+
+== Resolution (2026-08-25)
+
+Option 1 shipped: the REST router (both build paths) layers
+`rate_limit_middleware` from `rest_rate_limit_state_from_env()` —
+`PROXIMADB_REST_RATE_LIMIT_RPM`, unset => **no layer at all** (zero hot-path
+cost, default deployment unchanged). Mounted beside the v1-sunset layer, i.e.
+inside auth/tenant, so accounting aligns with the authenticated principal.
+Same `production(rpm, rpm)` shape as the pgwire gate (per-IP rpm/60s,
+process-global 10x ceiling). Keyed on the TD-TENANT-4 observed client address.
+Four new tests drive the REAL middleware through a router (429 envelope,
+`/health` exemption, per-IP isolation, gate truth table); the health exemption
+was negative-controlled (`if false &&` sabotage => `left: 429, right: 200`).
+
+Not shipped, deliberately: wiring the `[network.rate_limit]` TOML section — its
+parent `NetworkConfig` is itself unread by the boot path, so resurrecting that
+plumbing is a separate decomposition question, and an env gate mirrors the
+pgwire surface exactly. The section keeps its truth annotation. Also noted:
+`RateLimitLayer` implements no tower `Layer` trait at all — a constructible
+stub, the fourth artifact of the same false-assurance class; retiring it is a
+follow-up cleanup recorded here rather than silently left.
 
 == Non-goals
 
