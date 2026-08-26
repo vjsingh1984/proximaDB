@@ -35,10 +35,9 @@
 //! // Production security configuration
 //! let cors = CorsConfig::production()
 //!     .allow_origin("https://app.example.com");
-//! let rate_limit = RateLimitConfig::default(); // field defaults enabled=true,
-//!                                              // but the layer is NOT mounted —
-//!                                              // TD-RATE-1: constructing this
-//!                                              // configures nothing today
+//! // Request rate limiting on the REST surface is mounted via the env gate
+//! // PROXIMADB_REST_RATE_LIMIT_RPM (TD-RATE-1; unset = no layer). It is NOT
+//! // configured by constructing a RateLimitConfig here.
 //! let timeout = TimeoutConfig::default(); // 30 second timeout
 //! ```
 
@@ -57,7 +56,7 @@ pub mod v1_sunset;
 pub use auth::{AuthLayer, MiddlewareAuthConfig, UserInfo};
 pub use backpressure::{BackpressureConfig, create_concurrency_limit_layer};
 pub use cors::{CorsConfig, CorsConfigError, create_cors_layer};
-pub use rate_limit::{RateLimitConfig, RateLimitLayer};
+pub use rate_limit::RateLimitConfig;
 pub use request_id::{
     RequestId, RequestIdExt, RequestIdLayer, X_REQUEST_ID, request_id_middleware,
 };
