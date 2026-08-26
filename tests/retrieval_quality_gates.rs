@@ -777,3 +777,341 @@ fn answer_quality_report() {
     assert!(f1("xenc_w25") < f1("xenc_w100"));
     assert!(f1("xenc_w100") <= f1("keeps_everything") + 1e-12);
 }
+
+// ===========================================================================
+// Gate 5 — real ONNX reranking under the selector protocol
+// ===========================================================================
+//
+// The `SelectorStrategy::CrossEncoderRerank` above is a *modelled* reranker
+// (window + quality parameters) — deliberately, so the default build needs no
+// model artifacts. This section runs the REAL production scorer
+// (`BertPairTokenizingDocFeatureExtractor` → `OrtTokenizedScorerSession`) as one
+// more selector over the same preserved pools, through the same answer-quality
+// protocol and paired statistics. Feature-gated on the root `onnx` feature
+// (which forwards rank-onnx's real-onnx + bert-tokenizer), env-gated on the
+// registered model-path gates, so default CI compiles nothing here.
+
+#[cfg(feature = "onnx")]
+mod onnx_selector {
+    //! The REAL production scorer as one more selector under the gate-4
+    //! protocol: same preserved pools, same `AnswerQualityEvaluator`, same
+    //! paired statistics as the modelled strategies — the comparison isolates
+    //! real-vs-modelled *scoring*, not window policy. Feature-gated on the root
+    //! `onnx` feature (which forwards rank-onnx's real-onnx + bert-tokenizer)
+    //! and env-gated on the registered `PROXIMADB_TEST_BERT_ONNX_PATH`, so
+    //! default CI compiles nothing from this module.
+
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::{Arc, RwLock};
+
+    use anyhow::{Result, anyhow};
+
+    use super::answer_quality_data::{QaBed, QaBedConfig, generate_qa_bed};
+    use super::bench_answer_quality::{
+        AnswerExtractor, AnswerQualityEvaluator, BestSentence, SelectorRankings, WholeTopDocument,
+        sentence_bounds,
+    };
+    use super::bench_selector_benchmark::{
+        ResultSource, SelectorBenchmark, SelectorConfig, SelectorResult,
+    };
+
+    /// Shared doc-text source: ONE stateless extractor serves every request,
+    /// with per-call window texts swapped in (the R-5b.1.3 production shape).
+    /// This also keeps the `tokenizers` type inside rank-onnx — the root crate
+    /// does not depend on it directly.
+    struct SharedTexts(RwLock<HashMap<u32, String>>);
+
+    impl proximadb_rank_onnx::bert_pair_tokenizing_extractor::DocTextSource for SharedTexts {
+        fn doc_text(
+            &self,
+            doc: proximadb_rank_core::DocHandle,
+        ) -> proximadb_rank_core::RankResult<Option<String>> {
+            Ok(self
+                .0
+                .read()
+                .ok()
+                .and_then(|texts| texts.get(&doc.0).cloned()))
+        }
+    }
+
+    /// The real production scorer: one extractor + one session behind a
+    /// per-(query, doc) call. Docs longer than the model budget are split into
+    /// sentence windows (the #1726 zero-truncation protocol) and scored in ONE
+    /// batched session call — max-over-window is the doc score.
+    struct RealScorer {
+        extractor: proximadb_rank_onnx::bert_pair_tokenizing_extractor::BertPairTokenizingDocFeatureExtractor,
+        texts: Arc<SharedTexts>,
+        session: proximadb_rank_onnx::ort_tokenized_scorer_session::OrtTokenizedScorerSession,
+        max_seq_len: usize,
+        emits_tti: bool,
+    }
+
+    impl RealScorer {
+        fn load(model_path: &Path, input_slots: usize) -> Result<Self> {
+            use proximadb_rank_onnx::descriptor::{
+                DType, ModelDescriptor, ModelFramework, ModelKey, TensorIoSpec,
+            };
+
+            let max_seq_len = 512usize;
+            let emits_tti = input_slots == 3;
+            let slot_names: &[&str] = if emits_tti {
+                &["input_ids", "attention_mask", "token_type_ids"]
+            } else {
+                &["input_ids", "attention_mask"]
+            };
+            // The tokenizer loads through the extractor's own file constructor —
+            // the root crate never names the `tokenizers` types directly.
+            let texts = Arc::new(SharedTexts(RwLock::new(HashMap::new())));
+            let extractor =
+                proximadb_rank_onnx::bert_pair_tokenizing_extractor::BertPairTokenizingDocFeatureExtractor::from_tokenizer_file(
+                    &model_path.with_file_name("tokenizer.json"),
+                    texts.clone(),
+                    max_seq_len,
+                    emits_tti,
+                )
+                .map_err(|e| anyhow!("extractor construction: {e}"))?;
+            let descriptor = ModelDescriptor {
+                key: ModelKey::new("selector-bench-reranker", "gate5"),
+                tenant: None,
+                uri: format!("file://{}", model_path.display()),
+                sha256: [0; 32],
+                size_bytes: 0,
+                framework: ModelFramework::Onnx,
+                dtype: DType::Fp32,
+                input_spec: slot_names
+                    .iter()
+                    .map(|name| TensorIoSpec {
+                        name: (*name).into(),
+                        shape: vec![None, Some(max_seq_len as i64)],
+                        dtype: DType::Fp32,
+                    })
+                    .collect(),
+                output_spec: vec![TensorIoSpec {
+                    name: "logits".into(),
+                    shape: vec![None],
+                    dtype: DType::Fp32,
+                }],
+                max_batch_size: 64,
+                seq: 0,
+                created_at_ms: 0,
+            };
+            let session =
+                proximadb_rank_onnx::ort_tokenized_scorer_session::OrtTokenizedScorerSession::load_from_file(
+                    descriptor,
+                    model_path,
+                )?;
+            Ok(Self {
+                extractor,
+                texts,
+                session,
+                max_seq_len,
+                emits_tti,
+            })
+        }
+
+        /// Score one (query, doc) pair. Windows that still overflow the budget
+        /// are dropped (zero-truncation), not scored truncated; a doc with
+        /// nothing scoreable keeps a finite tail-of-window slot (0.0).
+        fn score_pair(&self, query: &str, doc: &str) -> f64 {
+            use proximadb_rank_core::{DocHandle, QueryContext};
+            use proximadb_rank_onnx::tokenized_doc_feature_extractor::TokenizedDocFeatureExtractor;
+            use proximadb_rank_onnx::tokenized_scorer_session::TokenizedScorerSession;
+
+            let windows: Vec<String> = sentence_bounds(doc)
+                .into_iter()
+                .map(|(start, end)| doc[start..end].to_string())
+                .collect();
+            if windows.is_empty() {
+                return 0.0;
+            }
+
+            // Swap this doc's windows into the shared source; the extractor
+            // itself stays stateless across requests by construction.
+            if let Ok(mut texts) = self.texts.0.write() {
+                texts.clear();
+                for (i, window) in windows.iter().enumerate() {
+                    texts.insert(i as u32, window.clone());
+                }
+            }
+            let qctx = QueryContext {
+                query_text: Some(Arc::from(query)),
+                ..QueryContext::default()
+            };
+            let docs: Vec<DocHandle> = (0..windows.len() as u32).map(DocHandle).collect();
+            // The extractor rejects the WHOLE batch if any window overflows, so
+            // fall back to per-window scoring when the batch fails — batched for
+            // the common case, per-window for the rare long tail.
+            let scores: Vec<f32> = match self.extractor.extract_batch(&docs, &qctx) {
+                Ok(batch) => self.session.score(&batch).unwrap_or_default(),
+                Err(_) => docs
+                    .iter()
+                    .filter_map(|doc| {
+                        let batch = self
+                            .extractor
+                            .extract_batch(std::slice::from_ref(doc), &qctx)
+                            .ok()?;
+                        self.session.score(&batch).ok()?.first().copied()
+                    })
+                    .collect(),
+            };
+            if scores.is_empty() {
+                0.0
+            } else {
+                scores
+                    .iter()
+                    .copied()
+                    .fold(f64::NEG_INFINITY, |acc, s| acc.max(s as f64))
+            }
+        }
+    }
+
+    /// Rerank the head of `upstream` with the real cross-encoder. Docs outside
+    /// the window are dropped — the same truncation contract as the modelled
+    /// reranker, so the comparison isolates real-vs-modelled SCORING, not
+    /// window policy. Deterministic tie-break on doc id.
+    fn onnx_rerank(
+        query: &str,
+        upstream: &[SelectorResult],
+        corpus: &HashMap<String, String>,
+        window: usize,
+        scorer: &RealScorer,
+    ) -> Vec<SelectorResult> {
+        let mut scored: Vec<(String, f64)> = upstream
+            .iter()
+            .take(window)
+            .map(|result| {
+                let score = corpus
+                    .get(&result.doc_id)
+                    .map(|text| scorer.score_pair(query, text))
+                    // Unresolvable text cannot be scored; keep a finite tail slot.
+                    .unwrap_or(f64::NEG_INFINITY);
+                (result.doc_id.clone(), score)
+            })
+            .collect();
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        scored
+            .into_iter()
+            .enumerate()
+            .map(|(rank, (doc_id, score))| SelectorResult {
+                doc_id,
+                score,
+                rank,
+                source: ResultSource::Reranked,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn real_onnx_reranker_scores_under_the_selector_protocol() {
+        let Ok(model) = std::env::var("PROXIMADB_TEST_BERT_ONNX_PATH") else {
+            eprintln!("skipping: PROXIMADB_TEST_BERT_ONNX_PATH not set");
+            return;
+        };
+        let model_path = Path::new(&model);
+        if !model_path.exists() {
+            eprintln!("skipping: {model_path:?} does not exist");
+            return;
+        }
+        let scorer = RealScorer::load(model_path, 3).expect("real scorer loads");
+
+        // Real inference is paid per (pair, window); keep the bed small enough
+        // for a manual run on a laptop while spanning all answer types.
+        let bed: QaBed = generate_qa_bed(&QaBedConfig {
+            num_questions: 20,
+            ..QaBedConfig::default()
+        });
+        let benchmark = SelectorBenchmark::new(
+            bed.ground_truth.clone(),
+            bed.candidate_pools.clone(),
+            bed.queries.clone(),
+        );
+
+        let noop_rankings = benchmark
+            .rankings(&SelectorConfig::noop("noop"))
+            .expect("noop rankings");
+
+        // The control: noop truncated to the SAME window. Real-vs-noop_w10 then
+        // isolates pure re-ORDERING inside an identical 10-document set —
+        // membership, window policy, and the extractor are all held fixed.
+        let mut noop_w10: SelectorRankings = HashMap::new();
+        for (query_id, ranking) in &noop_rankings {
+            noop_w10.insert(query_id.clone(), ranking.iter().take(10).cloned().collect());
+        }
+
+        let mut real_rankings: SelectorRankings = HashMap::new();
+        for qa in &bed.qa_pairs {
+            let upstream = noop_rankings
+                .get(&qa.query_id)
+                .expect("noop ranked every query");
+            let reranked = onnx_rerank(&qa.query_text, upstream, &bed.corpus, 10, &scorer);
+
+            // Membership preservation under REAL inference: a reranker reorders
+            // its window; it must never change which documents the window holds.
+            let upstream_set: Vec<&str> = upstream
+                .iter()
+                .take(10)
+                .map(|r| r.doc_id.as_str())
+                .collect();
+            let reranked_set: Vec<&str> = reranked.iter().map(|r| r.doc_id.as_str()).collect();
+            assert_eq!(
+                upstream_set.len(),
+                reranked_set.len(),
+                "the real reranker must emit exactly its window"
+            );
+            for doc in &upstream_set {
+                assert!(
+                    reranked_set.contains(doc),
+                    "real reranker dropped '{doc}' from its window — reorder only"
+                );
+            }
+
+            real_rankings.insert(qa.query_id.clone(), reranked);
+        }
+
+        // Ordering quality, gate-2 metrics: does REAL cross-encoder scoring rank
+        // the gold document higher within the window than raw score order did?
+        use super::bench_selector_benchmark::{recall_at_ks, reciprocal_rank};
+        let mrr_of = |rankings: &SelectorRankings| -> f64 {
+            bed.ground_truth
+                .iter()
+                .map(|gt| {
+                    rankings
+                        .get(&gt.query_id)
+                        .map(|r| reciprocal_rank(r, gt))
+                        .unwrap_or(0.0)
+                })
+                .sum::<f64>()
+                / bed.ground_truth.len() as f64
+        };
+        let noop_mrr = mrr_of(&noop_w10);
+        let real_mrr = mrr_of(&real_rankings);
+        println!("MRR within window 10: noop {noop_mrr:.4} vs real-onnx {real_mrr:.4}");
+        assert!(
+            real_mrr >= noop_mrr,
+            "real cross-encoder scoring must not order the window worse than raw              order: real {real_mrr:.4} vs noop {noop_mrr:.4}"
+        );
+
+        // Gate-4 view of the same two rankings (same window, so any difference
+        // is ordering reaching the answer extractors).
+        let results = AnswerQualityEvaluator::new(vec![
+            Box::new(BestSentence::new(10)),
+            Box::new(WholeTopDocument),
+        ])
+        .with_resamples(200)
+        .evaluate(
+            &bed.qa_pairs,
+            &bed.corpus,
+            &[
+                ("noop_w10".to_string(), noop_w10),
+                ("real_onnx_w10".to_string(), real_rankings),
+            ],
+        )
+        .expect("evaluation runs");
+        println!("{}", results.render());
+    }
+}

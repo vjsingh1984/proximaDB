@@ -10,11 +10,6 @@ use proximadb_rank_onnx::descriptor::{ModelDescriptor, ModelFramework};
 use proximadb_rank_onnx::registry::{InMemoryModelRegistry, ModelRegistry};
 use serde::Deserialize;
 
-/// Every catalog entry pins an upstream revision and a content hash. The parity
-/// fixture's `onnx_sha256` must agree with this catalog byte-for-byte — asserted
-/// below so the two files cannot drift.
-const PARITY_FIXTURE: &str = include_str!("fixtures/onnx_parity_fixture.json");
-
 /// Wire format of `fixtures/model_catalog.json`. `sha256` is hex in the file
 /// (the human convention) and converted to the descriptor's `[u8; 32]` here, at
 /// the boundary, so the checked-in catalog stays diffable.

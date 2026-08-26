@@ -137,6 +137,29 @@ pub struct BertPairTokenizingDocFeatureExtractor {
 }
 
 impl BertPairTokenizingDocFeatureExtractor {
+    /// Construct from a `tokenizer.json` path. Production deployments (and
+    /// out-of-crate callers that do not depend on `tokenizers` directly) load
+    /// from disk; this keeps the tokenizer type inside the crate.
+    #[cfg(feature = "bert-tokenizer")]
+    pub fn from_tokenizer_file(
+        tokenizer_path: &std::path::Path,
+        doc_text_source: Arc<dyn DocTextSource>,
+        max_seq_len: usize,
+        emit_token_type_ids: bool,
+    ) -> RankResult<Self> {
+        let tokenizer =
+            tokenizers::Tokenizer::from_file(tokenizer_path).map_err(|e| RankError::ModelLoad {
+                model_id: "bert_pair_extractor".into(),
+                reason: format!("tokenizer load {}: {e}", tokenizer_path.display()),
+            })?;
+        Ok(Self::new(
+            Arc::new(tokenizer),
+            doc_text_source,
+            max_seq_len,
+            emit_token_type_ids,
+        ))
+    }
+
     pub fn new(
         tokenizer: Arc<tokenizers::Tokenizer>,
         doc_text_source: Arc<dyn DocTextSource>,
@@ -474,7 +497,11 @@ mod tests {
             "alpha beta",
             64,
             false,
-            &[(1, "doc one"), (2, "doc two"), (3, "doc three with more words")],
+            &[
+                (1, "doc one"),
+                (2, "doc two"),
+                (3, "doc three with more words"),
+            ],
         );
         let b = e
             .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)], &qctx)
@@ -516,7 +543,7 @@ mod tests {
         let (e, qctx) = extractor_with("query", 8, true, &[(1, "doc")]);
         let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
         assert!(b.token_type_ids.is_some());
-        let tti = b.token_type_ids.unwrap();
+        let tti = b.token_type_ids.clone().unwrap();
         assert_eq!(tti.len(), 1);
         // Single-row batch: width is that row's own true length, under the cap.
         assert_eq!(tti[0].len(), b.seq_len());
