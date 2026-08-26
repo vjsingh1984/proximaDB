@@ -5105,7 +5105,7 @@ impl PostgresProtocol {
     }
 
     async fn emit_portal_page(&mut self, portal_name: &str, max_rows: usize) -> Result<()> {
-        let (rows, finished) = {
+        let (page, offsets, finished) = {
             let Some(portal) = self.portals.get_mut(portal_name) else {
                 return self
                     .send_error(
@@ -5122,23 +5122,28 @@ impl PostgresProtocol {
             let start = state.next_row;
             let (end, finished) =
                 Self::portal_page_bounds(state.result.rows.len(), state.next_row, max_rows);
-            let rows: Vec<Vec<Option<String>>> = state.result.rows[start..end]
-                .iter()
-                .map(|row| {
-                    row.iter()
-                        .map(super::relational_pipeline::text_encode)
-                        .collect()
-                })
-                .collect();
+            // Sends need &mut self, so the page must be materialized out of
+            // the portal borrow — but as ONE flat cell buffer plus per-row
+            // offsets (was a nested Vec<Vec<Option<String>>> with a Vec
+            // allocation per row per page). Ragged rows stay exact.
+            let mut page: Vec<Option<String>> = Vec::new();
+            let mut offsets: Vec<usize> = Vec::with_capacity(end - start + 1);
+            offsets.push(0);
+            for row in &state.result.rows[start..end] {
+                page.extend(row.iter().map(super::relational_pipeline::text_encode));
+                offsets.push(page.len());
+            }
             state.next_row = end;
-            (rows, finished)
+            (page, offsets, finished)
         };
 
-        for row in &rows {
-            self.send_data_row_nullable(row).await?;
+        let row_count = offsets.len().saturating_sub(1);
+        for bounds in offsets.windows(2) {
+            self.send_data_row_nullable(&page[bounds[0]..bounds[1]])
+                .await?;
         }
         if finished {
-            self.send_command_complete(&format!("SELECT {}", rows.len()))
+            self.send_command_complete(&format!("SELECT {}", row_count))
                 .await
         } else {
             self.send_portal_suspended().await
