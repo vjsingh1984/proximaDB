@@ -1007,6 +1007,8 @@ pub async fn try_run_select(
         String,
         crate::query::execution::olap_delta_merge::OlapDeltaTable,
     > = HashMap::new();
+    // TD-OLAP-1 Test 2.1: per-table PAX-backed flag (has ProximaBlock format layout)
+    let mut pax_tables: std::collections::HashSet<String> = std::collections::HashSet::new();
     for raw in &names {
         let key = normalize_table_key(raw);
         if tables.contains_key(&key) {
@@ -1021,6 +1023,10 @@ pub async fn try_run_select(
                     if let Some(params) = olap_delta_table_params(&catalog_schema) {
                         olap_delta_tables.insert(key.clone(), params);
                     }
+                }
+                // TD-OLAP-1 Test 2.1: Track PAX-backed tables from catalog signals
+                if catalog_table_is_pax_backed(&catalog_schema) {
+                    pax_tables.insert(key.clone());
                 }
                 tables.insert(key, PreparedTable::from_catalog(raw, &catalog_schema));
             }
@@ -1045,6 +1051,14 @@ pub async fn try_run_select(
         && tables.keys().all(|k| parquet_loc_by_key.contains_key(k));
     #[cfg(not(feature = "datafusion-integration"))]
     let parquet_backed = false;
+
+    // TD-OLAP-1 Test 2.1: compute the per-query PAX-backed signal from catalog
+    // PAX format detection. A table is PAX-backed if it has ANY storage layout
+    // with ProximaBlock format (the native vector+relational hybrid format).
+    // Mixed PAX+non-PAX queries report `false` (cross-engine join is later phase).
+    let pax_backed = !relational_abac_required
+        && !tables.is_empty()
+        && tables.keys().all(|k| pax_tables.contains(k));
 
     // C4 Phase-2b: refine the shape-class with real fan-out / cardinality for
     // hot Parquet-backed tables, peeked from the in-memory stat cache warmed by
@@ -1082,7 +1096,8 @@ pub async fn try_run_select(
     let shape = crate::query::compute_scheduler::QueryShape {
         engages_relational: true,
         parquet_backed,
-        pax_backed: false,
+        // TD-OLAP-1 Test 2.1: Route flip from catalog signals (no longer hard-coded)
+        pax_backed,
         partition_fanout,
         cardinality,
         operation_class,
@@ -2066,6 +2081,22 @@ fn catalog_table_is_parquet_backed(
             None
         }
     })
+}
+
+/// Check if a catalog table is PAX-backed (has ProximaBlock format storage layout).
+///
+/// Returns `true` if the table has ANY storage layout with `ProximaBlock` format,
+/// `false` otherwise. This is the PAX analog of `catalog_table_is_parquet_backed`
+/// but returns a bool instead of an optional location (PAX location is derived
+/// via `DrPathBuilder`, not catalog.location).
+fn catalog_table_is_pax_backed(
+    schema: &proximadb_catalog::CatalogTableSchema,
+) -> bool {
+    use proximadb_catalog::CatalogPhysicalFormat;
+    schema
+        .storage_layouts
+        .iter()
+        .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock))
 }
 
 /// Derive a parquet table's [`StatsTrust`] from its catalog authority. The ONLY
