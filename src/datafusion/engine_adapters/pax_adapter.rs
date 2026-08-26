@@ -503,8 +503,6 @@ impl PaxSplitReader {
             {
                 // Fixed-size vectors: FixedSizeList<Float32, N>
                 let mut values = Vec::new();
-                let valid_count = vectors.iter().filter(|v| v.is_some()).count();
-                let num_rows = vectors.len();
 
                 for vec_opt in &vectors {
                     if let Some(vec) = vec_opt {
