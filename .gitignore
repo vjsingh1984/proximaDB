@@ -306,6 +306,9 @@ docs/log/
 !config.json
 # Versioned wire contracts (e.g. statistics-envelope.v1) must track without -f.
 !docs/12-design/contracts/*.json
+# Pinned-model parity fixtures and the model catalog are hand-versioned test
+# sources (TD-SELECTOR-1 gate 5) — include_str! requires them in-tree.
+!crates/modalities/proximadb-rank-onnx/tests/fixtures/*.json
 # Recorded chunking output snapshot: a committed test fixture, not generated
 # runtime data. It is the oracle proving a refactor changed no output, so it must
 # track without -f or a regeneration silently stops being committed.

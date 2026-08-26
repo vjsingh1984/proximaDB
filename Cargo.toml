@@ -887,7 +887,15 @@ rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 # without it the BGE route returns ModelUnavailable (synthetic fallback is
 # forbidden in production paths). Tests that exercise real embedding are gated
 # on this feature.
-onnx = ["proximadb-embedding/onnx"]
+onnx = [
+  "proximadb-embedding/onnx",
+  # TD-SELECTOR-1 gate 5: the root `onnx` surface now includes the rank
+  # cross-encoder path, so the cloud-full+onnx Feature-Matrix job compiles
+  # (and env-gate-skips) the ONNX parity tests instead of letting the gated
+  # code rot unbuilt (the enterprise-catalogs lesson).
+  "proximadb-rank-onnx/real-onnx",
+  "proximadb-rank-onnx/bert-tokenizer",
+]
 
 # Cloud storage features (optional to avoid linking issues during testing)
 aws = ["object_store/aws", "proximadb-catalog/aws"]
