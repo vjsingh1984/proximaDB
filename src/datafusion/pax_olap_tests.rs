@@ -414,4 +414,102 @@ mod tests {
             "decode_f32_vec_stripe handles both RaBitQ and plain f32"
         );
     }
+
+    /// Test 2.5: Grouped aggregates execute over the PAX scan.
+    ///
+    /// Per ADR-052 / the ComputeBackend seam, DataFusion's own vectorized
+    /// AggregateExec performs GROUP BY ON TOP of the PAX-native scan (the repo
+    /// builds no native HashAgg). This drives the real pipeline end-to-end at
+    /// SessionContext level: `write_pax_segment` → `discover_pax_segments` →
+    /// [`crate::datafusion::engine_adapters::PaxTableProvider`] →
+    /// `ProximaScanExec`/`PaxSplitReader` → Arrow batches → DataFusion
+    /// aggregation → SQL-visible results.
+    #[tokio::test]
+    async fn grouped_aggregates_execute_over_pax_scan() {
+        use arrow_schema::{DataType, Field, Schema};
+        use datafusion::prelude::SessionContext;
+        use proximadb_block_format::{VectorQuant, col_id};
+        use proximadb_records::ProximaRecord;
+
+        use crate::datafusion::engine_adapters::register_pax_location;
+        use crate::storage::engines::sst::segment_format::write_pax_segment;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+
+        // Given: a real .pax segment whose five rows span two tenants (2 + 3).
+        let mk = |oid: &str, tenant: &str| ProximaRecord {
+            oid: oid.into(),
+            tenant_id: tenant.into(),
+            ..Default::default()
+        };
+        let records = vec![
+            mk("a1", "alpha"),
+            mk("a2", "alpha"),
+            mk("b1", "beta"),
+            mk("b2", "beta"),
+            mk("b3", "beta"),
+        ];
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let seg_path = tmp.path().join("seg.pax");
+        write_pax_segment(&seg_path, &records, "agg_col", 0, VectorQuant::Auto, None)
+            .expect("write_pax_segment");
+
+        // When: the segment directory is registered as a DataFusion table via
+        // the real provider entry point, then queried with GROUP BY.
+        let fs = Arc::new(
+            FilesystemFactory::create_default()
+                .await
+                .expect("fs factory"),
+        );
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "tenant_id",
+            DataType::Utf8,
+            false,
+        )]));
+        let name_to_col_id =
+            std::collections::HashMap::from([(String::from("tenant_id"), col_id::TENANT_ID)]);
+        let ctx = SessionContext::new();
+        register_pax_location(
+            &ctx,
+            "seg",
+            &tmp.path().display().to_string(),
+            schema,
+            name_to_col_id,
+            fs,
+            None, // tenant_id filter (Test 2.3 seam; not exercised here)
+            None, // time_range filter (Test 2.3 seam; not exercised here)
+        )
+        .await
+        .expect("register_pax_location");
+
+        let result = ctx
+            .sql("SELECT tenant_id, COUNT(*) AS cnt FROM seg GROUP BY tenant_id ORDER BY tenant_id")
+            .await
+            .expect("plan GROUP BY over PAX table")
+            .collect()
+            .await
+            .expect("collect aggregate output");
+
+        // Then: grouped counts match the written rows exactly.
+        let mut got: Vec<(String, i64)> = Vec::new();
+        for batch in &result {
+            let tenants = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow_array::StringArray>()
+                .expect("tenant_id group-key column");
+            let counts = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow_array::Int64Array>()
+                .expect("COUNT(*) column");
+            for i in 0..batch.num_rows() {
+                got.push((tenants.value(i).to_string(), counts.value(i)));
+            }
+        }
+        assert_eq!(
+            got,
+            vec![("alpha".to_string(), 2), ("beta".to_string(), 3)],
+            "GROUP BY over the PAX scan must produce correct per-tenant counts"
+        );
+    }
 }
