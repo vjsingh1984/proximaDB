@@ -2179,8 +2179,8 @@ fn olap_delta_table_params(
 struct EngineCatalog(Arc<InMemoryRelationalEngine>);
 
 impl CatalogLookup for EngineCatalog {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
-        self.0.schema_of(name)
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+        self.0.schema_of(name).map(std::sync::Arc::new)
     }
 }
 
@@ -2237,11 +2237,11 @@ struct SnapshotCatalog {
 }
 
 impl CatalogLookup for SnapshotCatalog {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+        // Refcount bump — the per-lookup schema deep clone is gone.
         self.tables
             .get(&normalize_table_key(name))
-            // Port trait returns an owned schema; clone through the Arc.
-            .map(|t| (*t.schema).clone())
+            .map(|t| std::sync::Arc::clone(&t.schema))
     }
 }
 

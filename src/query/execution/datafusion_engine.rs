@@ -162,7 +162,7 @@ impl DataFusionLocalEngine {
         // TD-OLAP-4: time lowering + logical/physical planning (the other half of
         // the per-query floor, separate from execution).
         let plan_start = std::time::Instant::now();
-        let mut schemas: HashMap<String, RelationalSchema> = HashMap::new();
+        let mut schemas: HashMap<String, std::sync::Arc<RelationalSchema>> = HashMap::new();
         for (name, _) in &context.parquet_tables {
             let provider = ctx
                 .table_provider(name.as_str())
@@ -181,7 +181,10 @@ impl DataFusionLocalEngine {
                     )
                 })
                 .collect();
-            schemas.insert(normalize_table_key(name), RelationalSchema::new(cols));
+            schemas.insert(
+                normalize_table_key(name),
+                std::sync::Arc::new(RelationalSchema::new(cols)),
+            );
         }
 
         let catalog = ParquetSchemaCatalog { schemas };
@@ -357,13 +360,15 @@ impl DataFusionLocalEngine {
 
 #[cfg(feature = "datafusion-integration")]
 struct ParquetSchemaCatalog {
-    schemas: HashMap<String, RelationalSchema>,
+    schemas: HashMap<String, std::sync::Arc<RelationalSchema>>,
 }
 
 #[cfg(feature = "datafusion-integration")]
 impl proximadb_relational_frontend::CatalogLookup for ParquetSchemaCatalog {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
-        self.schemas.get(&normalize_table_key(name)).cloned()
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+        self.schemas
+            .get(&normalize_table_key(name))
+            .map(std::sync::Arc::clone)
     }
 }
 

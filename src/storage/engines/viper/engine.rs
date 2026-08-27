@@ -91,6 +91,26 @@ use proximadb_storage_common::storage_path::StoragePath;
 /// - **Optimization**: Analytics/batch vs OLTP/real-time
 /// - **Compression**: 5-10x vs 3-5x
 /// - **Query Pattern**: Scan/aggregate vs point lookup
+///
+/// Per-row values of a `vector_fp32` column, accepting both Arrow list flavors
+/// the engine's writers emit: `List` from the shared columnar path, and
+/// `FixedSizeList` from the viper Parquet factory.
+fn list_row_values(
+    col: &dyn arrow_array::Array,
+    row_idx: usize,
+) -> Option<std::sync::Arc<dyn arrow_array::Array>> {
+    if let Some(list) = col.as_any().downcast_ref::<arrow_array::ListArray>() {
+        Some(list.value(row_idx))
+    } else if let Some(fixed) = col
+        .as_any()
+        .downcast_ref::<arrow_array::FixedSizeListArray>()
+    {
+        Some(fixed.value(row_idx))
+    } else {
+        None
+    }
+}
+
 pub struct ViperEngine {
     /// **Internal Engine Configuration**
     ///
@@ -1148,14 +1168,6 @@ impl ViperEngine {
                 // Find matching ID
                 for row_idx in 0..batch.num_rows() {
                     if id_array.value(row_idx) == vector_id {
-                        // Found a match! Extract the full record
-                        let vector_array = batch
-                            .column_by_name(FIELD_VECTOR_FP32)
-                            .and_then(|col| col.as_any().downcast_ref::<ListArray>())
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("Missing or invalid 'vector_fp32' column")
-                            })?;
-
                         let timestamp = batch
                             .column_by_name(FIELD_TIMESTAMP)
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
@@ -1182,8 +1194,18 @@ impl ViperEngine {
                             debug!("Skipping expired vector {} (expired at {})", vector_id, exp);
                             continue;
                         }
-                        // Extract vector data
-                        let vector_values = vector_array.value(row_idx);
+                        // Extract vector data. The write side emits
+                        // `vector_fp32` as a FixedSizeList (factory.rs
+                        // schema); accept BOTH list flavors — the previous
+                        // ListArray-only downcast rejected every
+                        // engine-written file ("Missing or invalid
+                        // 'vector_fp32' column" on point reads).
+                        let vector_values = batch
+                            .column_by_name(FIELD_VECTOR_FP32)
+                            .and_then(|col| list_row_values(col, row_idx))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("Missing or invalid 'vector_fp32' column")
+                            })?;
                         let vector_float_array = vector_values
                             .as_any()
                             .downcast_ref::<Float32Array>()
