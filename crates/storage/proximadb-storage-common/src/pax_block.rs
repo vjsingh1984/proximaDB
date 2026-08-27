@@ -84,15 +84,15 @@ pub const ZONE_INDEX_MARKER: &[u8; 4] = b"PAXZ";
 
 // Bit positions in [`BlockZoneSummary::present`] — only the numeric canonical
 // columns predicate pushdown prunes on without decoding rows.
-const ZONE_CREATED_AT: u8 = 1 << 0;
-const ZONE_UPDATED_AT: u8 = 1 << 1;
-const ZONE_VALID_FROM: u8 = 1 << 2;
-const ZONE_VALID_TO: u8 = 1 << 3;
-const ZONE_EDGE_WEIGHT: u8 = 1 << 4;
+pub(crate) const ZONE_CREATED_AT: u8 = 1 << 0;
+pub(crate) const ZONE_UPDATED_AT: u8 = 1 << 1;
+pub(crate) const ZONE_VALID_FROM: u8 = 1 << 2;
+pub(crate) const ZONE_VALID_TO: u8 = 1 << 3;
+pub(crate) const ZONE_EDGE_WEIGHT: u8 = 1 << 4;
 
 /// Serialized fixed width of a [`BlockZoneSummary`]: row_count(4) + present(1) +
 /// 4×(i64,i64)=64 + (f64,f64)=16.
-const ZONE_SUMMARY_BYTES: usize = 4 + 1 + 64 + 16;
+pub(crate) const ZONE_SUMMARY_BYTES: usize = 4 + 1 + 64 + 16;
 /// v2 per-block index entry width: offset(8) + size(4) + zone summary.
 const V2_ENTRY_BYTES: usize = 8 + 4 + ZONE_SUMMARY_BYTES;
 
@@ -171,7 +171,7 @@ impl BlockZoneSummary {
         s
     }
 
-    fn write_to(&self, buf: &mut Vec<u8>) {
+    pub(crate) fn write_to(&self, buf: &mut Vec<u8>) {
         buf.extend_from_slice(&self.row_count.to_le_bytes());
         buf.push(self.present);
         for (lo, hi) in [
@@ -187,7 +187,7 @@ impl BlockZoneSummary {
         buf.extend_from_slice(&self.edge_weight.1.to_le_bytes());
     }
 
-    fn read_from(data: &[u8]) -> Result<Self> {
+    pub(crate) fn read_from(data: &[u8]) -> Result<Self> {
         if data.len() < ZONE_SUMMARY_BYTES {
             bail!("zone summary truncated");
         }
@@ -1682,6 +1682,7 @@ impl PaxSegmentWriter {
             embed_quant_tag: 1,
             has_f32_tier: self.f32_tier,
             blocks,
+            block_stats: Vec::new(),
             encoding_map,
             block_tier_assignments,
             a0_off,
@@ -1702,6 +1703,8 @@ impl PaxSegmentWriter {
             footer_len,
             a0_off,
             a0_len,
+            c_off: 0,
+            c_len: 0,
         };
         let header_bytes = header.to_bytes();
         let mut tail = Vec::with_capacity(16);
@@ -2124,6 +2127,7 @@ impl PaxSegmentWriter {
             embed_quant_tag: 1, // SQ8 rerank tier — now Region B (hoisted out of blocks)
             has_f32_tier: self.f32_tier,
             blocks,
+            block_stats: Vec::new(),
             encoding_map,
             block_tier_assignments,
             a0_off,
@@ -2145,6 +2149,8 @@ impl PaxSegmentWriter {
             footer_len,
             a0_off,
             a0_len,
+            c_off: 0,
+            c_len: 0,
         };
 
         // 4. Stream the already-ordered regions into the local staging file.

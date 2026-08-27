@@ -29,14 +29,15 @@ use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
     PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
 };
-// These three are now used only by this module's `#[cfg(test)]` suite — the
+// These are now used only by this module's `#[cfg(test)]` suite — the
 // detection (`SegmentFormat` / `is_pax_segment`) and the PAX-decode body they
 // served moved down to `proximadb-storage-common`. Gated to test so the non-test
 // lib build stays warning-clean under clippy `-D warnings` (the CI gate).
 #[cfg(test)]
 use proximadb_block_format::BLOCK_MAGIC;
-#[cfg(test)]
-use proximadb_storage_common::segment_layout::{SegmentHeaderPrefix, is_coalesced_segment};
+use proximadb_storage_common::segment_layout::{
+    SEG_HEADER_PREFIX_V4_LEN, SegmentHeaderPrefix, is_coalesced_segment,
+};
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache;
@@ -821,7 +822,8 @@ pub(crate) async fn pax_filtered_row_allow(
     if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
         return Ok(None);
     }
-    let read_len = (SEG_HEADER_PREFIX_V3_LEN as u64).min(size);
+    // TD-PAXRG-1: floor covers v4 (88 B) as well; parse branches on version.
+    let read_len = (coalesced_header_prefetch_floor() as u64).min(size);
     let header_bytes = fs
         .read_range(path, 0, read_len)
         .await
@@ -2501,6 +2503,14 @@ fn prefix_prefetch_bytes() -> Option<u64> {
     (configured > 0).then_some(configured.min(MAX_PREFIX_PREFETCH_BYTES))
 }
 
+/// Largest known coalesced header-prefix length across layout versions
+/// (TD-PAXRG-1: v4 = 88 B). Prefix GETs fetch AT LEAST this many bytes
+/// (clamped to file size) so one read covers v1/v3/v4; `SegmentHeaderPrefix::parse`
+/// branches on the version byte.
+pub(crate) fn coalesced_header_prefetch_floor() -> usize {
+    SEG_HEADER_PREFIX_V4_LEN
+}
+
 fn split_probe_metadata_cache_enabled() -> bool {
     // Metadata population is the shipped behavior: the coarse-probe path
     // already fetched header/A0/RaBitQ params/footer, and failing to retain
@@ -2982,9 +2992,12 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         // TD-RDSTRAT-8: fetch the v3 prefix length unconditionally (clamped to
         // file size) — the 16 extra bytes ride the same GET and cover both the
         // v1 (56 B) and v3 (72 B) forms; `parse` branches on the version byte.
+        // TD-PAXRG-1: the floor is now v4 (88 B), covering the row-group
+        // layout's Region C extent too.
+        let floor = coalesced_header_prefetch_floor() as u64;
         let read_len = prefix_prefetch_bytes()
-            .unwrap_or(SEG_HEADER_PREFIX_V3_LEN as u64)
-            .max(SEG_HEADER_PREFIX_V3_LEN as u64)
+            .unwrap_or(floor)
+            .max(floor)
             .min(size);
         let bytes = fs
             .read_range(path, 0, read_len)
@@ -3755,6 +3768,16 @@ pub async fn rabitq_search_segment_coalesced_allowed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-PAXRG-1 Phase A: the coalesced header-prefix GET floor covers the v4
+    /// (row-group Region D) prefix length, so one ranged read serves every
+    /// layout version and `parse` branches on the version byte.
+    #[test]
+    fn v4_header_get_fetches_88_bytes() {
+        assert_eq!(coalesced_header_prefetch_floor(), SEG_HEADER_PREFIX_V4_LEN);
+        assert_eq!(coalesced_header_prefetch_floor(), 88);
+        assert!(coalesced_header_prefetch_floor() > 72, "floor grew past v3");
+    }
 
     fn cp_cfg(mult: f32) -> crate::core::config::CoarseProbeConfig {
         crate::core::config::CoarseProbeConfig {
