@@ -2710,8 +2710,7 @@ async fn coarse_probe_survivors(
                 seq
             }
         };
-        for ((range, buf), slot) in cold_ranges.iter().zip(batched).zip(cold_bytes.iter_mut())
-        {
+        for ((range, buf), slot) in cold_ranges.iter().zip(batched).zip(cold_bytes.iter_mut()) {
             crate::observability::io_trace::record_pax_region_bytes(buf.len() as u64, 0);
             if trace_on {
                 record_get(CacheTier::ProbeIndex, range.end - range.start);
@@ -5349,6 +5348,124 @@ mod tests {
             std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
             std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
             std::env::remove_var("PROXIMADB_IVF_K");
+        }
+    }
+
+    /// TD-RDSTRAT-12 §3 positive control: with `PROXIMADB_READ_RANGES_INFLIGHT`
+    /// armed, the coarse-probe COLD tail must flow through
+    /// `FileSystem::read_ranges_prefetch`'s bounded-concurrent executor — i.e.
+    /// the §2 `read_ranges` metrics get RECORDED (`Some`) where the sequential
+    /// baseline records nothing. This is the exact defect class §3 falsified:
+    /// the gate existed, tests passed, and NO production caller ever reached
+    /// the gated function. Runs under nextest process-per-test isolation so the
+    /// fn-local `OnceLock` env snapshots stay fresh per test.
+    #[tokio::test]
+    async fn probe_cold_tail_records_read_ranges_metrics_when_inflight_armed() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+        use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
+        const DIM: usize = 64;
+        const N: usize = 400;
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "8");
+            std::env::set_var("PROXIMADB_READ_RANGES_INFLIGHT", "4");
+            // The 400-row fixture fits inside the default 1 MiB file-prefix
+            // prefetch AND one gap-coalesced range — both would satisfy every
+            // probed cell above the cold queue before batching sees it.
+            // Disarm both so cells reach the TRUE-cold tail this test gates.
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "1");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP", "0");
+        }
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("v3prefetch.pax");
+        write_pax_segment_compacted(
+            &seg,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+
+        let counting = CountingFileSystem::new(
+            std::sync::Arc::new(LocalFileSystem::new(LocalConfig::default()).await.unwrap()),
+            global_counters(),
+        );
+        let survivor = SurvivorRangeCache::new(64 * 1024 * 1024);
+        let path = seg.to_string_lossy().to_string();
+
+        // Clear any metric a previous call left in the single-slot buffer.
+        let _ = drain_read_ranges_metrics();
+
+        let hits = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("probe search hits");
+
+        let metrics = drain_read_ranges_metrics().expect(
+            "armed INFLIGHT must route the probe cold tail through \
+                     read_ranges_prefetch and record its concurrency metrics",
+        );
+        assert!(
+            metrics.max_inflight >= 1 && metrics.fetch_rounds >= 1,
+            "implausible metrics payload: {metrics:?}"
+        );
+        assert_eq!(hits.len(), 5);
+
+        // Identical repeat stays served by the survivor seam — its consume
+        // pass adds NO further physical reads, so the metric slot is NOT
+        // rewritten by this query.
+        let again = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("repeat search hits");
+        assert_eq!(again.len(), 5);
+        assert!(
+            drain_read_ranges_metrics().is_none(),
+            "hot repeat must not issue additional batched reads"
+        );
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_IVF_K");
+            std::env::remove_var("PROXIMADB_READ_RANGES_INFLIGHT");
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
         }
     }
 

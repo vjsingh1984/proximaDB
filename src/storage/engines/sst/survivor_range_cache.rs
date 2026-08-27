@@ -1037,4 +1037,53 @@ mod tests {
         // (0,1024) hits on the 3rd call; the two distinct ranges miss once each.
         assert_eq!(fetches.load(Ordering::SeqCst), 2);
     }
+
+    /// TD-RDSTRAT-12 §3: `peek_memory_exact` uses THE SAME scoped key as
+    /// `get_or_fetch`, so a peek-None followed by a load makes the next peek
+    /// Some — and a peek-Some guarantees the consume loader never runs (the
+    /// property the batch-prefetch planner leans on).
+    #[tokio::test]
+    async fn peek_memory_exact_key_matches_get_or_fetch() {
+        let cache = SurvivorRangeCache::new(16 * 1024 * 1024);
+        assert_eq!(
+            cache
+                .peek_memory_exact(CacheKind::Other, "seg.pax", 0, 1024)
+                .await,
+            None,
+            "unknown range is not resident"
+        );
+
+        let loaded: Arc<[u8]> = Arc::from(vec![7u8; 1024].as_slice());
+        cache
+            .get_or_fetch(CacheKind::Other, "seg.pax", 0, 1024, || async {
+                Ok(loaded.to_vec())
+            })
+            .await
+            .unwrap();
+
+        // Resident after the load — identical coordinates, identical key.
+        let resident = cache
+            .peek_memory_exact(CacheKind::Other, "seg.pax", 0, 1024)
+            .await;
+        assert!(
+            resident.is_some(),
+            "peek must see the entry get_or_fetch wrote"
+        );
+
+        // A peek-verified range served via get_or_fetch never runs its loader.
+        let ran = Arc::new(AtomicUsize::new(0));
+        let r = ran.clone();
+        let again = cache
+            .get_or_fetch(CacheKind::Other, "seg.pax", 0, 1024, move || {
+                let ran = r.clone();
+                async move {
+                    ran.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![0u8; 1024]) // would be wrong if it ran
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(ran.load(Ordering::SeqCst), 0, "loader skipped on residency");
+        assert_eq!(&*again, resident.as_deref().unwrap());
+    }
 }
