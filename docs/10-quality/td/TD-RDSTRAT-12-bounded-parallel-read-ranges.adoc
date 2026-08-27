@@ -5,9 +5,9 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Complete with negative result (2026-08-26)** — `PROXIMADB_READ_RANGES_INFLIGHT` implemented with io_trace integration, but SIFT1M evidence showed the env gate is INERT for IVF probe path. See §3 findings below.
+| Status | **Rewired + re-measured (2026-08-27)** — IVF probe cold tail now batches through `read_ranges_prefetch`; parity proven, mechanism proven; ≥2× acceptance requires a high-RTT backend rerun. See §3.
 | Priority | **P2** — performance optimization for cold queries; not correctness-blocked.
-| Severity | Feature-complete; env gate exists but unreachable from current IVF workload.
+| Severity | Feature-complete; gate reachable and proven fired by positive control.
 | Component | `crates/storage/proximadb-storage-filesystem-types/src/lib.rs` — `read_ranges_buffered`, `FileSystem::read_ranges`, `FileSystem::read_ranges_prefetch`
 | Governs | Parallelism of ranged GETs in the `FileSystem::read_ranges` path, which serves PAX segment reads (Region-A/B reads, footer fetches).
 | Relates to | TD-RDSTRAT-8 (IVF coarse probe — this is the orthogonal work item from §Bounded-parallel `read_ranges`), TD-RDSTRAT-6 (binary tier I/O baseline)
@@ -30,7 +30,7 @@ The TD specifies two env knobs, acceptance criteria, and io_trace additions.
 | `FileSystem::read_ranges` parallel path | ✅ **Implemented** (lines 620-636) — delegates to `read_ranges_buffered` when `PARALLEL > 1`
 | `PROXIMADB_READ_RANGES_INFLIGHT` | ✅ **Implemented** (2026-08-26) — `FileSystem::read_ranges_prefetch()` method with INFLIGHT cap (lib.rs:780-851); zero production callers
 | `fetch_rounds` + `max_inflight` in io_trace | ✅ **Implemented for general path** (2026-08-26) — `io_trace::record_read_ranges()` + `read_ranges_fetch_rounds` / `read_ranges_max_inflight` metrics (io_trace.rs:684-686, 887-891)
-| SIFT1M cold p50 ≥2× improvement | ⚠️ **Measured — HYPOTHESIS FALSIFIED** — env gate is INERT for IVF probe path; see §3 findings below
+| SIFT1M cold p50 ≥2× improvement | ⚠️ **Rewired + re-measured** — parity & mechanism proven (positive control); −4.3% p50 on ≈0-RTT local bed; acceptance needs high-RTT rerun (see §3)
 |===
 
 == Remaining work
@@ -67,49 +67,55 @@ Required:
 
 === 3. Collect SIFT1M evidence
 
-⚠️ **COMPLETE (2026-08-26) — HYPOTHESIS FALSIFIED**
+**Status (2026-08-27): rewiring COMPLETE; acceptance NOT MET on local-disk bed — structurally unevaluable there; high-RTT rerun required.**
 
-**Acceptance criteria (from TD-RDSTRAT-8):**
+==== Round 1 (2026-08-26): hypothesis falsified — gate inert
 
-* "SIFT1M cold p50 improves ≥2× at equal GETs"
+Original A/B (`INFLIGHT=0` vs `=32`) was a null result because NOTHING reached
+the gated function: `coarse_probe_survivors` issued per-fetch `fs.read_range`
+in a loop, and `read_ranges_prefetch` had zero production callers
+(`rdstrat12_sift1m_inflight_inert` ledger entry).
 
-**Actual result:** NO MEASURABLE EFFECT — hypothesis falsified by measurement.
+==== Round 2 (2026-08-27): cold tail rewired through the batch primitive
 
-*Measured baseline (`INFLIGHT=0`) vs treatment (`INFLIGHT=32`):*
-* **object_cold p50:** 49.02ms vs 49.11ms (<1% difference)
-* **GETs/query:** 13.80 vs 13.80 (identical)
-* **bytes/query:** 46.18MB vs 46.18MB (identical)
-* **fetch_rounds/query:** 4.61 vs 4.61 (identical)
-* **recall@100:** 0.9874 vs 0.9874 (identical)
+Adopted option 1. `coarse_probe_survivors` now classifies every probed-cell
+fetch up front (region Arc → prefix → invariants → survivor-RAM residency via
+new side-effect-free `peek_memory_exact`/`TenantCache::peek_memory`) and issues
+ONE bounded-concurrent `fs.read_ranges_prefetch` round for the TRUE-COLD tail;
+consume replays the original loaders/get_or_fetch so TD-CACHE-6 tracking,
+LRU admission, counters and error text are unchanged. Sequential shape when
+the cap resolves ≤1. An LRU race between peek and consume fails safe to the
+baseline loader (no panics). A first draft gating batches on
+`survivor_cache.is_none()` was dead code in production (cache always `Some`)
+and was replaced before measuring.
 
-**Root cause:** The `PROXIMADB_READ_RANGES_INFLIGHT` env gate is **inert** for the SIFT1M IVF probe workload:
+==== Measured parity + verdict
 
-1. **IVF probe path does not use `read_ranges_prefetch()`** — The env gate only exists in `proximadb-storage-filesystem-types/src/lib.rs:795` inside the `read_ranges_prefetch()` function
-2. **IVF probe has its own fetch mechanism** — `src/storage/engines/sst/segment_format.rs:coarse_probe_survivors()` (lines 2487-2701) issues sequential `fs.read_range()` calls in a for loop (lines 2619-2669)
-3. **Zero production callers** — `grep` confirmed `read_ranges_prefetch()` has zero production callers outside its own test file
+Object-cold parity across arms: GETs/q 13.80 = , bytes/q 46.18MB = ,
+cells/q 11.0 = , recall@100 0.9874 = . Latency deltas: object_cold p50
+55.37→52.98ms (−4.3%), post_write −2.4%, warm-disk −3.5%.
+Mechanism-fired positive control:
+`probe_cold_tail_records_read_ranges_metrics_when_inflight_armed` proves the
+batch path executes and records `Some{fetch_rounds,max_inflight}` when armed,
+None when cache layers absorb everything (that fixture lesson is encoded in
+the test: disarm `PROXIMADB_PAX_PREFIX_PREFETCH_BYTES` and gap coalescing or
+nothing reaches the cold queue).
 
-The IVF probe calculates its own `fetch_rounds` metric independently (line 2697: `fetched.len() as u64`) and never touches the `read_ranges_prefetch()` code path gated by `PROXIMADB_READ_RANGES_INFLIGHT`.
+Acceptance ("cold p50 ≥2× at equal GETs") **cannot be met on this bed**: the
+file:// backend carries ≈0 RTT, leaving no round-trip term for wave
+parallelism to collapse. Required next step: rerun this pair against real
+Azure/S3 or Azurite behind an artificial-latency proxy (per
+CODESIGN_MEASURE_ARC_SIFT1M_AZURITE_2026_07_26) before any default-flip.
 
-**Evidence recorded:**
-* `BENCHMARK_EVIDENCE.toml` entry: `rdstrat12_sift1m_inflight_inert`
-* Status artifact: `docs/_internal/status/RDSTRAT12_SIFT1M_INFLIGHT_INERT_2026_08_26.adoc`
-* Binary: SHA-256 `29ed454bf049671ba6f78a9402d057b4f03163267045206c55c9bcb7b2fc599e` (git revision `64a29ec5604903aadb2502db6abaab8b18b84164`)
-
-**Next steps (choose one):**
-
-1. **Rewire IVF probe to use `read_ranges_prefetch()`** — Modify `coarse_probe_survivors()` to batch its ranged reads and call `fs.read_ranges_prefetch()` instead of the current for loop, then re-measure
-2. **Find a different benchmark** — Identify a workload that actually exercises the `read_ranges_prefetch()` code path (footer prefetch, other metadata loads)
-3. **Retire §3 as "tested, inert"** — Accept that the env gate exists but is not reachable from current IVF workloads
-
-Per "Measure, Don't Assert" (mandate #6), this falsified hypothesis is itself valuable data — the mechanism compiles and ships but is unreachable from the measured workload.
+Evidence: `rdstrat12_sift1m_inflight_batch_v2` (ledger) +
+`docs/_internal/status/RDSTRAT12_SIFT1M_INFLIGHT_BATCH_V2_2026_08_27.adoc`;
+round-1 falsification preserved at `rdstrat12_sift1m_inflight_inert` +
+`RDSTRAT12_SIFT1M_INFLIGHT_INERT_2026_08_26.adoc`.
 
 === 4. Update ENV_GATE_REGISTRY
 
-Add `PROXIMADB_READ_RANGES_INFLIGHT` to `docs/12-design/ENV_GATE_REGISTRY.adoc` with:
-
-* Semantic: "Prefetch cap for pure I/O-bound ranged reads in `FileSystem::read_ranges`. Higher than the decode-bound `PROXIMADB_FS_READ_RANGES_PARALLEL` cap."
-* Default: sensible value (e.g., 32, or `2 × PARALLEL`)
-* Tier: opt-in (like `PARALLEL`, default OFF until measured)
+✅ **DONE** — row exists at `docs/12-design/ENV_GATE_REGISTRY.adoc:107`
+(semantic / unset-default / opt-in tier, owner TD-RDSTRAT-12).
 == Implementation notes
 
 * The core `read_ranges_buffered` contract is correct and unit-tested — do NOT change its behavior

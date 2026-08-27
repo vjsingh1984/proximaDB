@@ -1112,3 +1112,19 @@ hardware = "Local macOS arm64 (Apple Silicon), release-server build 29ed454bf049
 date = "2026-08-26"
 version = "feat/rdstrat-12-sift1m-evidence off develop @ 8b3665ac7"
 notes = "Binary SHA-256 29ed454bf049671ba6f78a9402d057b4f03163267045206c55c9bcb7b2fc599e, built 2026-08-26. Both runs completed with identical recall (~0.987-0.990) and matching GET/bytes profiles, confirming a fair comparison. The IVF probe path calculates its own fetch_rounds metric (line 2697: fetched.len() as u64) independent of read_ranges_prefetch. grep confirmed zero production callers of read_ranges_prefetch outside its own test file. To make PROXIMADB_READ_RANGES_INFLIGHT meaningful for IVF workloads, the coarse_probe_survivors function would need to be rewired to use read_ranges_prefetch() instead of its current for loop; or a different benchmark that exercises the read_ranges_prefetch code path would be needed. Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "rdstrat12_sift1m_inflight_batch_v2"
+claim = "After rewiring the IVF coarse-probe cold tail through FileSystem::read_ranges_prefetch (batching true-cold ranges behind PROXIMADB_READ_RANGES_INFLIGHT with a side-effect-free survivor-RAM residency probe), SIFT1M local-disk A/B shows the mechanism REACHABLE and FIRED (positive-control unit test records Some{fetch_rounds,max_inflight}; sequential arm records None) with exact parity — identical GETs/query (13.80), bytes/query (46.18MB), cells (11.0) and recall@100 (0.9874) across arms — but only −4.3% object-cold p50 (55.37→52.98ms). The ≥2× acceptance CANNOT be evaluated on this bed: file:// backend RTT ≈ 0 leaves no round-trip term for wave parallelism to hide; the criterion needs a high-RTT backend (real cloud or artificial-latency proxy per the TD-SEARCH-2 arc)."
+metric = "object_cold p50 + GETs/query + bytes/query + recall@100 + read_ranges metrics presence"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-12-bounded-parallel-read-ranges.adoc",
+]
+bench_source = "scripts/bench/sift1m_get_reduction.py"
+bench_command = "Baseline: PROXIMADB_READ_RANGES_INFLIGHT=0 python3 scripts/bench/sift1m_get_reduction.py --root /tmp/sift1m_v3_baseline --binary target/release-server/proximadb-server --rows 1000000 --port 5678 --queries 100 --top-k 100 --post-write-max-gets 5000 --settle-timeout-secs 2400; Treatment: same with INFLIGHT=32 and --root /tmp/sift1m_v3_treatment; back-to-back on quiet machine"
+artifact = "docs/_internal/status/RDSTRAT12_SIFT1M_INFLIGHT_BATCH_V2_2026_08_27.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB), release-server build, serialized runs; load avg ≤ 9 at phase time"
+date = "2026-08-27"
+version = "feat/rdstrat-12-sift1m-evidence @ ad6a4fcdd (binary edc555b2181b2ed0921800a3da5e5139a8b1c564eb72bf90f6b1ac3b8e6681bd)"
+notes = "Full arm table: post_write 57.29→55.94ms p50; local_disk_warm 68.82→66.38ms; object_cold 55.37→52.98ms p50 / 71.63→75.87 p95; qps 17.63→17.58 cold. Harness default 50ms latency gates tripped in BOTH arms under residual load (exit=1 both sides; result.json still written) — procedural, not differential. Positive control: probe_cold_tail_records_read_ranges_metrics_when_inflight_armed (INFLIGHT=4 → drain Some{max_inflight≥1,fetch_rounds≥1}; repeat query adds none). Fixture lesson encoded there: a segment inside PROXIMADB_PAX_PREFIX_PREFETCH_BYTES or one gap-coalesced range never reaches the cold queue. Indicative dev-machine run, not an SLA."
