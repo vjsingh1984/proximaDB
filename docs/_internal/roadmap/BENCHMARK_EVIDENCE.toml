@@ -1103,7 +1103,7 @@ claim = "TD-RDSTRAT-12 §3 hypothesis (PROXIMADB_READ_RANGES_INFLIGHT raises SIF
 metric = "p50 latency + GETs/query + bytes/query + fetch_rounds/query across baseline/treatment"
 status = "measured"
 asserted_in = [
-  "docs/10-quality/td/TD-RDSTRAT-12-read-ranges-optimization.adoc",
+  "docs/10-quality/td/TD-RDSTRAT-12-bounded-parallel-read-ranges.adoc",
 ]
 bench_source = "scripts/bench/sift1m_get_reduction.py"
 bench_command = "Baseline: PROXIMADB_READ_RANGES_INFLIGHT=0 python3 scripts/bench/sift1m_get_reduction.py --root /tmp/sift1m_baseline --rows 1000000 --port 5678 --binary target/release-server/proximadb-server --queries 100 --top-k 100 --post-write-max-gets 5000; Treatment: same with INFLIGHT=32 and --root /tmp/sift1m_treatment"
