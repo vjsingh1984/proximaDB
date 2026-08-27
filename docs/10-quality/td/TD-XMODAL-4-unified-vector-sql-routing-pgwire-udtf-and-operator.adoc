@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision; successful SST exact/ANN executions land attributable trace/warehouse samples and observe-only cost cells. Vector cost cells now partition truthful storage locality and the route-time cache policy, while completed cache outcome remains arm-specific evidence. The bounded paired SIFT gate rejects unknown policy or outcome. Automatic cost selection remains closed pending replicated cache-enabled measurements under representative remote RTT; cross-surface parity also remains open.
+| Status | **In progress**. Both SQL syntaxes lower to the canonical `proximadb_vector_query::VectorSearchExpr` and execute through the shared native vector-search port. The canonical `ComputeScheduler` exposes a distinct vector *access-path* decision; successful SST exact/ANN executions land attributable trace/warehouse samples and observe-only cost cells. Vector cost cells partition storage locality and route-time cache availability, while completed cache outcome remains arm-specific evidence. The bounded paired SIFT gate rejects unknown policy or outcome and now reports each outcome separately. A replicated 50 ms RTT-injected/full-cache cohort refuted the assumption that `full` implies warm execution and exposed missing collection geometry, cache-capacity, and canonical decision-boundary context. Automatic cost selection and cross-surface parity remain open.
 | Severity | Medium-High (surface consistency + moat: one internal vector-search intent behind every SQL surface; removes the hardcoded pgwire `<->` bypass and the pgwire/UDTF reachability gap)
 | Component | pgwire (`src/network/postgres/relational_pipeline.rs`, `pgvector_params.rs`) ; router (`src/query/compute_scheduler.rs` `VectorQueryShape`/`route_vector_search`) ; DataFusion UDTF (`src/datafusion/cross_modal.rs` `VectorSearchTableFunction`, `src/datafusion/mod.rs` `register_udtf`) ; vector engine (`SstEngine::search_vectors_unified`, `VectorOpsPort::unified_search_native`).
 | Governs / derives from | link:../../12-design/adr/ADR-053-cross-modal-query-fabric.adoc[ADR-053] (cross-modal query fabric — "no new DSL; reuse SQL + table functions") ; the reserved TD-XMODAL-4 forward-reference therein.
@@ -340,6 +340,87 @@ authoritative archive checksum and the exact extracted-file checksums.
 Automatic routing remains closed. The next admission evidence is replicated
 `cache_policy=full` Exact/ANN measurement on a representative remote-RTT bed,
 with the arm-specific outcome distribution reported rather than forced equal.
+
+=== RTT-injected/full-policy replication and route-boundary correction (2026-08-27)
+
+The existing paired gate was reused against a dedicated Azurite 3.36.0
+container through Toxiproxy 2.12.0. The proxy injected 25 ms in each direction
+(50 ms target RTT) without per-chunk amplification. Both SST cache budgets were
+64 MiB, the canonical TEXMEX base/query files were used, and every one of the 30
+ground-truth rows per process was independently brute-forced over the same
+100,000 vectors. This is deterministic RTT-injected emulator evidence, not an
+Azure-service SLA.
+
+The first diagnostic run broke the reporter before it could authorize a
+conclusion:
+
+* completed cold/warm/mixed outcomes were counted but their latency and I/O were
+  pooled into one ANN percentile;
+* when the recall query count exceeded the bounded paired prefix, Exact metrics
+  covered only paired queries while ANN metrics covered every recall query and
+  used a different denominator; and
+* the lower-rank percentile calculation is not meaningful for one- or
+  two-sample outcome cohorts.
+
+The one existing harness now accumulates both arms only inside the same paired
+branch, partitions latency and every cache/I/O counter by completed outcome,
+and reports min/median/max for those potentially small cohorts. Recall still
+uses every requested query. No second benchmark or environment gate was added.
+
+Three fresh-process runs on the corrected paired population produced:
+
+[cols="1,1,1,1", options="header"]
+|===
+| Measure | Replica 1 | Replica 2 | Replica 3
+| Exact top-10 oracle equality | 30/30 | 30/30 | 30/30
+| ANN recall@10 | 0.9900 | 0.9900 | 0.9900
+| Admitted remote/full-policy pairs | 30/30 | 30/30 | 30/30
+| Exact completed outcomes | bypass 30 | bypass 30 | bypass 30
+| ANN completed outcomes | cold 2, mixed 28 | cold 1, mixed 29 | cold 2, mixed 28
+| Exact p50 / p95 | 1,986,875 / 3,337,716 us | 3,867,573 / 6,046,952 us | 2,147,804 / 3,716,368 us
+| ANN aggregate p50 / p95 | 1,180,115 / 2,242,837 us | 1,750,573 / 3,133,869 us | 1,061,770 / 1,980,566 us
+| Exact physical I/O/query | 5.00 GET, 77,192,431 B | 5.00 GET, 77,192,431 B | 5.00 GET, 77,192,431 B
+| ANN physical I/O/query | 14.73 GET, 37,240,629 B | 14.83 GET, 37,507,153 B | 14.73 GET, 37,240,629 B
+|===
+
+The stable result is correctness, outcome distribution, and physical I/O: the
+64 MiB survivor tier removed roughly half the ANN bytes versus Exact, but it
+never reached a warm outcome at this scale. The wall ranges are
+contention-bounded observations only. The shared host carried unrelated Rust,
+Clippy, Vitest, Ollama, and Docker work during the cohort (observed load averages
+14.7--47.3), which inflated attributed compute and widened latency materially.
+They are retained to prevent selective reporting, but cannot become a latency
+ratchet or cloud SLA. In particular, the one- or two-sample cold latencies do
+not support a tail percentile claim.
+
+This measurement closes the requested experiment but **does not** admit the
+automatic route. It exposes three first-principles identity defects:
+
+* `VectorCachePolicy::Full` records only that both caches exist. A 1 MiB and a
+  64 GiB configuration produce the same value even though capacity controls
+  eviction and hit probability.
+* `vector_access_shape` omits searchable cardinality, segment/file geometry,
+  and searchable bytes. The `N=1,000` smoke reached cold then warm ANN under the
+  same `storage=remote/cache_policy=full` shape that was cold/mixed at
+  `N=100,000`; dimension/top-k/filter alone are not a cost-equivalent class.
+* `ComputeScheduler::route_vector_search` receives only dimension, top-k,
+  filter presence, and caller intent. Storage locality and cache policy are
+  learned later inside SST, after the static scheduler decision, so the
+  decision owner cannot construct or consume the cell it trains. The unified
+  executor and vector operations adapter also invoke that scheduler at separate
+  surface boundaries.
+
+The corrected boundary is one route decision in the canonical native vector
+operations path **after** tenant-scoped collection resolution and **before**
+physical search. A typed execution context must carry exact measured features
+(engine/index availability, searchable records/bytes, segment/file count,
+storage class, cache budgets/resident bytes, and collection-scoped recent hit
+evidence) into both the decision and the completed trace. The cost model should
+compare analytical I/O/CPU terms plus learned residuals, with uncertainty and
+recall admission; it should not multiply those continuous inputs into an
+unbounded string-cell cross product. Unknown or stale context keeps Exact as the
+floor. The two surface-level scheduler calls should then be removed, not kept as
+compatibility shims or parallel policy paths.
 
 == Constraints
 
