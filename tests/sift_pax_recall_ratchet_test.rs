@@ -379,6 +379,18 @@ struct OutcomeMeasurements {
     l2_misses: u64,
 }
 
+impl OutcomeMeasurements {
+    fn latency_min_median_max(&self) -> (u64, u64, u64) {
+        let mut elapsed_us = self.elapsed_us.clone();
+        elapsed_us.sort_unstable();
+        (
+            elapsed_us.first().copied().unwrap_or_default(),
+            percentile_us(&elapsed_us, 50),
+            elapsed_us.last().copied().unwrap_or_default(),
+        )
+    }
+}
+
 fn record_outcome_measurement(
     cohorts: &mut BTreeMap<&'static str, OutcomeMeasurements>,
     elapsed_us: u64,
@@ -411,16 +423,15 @@ fn report_outcome_measurements(
     cohorts: &mut BTreeMap<&'static str, OutcomeMeasurements>,
 ) {
     for (outcome, cohort) in cohorts {
-        cohort.elapsed_us.sort_unstable();
         let samples = cohort.elapsed_us.len();
         let denominator = samples as f64;
+        let (min_us, median_us, max_us) = cohort.latency_min_median_max();
         eprintln!(
             "SIFT {arm} cache-outcome evidence: outcome={outcome}, samples={samples}, \
-             p50/p95={}/{} us; GET/range-GET/bytes/compute-ms per sample=\
+             latency min/median/max={min_us}/{median_us}/{max_us} us; \
+             GET/range-GET/bytes/compute-ms per sample=\
              {:.2}/{:.2}/{:.0}/{:.2}; footer hit/miss={:.2}/{:.2}, \
              survivor-L1 hit/miss={:.2}/{:.2}, L2 hit/miss={:.2}/{:.2}",
-            percentile_us(&cohort.elapsed_us, 50),
-            percentile_us(&cohort.elapsed_us, 95),
             cohort.get_ops as f64 / denominator,
             cohort.range_gets as f64 / denominator,
             cohort.bytes_read as f64 / denominator,
@@ -910,6 +921,7 @@ fn cache_outcome_measurements_remain_stratified() {
     assert_eq!(cold.get_ops, 6);
     assert_eq!(cold.bytes_read, 60);
     assert_eq!(cold.survivor_l1_misses, 8);
+    assert_eq!(cold.latency_min_median_max(), (100, 100, 300));
 
     let mixed = cohorts.get("mixed").expect("mixed cohort");
     assert_eq!(mixed.elapsed_us, vec![200]);
