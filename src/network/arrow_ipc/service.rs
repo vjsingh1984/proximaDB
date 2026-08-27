@@ -593,6 +593,12 @@ impl ProximaFlightService {
             metadata.get(name).and_then(|value| value.to_str().ok())
         })?;
         if hit.deprecated {
+            // TD-TENANT-3 S4: the counter fires on EVERY use — the retirement
+            // gate is `increase(proximadb_deprecated_claim_uses_total[7d]) == 0`
+            // — while the warn stays once per process to avoid log spam.
+            crate::network::middleware::claim_metrics::record_deprecated_claim_use(
+                "flight", hit.name,
+            );
             Self::warn_deprecated_tenant_alias(hit.name);
         }
         Some(hit.value.to_owned())
