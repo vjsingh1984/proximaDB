@@ -18,7 +18,7 @@ torch>=2.13.0
 # Essential for demos
 nltk>=3.10.2
 aiohttp>=3.8.0
-aiohttp-cors>=0.7.0
+aiohttp-cors>=0.8.1
 
 # No visualization, no dev tools, no testing
 # No transformers library (use sentence-transformers only)

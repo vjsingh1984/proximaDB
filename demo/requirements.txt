@@ -22,7 +22,7 @@ click>=8.4.2
 
 # HTTP clients
 aiohttp>=3.8.0
-aiohttp-cors>=0.7.0
+aiohttp-cors>=0.8.1
 httpx>=0.24.0
 
 # JSON handling
