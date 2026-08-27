@@ -1602,14 +1602,54 @@ impl UnifiedStorageFormat for NovaEngine {
             collection_id, base_path, vector_id
         );
 
-        // Construct data directory from base_path and collection_id
-        let _data_dir = format!("{}/{}/data", base_path, collection_id);
+        // Point read over this collection's flushed Parquet files (the same
+        // full-read primitive the search path uses — an ID scan needs no
+        // dimension). This was previously a `Ok(None)` placeholder, which made
+        // every NOVA point lookup a miss (upserts re-inserted existing ids)
+        // — invisible while embedded flushes were mis-routed to SST, exposed
+        // once flushes reached the real engine.
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        // Same plumbing the search path uses: base filesystem from the
+        // factory + the collection-scoped UnifiedCachingFilesystem wrapper.
+        let fs = self.filesystem.get_filesystem(&data_dir)?;
+        let unified_fs = Arc::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
+                fs,
+                collection_id.to_string(),
+                crate::storage::engines::ENGINE_NOVA.to_string(),
+            ),
+        );
 
-        // Deferred: Load actual Parquet files from data_dir
-        // For now, return None as placeholder
-        // In production, would:
-        // 1. Load Parquet files from data_dir
-        // 2. Search through ID indexes
+        use proximadb_storage_filesystem_types::FileSystem as _;
+        let entries = match unified_fs.list(&data_dir).await {
+            Ok(entries) => entries,
+            // Directory might not exist yet (no flushes) — not an error.
+            Err(_) => return Ok(None),
+        };
+        let files: Vec<String> = entries
+            .into_iter()
+            .filter(|e| !e.metadata.is_directory && e.name.ends_with(".parquet"))
+            .map(|e| format!("{}/{}", data_dir, e.name))
+            .collect();
+
+        for file_path in files {
+            let reader =
+                crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+                    vec![file_path],
+                    0,
+                    self.filesystem.clone(),
+                    unified_fs.clone(),
+                    collection_id.to_string(),
+                    crate::storage::engines::ENGINE_NOVA.to_string(),
+                )?;
+            let records = reader.read_all_records(0, None).await?;
+            for record in records {
+                if record.oid == vector_id {
+                    return Ok(Some(record));
+                }
+            }
+        }
+
         Ok(None)
     }
 
