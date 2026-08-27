@@ -935,4 +935,91 @@ mod tests {
             snap.range_gets
         );
     }
+
+    /// Test 2.8a: Route confirmation — a PAX-backed OLAP shape routes to
+    /// DataFusion (NOT Volcano) when `PROXIMADB_DF_PAX_READER=1`.
+    ///
+    /// Drives the REAL policy core (`ComputeScheduler::route_select`) with the
+    /// QueryShape the pgwire pipeline now computes from real catalog signals
+    /// (Test 2.1's predicate feeds this flag) — this is the "plan shows
+    /// DataFusion, not Volcano" half of the E2E confirmation at the decision
+    /// seam where it is deterministic; socket-level plan echo is out of unit
+    /// scope.
+    #[tokio::test]
+    async fn pax_backed_shape_routes_to_datafusion_under_gate() {
+        unsafe { std::env::set_var("PROXIMADB_DF_PAX_READER", "1") };
+
+        use crate::query::compute_scheduler::{ComputeScheduler, QueryShape};
+        use crate::query::table_write_plan::ComputeBackend;
+
+        let scheduler = ComputeScheduler::new();
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+            pax_backed: true,
+            ..Default::default()
+        };
+        let decision = scheduler.route_select(shape);
+        assert_eq!(
+            decision.backend,
+            ComputeBackend::DataFusionLocal,
+            "PAX-backed analytical shape + gate ON must route DataFusion, got: {}",
+            decision.reason
+        );
+    }
+
+    /// Test 2.8b: Route confirmation (control) — WITHOUT the PAX signal the
+    /// same OLAP shape stays on Volcano/Native even under the same process
+    /// gate, proving it is the catalog-derived `pax_backed` flag that flips
+    /// the route (not merely `engages_relational`).
+    #[tokio::test]
+    async fn non_pax_olap_shape_stays_volcano_despite_gate() {
+        unsafe { std::env::set_var("PROXIMADB_DF_PAX_READER", "1") };
+
+        use crate::query::compute_scheduler::{ComputeScheduler, QueryShape};
+        use crate::query::table_write_plan::ComputeBackend;
+
+        let scheduler = ComputeScheduler::new();
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+            pax_backed: false,
+            ..Default::default()
+        };
+        let decision = scheduler.route_select(shape);
+        assert_eq!(
+            decision.backend,
+            ComputeBackend::Native,
+            "non-PAX analytical shape must remain Volcano, got: {}",
+            decision.reason
+        );
+    }
+
+    /// Test 2.8c: Parquet precedence — when tables are parquet-backed the
+    /// original P1 arm wins regardless of any PAX signals (route ordering
+    /// sanity between the two object-storage families).
+    #[tokio::test]
+    async fn parquet_backed_takes_precedence_over_pax() {
+        use crate::query::compute_scheduler::{ComputeScheduler, QueryShape};
+        use crate::query::table_write_plan::ComputeBackend;
+
+        let scheduler = ComputeScheduler::new();
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            pax_backed: true,
+            ..Default::default()
+        };
+        let decision = scheduler.route_select(shape);
+        assert_eq!(
+            decision.backend,
+            ComputeBackend::DataFusionLocal,
+            "parquet-backed OLAP shape routes DataFusion first"
+        );
+        assert!(
+            decision.reason.contains("Parquet"),
+            "reason string must identify the Parquet arm, got: {}",
+            decision.reason
+        );
+    }
 }
