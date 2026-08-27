@@ -21,9 +21,11 @@ use std::sync::Arc;
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::catalog::Session;
+use datafusion::common::DFSchema;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
+use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::SessionContext;
 
@@ -80,13 +82,15 @@ impl PaxTableProvider {
         })
     }
 
-    /// Construct the `SplitReader` that decodes PAX segments → Arrow batches.
-    fn reader(&self) -> Arc<dyn SplitReader> {
+    /// Construct the `SplitReader` that decodes PAX segments → Arrow batches,
+    /// seeded with the caller-resolved physical filters so `PaxSegmentScanner`
+    /// can prune blocks off the decode path (TD-OLAP-1 Test 2.6).
+    fn reader(&self, physical_filters: Vec<Arc<dyn PhysicalExpr>>) -> Arc<dyn SplitReader> {
         Arc::new(PaxSplitReader::new(
             self.schema.clone(),
             self.filesystem_factory.clone(),
             self.name_to_col_id.clone(),
-            vec![],
+            physical_filters,
             self.tenant_id.clone(),
             self.time_range,
         ))
@@ -120,10 +124,20 @@ impl TableProvider for PaxTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
+        // TD-OLAP-1 Test 2.6: lower the pushed WHERE predicates to physical exprs
+        // and hand them to the split reader, so the PAX prune stack (zone maps +
+        // column stats via `pruning_predicates`) can skip blocks pre-decode.
+        // Fail loudly on lowering errors — a silently dropped filter would only
+        // cost bytes on the FilterExec path but hides translator gaps.
+        let df_schema = DFSchema::try_from(self.schema.as_ref().clone())?;
+        let mut physical_filters = Vec::with_capacity(filters.len());
+        for expr in filters {
+            physical_filters.push(state.create_physical_expr(expr.clone(), &df_schema)?);
+        }
         let exec = ProximaScanExec::builder()
             .schema(self.schema.clone())
             .splits(self.splits.clone())
-            .reader(self.reader())
+            .reader(self.reader(physical_filters))
             .projection(projection.cloned())
             .filters(filters.to_vec())
             .limit(limit)

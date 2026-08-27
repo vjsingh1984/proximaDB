@@ -196,7 +196,7 @@ impl PaxSplitReader {
     /// range-reads each surviving block's footer/metadata (NOT its body) into a
     /// [`BlockLayout`] and prunes on ALL columns, so a `props__<key>`-pruned block
     /// costs only its footer, never its body.
-    async fn load_ranged(
+    pub(crate) async fn load_ranged(
         &self,
         split: &FileSplit,
         out_schema: &SchemaRef,
