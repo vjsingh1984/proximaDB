@@ -150,14 +150,18 @@ fn classify_unsupported(msg: &str) -> &'static str {
 
 /// Resolve a table name to its schema. The frontend stays pure
 /// — no catalog crate dependency — by taking this trait object.
+///
+/// Returns a shared `Arc` so hot implementors (per-connection snapshot
+/// catalogs) can serve lookups by refcount instead of deep-cloning the
+/// schema's column list per call.
 pub trait CatalogLookup {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema>;
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>>;
 }
 
 /// Simple in-memory catalog for tests and standalone use.
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryCatalog {
-    tables: std::collections::HashMap<String, RelationalSchema>,
+    tables: std::collections::HashMap<String, std::sync::Arc<RelationalSchema>>,
 }
 
 impl InMemoryCatalog {
@@ -165,13 +169,13 @@ impl InMemoryCatalog {
         Self::default()
     }
     pub fn register(&mut self, name: impl Into<String>, schema: RelationalSchema) {
-        self.tables.insert(name.into(), schema);
+        self.tables.insert(name.into(), std::sync::Arc::new(schema));
     }
 }
 
 impl CatalogLookup for InMemoryCatalog {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
-        self.tables.get(name).cloned()
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+        self.tables.get(name).map(std::sync::Arc::clone)
     }
 }
 
@@ -1095,7 +1099,9 @@ fn lower_table_factor(
             let scope = Scope::from_table(&scope_name, &schema);
             let plan = LogicalNode::Scan {
                 table: TableId::new(table_name),
-                table_schema: schema,
+                // The plan IR owns its schema; one clone at plan-build time
+                // (the trait's Arc already saved the per-lookup deep clone).
+                table_schema: (*schema).clone(),
                 projected_columns: None,
                 predicate: None,
             };

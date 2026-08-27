@@ -751,8 +751,8 @@ mod tests {
         // Build a CatalogLookup that consults the engine.
         struct EngineCatalog(Arc<InMemoryRelationalEngine>);
         impl proximadb_relational_frontend::CatalogLookup for EngineCatalog {
-            fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
-                self.0.schema_of(name)
+            fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+                self.0.schema_of(name).map(std::sync::Arc::new)
             }
         }
         let catalog = EngineCatalog(engine.clone());
@@ -811,8 +811,8 @@ mod tests {
             .unwrap();
         struct EngineCatalog(Arc<InMemoryRelationalEngine>);
         impl proximadb_relational_frontend::CatalogLookup for EngineCatalog {
-            fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
-                self.0.schema_of(name)
+            fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+                self.0.schema_of(name).map(std::sync::Arc::new)
             }
         }
         let catalog = EngineCatalog(engine.clone());
@@ -854,8 +854,8 @@ mod tests {
             .unwrap();
         struct EngineCatalog(Arc<InMemoryRelationalEngine>);
         impl proximadb_relational_frontend::CatalogLookup for EngineCatalog {
-            fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
-                self.0.schema_of(name)
+            fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+                self.0.schema_of(name).map(std::sync::Arc::new)
             }
         }
         let catalog = EngineCatalog(engine.clone());
