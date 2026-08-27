@@ -10,11 +10,6 @@ use proximadb_rank_onnx::descriptor::{ModelDescriptor, ModelFramework};
 use proximadb_rank_onnx::registry::{InMemoryModelRegistry, ModelRegistry};
 use serde::Deserialize;
 
-/// Every catalog entry pins an upstream revision and a content hash. The parity
-/// fixture's `onnx_sha256` must agree with this catalog byte-for-byte — asserted
-/// below so the two files cannot drift.
-const PARITY_FIXTURE: &str = include_str!("fixtures/onnx_parity_fixture.json");
-
 /// Wire format of `fixtures/model_catalog.json`. `sha256` is hex in the file
 /// (the human convention) and converted to the descriptor's `[u8; 32]` here, at
 /// the boundary, so the checked-in catalog stays diffable.
@@ -97,6 +92,19 @@ struct ParityFixtureMeta {
     onnx_sha256: String,
     revision: String,
 }
+
+/// model_id → checked-in parity fixture, so the cross-file hash check covers
+/// every catalog entry that has one.
+const PARITY_FIXTURES: &[(&str, &str)] = &[
+    (
+        "cross-encoder/ms-marco-MiniLM-L6-v2",
+        include_str!("fixtures/onnx_parity_fixture.json"),
+    ),
+    (
+        "BAAI/bge-reranker-large",
+        include_str!("fixtures/bge_parity_fixture.json"),
+    ),
+];
 
 fn catalog() -> Vec<ModelDescriptor> {
     let raw: Catalog = serde_json::from_str(include_str!("fixtures/model_catalog.json"))
@@ -215,28 +223,47 @@ fn catalog_io_spec_matches_the_serving_session_contract() {
 
 #[test]
 fn catalog_hash_agrees_with_the_parity_fixture() {
-    // The catalog's content hash and the parity fixture's reference-artifact hash
-    // describe the SAME export; if they disagree, one of the two files was
+    // The catalog's content hash and each parity fixture's reference-artifact
+    // hash describe the SAME export; if they disagree, one of the two files was
     // regenerated without the other — exactly the drift this gate exists to stop.
-    let fixture: ParityFixtureMeta =
-        serde_json::from_str(PARITY_FIXTURE).expect("parity fixture must parse");
     for desc in &catalog() {
-        if desc.key.model_id == "cross-encoder/ms-marco-MiniLM-L6-v2" {
-            let hex = desc
-                .sha256
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>();
-            assert_eq!(
-                hex, fixture.onnx_sha256,
-                "catalog sha256 and parity-fixture onnx_sha256 disagree — regenerate together"
-            );
-            assert!(
-                desc.key.version.starts_with(&fixture.revision[..7]),
-                "catalog version {} must pin the fixture's revision {}",
-                desc.key.version,
-                fixture.revision
-            );
-        }
+        let Some((_, src)) = PARITY_FIXTURES
+            .iter()
+            .find(|(model_id, _)| *model_id == desc.key.model_id)
+        else {
+            continue;
+        };
+        let fixture: ParityFixtureMeta =
+            serde_json::from_str(src).expect("parity fixture must parse");
+        let hex = desc
+            .sha256
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            hex, fixture.onnx_sha256,
+            "{}: catalog sha256 and parity-fixture onnx_sha256 disagree — regenerate together",
+            desc.key.model_id
+        );
+        assert!(
+            desc.key.version.starts_with(&fixture.revision[..7]),
+            "{}: catalog version {} must pin the fixture's revision {}",
+            desc.key.model_id,
+            desc.key.version,
+            fixture.revision
+        );
+    }
+}
+
+#[test]
+fn every_parity_fixture_has_a_catalog_entry() {
+    // The reverse drift: a fixture without a catalog entry means a parity-gated
+    // model whose provenance nobody pinned.
+    let models = catalog();
+    for (model_id, _) in PARITY_FIXTURES {
+        assert!(
+            models.iter().any(|d| d.key.model_id == *model_id),
+            "{model_id} has a parity fixture but no catalog entry"
+        );
     }
 }

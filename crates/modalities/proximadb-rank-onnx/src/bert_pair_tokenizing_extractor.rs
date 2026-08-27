@@ -114,10 +114,11 @@ impl DocTextSource for HashMapDocTextSource {
 /// - `tokenizer`: shared `Arc<tokenizers::Tokenizer>` (same instance
 ///   embedding crate uses; one tokenizer file per deployment).
 /// - `doc_text_source`: resolves doc text by handle.
-/// - `max_seq_len`: hard cap on tokenized sequence length. Padding
-///   happens at this boundary so the resulting batch is rectangular
-///   (a hard requirement for the ONNX session). Tokenizer overflow is
-///   detected and rejected rather than silently truncated.
+/// - `max_seq_len`: hard cap on tokenized sequence length. Padding is
+///   batch-longest so the resulting batch is rectangular (a hard
+///   requirement for the ONNX session) without paying `max_seq_len`
+///   compute per row. Tokenizer overflow is detected and rejected
+///   rather than silently truncated.
 /// - `emit_token_type_ids`: when true, produce `token_type_ids`
 ///   (segment ids) — required by BERT-base/MiniLM-L-12-v2 style
 ///   models; some MiniLM-derived models don't take them.
@@ -130,9 +131,35 @@ pub struct BertPairTokenizingDocFeatureExtractor {
     doc_text_source: Arc<dyn DocTextSource>,
     max_seq_len: usize,
     emit_token_type_ids: bool,
+    /// The tokenizer's real pad id (BERT 0, XLM-R 1, …). Used by the conversion
+    /// layer when padding rows to the batch width.
+    pad_id: i64,
 }
 
 impl BertPairTokenizingDocFeatureExtractor {
+    /// Construct from a `tokenizer.json` path. Production deployments (and
+    /// out-of-crate callers that do not depend on `tokenizers` directly) load
+    /// from disk; this keeps the tokenizer type inside the crate.
+    #[cfg(feature = "bert-tokenizer")]
+    pub fn from_tokenizer_file(
+        tokenizer_path: &std::path::Path,
+        doc_text_source: Arc<dyn DocTextSource>,
+        max_seq_len: usize,
+        emit_token_type_ids: bool,
+    ) -> RankResult<Self> {
+        let tokenizer =
+            tokenizers::Tokenizer::from_file(tokenizer_path).map_err(|e| RankError::ModelLoad {
+                model_id: "bert_pair_extractor".into(),
+                reason: format!("tokenizer load {}: {e}", tokenizer_path.display()),
+            })?;
+        Ok(Self::new(
+            Arc::new(tokenizer),
+            doc_text_source,
+            max_seq_len,
+            emit_token_type_ids,
+        ))
+    }
+
     pub fn new(
         tokenizer: Arc<tokenizers::Tokenizer>,
         doc_text_source: Arc<dyn DocTextSource>,
@@ -140,49 +167,64 @@ impl BertPairTokenizingDocFeatureExtractor {
         emit_token_type_ids: bool,
     ) -> Self {
         let max_seq_len = max_seq_len.max(1);
-        // R-5b.1.4: clone the shared tokenizer and configure fixed
-        // padding plus overflow capture at max_seq_len. The extractor
-        // rejects any captured overflow before inference. The
-        // conversion pass downstream still provides shape defense and
-        // the u32 → i64 conversion the tokenizer doesn't do.
+        // R-5b.1.4: clone the shared tokenizer and configure truncation +
+        // overflow capture at max_seq_len. Padding is deliberately NOT
+        // configured here: rows keep their true length, overflow is judged on
+        // real content, and the conversion pass downstream is the single owner
+        // of width (it pads to the longest row in the batch — see
+        // TD-SELECTOR-1 gate 5 for why `max_seq_len`-wide padding was ~11×
+        // wasted compute). The conversion still provides shape defense and the
+        // u32 → i64 conversion the tokenizer doesn't do.
         //
         // We clone the inner Tokenizer rather than mutate the shared
         // Arc — the same `Arc<Tokenizer>` is used by the embedding
         // crate's `SharedTokenizer` for token-count chunking, which
         // wants per-call defaults. Per-extractor cloning isolates the
-        // padding/truncation config to the rerank path.
-        let configured =
+        // truncation config to the rerank path.
+        let (configured, pad_id) =
             configure_tokenizer_for_pair_encoding(tokenizer.as_ref().clone(), max_seq_len);
         Self {
             tokenizer: Arc::new(configured),
             doc_text_source,
             max_seq_len,
             emit_token_type_ids,
+            pad_id,
         }
     }
 }
 
-/// Apply fixed-length padding plus overflow capture to a cloned tokenizer.
-/// The tokenizer represents overflow by truncating the primary encoding and
-/// retaining overflow encodings; `extract_batch` rejects that condition before
-/// inference. Padding token id is `0` to match the conversion fallback.
+/// Configure truncation + overflow capture on a cloned tokenizer, disable any
+/// tokenizer-level padding, and resolve the model family's real pad id.
+///
+/// Width policy (TD-SELECTOR-1 gate 5): the conversion layer in `extract_batch`
+/// pads every row to the LONGEST row in the batch. Batch-rectangular is all the
+/// ONNX session contract requires; padding to `max_seq_len` instead made every
+/// pair pay the full budget — measured ~11× wasted compute on a realistic bed
+/// (median pair 37 tokens against a 512 budget). The tokenizer therefore emits
+/// unpadded rows and never double-pads.
+///
+/// The pad id comes from the tokenizer's own config when present, falling back
+/// through the common special-token spellings. Hardcoding 0 is wrong for
+/// non-BERT families (XLM-R's `<pad>` is id 1), which would silently corrupt
+/// padded positions for those tokenizers.
 fn configure_tokenizer_for_pair_encoding(
     mut tokenizer: tokenizers::Tokenizer,
     max_seq_len: usize,
-) -> tokenizers::Tokenizer {
-    use tokenizers::tokenizer::{PaddingDirection, PaddingParams, PaddingStrategy};
+) -> (tokenizers::Tokenizer, i64) {
     use tokenizers::utils::truncation::{
         TruncationDirection, TruncationParams, TruncationStrategy,
     };
 
-    tokenizer.with_padding(Some(PaddingParams {
-        strategy: PaddingStrategy::Fixed(max_seq_len),
-        direction: PaddingDirection::Right,
-        pad_to_multiple_of: None,
-        pad_id: 0,
-        pad_type_id: 0,
-        pad_token: "[PAD]".into(),
-    }));
+    let pad_id = match tokenizer.get_padding() {
+        Some(existing) => existing.pad_id as i64,
+        None => ["[PAD]", "<pad>", "<|pad|>", "<pad_token>"]
+            .iter()
+            .find_map(|spelling| tokenizer.token_to_id(spelling))
+            .unwrap_or(0) as i64,
+    };
+
+    // Rows leave the tokenizer at their true length; the conversion pass pads.
+    tokenizer.with_padding(None);
     // with_truncation returns Result because params can be inconsistent.
     // If configuration ever fails, the unconfigured tokenizer emits a row
     // wider than max_seq_len and the explicit pre-conversion guard rejects it.
@@ -192,7 +234,7 @@ fn configure_tokenizer_for_pair_encoding(
         stride: 0,
         direction: TruncationDirection::Right,
     }));
-    tokenizer
+    (tokenizer, pad_id)
 }
 
 impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
@@ -237,8 +279,17 @@ impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
                     reason: format!("tokenizer.encode_batch: {e}"),
                 })?;
 
-        // Verify overflow, then convert each already padded encoding to
-        // `max_seq_len`. Production input is never truncated here.
+        // Overflow check on TRUE content length (rows are unpadded), then pad
+        // every row to the longest row in this batch. Batch-rectangular is all
+        // the session contract requires; padding to `max_seq_len` instead cost
+        // ~11× compute on realistic beds (TD-SELECTOR-1 gate 5). Production
+        // input is never truncated here.
+        let batch_width = encodings
+            .iter()
+            .map(|enc| enc.get_ids().len())
+            .max()
+            .unwrap_or(0);
+
         let mut input_ids: Vec<Vec<i64>> = Vec::with_capacity(encodings.len());
         let mut attention_mask: Vec<Vec<i64>> = Vec::with_capacity(encodings.len());
         let mut token_type_ids: Option<Vec<Vec<i64>>> = if self.emit_token_type_ids {
@@ -259,18 +310,20 @@ impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
             }
             input_ids.push(pad_or_truncate_to_i64(
                 enc.get_ids(),
-                self.max_seq_len,
-                /*pad=*/ 0,
+                batch_width,
+                /*pad=*/ self.pad_id,
             ));
+            // Padded positions are masked out, so attention and type-id rows
+            // pad with 0 regardless of the family's pad token id.
             attention_mask.push(pad_or_truncate_to_i64(
                 enc.get_attention_mask(),
-                self.max_seq_len,
+                batch_width,
                 /*pad=*/ 0,
             ));
             if let Some(tti) = token_type_ids.as_mut() {
                 tti.push(pad_or_truncate_to_i64(
                     enc.get_type_ids(),
-                    self.max_seq_len,
+                    batch_width,
                     /*pad=*/ 0,
                 ));
             }
@@ -435,23 +488,40 @@ mod tests {
     }
 
     #[test]
-    fn extractor_produces_rectangular_batch_at_max_seq_len() {
+    fn extractor_pads_to_batch_longest_not_max_seq_len() {
+        // Width policy (TD-SELECTOR-1 gate 5): rows pad to the longest row in
+        // the batch, NOT to max_seq_len — padding every pair to the budget cost
+        // ~11× compute on realistic beds. With a generous budget and short docs,
+        // the emitted width must be the longest actual row.
         let (e, qctx) = extractor_with(
             "alpha beta",
-            6,
+            64,
             false,
-            &[(1, "doc one"), (2, "doc two"), (3, "doc three")],
+            &[
+                (1, "doc one"),
+                (2, "doc two"),
+                (3, "doc three with more words"),
+            ],
         );
         let b = e
             .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)], &qctx)
             .unwrap();
         assert_eq!(b.batch_size(), 3);
-        for row in &b.input_ids {
-            assert_eq!(row.len(), 6, "row must be padded/truncated to max_seq_len");
-        }
-        for row in &b.attention_mask {
-            assert_eq!(row.len(), 6);
-        }
+        let width = b.seq_len();
+        assert!(
+            width < 64,
+            "width must be batch-longest ({width}), not the 64 budget"
+        );
+        let longest = b
+            .attention_mask
+            .iter()
+            .map(|row| row.iter().sum::<i64>())
+            .max()
+            .unwrap();
+        assert_eq!(
+            width as i64, longest,
+            "the longest row has no padding, so its length IS the batch width"
+        );
         assert!(b.validate_rectangular().is_ok());
     }
 
@@ -473,9 +543,11 @@ mod tests {
         let (e, qctx) = extractor_with("query", 8, true, &[(1, "doc")]);
         let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
         assert!(b.token_type_ids.is_some());
-        let tti = b.token_type_ids.unwrap();
+        let tti = b.token_type_ids.clone().unwrap();
         assert_eq!(tti.len(), 1);
-        assert_eq!(tti[0].len(), 8);
+        // Single-row batch: width is that row's own true length, under the cap.
+        assert_eq!(tti[0].len(), b.seq_len());
+        assert!(tti[0].len() <= 8);
     }
 
     #[test]
@@ -513,9 +585,10 @@ mod tests {
         let b = e.extract_batch(&[DocHandle(1)], &qctx_b).unwrap();
         // Same doc, same vocab → identical token ids when the query
         // also matches; here the queries differ so at least one
-        // input_id position must differ between batches.
-        assert_eq!(a.input_ids[0].len(), 8);
-        assert_eq!(b.input_ids[0].len(), 8);
+        // input_id position must differ between batches. Single-row
+        // batches are padded to their own length, so widths differ
+        // with the queries.
+        assert!(a.input_ids[0].len() <= 8 && b.input_ids[0].len() <= 8);
         assert_ne!(
             a.input_ids[0], b.input_ids[0],
             "different query_text must produce different tokens"
