@@ -1192,6 +1192,12 @@ mod tests {
         .await;
 
         // The ranged machinery engaged AND saved bytes vs the whole segment.
+        eprintln!(
+            "[v4-ranged] bytes={} gets={} file_len={file_len} ({:.1}% of file)",
+            snap.bytes_read,
+            snap.range_gets,
+            snap.bytes_read as f64 / file_len as f64 * 100.0
+        );
         assert!(
             snap.range_gets > 0,
             "ranged reads engaged: gets={} bytes={}",

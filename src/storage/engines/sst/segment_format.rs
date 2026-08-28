@@ -4100,6 +4100,11 @@ mod tests {
         // delta is Region D (whole RG bodies vs ~k OID strings). Assert a
         // savings floor so a dead chunk path (falling back to whole RGs)
         // cannot pass on noise.
+        eprintln!(
+            "[oid-chunk] v3: bytes={v3_bytes} gets={v3_gets}; v4: bytes={v4_bytes} \
+             gets={v4_gets}; bytes_saved={}",
+            v3_bytes.saturating_sub(v4_bytes)
+        );
         assert!(
             v4_bytes < v3_bytes && v3_bytes.saturating_sub(v4_bytes) >= 32 * 1024,
             "chunk fetch must save Region-D bytes: v3={v3_bytes} v4={v4_bytes}"
