@@ -1,7 +1,7 @@
 = TD-SELECTOR-1: Calibrated Open-Weight Selector Benchmark
 
-Status:: Implemented — harness + gates 2, 4, 5 (synthetic evidence only)
-Date:: 2026-08-23 (gates 2/4, #1730); 2026-08-25..26 (gate 5 + follow-ups)
+Status:: Implemented — gates 2/4/5 (synthetic) + gate 3 (real dev data; held-out sealed)
+Date:: 2026-08-23 (gates 2/4, #1730); 2026-08-25..26 (gate 5, #1736/#1741); 2026-08-27 (gate 3)
 Worktree:: `feat/selector-benchmark` (#1730); `feat/selector-onnx-parity` (gate 5 + follow-ups)
 
 == Context
@@ -277,12 +277,79 @@ not window policy. Long docs are sentence-window split with max-over-window (the
 #1726 protocol) rather than rejected. Default CI compiles nothing from the module
 (root `onnx` feature off); it runs manually with the registered env gates.
 
+== Gate 3 — selector protocol on real development data (2026-08-27)
+
+Ran the selector protocol on the REAL #1726 campaign data (NFCorpus dev, 324
+queries, 57 306 query-source pairs, pinned MiniLM `4bebbd56` cached scores — zero
+new inference). Preserved pool: the bm25+bge RRF union (128–200 candidates/query).
+Every selector consumes that pool; depths were materialized with the existing
+`rerank_source_candidates.py materialize` (the `--rerank-all` reproduction is
+byte-identical to the shipped #1726 run, sha `30325bd876661f74` — pipeline
+integrity confirmed).
+
+=== Dev results (qrels: normalized dev source_qrels; evaluator + paired bootstrap 10 000, seed 17)
+
+[cols="3,2,2,2,2"]
+|===
+|Selector |NDCG@10 |Rec@10 |NDCG@100 |Rec@100
+
+|union-order (no rerank)
+|0.3315 |0.1527 |0.3024 |0.3208
+
+|rerank@10
+|0.3338 |0.1527 |0.3066 |0.3208
+
+|rerank@20
+|0.3385 |0.1593 |0.3078 |0.3208
+
+|rerank@100
+|0.3342 |0.1567 |0.3064 |0.3208
+
+|rerank@all (the #1726 incumbent)
+|0.3320 |0.1542 |0.3013 |0.3136
+|===
+
+=== Findings
+
+1. **The #1726 selector regression is a depth-policy artifact, not model quality
+   — and it is structural.** The shipped run reordered EVERY candidate
+   (`rerank_count: "all"`). Any bounded depth D ≤ 100 keeps positions D+1..100 in
+   union order, so top-100 membership equals the union's *by construction*: Recall@100
+   = 0.3208 for D ∈ {10, 20, 100}, deterministically, while the unbounded reorder
+   uniquely loses it (0.3136, −0.0072) by pushing mid-tail relevant documents past
+   rank 100. The synthetic gate-2 theorem ("a W-deep reranker's Recall@k IS its
+   upstream's Recall@min(W,k)") holds verbatim on production data.
+2. **Dev-selected candidate: rerank@20** — best on all four metrics — but the
+   paired comparisons vs the incumbent do NOT clear significance at n = 324:
+   NDCG@10 Δ +0.006503 CI [−0.001850, +0.014628]; Recall@100 Δ +0.007238 CI
+   [−0.002569, +0.017110]. Both intervals include zero.
+3. **Verdict: NOT promotable on quality grounds; held-out stays sealed.** The
+   decisive claim (recall preservation under bounded depth) is deterministic, so a
+   held-out run would confirm nothing; spending the seal on a non-significant
+   quality delta is precisely what the promotion rule forbids.
+
+=== Production-shape mapping
+
+`CrossModalReranker` (`crates/query/proximadb-query/src/reranking.rs:536`) does
+`records.into_iter().take(rerank_top_k)` — a BOUNDED reorder (default
+`rerank_top_k` = 100), so serving does not have the rerank-all pathology for
+top-100 consumers. Two caveats recorded for follow-up:
+
+* the tail past `rerank_top_k` is **dropped, not preserved**: a consumer asking
+  for top-K > `rerank_top_k` silently loses records. The bench pipeline's
+  `materialize_run` keeps the tail (`merged.extend(candidates[D..])`) — the
+  recall-preserving shape. Aligning the Rust seam to preserve-and-append is a
+  behavior change (result cardinality) that deserves its own eval, not a rider.
+* the evidence pipeline's scorer supports both policies (`--rerank-count D` vs
+  `--rerank-all`); **`--rerank-all` should not be used for delivered top-100
+  selection** — that is the one policy measured to lose recall.
+
 == Remaining gates
 
-* **Gate 3 (production)**: run the selector protocol on development data with the
-  real retrievers and sealed held-out queries; promote only on paired significance.
-  With parity proven and the harness able to drive the real scorer, the ONNX path
-  can now *be* the scoring engine for that run.
+* **Gate 3 (held-out confirmation)**: dev-side complete (above); the held-out
+  split remains sealed until a dev candidate clears significance. A larger dev
+  bed or a stronger reranker (BGE, catalog-pinned) are the two levers that could
+  produce one.
 * **Length bucketing for heterogeneous windows**: one long document sets the whole
   window's batch width (see the latency table). Bucketing or window-splitting
   recovers it; the parity fixtures re-run as the gate.
