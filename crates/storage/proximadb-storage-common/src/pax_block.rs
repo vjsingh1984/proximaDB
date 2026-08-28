@@ -941,11 +941,11 @@ pub struct PaxSegmentWriter {
     /// [`RG_TARGET_MIN_BYTES`] so sub-granule framing amplification is
     /// structurally impossible. Default OFF (`PROXIMADB_PAX_WRITE_RG_LAYOUT`).
     rg_layout: bool,
-    /// Per-flushed-RG OID-chunk extents `(rel_off, len)` inside each RG's block
-    /// bytes (the OID stripe's ColumnMeta offset/len), 1:1 with `index.blocks`.
-    /// Populated only when `rg_layout` is on; serialized in the footer's
-    /// per-entry MinMax stats payload for the ANN top-k chunk fetch.
-    rg_oid_chunks: Vec<(u32, u32)>,
+    /// Per-flushed-RG OID-chunk descriptors `(rel_off, len, encoding_id, lz4)`
+    /// for the OID stripe inside each RG's block bytes, 1:1 with
+    /// `index.blocks`. Populated only when `rg_layout` is on; serialized in the
+    /// footer's per-entry MinMax stats payload for the ANN top-k chunk fetch.
+    rg_oid_chunks: Vec<(u32, u32, u8, bool)>,
     /// Embedding-0 f32 vectors in cluster (add) order, buffered contiguously for
     /// the segment-level RaBitQ/SQ8 regions. Populated only in coalesced mode.
     rabitq_vectors: CoalescedVectorBuffer,
@@ -1551,8 +1551,15 @@ impl PaxSegmentWriter {
                 .column_metas()
                 .iter()
                 .find(|m| m.column_id == col_id::OID)
-                .map(|m| (m.stripe_offset, m.stripe_len))
-                .unwrap_or((0u32, 0u32));
+                .map(|m| {
+                    (
+                        m.stripe_offset,
+                        m.stripe_len,
+                        m.encoding_id,
+                        m.is_lz4_compressed,
+                    )
+                })
+                .unwrap_or((0u32, 0u32, 0u8, false));
             self.rg_oid_chunks.push(oid_chunk);
         }
         self.index.blocks.push(BlockIndexEntry {
@@ -1862,13 +1869,15 @@ impl PaxSegmentWriter {
                 .zip(
                     self.rg_oid_chunks
                         .iter()
-                        .chain(std::iter::repeat(&(0u32, 0u32))),
+                        .chain(std::iter::repeat(&(0u32, 0u32, 0u8, false))),
                 )
-                .map(|(entry, &(chunk_off, chunk_len))| {
+                .map(|(entry, &(chunk_off, chunk_len, chunk_enc, chunk_lz4))| {
                     entry.zone.as_ref().map(|zone| FooterRowGroupStats {
                         zone: zone.clone(),
                         oid_chunk_rel_off: chunk_off,
                         oid_chunk_len: chunk_len,
+                        oid_encoding_id: chunk_enc,
+                        oid_is_lz4: chunk_lz4,
                     })
                 })
                 .collect()
@@ -2383,13 +2392,15 @@ impl PaxSegmentWriter {
                 .zip(
                     self.rg_oid_chunks
                         .iter()
-                        .chain(std::iter::repeat(&(0u32, 0u32))),
+                        .chain(std::iter::repeat(&(0u32, 0u32, 0u8, false))),
                 )
-                .map(|(entry, &(chunk_off, chunk_len))| {
+                .map(|(entry, &(chunk_off, chunk_len, chunk_enc, chunk_lz4))| {
                     entry.zone.as_ref().map(|zone| FooterRowGroupStats {
                         zone: zone.clone(),
                         oid_chunk_rel_off: chunk_off,
                         oid_chunk_len: chunk_len,
+                        oid_encoding_id: chunk_enc,
+                        oid_is_lz4: chunk_lz4,
                     })
                 })
                 .collect()

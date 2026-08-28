@@ -36,7 +36,8 @@ use proximadb_storage_common::pax_block::{
 #[cfg(test)]
 use proximadb_block_format::BLOCK_MAGIC;
 use proximadb_storage_common::segment_layout::{
-    SEG_HEADER_PREFIX_V4_LEN, SegmentHeaderPrefix, is_coalesced_segment,
+    SEG_HEADER_PREFIX_V4_LEN, SEG_LAYOUT_VERSION_ROW_GROUP, SegmentHeaderPrefix,
+    is_coalesced_segment,
 };
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
@@ -3606,162 +3607,226 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         block_rows.entry(bi).or_default().push(local as usize);
     }
     let topk_blocks: Vec<usize> = block_rows.keys().copied().collect();
-    let oid_policy = resolve_adaptive_range_policy(
-        path,
-        "region_d_topk",
-        "PROXIMADB_PAX_COALESCE_GAP",
-        "PROXIMADB_PAX_COALESCE_RANGE",
-        defaults,
-        |candidate| {
-            estimate_coalesced_byte_ranges(
-                topk_blocks.iter().filter_map(|&index| {
-                    footer
-                        .blocks
-                        .get(index)
-                        .map(|block| (block.offset, block.offset + block.size as u64))
-                }),
-                candidate,
-            )
-        },
-    );
-    let oid_fetches = plan_coalesced_block_ranges(&footer, &topk_blocks, &oid_policy);
     let mut oid_of: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
-    // TD-RDSTRAT-12 §3 round 4: peek·batch·feed for the OID tail (mirror of
-    // W1; plain exact-key seam — no parent tier here). Classification via the
-    // existing side-effect-free `peek_memory_exact`; one bounded-concurrent
-    // wave for the true-cold block ranges (D4 bound: min(INFLIGHT,N) ×
-    // max_range_bytes ≤ 128 MiB transient).
-    enum OidSlot {
-        SiteServed,
-        Cold(usize),
-    }
-    let mut oid_slots: Vec<OidSlot> = Vec::with_capacity(oid_fetches.len());
-    let mut oid_cold_ranges: Vec<std::ops::Range<u64>> = Vec::new();
-    for fetch in &oid_fetches {
-        match survivor_cache {
-            Some(sc)
-                if sc
-                    .peek_memory_exact(CacheKind::Other, path, fetch.start, fetch.end - fetch.start)
-                    .await
-                    .is_some() =>
-            {
-                oid_slots.push(OidSlot::SiteServed);
-            }
-            _ => {
-                oid_slots.push(OidSlot::Cold(oid_cold_ranges.len()));
-                oid_cold_ranges.push(fetch.start..fetch.end);
-            }
-        }
-    }
-    let mut oid_cold_bytes: Vec<Option<Vec<u8>>> = vec![None; oid_cold_ranges.len()];
-    if !oid_cold_ranges.is_empty() {
-        let batched = match fs.read_ranges_prefetch(path, oid_cold_ranges.clone()).await {
-            Ok(bufs) => bufs,
-            Err(_) => {
-                // Defensive fallback to the sequential baseline shape.
-                let mut seq = Vec::with_capacity(oid_cold_ranges.len());
-                for range in &oid_cold_ranges {
-                    let b = fs
-                        .read_range(path, range.start, range.end - range.start)
-                        .await
-                        .map_err(|err| {
-                            anyhow::anyhow!("coalesced scan OID fallback {path}: {err}")
-                        })?;
-                    if trace_on {
-                        record_get(CacheTier::ResultPayload, range.end - range.start);
-                    }
-                    seq.push(b);
-                }
-                seq
-            }
-        };
-        // Metrics parity: the baseline loader records ONLY
-        // `record_get(ResultPayload, …)` (never region bytes) — fire it here,
-        // once per physical GET, and keep the Cold loaders silent.
-        for ((range, buf), slot) in oid_cold_ranges
-            .iter()
-            .zip(batched)
-            .zip(oid_cold_bytes.iter_mut())
-        {
-            if trace_on {
-                record_get(CacheTier::ResultPayload, range.end - range.start);
-            }
-            *slot = Some(buf);
-        }
-        crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
-    }
-    for (fetch_i, fetch) in oid_fetches.iter().enumerate() {
-        let start = fetch.start;
-        let range_len = fetch.end - fetch.start;
-        let pre = match &oid_slots[fetch_i] {
-            OidSlot::Cold(i) => Some(oid_cold_bytes[*i].take().ok_or_else(|| {
-                anyhow::anyhow!("coalesced scan OID fetch {path}: cold fetch {i} missing")
-            })?),
-            OidSlot::SiteServed => None,
-        };
-        // ADR-065 Q3: same read-through cache as survivors (OID ranges are also
-        // immutable per segment + repeat across hot queries). `CacheKind::Other`
-        // separates OID stats from survivor (QuantizedCodes) stats.
-        let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
-            match pre {
-                Some(mut pre) => sc
-                    .get_or_fetch(CacheKind::Other, path, start, range_len, || async {
-                        Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
-                            std::mem::take(&mut pre),
-                        )
-                    })
-                    .await
-                    .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?,
-                None => {
-                    // SiteServed (or a peek/consume race): the original
-                    // baseline loader — records fire iff it truly runs.
-                    sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
-                        let b = fs.read_range(path, start, range_len).await?;
-                        if trace_on {
-                            record_get(CacheTier::ResultPayload, range_len);
-                        }
-                        Ok(b)
-                    })
-                    .await
-                    .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?
-                }
-            }
-        } else {
-            match pre {
-                Some(b) => Arc::from(b),
-                None => {
-                    let b = fs
-                        .read_range(path, start, range_len)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?;
-                    if trace_on {
-                        record_get(CacheTier::ResultPayload, range_len);
-                    }
-                    Arc::from(b)
-                }
-            }
-        };
-        for &bi in &fetch.blocks {
+    // TD-PAXRG-1 Phase D (v4): the footer's per-RG stats payload addresses each
+    // RG's OID chunk, so the top-k OIDs are fetched as CHUNKS — the same GET
+    // count as whole-RG fetches (request economy parity) at a fraction of the
+    // bytes (an RG is up to the multi-MiB granule; the OID chunk is ~tens of
+    // bytes per row). Non-v4 segments keep the TD-RDSTRAT-12 §3 r4
+    // peek·batch·feed whole-block tail, verbatim.
+    let v4_chunk_fetch = header.layout_version == SEG_LAYOUT_VERSION_ROW_GROUP
+        && topk_blocks.iter().all(|&bi| {
+            footer
+                .block_stats
+                .get(bi)
+                .is_some_and(|s| s.as_ref().is_some_and(|stats| stats.oid_chunk_len > 0))
+        });
+    if v4_chunk_fetch {
+        // TD-PAXRG-1 Phase D: per-RG OID-chunk fetch — the footer's stats
+        // payload addresses each RG's chunk; decode via decode_str_chunk.
+        for (&bi, locals) in &block_rows {
             let Some(b) = footer.blocks.get(bi) else {
                 continue;
             };
-            let rel = match b.offset.checked_sub(fetch.start) {
-                Some(r) => r as usize,
-                None => continue,
-            };
-            let end = rel + b.size as usize;
-            if end > buf.len() {
+            let Some(Some(stats)) = footer.block_stats.get(bi) else {
                 continue;
+            };
+            let start = b.offset + stats.oid_chunk_rel_off as u64;
+            let range_len = stats.oid_chunk_len as u64;
+            // ADR-065 Q3: same read-through cache class as the legacy OID path.
+            let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
+                sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
+                    let b = fs.read_range(path, start, range_len).await?;
+                    if trace_on {
+                        record_get(CacheTier::ResultPayload, range_len);
+                    }
+                    Ok(b)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}"))?
+            } else {
+                let b = fs
+                    .read_range(path, start, range_len)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}"))?;
+                if trace_on {
+                    record_get(CacheTier::ResultPayload, range_len);
+                }
+                Arc::from(b)
+            };
+            let oids = proximadb_block_format::decode_str_chunk(
+                &buf,
+                stats.oid_encoding_id,
+                stats.oid_is_lz4,
+                b.row_count as usize,
+            )
+            .unwrap_or_default();
+            for &local in locals {
+                if let Some(oid) = oids.get(local).cloned().flatten() {
+                    let g = block_start[bi] as usize + local;
+                    oid_of.insert(g, oid);
+                }
             }
-            let Ok(reader) = PaxBlockReader::open(&buf[rel..end]) else {
-                continue;
+        }
+    } else {
+        // TD-RDSTRAT-12 §3 round 4 (develop, verbatim): peek·batch·feed for the
+        // legacy whole-block OID tail.
+        let oid_policy = resolve_adaptive_range_policy(
+            path,
+            "region_d_topk",
+            "PROXIMADB_PAX_COALESCE_GAP",
+            "PROXIMADB_PAX_COALESCE_RANGE",
+            defaults,
+            |candidate| {
+                estimate_coalesced_byte_ranges(
+                    topk_blocks.iter().filter_map(|&index| {
+                        footer
+                            .blocks
+                            .get(index)
+                            .map(|block| (block.offset, block.offset + block.size as u64))
+                    }),
+                    candidate,
+                )
+            },
+        );
+        let oid_fetches = plan_coalesced_block_ranges(&footer, &topk_blocks, &oid_policy);
+        // TD-RDSTRAT-12 §3 round 4: peek·batch·feed for the OID tail (mirror of
+        // W1; plain exact-key seam — no parent tier here). Classification via the
+        // existing side-effect-free `peek_memory_exact`; one bounded-concurrent
+        // wave for the true-cold block ranges (D4 bound: min(INFLIGHT,N) ×
+        // max_range_bytes ≤ 128 MiB transient).
+        enum OidSlot {
+            SiteServed,
+            Cold(usize),
+        }
+        let mut oid_slots: Vec<OidSlot> = Vec::with_capacity(oid_fetches.len());
+        let mut oid_cold_ranges: Vec<std::ops::Range<u64>> = Vec::new();
+        for fetch in &oid_fetches {
+            match survivor_cache {
+                Some(sc)
+                    if sc
+                        .peek_memory_exact(CacheKind::Other, path, fetch.start, fetch.end - fetch.start)
+                        .await
+                        .is_some() =>
+                {
+                    oid_slots.push(OidSlot::SiteServed);
+                }
+                _ => {
+                    oid_slots.push(OidSlot::Cold(oid_cold_ranges.len()));
+                    oid_cold_ranges.push(fetch.start..fetch.end);
+                }
+            }
+        }
+        let mut oid_cold_bytes: Vec<Option<Vec<u8>>> = vec![None; oid_cold_ranges.len()];
+        if !oid_cold_ranges.is_empty() {
+            let batched = match fs.read_ranges_prefetch(path, oid_cold_ranges.clone()).await {
+                Ok(bufs) => bufs,
+                Err(_) => {
+                    // Defensive fallback to the sequential baseline shape.
+                    let mut seq = Vec::with_capacity(oid_cold_ranges.len());
+                    for range in &oid_cold_ranges {
+                        let b = fs
+                            .read_range(path, range.start, range.end - range.start)
+                            .await
+                            .map_err(|err| {
+                                anyhow::anyhow!("coalesced scan OID fallback {path}: {err}")
+                            })?;
+                        if trace_on {
+                            record_get(CacheTier::ResultPayload, range.end - range.start);
+                        }
+                        seq.push(b);
+                    }
+                    seq
+                }
             };
-            let oids = reader.decode_str_stripe(col_id::OID).unwrap_or_default();
-            if let Some(locals) = block_rows.get(&bi) {
-                for &local in locals {
-                    if let Some(oid) = oids.get(local).cloned().flatten() {
-                        let g = block_start[bi] as usize + local;
-                        oid_of.insert(g, oid);
+            // Metrics parity: the baseline loader records ONLY
+            // `record_get(ResultPayload, …)` (never region bytes) — fire it here,
+            // once per physical GET, and keep the Cold loaders silent.
+            for ((range, buf), slot) in oid_cold_ranges
+                .iter()
+                .zip(batched)
+                .zip(oid_cold_bytes.iter_mut())
+            {
+                if trace_on {
+                    record_get(CacheTier::ResultPayload, range.end - range.start);
+                }
+                *slot = Some(buf);
+            }
+            crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
+        }
+        for (fetch_i, fetch) in oid_fetches.iter().enumerate() {
+            let start = fetch.start;
+            let range_len = fetch.end - fetch.start;
+            let pre = match &oid_slots[fetch_i] {
+                OidSlot::Cold(i) => Some(oid_cold_bytes[*i].take().ok_or_else(|| {
+                    anyhow::anyhow!("coalesced scan OID fetch {path}: cold fetch {i} missing")
+                })?),
+                OidSlot::SiteServed => None,
+            };
+            // ADR-065 Q3: same read-through cache as survivors (OID ranges are also
+            // immutable per segment + repeat across hot queries). `CacheKind::Other`
+            // separates OID stats from survivor (QuantizedCodes) stats.
+            let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
+                match pre {
+                    Some(mut pre) => sc
+                        .get_or_fetch(CacheKind::Other, path, start, range_len, || async {
+                            Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
+                                std::mem::take(&mut pre),
+                            )
+                        })
+                        .await
+                        .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?,
+                    None => {
+                        // SiteServed (or a peek/consume race): the original
+                        // baseline loader — records fire iff it truly runs.
+                        sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
+                            let b = fs.read_range(path, start, range_len).await?;
+                            if trace_on {
+                                record_get(CacheTier::ResultPayload, range_len);
+                            }
+                            Ok(b)
+                        })
+                        .await
+                        .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?
+                    }
+                }
+            } else {
+                match pre {
+                    Some(b) => Arc::from(b),
+                    None => {
+                        let b = fs
+                            .read_range(path, start, range_len)
+                            .await
+                            .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?;
+                        if trace_on {
+                            record_get(CacheTier::ResultPayload, range_len);
+                        }
+                        Arc::from(b)
+                    }
+                }
+            };
+            for &bi in &fetch.blocks {
+                let Some(b) = footer.blocks.get(bi) else {
+                    continue;
+                };
+                let rel = match b.offset.checked_sub(fetch.start) {
+                    Some(r) => r as usize,
+                    None => continue,
+                };
+                let end = rel + b.size as usize;
+                if end > buf.len() {
+                    continue;
+                }
+                let Ok(reader) = PaxBlockReader::open(&buf[rel..end]) else {
+                    continue;
+                };
+                let oids = reader.decode_str_stripe(col_id::OID).unwrap_or_default();
+                if let Some(locals) = block_rows.get(&bi) {
+                    for &local in locals {
+                        if let Some(oid) = oids.get(local).cloned().flatten() {
+                            let g = block_start[bi] as usize + local;
+                            oid_of.insert(g, oid);
+                        }
                     }
                 }
             }
@@ -3855,6 +3920,135 @@ mod tests {
         assert!(
             pax_segment_has_exact_vector_authority(&segment),
             "Region C must satisfy the exact-authority predicate"
+        );
+    }
+
+    /// TD-PAXRG-1 Phase D: on a v4 segment the top-k OIDs come from the
+    /// footer-addressed OID CHUNKS, not whole row groups. Evidence: (a) result
+    /// parity with the v3 whole-block fetch on the identical corpus/order
+    /// (same Region A/B encodes ⇒ identical distances), and (b) strictly fewer
+    /// ranged bytes at no more GETs — request economy at parity, byte win.
+    #[tokio::test]
+    async fn v4_oid_chunk_fetch_parity_and_byte_win_vs_v3() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_common::pax_block::RG_TARGET_MIN_BYTES;
+        use proximadb_storage_filesystem_types::FileSystem;
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+
+        const DIM: usize = 64;
+        const N: usize = 1_500;
+        const K: usize = 10;
+
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+
+        let build = |path: &std::path::Path, rg: bool| {
+            let mut writer = PaxSegmentWriter::new(
+                path,
+                BlockMode::Pax,
+                BlockCompression::None,
+                "col",
+                0,
+                1,
+                // v3: small blocks (multi-block segment); v4: floor clamps to
+                // one big RG so the whole-RG-vs-chunk contrast is maximal.
+                Some(if rg { RG_TARGET_MIN_BYTES } else { 96 * 1024 }),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_coalesced_rabitq(true)
+            .with_oid_resolver(true);
+            if rg {
+                writer = writer.with_rg_layout(true);
+            }
+            for (i, v) in corpus.iter().enumerate() {
+                writer.add_record(&rec(&format!("r{i}"), 1000 + i as i64, v.clone()))?;
+            }
+            writer.finish()
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let v3_path = dir.path().join("v3.pax");
+        let v4_path = dir.path().join("v4.pax");
+        build(&v3_path, false).unwrap();
+        build(&v4_path, true).unwrap();
+
+        // Sanity: the v4 file really is the v4 layout.
+        let v4_bytes = std::fs::read(&v4_path).unwrap();
+        let header = SegmentHeaderPrefix::parse(&v4_bytes[..SEG_HEADER_PREFIX_V4_LEN]).unwrap();
+        assert_eq!(header.layout_version, SEG_LAYOUT_VERSION_ROW_GROUP);
+
+        let inner = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let counters = global_counters();
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(CountingFileSystem::new(Arc::new(inner), counters.clone()));
+
+        let query = corpus[137].clone();
+        let run = |path: &std::path::Path| {
+            let fs = fs.clone();
+            let counters = counters.clone();
+            let query = query.clone();
+            let path = path.to_path_buf();
+            async move {
+                counters.reset();
+                let hits = rabitq_search_segment_coalesced(
+                    &*fs,
+                    path.to_str().unwrap(),
+                    &query,
+                    K,
+                    RankMetric::L2,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .expect("cascade must serve the segment");
+                (
+                    hits,
+                    counters
+                        .bytes_read
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    counters.total_gets(),
+                )
+            }
+        };
+
+        let (v3_hits, v3_bytes, v3_gets) = run(&v3_path).await;
+        let (v4_hits, v4_bytes, v4_gets) = run(&v4_path).await;
+
+        // (a) Parity: same hits, same order, same scores (identical A/B
+        // encodes; only Region D's fetch strategy differs).
+        assert_eq!(v3_hits.len(), v4_hits.len(), "top-k count parity");
+        for (a, b) in v3_hits.iter().zip(&v4_hits) {
+            assert_eq!(a.oid, b.oid, "OID parity: {} vs {}", a.oid, b.oid);
+            assert_eq!(a.distance.to_bits(), b.distance.to_bits(), "score parity");
+        }
+
+        // (b) The byte win: the v4 OID-chunk fetch reads strictly less — the
+        // delta is Region D (whole RG bodies vs ~k OID strings). Assert a
+        // savings floor so a dead chunk path (falling back to whole RGs)
+        // cannot pass on noise.
+        assert!(
+            v4_bytes < v3_bytes && v3_bytes.saturating_sub(v4_bytes) >= 32 * 1024,
+            "chunk fetch must save Region-D bytes: v3={v3_bytes} v4={v4_bytes}"
+        );
+        // GET economy: chunks are fetched per touched RG and deliberately NOT
+        // coalesced across RGs (merging would span the inter-RG gap and
+        // re-read the bodies the chunk fetch exists to skip). v3's ADJACENT
+        // whole blocks can merge into fewer GETs, so v4 may use a small
+        // constant more requests — the deliberate trade is bytes-dominant.
+        // The TD's flip criterion is therefore: GET count within a small
+        // constant of v3, bytes strictly down.
+        assert!(
+            v4_gets <= v3_gets + 2,
+            "request economy within a small constant: v3={v3_gets} v4={v4_gets}"
         );
     }
 

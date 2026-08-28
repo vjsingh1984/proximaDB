@@ -298,10 +298,15 @@ pub struct FooterRowGroupStats {
     pub oid_chunk_rel_off: u32,
     /// Byte length of the OID chunk.
     pub oid_chunk_len: u32,
+    /// The OID stripe's `encoding_id` (PAX string codec) — the chunk decodes
+    /// standalone via `decode_str_chunk`.
+    pub oid_encoding_id: u8,
+    /// The OID stripe's LZ4 flag.
+    pub oid_is_lz4: bool,
 }
 
-/// `zone (85 B) + [oid_chunk_rel_off u32][oid_chunk_len u32]`.
-pub const RG_STATS_MIN_BYTES: usize = 93;
+/// `zone (85 B) + [rel_off u32][len u32][encoding_id u8][lz4 u8]`.
+pub const RG_STATS_MIN_BYTES: usize = 95;
 
 impl FooterRowGroupStats {
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -309,6 +314,8 @@ impl FooterRowGroupStats {
         self.zone.write_to(&mut buf);
         buf.extend_from_slice(&self.oid_chunk_rel_off.to_le_bytes());
         buf.extend_from_slice(&self.oid_chunk_len.to_le_bytes());
+        buf.push(self.oid_encoding_id);
+        buf.push(self.oid_is_lz4 as u8);
         buf
     }
 
@@ -320,6 +327,8 @@ impl FooterRowGroupStats {
             zone: crate::pax_block::BlockZoneSummary::read_from(data)?,
             oid_chunk_rel_off: u32::from_le_bytes(data[85..89].try_into()?),
             oid_chunk_len: u32::from_le_bytes(data[89..93].try_into()?),
+            oid_encoding_id: data[93],
+            oid_is_lz4: data[94] != 0,
         })
     }
 }
@@ -1536,6 +1545,8 @@ mod tests {
             zone,
             oid_chunk_rel_off: 512,
             oid_chunk_len: 1_024,
+            oid_encoding_id: 1,
+            oid_is_lz4: false,
         };
         let footer = SegmentFooterIndex {
             row_count: 255,
