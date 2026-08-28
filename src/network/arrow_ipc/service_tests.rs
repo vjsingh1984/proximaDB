@@ -227,6 +227,36 @@ fn test_tenant_id_from_flight_metadata_prefers_canonical_header() {
     );
 }
 
+/// TD-TENANT-3 S4: the retirement gate is now METRIC-based, not log-based —
+/// every deprecated use increments `proximadb_deprecated_claim_uses_total`
+/// even though the warn fires once per process. This drives the REAL
+/// `tenant_id_from_metadata` twice and asserts the counter moved by exactly
+/// two: without this, a long-lived pod goes log-silent while clients keep
+/// using an alias, and "quiet warnings" would falsely read as "migrated".
+#[test]
+fn test_deprecated_alias_use_is_counted_per_use() {
+    let label = |v: f64| v;
+    let before = crate::network::middleware::claim_metrics::DEPRECATED_CLAIM_USES
+        .get_metric_with_label_values(&["flight", "tenant_id"])
+        .map(|c| c.get())
+        .unwrap_or(0.0);
+
+    for _ in 0..2 {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert("tenant_id", "tenant-a".parse().unwrap());
+        assert_eq!(
+            ProximaFlightService::tenant_id_from_metadata(&metadata),
+            Some("tenant-a".to_string())
+        );
+    }
+
+    let after = crate::network::middleware::claim_metrics::DEPRECATED_CLAIM_USES
+        .get_metric_with_label_values(&["flight", "tenant_id"])
+        .map(|c| c.get())
+        .unwrap_or(0.0);
+    assert_eq!(label(after - before), 2.0, "counter must be per-use");
+}
+
 /// The legacy aliases stay accepted until TD-TENANT-3 S4 retires them — this
 /// is the compatibility half of "narrow, never widen": Flight clients are not
 /// broken, they are warned.

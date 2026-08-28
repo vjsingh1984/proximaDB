@@ -43,6 +43,7 @@
 
 pub mod auth;
 pub mod auth_failclosed;
+pub mod claim_metrics;
 pub use proximadb_network_middleware::backpressure;
 pub use proximadb_network_middleware::cors;
 pub mod metrics;

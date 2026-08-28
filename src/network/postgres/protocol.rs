@@ -1061,13 +1061,22 @@ impl PostgresProtocol {
             let tier_claim =
                 proximadb_tenant::tier_claim_pg(|name| params.get(name).map(String::as_str));
             let db = session.database.clone();
-            if let (false, Some(tier)) = (
+            match (
                 db.is_empty(),
-                proximadb_tenant::resolve_tier_claim(tier_claim, None, self.tier_header_trust)
-                    .ok()
-                    .flatten(),
+                proximadb_tenant::resolve_tier_claim(tier_claim, None, self.tier_header_trust),
             ) {
-                crate::services::record_store::set_tenant_tier(db, tier);
+                // Rejected: DROPPED (never SQLSTATE). pgwire's drop was fully
+                // silent — count it (ADR-0053 W8) so a strict deployment can
+                // see how many connections are losing their claim.
+                (false, Err(rejection)) => {
+                    crate::network::middleware::claim_metrics::record_tier_claim_dropped(
+                        "pgwire", &rejection,
+                    );
+                }
+                (false, Ok(Some(tier))) => {
+                    crate::services::record_store::set_tenant_tier(db, tier);
+                }
+                _ => {}
             }
         }
 

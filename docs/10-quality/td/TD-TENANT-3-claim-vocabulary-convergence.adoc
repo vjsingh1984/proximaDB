@@ -213,6 +213,22 @@ normalization happens on the *caller* side of the seam.
 
 . Retire Flight's `x-proximadb-tenant-id` / `tenant-id` / `tenant_id` aliases
   once the deprecation warning is silent across a release.
++
+[NOTE]
+====
+**Retirement gate made measurable (2026-08-27).** "Warning silent" was
+originally a log observation — but the warn fires **once per process**, so a
+long-lived pod goes log-silent while clients keep using an alias every second,
+and "quiet logs" would falsely read as "clients migrated". Every use now
+increments the cumulative counter
+`proximadb_deprecated_claim_uses_total{surface,name}` (per use, not per
+process; the warn stays once-per-process to avoid log spam). **The gate is a
+query: retire when `increase(proximadb_deprecated_claim_uses_total[7d]) == 0`**
+on the serving fleet, evaluated across a release boundary. The same change
+added `proximadb_tier_claims_dropped_total{surface,reason}` so ADR-0053 W8
+drops (previously warn-once-per-tenant, invisible in aggregate — and fully
+silent on pgwire) are countable per surface and rejection reason.
+====
 . `X-Forwarded-For` is read ungated at
   `crates/platform/proximadb-network-middleware/src/rate_limit.rs:327`.
 +

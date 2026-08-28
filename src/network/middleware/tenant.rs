@@ -715,6 +715,13 @@ fn warn_once_per_tenant(
     tenant: &str,
     rejection: &proximadb_tenant::TierClaimRejection,
 ) {
+    // ADR-0053 W8: count EVERY drop (the warn below is once per tenant —
+    // aggregate drop volume must not inherit that suppression).
+    crate::network::middleware::claim_metrics::record_tier_claim_dropped(
+        bounded_surface(surface),
+        rejection,
+    );
+
     static WARNED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
         std::sync::OnceLock::new();
     let warned = WARNED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
@@ -728,6 +735,20 @@ fn warn_once_per_tenant(
             "dropped x-tenant-tier claim: {rejection} \
              (governed by PROXIMADB_TIER_HEADER_TRUST)"
         );
+    }
+}
+
+/// Map a surface name to a bounded metric label. Callers pass in-tree
+/// literals; the fallback keeps label cardinality structurally bounded if a
+/// new surface is added without extending this match (the metric reads
+/// "other" and clippy/PR review catches the mismatch).
+fn bounded_surface(surface: &str) -> &'static str {
+    match surface {
+        "rest" => "rest",
+        "grpc" => "grpc",
+        "flight" => "flight",
+        "pgwire" => "pgwire",
+        _ => "other",
     }
 }
 
