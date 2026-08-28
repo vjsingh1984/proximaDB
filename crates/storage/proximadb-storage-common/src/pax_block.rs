@@ -4839,4 +4839,68 @@ mod tests {
         );
         Ok(())
     }
+    /// TD-PAXRG-1 Phase F: coarse cells never straddle row groups — under
+    /// rg_layout the writer force-cuts at every coarse-cell boundary, so a
+    /// two-cell segment yields exactly one whole RG per cell (A0's
+    /// `d_block_begin/end` then hold whole-RG ordinals by construction).
+    #[test]
+    fn v4_cells_never_straddle_row_groups() -> Result<()> {
+        use crate::coarse_directory::CoarseModel;
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        const DIM: usize = 8;
+        let model = CoarseModel {
+            dim: DIM as u32,
+            n_comp: 1,
+            pca_mean: vec![0.0; DIM],
+            pca_components: vec![0.1; DIM],
+            centroids: vec![-1.0, 1.0],
+            radii: vec![1.0, 1.0],
+            cell_rows: vec![5, 5],
+            seed: 7,
+            trained_on: 10,
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("cells-rg.pax");
+        // Huge target: WITHOUT the cell-boundary cut this would be one RG.
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(RG_TARGET_MIN_BYTES),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_rg_layout(true)
+        .with_oid_resolver(true)
+        .with_two_level(model);
+        for row in 0..10usize {
+            let mut record = make_record(&format!("oid-{row}"), "t", 1_000 + row as i64);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(
+                    (0..DIM).map(|d| (row * 7 + d) as f32 * 0.01).collect(),
+                ),
+                ..Default::default()
+            });
+            writer.add_record(&record)?;
+        }
+        writer.finish()?;
+
+        let segment = std::fs::read(&path)?;
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        assert_eq!(
+            footer.blocks.len(),
+            2,
+            "two cells ⇒ two whole RGs (the cell boundary forces an RG cut)"
+        );
+        let rows: Vec<u32> = footer.blocks.iter().map(|b| b.row_count).collect();
+        assert_eq!(rows, vec![5, 5], "one RG per coarse cell");
+        Ok(())
+    }
 }

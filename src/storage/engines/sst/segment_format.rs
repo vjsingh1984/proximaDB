@@ -159,6 +159,34 @@ pub fn write_pax_segment_full(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
+    write_pax_segment_full_with_layout(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        rg_layout_enabled(),
+    )
+}
+
+/// Like [`write_pax_segment_full`] with an explicit row-group Region D switch
+/// (TD-PAXRG-1) — the flush seam resolves the per-collection tag + env and
+/// passes the result here. No-ops for non-RaBitQ-coalesced writes.
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_full_with_layout(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    rg_layout: bool,
+) -> Result<SegmentMeta> {
     Ok(write_pax_segment_full_internal(
         path,
         records,
@@ -168,9 +196,39 @@ pub fn write_pax_segment_full(
         rerank_quant,
         f32_tier,
         target_block,
+        rg_layout,
         None,
     )?
     .meta)
+}
+
+/// Cache-seed variant with an explicit row-group Region D switch (TD-PAXRG-1)
+/// — the flush seam resolves the per-collection tag + env and passes it here.
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_full_with_cache_seed_and_layout(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    rg_layout: bool,
+    include_sq8: bool,
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
+    write_pax_segment_full_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        rg_layout,
+        Some(include_sq8),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -185,7 +243,7 @@ pub fn write_pax_segment_full_with_cache_seed(
     target_block: Option<usize>,
     include_sq8: bool,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
-    write_pax_segment_full_internal(
+    write_pax_segment_full_with_cache_seed_and_layout(
         path,
         records,
         collection_id,
@@ -194,7 +252,8 @@ pub fn write_pax_segment_full_with_cache_seed(
         rerank_quant,
         f32_tier,
         target_block,
-        Some(include_sq8),
+        rg_layout_enabled(),
+        include_sq8,
     )
 }
 
@@ -208,6 +267,7 @@ fn write_pax_segment_full_internal(
     rerank_quant: VectorQuant,
     f32_tier: bool,
     target_block: Option<usize>,
+    rg_layout: bool,
     capture_sq8: Option<bool>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     // TD-RDSTRAT-5 S1 / TD-WLP-4 (default ON, kill-switch
@@ -254,6 +314,7 @@ fn write_pax_segment_full_internal(
         rerank_quant,
         f32_tier,
         target_block,
+        rg_layout,
         cluster,
         plan,
         None, // two-level is compaction-only (TD-RDSTRAT-8)
@@ -282,7 +343,9 @@ pub fn write_pax_segment_compacted(
     f32_tier: bool,
     target_block: Option<usize>,
 ) -> Result<SegmentMeta> {
-    Ok(write_pax_segment_compacted_internal(
+    // TD-PAXRG-1: compaction-side per-collection plumbing is a recorded
+    // follow-up; the env gate governs compacted output for now.
+    write_pax_segment_compacted_internal(
         path,
         records,
         collection_id,
@@ -291,9 +354,10 @@ pub fn write_pax_segment_compacted(
         rerank_quant,
         f32_tier,
         target_block,
+        rg_layout_enabled(),
         None,
-    )?
-    .meta)
+    )
+    .map(|write| write.meta)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -317,6 +381,7 @@ pub fn write_pax_segment_compacted_with_cache_seed(
         rerank_quant,
         f32_tier,
         target_block,
+        rg_layout_enabled(),
         Some(include_sq8),
     )
 }
@@ -331,6 +396,7 @@ fn write_pax_segment_compacted_internal(
     rerank_quant: VectorQuant,
     f32_tier: bool,
     target_block: Option<usize>,
+    rg_layout: bool,
     capture_sq8: Option<bool>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     use crate::storage::engines::sst::block_cluster;
@@ -379,6 +445,7 @@ fn write_pax_segment_compacted_internal(
         rerank_quant,
         f32_tier,
         target_block,
+        rg_layout,
         cluster,
         plan,
         probe_model,
@@ -450,6 +517,7 @@ fn write_pax_segment_ordered(
     rerank_quant: VectorQuant,
     f32_tier: bool,
     target_block: Option<usize>,
+    rg_layout: bool,
     cluster: bool,
     plan: Option<crate::storage::engines::sst::block_cluster::ClusterPlan>,
     two_level: Option<proximadb_storage_common::coarse_directory::CoarseModel>,
