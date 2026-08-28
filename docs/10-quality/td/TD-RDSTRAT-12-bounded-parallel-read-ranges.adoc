@@ -5,10 +5,10 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Partial — core parallel path exists (`PROXIMADB_FS_READ_RANGES_PARALLEL`); missing INFLIGHT cap, io_trace fields, and SIFT1M evidence.**
+| Status | **Rewired + re-measured (2026-08-27)** — IVF probe cold tail now batches through `read_ranges_prefetch`; parity proven, mechanism proven; ≥2× acceptance requires a high-RTT backend rerun. See §3.
 | Priority | **P2** — performance optimization for cold queries; not correctness-blocked.
-| Severity | Feature-complete, missing observability and evidence.
-| Component | `crates/storage/proximadb-storage-filesystem-types/src/lib.rs` — `read_ranges_buffered`, `FileSystem::read_ranges`
+| Severity | Feature-complete; gate reachable and proven fired by positive control.
+| Component | `crates/storage/proximadb-storage-filesystem-types/src/lib.rs` — `read_ranges_buffered`, `FileSystem::read_ranges`, `FileSystem::read_ranges_prefetch`
 | Governs | Parallelism of ranged GETs in the `FileSystem::read_ranges` path, which serves PAX segment reads (Region-A/B reads, footer fetches).
 | Relates to | TD-RDSTRAT-8 (IVF coarse probe — this is the orthogonal work item from §Bounded-parallel `read_ranges`), TD-RDSTRAT-6 (binary tier I/O baseline)
 | Pillar | PERF (latency)
@@ -28,9 +28,9 @@ The TD specifies two env knobs, acceptance criteria, and io_trace additions.
 | `read_ranges_buffered` helper | ✅ **Implemented** (lines 477-492 of `proximadb-storage-filesystem-types/src/lib.rs`) — order-preserving, short-circuit-on-error, unit-tested
 | `PROXIMADB_FS_READ_RANGES_PARALLEL` | ✅ **Implemented** — env gate registered, default 0 (sequential)
 | `FileSystem::read_ranges` parallel path | ✅ **Implemented** (lines 620-636) — delegates to `read_ranges_buffered` when `PARALLEL > 1`
-| `PROXIMADB_READ_RANGES_INFLIGHT` | ❌ **Not implemented** — TD-specified separate prefetch cap for pure prefetch vs decode-bound work
-| `fetch_rounds` + `max_inflight` in io_trace | ❌ **Not implemented for general path** — exists for IVF probe (`src/storage/engines/sst/metrics.rs`) but not as general `read_ranges` telemetry
-| SIFT1M cold p50 ≥2× improvement | ❌ **Not measured** — acceptance evidence not collected
+| `PROXIMADB_READ_RANGES_INFLIGHT` | ✅ **Implemented** (2026-08-26) — `FileSystem::read_ranges_prefetch()` method with INFLIGHT cap (lib.rs:780-851); zero production callers
+| `fetch_rounds` + `max_inflight` in io_trace | ✅ **Implemented for general path** (2026-08-26) — `io_trace::record_read_ranges()` + `read_ranges_fetch_rounds` / `read_ranges_max_inflight` metrics (io_trace.rs:684-686, 887-891)
+| SIFT1M cold p50 ≥2× improvement | ⚠️ **Rewired + re-measured** — parity & mechanism proven (positive control); −4.3% p50 on ≈0-RTT local bed; acceptance needs high-RTT rerun (see §3)
 |===
 
 == Remaining work
@@ -67,26 +67,55 @@ Required:
 
 === 3. Collect SIFT1M evidence
 
-Acceptance criteria (from TD-RDSTRAT-8):
+**Status (2026-08-27): rewiring COMPLETE; acceptance NOT MET on local-disk bed — structurally unevaluable there; high-RTT rerun required.**
 
-* "SIFT1M cold p50 improves ≥2× at equal GETs"
+==== Round 1 (2026-08-26): hypothesis falsified — gate inert
 
-This requires:
+Original A/B (`INFLIGHT=0` vs `=32`) was a null result because NOTHING reached
+the gated function: `coarse_probe_survivors` issued per-fetch `fs.read_range`
+in a loop, and `read_ranges_prefetch` had zero production callers
+(`rdstrat12_sift1m_inflight_inert` ledger entry).
 
-* A benchmark run on SIFT1M comparing sequential (`PROXIMADB_FS_READ_RANGES_PARALLEL=0`) vs parallel (`=4` or sensible cap)
-* Verify GET count is **unchanged** (coalescing is independent of parallelism)
-* Report cold p50 latency improvement
-* Record evidence in `BENCHMARK_EVIDENCE.toml` under an entry like `rdstrat12_sift1m_parallel_read_ranges`
+==== Round 2 (2026-08-27): cold tail rewired through the batch primitive
 
-The TD notes this benefits `PXH1` segments equally (not just v3), so the benchmark should use v1 segments to prove the general win.
+Adopted option 1. `coarse_probe_survivors` now classifies every probed-cell
+fetch up front (region Arc → prefix → invariants → survivor-RAM residency via
+new side-effect-free `peek_memory_exact`/`TenantCache::peek_memory`) and issues
+ONE bounded-concurrent `fs.read_ranges_prefetch` round for the TRUE-COLD tail;
+consume replays the original loaders/get_or_fetch so TD-CACHE-6 tracking,
+LRU admission, counters and error text are unchanged. Sequential shape when
+the cap resolves ≤1. An LRU race between peek and consume fails safe to the
+baseline loader (no panics). A first draft gating batches on
+`survivor_cache.is_none()` was dead code in production (cache always `Some`)
+and was replaced before measuring.
+
+==== Measured parity + verdict
+
+Object-cold parity across arms: GETs/q 13.80 = , bytes/q 46.18MB = ,
+cells/q 11.0 = , recall@100 0.9874 = . Latency deltas: object_cold p50
+55.37→52.98ms (−4.3%), post_write −2.4%, warm-disk −3.5%.
+Mechanism-fired positive control:
+`probe_cold_tail_records_read_ranges_metrics_when_inflight_armed` proves the
+batch path executes and records `Some{fetch_rounds,max_inflight}` when armed,
+None when cache layers absorb everything (that fixture lesson is encoded in
+the test: disarm `PROXIMADB_PAX_PREFIX_PREFETCH_BYTES` and gap coalescing or
+nothing reaches the cold queue).
+
+Acceptance ("cold p50 ≥2× at equal GETs") **cannot be met on this bed**: the
+file:// backend carries ≈0 RTT, leaving no round-trip term for wave
+parallelism to collapse. Required next step: rerun this pair against real
+Azure/S3 or Azurite behind an artificial-latency proxy (per
+CODESIGN_MEASURE_ARC_SIFT1M_AZURITE_2026_07_26) before any default-flip.
+
+Evidence: `rdstrat12_sift1m_inflight_batch_v2` (ledger) +
+`docs/_internal/status/RDSTRAT12_SIFT1M_INFLIGHT_BATCH_V2_2026_08_27.adoc`;
+round-1 falsification preserved at `rdstrat12_sift1m_inflight_inert` +
+`RDSTRAT12_SIFT1M_INFLIGHT_INERT_2026_08_26.adoc`.
 
 === 4. Update ENV_GATE_REGISTRY
 
-Add `PROXIMADB_READ_RANGES_INFLIGHT` to `docs/12-design/ENV_GATE_REGISTRY.adoc` with:
-
-* Semantic: "Prefetch cap for pure I/O-bound ranged reads in `FileSystem::read_ranges`. Higher than the decode-bound `PROXIMADB_FS_READ_RANGES_PARALLEL` cap."
-* Default: sensible value (e.g., 32, or `2 × PARALLEL`)
-* Tier: opt-in (like `PARALLEL`, default OFF until measured)
+✅ **DONE** — row exists at `docs/12-design/ENV_GATE_REGISTRY.adoc:107`
+(semantic / unset-default / opt-in tier, owner TD-RDSTRAT-12).
 == Implementation notes
 
 * The core `read_ranges_buffered` contract is correct and unit-tested — do NOT change its behavior

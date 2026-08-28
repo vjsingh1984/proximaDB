@@ -2616,58 +2616,165 @@ async fn coarse_probe_survivors(
         .iter()
         .map(|cell| (cell.end - cell.start) / stride)
         .sum();
-    for fetch in fetches {
+
+    // TD-RDSTRAT-12 §3 rewiring: batch the COLD TAIL of probed-cell ranged reads
+    // through `FileSystem::read_ranges_prefetch`, whose bounded-concurrency gate
+    // (`PROXIMADB_READ_RANGES_INFLIGHT`) turns cold latency from GETs × RTT into
+    // rounds × RTT. Cache dynamics are preserved byte-for-byte:
+    //   classify pass resolves layers exactly once (region Arc / prefix /
+    //   invariants L1+L2); for anything past those, a side-effect-free
+    //   survivor-RAM probe distinguishes "would be served without its loader"
+    //   (consume via `get_or_fetch` — counters/track_hot_key fire as usual, the
+    //   bundled bytes never run) from "true cold" (batch member — ONE physical
+    //   GET issued up front, handed to the loader so L1/L2 population and
+    //   metrics stay identical to the sequential baseline).
+    enum Slot {
+        Ready(Vec<u8>),
+        /// Survivor-RAM resident: no physical read; consumed via `get_or_fetch`
+        /// for counter/tracking parity (its loader will not run).
+        SurvivorCached,
+        /// True cold: index into the pending batch queue.
+        Cold(usize),
+    }
+    let mut slots: Vec<Slot> = Vec::with_capacity(fetches.len());
+    let mut cold_ranges: Vec<std::ops::Range<u64>> = Vec::new();
+    for fetch in &fetches {
         let len = fetch.end - fetch.start;
-        // TD-CACHE-6: probed-cell ranges MUST flow through the tenant-keyed
-        // survivor-cache seam — identical repeat queries probe identical
-        // cells, and a direct read made the hot path pay these GETs every
-        // time (the probe-armed default bypassed the warm tier entirely).
-        let cached_region_slice =
-            cached
-                .and_then(|inv| inv.region_bytes.as_ref())
-                .and_then(|region| {
-                    let start =
-                        usize::try_from(fetch.start.checked_sub(header.rabitq_off)?).ok()?;
-                    let len = usize::try_from(len).ok()?;
-                    region.get(start..start.checked_add(len)?)
-                });
         let relative_off = fetch.start.saturating_sub(header.rabitq_off);
-        let bytes: Vec<u8> = if let Some(bytes) = cached_region_slice {
-            bytes.to_vec()
-        } else if let Some(bytes) = prefetched_slice(prefix, fetch.start, len) {
-            bytes.to_vec()
-        } else if let Some(bytes) = match invariants_cache {
+        if let Some(region) = cached
+            .and_then(|inv| inv.region_bytes.as_ref())
+            .and_then(|r| {
+                let start = usize::try_from(fetch.start.checked_sub(header.rabitq_off)?).ok()?;
+                let end = start.checked_add(usize::try_from(len).ok()?)?;
+                r.get(start..end)
+            })
+        {
+            slots.push(Slot::Ready(region.to_vec()));
+            continue;
+        }
+        if let Some(bytes) = prefetched_slice(prefix, fetch.start, len) {
+            slots.push(Slot::Ready(bytes.to_vec()));
+            continue;
+        }
+        if let Some(bytes) = match invariants_cache {
             Some(cache) => cache.get_region_range(path, relative_off, len).await,
             None => None,
         } {
-            bytes.to_vec()
-        } else if let Some(sc) = survivor_cache {
-            sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
-                let b = fs
-                    .read_range(path, fetch.start, len)
+            slots.push(Slot::Ready(bytes.to_vec()));
+            continue;
+        }
+        match survivor_cache {
+            Some(sc)
+                if sc
+                    .peek_memory_exact(CacheKind::Other, path, fetch.start, len)
                     .await
-                    .map_err(std::io::Error::other)?;
-                crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
-                if trace_on {
-                    record_get(CacheTier::ProbeIndex, len);
-                }
-                Ok(b)
-            })
-            .await
-            .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?
-            .to_vec()
-        } else {
-            let b = fs
-                .read_range(path, fetch.start, len)
-                .await
-                .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?;
-            crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
-            if trace_on {
-                record_get(CacheTier::ProbeIndex, len);
+                    .is_some() =>
+            {
+                slots.push(Slot::SurvivorCached);
             }
-            b
+            _ => {
+                slots.push(Slot::Cold(cold_ranges.len()));
+                cold_ranges.push(fetch.start..fetch.end);
+            }
+        }
+    }
+
+    // One bounded-concurrent I/O round for every true-cold range. `INFLIGHT`
+    // caps in-flight GETs here; sequential behavior when unset/≤1 is unchanged
+    // from the baseline loop (the cap defers to PARALLEL).
+    //
+    // Metrics parity: every buffer below corresponds to exactly one physical
+    // GET the sequential path would have issued inside its loader, so the
+    // per-buffer `record_pax_region_bytes` / `record_get` fires HERE, once,
+    // at batch time.
+    let mut cold_bytes: Vec<Option<Vec<u8>>> = vec![None; cold_ranges.len()];
+    if !cold_ranges.is_empty() {
+        let batched = match fs.read_ranges_prefetch(path, cold_ranges.clone()).await {
+            Ok(bufs) => bufs,
+            Err(_) => {
+                // Defensive fallback to the sequential baseline shape.
+                let mut seq = Vec::with_capacity(cold_ranges.len());
+                for range in &cold_ranges {
+                    let b = fs
+                        .read_range(path, range.start, range.end - range.start)
+                        .await
+                        .map_err(|err| {
+                            anyhow::anyhow!("coarse-probe Region A fallback {path}: {err}")
+                        })?;
+                    crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
+                    if trace_on {
+                        record_get(CacheTier::ProbeIndex, range.end - range.start);
+                    }
+                    seq.push(b);
+                }
+                seq
+            }
         };
-        fetched.push((fetch, bytes));
+        for ((range, buf), slot) in cold_ranges.iter().zip(batched).zip(cold_bytes.iter_mut()) {
+            crate::observability::io_trace::record_pax_region_bytes(buf.len() as u64, 0);
+            if trace_on {
+                record_get(CacheTier::ProbeIndex, range.end - range.start);
+            }
+            *slot = Some(buf);
+        }
+    }
+
+    // Consume pass: materialize each fetch's bytes IN ORDER, running the exact
+    // same consumer the sequential path used (so tenant-keyed tracking, LRU
+    // admission, io_trace survivor counters and error text are unchanged). A
+    // Cold loader that finds its entry already populated (cross-query race)
+    // simply leaves its pre-batched buffer unconsumed — that GET was ours
+    // either way, and the cache wins.
+    for (fetch, slot) in fetches.iter().zip(slots.iter()) {
+        let len = fetch.end - fetch.start;
+        let bytes: Vec<u8> = match slot {
+            Slot::Ready(b) => b.clone(),
+            Slot::SurvivorCached => {
+                // peek_memory_exact said resident, but an LRU race could have
+                // evicted before we reach the consume call; fail safe to a real
+                // ranged read (the baseline shape), never panic.
+                let sc = match survivor_cache {
+                    Some(sc) => sc,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "coarse-probe Region A {path}: internal slot/cache mismatch"
+                        ));
+                    }
+                };
+                sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
+                    let b = fs
+                        .read_range(path, fetch.start, len)
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
+                    if trace_on {
+                        record_get(CacheTier::ProbeIndex, len);
+                    }
+                    Ok(b)
+                })
+                .await
+                .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?
+                .to_vec()
+            }
+            Slot::Cold(i) => {
+                let mut buf = cold_bytes[*i].take().ok_or_else(|| {
+                    anyhow::anyhow!("coarse-probe Region A {path}: cold fetch {i} missing")
+                })?;
+                match survivor_cache {
+                    Some(sc) => sc
+                        .get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
+                            Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
+                                std::mem::take(&mut buf),
+                            )
+                        })
+                        .await
+                        .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?
+                        .to_vec(),
+                    None => buf,
+                }
+            }
+        };
+        fetched.push((fetch.clone(), bytes));
     }
     let mut runs: Vec<(usize, &[u8])> = Vec::with_capacity(selected.len());
     for (fetch, bytes) in &fetched {
@@ -5241,6 +5348,124 @@ mod tests {
             std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
             std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
             std::env::remove_var("PROXIMADB_IVF_K");
+        }
+    }
+
+    /// TD-RDSTRAT-12 §3 positive control: with `PROXIMADB_READ_RANGES_INFLIGHT`
+    /// armed, the coarse-probe COLD tail must flow through
+    /// `FileSystem::read_ranges_prefetch`'s bounded-concurrent executor — i.e.
+    /// the §2 `read_ranges` metrics get RECORDED (`Some`) where the sequential
+    /// baseline records nothing. This is the exact defect class §3 falsified:
+    /// the gate existed, tests passed, and NO production caller ever reached
+    /// the gated function. Runs under nextest process-per-test isolation so the
+    /// fn-local `OnceLock` env snapshots stay fresh per test.
+    #[tokio::test]
+    async fn probe_cold_tail_records_read_ranges_metrics_when_inflight_armed() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+        use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
+        const DIM: usize = 64;
+        const N: usize = 400;
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "8");
+            std::env::set_var("PROXIMADB_READ_RANGES_INFLIGHT", "4");
+            // The 400-row fixture fits inside the default 1 MiB file-prefix
+            // prefetch AND one gap-coalesced range — both would satisfy every
+            // probed cell above the cold queue before batching sees it.
+            // Disarm both so cells reach the TRUE-cold tail this test gates.
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "1");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP", "0");
+        }
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("v3prefetch.pax");
+        write_pax_segment_compacted(
+            &seg,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+
+        let counting = CountingFileSystem::new(
+            std::sync::Arc::new(LocalFileSystem::new(LocalConfig::default()).await.unwrap()),
+            global_counters(),
+        );
+        let survivor = SurvivorRangeCache::new(64 * 1024 * 1024);
+        let path = seg.to_string_lossy().to_string();
+
+        // Clear any metric a previous call left in the single-slot buffer.
+        let _ = drain_read_ranges_metrics();
+
+        let hits = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("probe search hits");
+
+        let metrics = drain_read_ranges_metrics().expect(
+            "armed INFLIGHT must route the probe cold tail through \
+                     read_ranges_prefetch and record its concurrency metrics",
+        );
+        assert!(
+            metrics.max_inflight >= 1 && metrics.fetch_rounds >= 1,
+            "implausible metrics payload: {metrics:?}"
+        );
+        assert_eq!(hits.len(), 5);
+
+        // Identical repeat stays served by the survivor seam — its consume
+        // pass adds NO further physical reads, so the metric slot is NOT
+        // rewritten by this query.
+        let again = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("repeat search hits");
+        assert_eq!(again.len(), 5);
+        assert!(
+            drain_read_ranges_metrics().is_none(),
+            "hot repeat must not issue additional batched reads"
+        );
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_IVF_K");
+            std::env::remove_var("PROXIMADB_READ_RANGES_INFLIGHT");
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
         }
     }
 

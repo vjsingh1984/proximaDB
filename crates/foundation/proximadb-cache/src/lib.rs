@@ -832,6 +832,25 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         self.lookup(key).await.map(|(value, _)| value)
     }
 
+    /// TD-RDSTRAT-12 §3: RAM-residency probe with NO hit/miss accounting and
+    /// NO inserts — answers "would `get_or_load` for this key be served from
+    /// DRAM without running its loader?". Checks the pinned floor set and the
+    /// shared L1 only; persistent L2 is deliberately unchecked so callers
+    /// treat `None` as "a fetch may still be needed" (conservative: a resident
+    /// disk-tier range could then be re-fetched once through the caller's own
+    /// consume path — never double-billed at the object-store boundary twice
+    /// per query, because the consumer that owns the persistent tier is the
+    /// same caller). The moka recency of a probed entry is refreshed; there is
+    /// no other observable effect.
+    pub async fn peek_memory(&self, key: &CacheKey) -> Option<V> {
+        if let Some(pinned) = &self.pinned
+            && let Some(v) = pinned.get(key)
+        {
+            return Some(v);
+        }
+        self.inner.get(key).await.map(|cv| cv.value)
+    }
+
     /// Lookup with the physical cache tier that satisfied it. Engine wrappers
     /// use this to forward truthful per-query evidence without making the
     /// foundation cache depend on an observability crate.
@@ -1087,6 +1106,37 @@ mod tests {
         assert_eq!(c.get(&stable).await, Some(7));
         assert_eq!(c.get(&textual).await, None);
         assert_eq!(c.stable_tenant_bytes(42), 8);
+    }
+
+    /// TD-RDSTRAT-12 §3: `peek_memory` reports DRAM residency (L1/pinned)
+    /// only — a value that would be served from persistent L2 reads as None
+    /// so batch-prefetch planners conservatively count a fetch, and peeking
+    /// never promotes.
+    #[tokio::test]
+    async fn peek_memory_is_l1_only_and_never_promotes_from_l2() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let store = Arc::new(
+            PersistentByteStore::open(dir.path(), 1 << 20).expect("open persistent cache"),
+        );
+        let first = TenantCache::new(CacheBudget::new(1024, 1024)).with_l2_backend(Arc::new(
+            PersistentArcBytesL2::new(store.clone(), "survivor", L2Class::Survivor),
+        ));
+        let k = CacheKey::new("tenant-a", CacheKind::QuantizedCodes, "seg:0:5");
+        first.insert(k.clone(), 5, Arc::from(&b"bytes"[..])).await;
+        drop(first);
+
+        let second = TenantCache::new(CacheBudget::new(1024, 1024)).with_l2_backend(Arc::new(
+            PersistentArcBytesL2::new(store, "survivor", L2Class::Survivor),
+        ));
+        // Resident only in persistent L2: peek reports None (no promotion).
+        assert_eq!(
+            second.peek_memory(&k).await.as_deref(),
+            None,
+            "peek must not see through to the persistent tier"
+        );
+        // A real get promotes; afterwards peek sees it.
+        assert_eq!(second.get(&k).await.as_deref(), Some(&b"bytes"[..]));
+        assert_eq!(second.peek_memory(&k).await.as_deref(), Some(&b"bytes"[..]));
     }
 
     /// TD-CACHE-3 S2: a churning tenant CANNOT evict another tenant's pinned

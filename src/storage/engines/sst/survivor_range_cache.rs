@@ -495,6 +495,26 @@ impl SurvivorRangeCache {
         result.map(|(value, _)| value)
     }
 
+    /// TD-RDSTRAT-12 §3: side-effect-free residency probe for batch-prefetch
+    /// planning — `Some(bytes)` iff a subsequent [`Self::get_or_fetch`] with
+    /// these exact coordinates would be served from DRAM (pinned or L1)
+    /// WITHOUT running its loader. No `track_hot_key`, no hit/miss counters,
+    /// no inserts, no persistent-tier reads. Deliberately conservative: an
+    /// `None` answer may still be served from a lower tier by the eventual
+    /// consume call, so callers must treat every batched range as payable I/O
+    /// they intended to issue anyway.
+    pub async fn peek_memory_exact(
+        &self,
+        kind: CacheKind,
+        path: &str,
+        off: u64,
+        len: u64,
+    ) -> Option<Arc<[u8]>> {
+        let scope = request_cache_scope();
+        let key = CacheKey::with_scope(scope, kind, format!("{path}:{off}:{len}"));
+        self.inner.peek_memory(&key).await
+    }
+
     /// TD-CACHE-1 S2: the top-`k` hot ranges per tenant by hit count — the
     /// shutdown manifest payload. Cheap snapshot under the tracking lock.
     pub fn warm_set(&self, top_k: usize) -> Vec<(String, Vec<WarmKey>)> {
@@ -1016,5 +1036,54 @@ mod tests {
         }
         // (0,1024) hits on the 3rd call; the two distinct ranges miss once each.
         assert_eq!(fetches.load(Ordering::SeqCst), 2);
+    }
+
+    /// TD-RDSTRAT-12 §3: `peek_memory_exact` uses THE SAME scoped key as
+    /// `get_or_fetch`, so a peek-None followed by a load makes the next peek
+    /// Some — and a peek-Some guarantees the consume loader never runs (the
+    /// property the batch-prefetch planner leans on).
+    #[tokio::test]
+    async fn peek_memory_exact_key_matches_get_or_fetch() {
+        let cache = SurvivorRangeCache::new(16 * 1024 * 1024);
+        assert_eq!(
+            cache
+                .peek_memory_exact(CacheKind::Other, "seg.pax", 0, 1024)
+                .await,
+            None,
+            "unknown range is not resident"
+        );
+
+        let loaded: Arc<[u8]> = Arc::from(vec![7u8; 1024].as_slice());
+        cache
+            .get_or_fetch(CacheKind::Other, "seg.pax", 0, 1024, || async {
+                Ok(loaded.to_vec())
+            })
+            .await
+            .unwrap();
+
+        // Resident after the load — identical coordinates, identical key.
+        let resident = cache
+            .peek_memory_exact(CacheKind::Other, "seg.pax", 0, 1024)
+            .await;
+        assert!(
+            resident.is_some(),
+            "peek must see the entry get_or_fetch wrote"
+        );
+
+        // A peek-verified range served via get_or_fetch never runs its loader.
+        let ran = Arc::new(AtomicUsize::new(0));
+        let r = ran.clone();
+        let again = cache
+            .get_or_fetch(CacheKind::Other, "seg.pax", 0, 1024, move || {
+                let ran = r.clone();
+                async move {
+                    ran.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![0u8; 1024]) // would be wrong if it ran
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(ran.load(Ordering::SeqCst), 0, "loader skipped on residency");
+        assert_eq!(&*again, resident.as_deref().unwrap());
     }
 }
