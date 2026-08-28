@@ -3807,6 +3807,57 @@ mod tests {
         assert!(coalesced_header_prefetch_floor() > 72, "floor grew past v3");
     }
 
+    /// TD-PAXRG-1 Phase C: a v4 segment with the hoisted exact tier (Region C)
+    /// still satisfies the segment-level exact-authority predicate — the
+    /// footer's `has_f32_tier` capability flag keeps its meaning when the tier
+    /// moves out of the blocks.
+    #[test]
+    fn exact_authority_holds_for_region_c_segment() {
+        use proximadb_block_format::{BlockCompression, BlockMode, VectorQuant};
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        use proximadb_storage_common::pax_block::PaxSegmentWriter;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("rg-c-authority.pax");
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(256 * 1024),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_f32_tier(true)
+        .with_rg_layout(true)
+        .with_oid_resolver(true);
+        for row in 0..32 {
+            let mut record = ProximaRecord {
+                oid: format!("oid-{row}"),
+                tenant_id: "t".into(),
+                created_at_ns: 1_000 + row as i64,
+                updated_at_ns: 1_000 + row as i64,
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: 16,
+                values: EmbeddingValues::Fp32(vec![0.5; 16]),
+                ..Default::default()
+            });
+            writer.add_record(&record).expect("add record");
+        }
+        writer.finish().expect("finish v4+C segment");
+
+        let segment = std::fs::read(&path).expect("read segment");
+        assert!(
+            pax_segment_has_exact_vector_authority(&segment),
+            "Region C must satisfy the exact-authority predicate"
+        );
+    }
+
     fn cp_cfg(mult: f32) -> crate::core::config::CoarseProbeConfig {
         crate::core::config::CoarseProbeConfig {
             enable_read_probe: true,

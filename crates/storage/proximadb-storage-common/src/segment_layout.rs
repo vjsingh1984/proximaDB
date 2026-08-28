@@ -450,6 +450,12 @@ pub struct BlockTierAssignment {
 const DESCRIPTOR_SIZE: usize = 28;
 const ASSIGNMENT_SIZE: usize = 11;
 const SECTION_STRIPE_ENCODING_MAP: u8 = 2;
+/// Optional footer section mirroring the Region C (exact fp32) extent
+/// (TD-PAXRG-1). Same additive-section contract as the A0 mirror: old parsers
+/// skip the unknown tag; footer stays single-version.
+const SECTION_EXACT_REGION: u8 = 6;
+/// `[c_off u64][c_len u64]`.
+const EXACT_REGION_SECTION_LEN: usize = 16;
 /// Optional footer section mirroring the Region A0 (coarse directory) extent
 /// (TD-RDSTRAT-8). Additive: parsers that predate it skip unknown section tags
 /// (pinned by `typed_footer_unknown_optional_section_is_skipped`), so the footer
@@ -533,6 +539,11 @@ pub struct SegmentFooterIndex {
     /// (forward-compatible — old parsers skip the unknown tag).
     pub opr_off: u64,
     pub opr_len: u64,
+    /// Region C (exact fp32) extent mirror (TD-PAXRG-1; also in the v4
+    /// header-prefix). `0/0` = absent (v1/v3 segments, or v4 without the
+    /// `pax_f32_tier` opt-in). Serialized as an optional trailing section.
+    pub c_off: u64,
+    pub c_len: u64,
 }
 
 /// `[footer_len u64][SEGMENT_MAGIC 8B]` — the 16 B tail that locates the footer.
@@ -919,6 +930,12 @@ impl SegmentFooterIndex {
             payload.extend_from_slice(&self.opr_len.to_le_bytes());
             sections.push((SECTION_OID_RESOLVER, payload));
         }
+        if self.c_len > 0 {
+            let mut payload = Vec::with_capacity(EXACT_REGION_SECTION_LEN);
+            payload.extend_from_slice(&self.c_off.to_le_bytes());
+            payload.extend_from_slice(&self.c_len.to_le_bytes());
+            sections.push((SECTION_EXACT_REGION, payload));
+        }
         if !sections.is_empty() {
             let section_count = u16::try_from(sections.len())
                 .map_err(|_| anyhow::anyhow!("footer section count exceeds u16"))?;
@@ -1060,6 +1077,8 @@ impl SegmentFooterIndex {
         let mut a0_len = 0u64;
         let mut opr_off = 0u64;
         let mut opr_len = 0u64;
+        let mut c_off = 0u64;
+        let mut c_len = 0u64;
         if p != body.len() {
             let section_count = read_u16(body, &mut p)? as usize;
             if section_count > body.len().saturating_sub(p) / 6 {
@@ -1097,6 +1116,15 @@ impl SegmentFooterIndex {
                     }
                     opr_off = u64::from_le_bytes(section[..8].try_into()?);
                     opr_len = u64::from_le_bytes(section[8..16].try_into()?);
+                } else if tag == SECTION_EXACT_REGION {
+                    if version != SECTION_VERSION_V1 {
+                        bail!("unsupported exact-region section version {version}");
+                    }
+                    if section.len() != EXACT_REGION_SECTION_LEN {
+                        bail!("exact-region section has wrong length");
+                    }
+                    c_off = u64::from_le_bytes(section[..8].try_into()?);
+                    c_len = u64::from_le_bytes(section[8..16].try_into()?);
                 }
             }
             if p != body.len() {
@@ -1123,6 +1151,8 @@ impl SegmentFooterIndex {
             a0_len,
             opr_off,
             opr_len,
+            c_off,
+            c_len,
         })
     }
 
@@ -1206,6 +1236,8 @@ mod tests {
 
     fn sample_footer() -> SegmentFooterIndex {
         SegmentFooterIndex {
+            c_off: 0,
+            c_len: 0,
             row_count: 1000,
             rabitq_off: 56,
             rabitq_len: 24_000,
@@ -1443,6 +1475,55 @@ mod tests {
         assert!(SegmentHeaderPrefix::parse(&bytes).is_ok());
     }
 
+    /// TD-PAXRG-1 Phase C: the Region C extent round-trips as the
+    /// `SECTION_EXACT_REGION` footer mirror, and a footer without it (c_len 0)
+    /// stays byte-identical to the sectionless form.
+    #[test]
+    fn footer_exact_region_section_round_trips_and_absent_when_c_len_zero() {
+        let base = SegmentFooterIndex {
+            row_count: 128,
+            rabitq_off: 88,
+            rabitq_len: 1_000,
+            sq8_off: 1_088,
+            sq8_len: 2_000,
+            sq8_min: 0.0,
+            sq8_scale: 1.0,
+            embed_dim: 8,
+            embed_count: 1,
+            embed_quant_tag: 1,
+            has_f32_tier: true,
+            blocks: vec![FooterBlockEntry {
+                offset: 5_000,
+                size: 4_000,
+                row_count: 128,
+                stats_kind: StatsKind::None,
+            }],
+            block_stats: Vec::new(),
+            encoding_map: Vec::new(),
+            block_tier_assignments: Vec::new(),
+            a0_off: 0,
+            a0_len: 0,
+            opr_off: 0,
+            opr_len: 0,
+            c_off: 3_088,
+            c_len: 16_384,
+        };
+        let parsed = SegmentFooterIndex::parse(&base.to_bytes().expect("serialize"))
+            .expect("parse footer with exact-region section");
+        assert_eq!(parsed.c_off, 3_088);
+        assert_eq!(parsed.c_len, 16_384);
+
+        // c_len == 0 ⇒ no section: byte-identical to the pre-PAXRG form.
+        let mut absent = base.clone();
+        absent.c_off = 0;
+        absent.c_len = 0;
+        let bytes = absent.to_bytes().expect("serialize sectionless");
+        assert!(!bytes.is_empty());
+        let reparsed = SegmentFooterIndex::parse(&bytes).expect("parse sectionless footer");
+        assert_eq!(reparsed.c_off, 0);
+        assert_eq!(reparsed.c_len, 0);
+    }
+
     /// TD-PAXRG-1 Phase A: the MinMax stats payload round-trips through the
     /// footer block table, and unknown/short stats tags decode to `None`
     /// (forward-compatible) without disturbing the entry fields.
@@ -1468,6 +1549,8 @@ mod tests {
             embed_count: 1,
             embed_quant_tag: 1,
             has_f32_tier: false,
+            c_off: 0,
+            c_len: 0,
             blocks: vec![
                 FooterBlockEntry {
                     offset: 1_000,
