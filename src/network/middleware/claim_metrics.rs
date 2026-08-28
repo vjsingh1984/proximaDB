@@ -24,27 +24,37 @@
 use lazy_static::lazy_static;
 use prometheus::{CounterVec, register_counter_vec};
 
+/// Panic-policy-safe `CounterVec` registration (same shape as
+/// `metrics/operational_metrics.rs`): fall back to a fresh unregistered vec on
+/// the pathological double-register rather than `.expect()` — registration
+/// failure must not take the process down (the gate degrades to uncounted,
+/// matching the `.map(inc)`-style guards at the recording sites).
+fn counter_vec(name: &str, help: &str, labels: &[&str]) -> CounterVec {
+    register_counter_vec!(name, help, labels).unwrap_or_else(|_| {
+        CounterVec::new(prometheus::Opts::new(name, help), labels)
+            .unwrap_or_else(|_| unreachable!("valid counter metric descriptor"))
+    })
+}
+
 lazy_static! {
     /// Every use of a deprecated claim name (per use, NOT per process — this
     /// is the counter the once-per-process warn deliberately is not).
-    pub static ref DEPRECATED_CLAIM_USES: CounterVec = register_counter_vec!(
+    pub static ref DEPRECATED_CLAIM_USES: CounterVec = counter_vec(
         "proximadb_deprecated_claim_uses_total",
         "Total uses of deprecated claim names (e.g. Arrow Flight legacy tenant-alias headers). \
          Cumulative per use; the TD-TENANT-3 S4 retirement gate is \
          increase(...) == 0 over the observation window.",
-        &["surface", "name"]
-    )
-    .expect("register proximadb_deprecated_claim_uses_total");
+        &["surface", "name"],
+    );
 
     /// Every entitlement claim dropped by the tier trust gate.
-    pub static ref TIER_CLAIMS_DROPPED: CounterVec = register_counter_vec!(
+    pub static ref TIER_CLAIMS_DROPPED: CounterVec = counter_vec(
         "proximadb_tier_claims_dropped_total",
         "Total X-Tenant-Tier/x-tenant-tier/proximadb_tier claims DROPPED by \
          PROXIMADB_TIER_HEADER_TRUST (ADR-0053 W8), by ingress surface and \
          rejection reason. The request proceeds at the default tier.",
-        &["surface", "reason"]
-    )
-    .expect("register proximadb_tier_claims_dropped_total");
+        &["surface", "reason"],
+    );
 }
 
 /// Record one use of a deprecated claim name (TD-TENANT-3).
