@@ -1022,4 +1022,470 @@ mod tests {
             decision.reason
         );
     }
+
+    // ── TD-PAXRG-1 Phase E: DataFusion over v4 row-group segments ────────────
+
+    /// Writes a v4 row-group segment with `rows` records at
+    /// `created_at = (i+1) * 1000` (32-dim embeddings so RGs carry real bulk).
+    fn write_v4_segment(dir: &std::path::Path, rows: usize) -> std::path::PathBuf {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        use proximadb_storage_common::pax_block::RG_TARGET_MIN_BYTES;
+
+        let seg = dir.join("seg.pax");
+        let mut writer = proximadb_storage_common::pax_block::PaxSegmentWriter::new(
+            &seg,
+            proximadb_block_format::BlockMode::Pax,
+            proximadb_block_format::BlockCompression::None,
+            "v4col",
+            0,
+            1,
+            Some(RG_TARGET_MIN_BYTES),
+        )
+        .with_quant(proximadb_block_format::VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_rg_layout(true)
+        .with_oid_resolver(true);
+        for i in 0..rows {
+            let ts = (i + 1) as i64 * 1000;
+            let mut record = proximadb_records::ProximaRecord {
+                oid: format!("r{i:05}"),
+                tenant_id: "t".into(),
+                created_at_ns: ts,
+                updated_at_ns: ts,
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: 32,
+                values: EmbeddingValues::Fp32(vec![0.5; 32]),
+                ..Default::default()
+            });
+            writer.add_record(&record).expect("add record");
+        }
+        writer.finish().expect("finish v4 segment");
+        seg
+    }
+
+    /// TD-PAXRG-1 Phase E: the DataFusion ranged arm serves v4 segments —
+    /// the header-declared footer is located without a PAXZ probe, RGs are
+    /// pruned from the footer's per-RG zone summaries, and only surviving RG
+    /// extents come off the wire. Row-exactness guards against wrong skips.
+    #[tokio::test]
+    async fn v4_ranged_scan_prunes_row_groups_off_the_wire() {
+        unsafe { std::env::set_var("PROXIMADB_DF_PAX_RANGED", "1") };
+        assert!(
+            crate::datafusion::engine_adapters::pax_adapter::pax_ranged_read_enabled(),
+            "ranged gate must be observable"
+        );
+
+        use arrow_schema::{DataType, Field, Schema};
+        use datafusion::logical_expr::Operator;
+        use datafusion::physical_expr::PhysicalExpr;
+        use datafusion::physical_expr::expressions::{BinaryExpr, col, lit};
+        use datafusion::prelude::SessionContext;
+        use proximadb_block_format::col_id;
+
+        use crate::datafusion::engine_adapters::pax_adapter::PaxSplitReader;
+        use crate::datafusion::engine_adapters::register_pax_location;
+        use crate::observability::io_trace;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+
+        const ROWS: usize = 8_000;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let seg_path = write_v4_segment(dir.path(), ROWS);
+        let file_len = std::fs::metadata(&seg_path).expect("meta").len();
+
+        let fs = Arc::new(
+            FilesystemFactory::create_default()
+                .await
+                .expect("fs factory"),
+        );
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "created_at",
+            DataType::Int64,
+            true,
+        )]));
+        let name_to_col_id =
+            std::collections::HashMap::from([(String::from("created_at"), col_id::CREATED_AT)]);
+        let ctx = SessionContext::new();
+        register_pax_location(
+            &ctx,
+            "seg",
+            &dir.path().display().to_string(),
+            schema.clone(),
+            name_to_col_id.clone(),
+            fs.clone(),
+            None,
+            None,
+        )
+        .await
+        .expect("register v4 segment");
+
+        // One cold, filtered query through the REAL provider (row-exactness
+        // end-to-end). Byte evidence is taken at the READER seam below —
+        // provider reads run on DataFusion-spawned partition tasks where the
+        // ambient io_trace task-local does not exist (known attribution gap).
+        let sql_rows = ctx
+            .sql("SELECT created_at FROM seg WHERE created_at >= 3500000 AND created_at <= 4500000")
+            .await
+            .expect("plan v4 filtered query")
+            .collect()
+            .await
+            .expect("collect v4 filtered output");
+        let mut rows: Vec<i64> = Vec::new();
+        for batch in &sql_rows {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow_array::Int64Array>()
+                .expect("created_at column");
+            rows.extend(col.values());
+        }
+        rows.sort_unstable();
+
+        // Row-exactness: exactly the multiples of 1000 in the window
+        // (3_500_000 itself matches: i+1 ∈ [3500..=4500] ⇒ 1001 rows).
+        let expected: Vec<i64> = (3500..=4500).map(|k| k * 1000).collect();
+        assert_eq!(rows.len(), expected.len(), "survivor count");
+        assert_eq!(rows, expected, "survivors must match exactly");
+
+        // Byte evidence at the reader seam, under OUR scope: the v4 ranged arm
+        // (header-declared footer → RG zone prune → surviving-RG extents).
+        let filter: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            col("created_at", schema.as_ref()).expect("col"),
+            Operator::GtEq,
+            lit(3_500_000i64),
+        ));
+        let filter_le = Arc::new(BinaryExpr::new(
+            col("created_at", schema.as_ref()).expect("col"),
+            Operator::LtEq,
+            lit(4_500_000i64),
+        ));
+        let conjunction = Arc::new(BinaryExpr::new(filter, Operator::And, filter_le));
+        let seeded = PaxSplitReader::new(
+            schema.clone(),
+            fs.clone(),
+            name_to_col_id,
+            vec![conjunction],
+            None,
+            None,
+        );
+        let splits =
+            crate::datafusion::engine_adapters::pax_segment_locator::discover_pax_segments(
+                &dir.path().display().to_string(),
+                &fs,
+            )
+            .await
+            .expect("discover v4 split");
+        let split = splits.first().expect("split").clone();
+        let (_, snap) = io_trace::scope(async {
+            let batches = seeded
+                .load_ranged(&split, &schema)
+                .await
+                .expect("v4 ranged load")
+                .expect("v4 takes the ranged path (footer index present)");
+            (
+                batches.iter().map(|b| b.num_rows()).sum::<usize>(),
+                io_trace::snapshot().expect("io_trace scope active"),
+            )
+        })
+        .await;
+
+        // The ranged machinery engaged AND saved bytes vs the whole segment.
+        assert!(
+            snap.range_gets > 0,
+            "ranged reads engaged: gets={} bytes={}",
+            snap.range_gets,
+            snap.bytes_read
+        );
+        assert!(
+            snap.bytes_read < file_len,
+            "RG pruning must fetch fewer bytes than the whole segment: \
+             bytes={} vs {file_len}",
+            snap.bytes_read
+        );
+    }
+
+    /// TD-PAXRG-1 Phase E: grouped aggregates over a v4 segment via the real
+    /// provider — DataFusion's AggregateExec on top of the RG scan yields the
+    /// exact grouped counts (parity with the v3-path behavior proven in
+    /// `grouped_aggregates_execute_over_pax_scan`).
+    #[tokio::test]
+    async fn v4_grouped_aggregates_parity_over_provider() {
+        use arrow_schema::{DataType, Field, Schema};
+        use datafusion::prelude::SessionContext;
+        use proximadb_block_format::col_id;
+        use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
+
+        use crate::datafusion::engine_adapters::register_pax_location;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let seg = dir.path().join("seg.pax");
+        let mk = |oid: &str, tenant: &str| {
+            let mut r = ProximaRecord {
+                oid: oid.into(),
+                tenant_id: tenant.into(),
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: 32,
+                values: EmbeddingValues::Fp32(vec![0.5; 32]),
+                ..Default::default()
+            });
+            r
+        };
+        let records = vec![
+            mk("a1", "alpha"),
+            mk("a2", "alpha"),
+            mk("b1", "beta"),
+            mk("b2", "beta"),
+            mk("b3", "beta"),
+        ];
+        let mut writer = proximadb_storage_common::pax_block::PaxSegmentWriter::new(
+            &seg,
+            proximadb_block_format::BlockMode::Pax,
+            proximadb_block_format::BlockCompression::None,
+            "v4col",
+            0,
+            1,
+            Some(64 * 1024),
+        )
+        .with_quant(proximadb_block_format::VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_rg_layout(true)
+        .with_oid_resolver(true);
+        for r in &records {
+            writer.add_record(r).expect("add record");
+        }
+        writer.finish().expect("finish");
+
+        let fs = Arc::new(
+            FilesystemFactory::create_default()
+                .await
+                .expect("fs factory"),
+        );
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "tenant_id",
+            DataType::Utf8,
+            false,
+        )]));
+        let name_to_col_id =
+            std::collections::HashMap::from([(String::from("tenant_id"), col_id::TENANT_ID)]);
+        let ctx = SessionContext::new();
+        register_pax_location(
+            &ctx,
+            "seg",
+            &dir.path().display().to_string(),
+            schema,
+            name_to_col_id,
+            fs,
+            None,
+            None,
+        )
+        .await
+        .expect("register v4 segment");
+
+        let batches = ctx
+            .sql("SELECT tenant_id, COUNT(*) AS cnt FROM seg GROUP BY tenant_id ORDER BY tenant_id")
+            .await
+            .expect("plan v4 GROUP BY")
+            .collect()
+            .await
+            .expect("collect v4 aggregate");
+        let mut got: Vec<(String, i64)> = Vec::new();
+        for batch in &batches {
+            let tenants = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow_array::StringArray>()
+                .expect("tenant_id column");
+            let counts = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow_array::Int64Array>()
+                .expect("cnt column");
+            for i in 0..batch.num_rows() {
+                got.push((tenants.value(i).to_string(), counts.value(i)));
+            }
+        }
+        assert_eq!(
+            got,
+            vec![("alpha".to_string(), 2), ("beta".to_string(), 3)],
+            "GROUP BY over the v4 RG scan must produce exact counts"
+        );
+    }
+
+    /// TD-PAXRG-1 Phase E (amplification closure): at the pathological 400-byte
+    /// target the v3 layout produced ~micro-blocks whose pruned fetch measured
+    /// ~1.25 MB; the v4 floor clamps RGs so the same selective predicate reads
+    /// a small fraction of that. Measured at the reader seam (ambient io_trace
+    /// cannot see provider-partitioned reads).
+    #[tokio::test]
+    async fn v4_floor_kills_microgranule_amplification() {
+        unsafe { std::env::set_var("PROXIMADB_DF_PAX_RANGED", "1") };
+
+        use arrow_schema::{DataType, Field, Schema};
+        use datafusion::logical_expr::Operator;
+        use datafusion::physical_expr::PhysicalExpr;
+        use datafusion::physical_expr::expressions::{BinaryExpr, col, lit};
+        use proximadb_block_format::{VectorQuant, col_id};
+        use proximadb_records::ProximaRecord;
+
+        use crate::datafusion::engine_adapters::pax_adapter::PaxSplitReader;
+        use crate::observability::io_trace;
+        use crate::storage::engines::sst::segment_format::write_pax_segment;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+
+        const ROWS: usize = 4_000;
+        let build = |path: &std::path::Path, rg: bool| {
+            let records: Vec<ProximaRecord> = (0..ROWS)
+                .map(|i| {
+                    let ts = (i + 1) as i64 * 1000;
+                    ProximaRecord {
+                        oid: format!("r{i:05}"),
+                        tenant_id: "t".into(),
+                        created_at_ns: ts,
+                        updated_at_ns: ts,
+                        ..Default::default()
+                    }
+                })
+                .collect();
+            write_pax_segment(path, &records, "amp_col", 0, VectorQuant::RaBitQ, Some(400))
+                .expect("write segment (rg flag via env for v4)");
+            let _ = rg;
+        };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        // v3 baseline: gate off, tiny target ⇒ micro-blocks (the measured 1.25 MB).
+        let v3_dir = dir.path().join("v3");
+        std::fs::create_dir_all(&v3_dir).expect("v3 dir");
+        build(&v3_dir.join("seg.pax"), false);
+        // v4: same dataset, same 400-byte request, gate ON ⇒ floor-clamped RGs.
+        // The writer gate is read by the SST flush resolver; for the direct
+        // writer harness we rebuild with the explicit builder flag instead.
+        let v4_dir = dir.path().join("v4");
+        std::fs::create_dir_all(&v4_dir).expect("v4 dir");
+        {
+            use proximadb_records::{EmbeddingCell, EmbeddingValues};
+            use proximadb_storage_common::pax_block::RG_TARGET_MIN_BYTES;
+            let seg = v4_dir.join("seg.pax");
+            let mut writer = proximadb_storage_common::pax_block::PaxSegmentWriter::new(
+                &seg,
+                proximadb_block_format::BlockMode::Pax,
+                proximadb_block_format::BlockCompression::None,
+                "amp_col",
+                0,
+                1,
+                Some(400),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_coalesced_rabitq(true)
+            .with_rg_layout(true)
+            .with_oid_resolver(true);
+            for i in 0..ROWS {
+                let ts = (i + 1) as i64 * 1000;
+                let mut r = ProximaRecord {
+                    oid: format!("r{i:05}"),
+                    tenant_id: "t".into(),
+                    created_at_ns: ts,
+                    updated_at_ns: ts,
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: 32,
+                    values: EmbeddingValues::Fp32(vec![0.5; 32]),
+                    ..Default::default()
+                });
+                writer.add_record(&r).expect("add record");
+            }
+            writer.finish().expect("finish v4");
+        }
+
+        let fs = Arc::new(
+            FilesystemFactory::create_default()
+                .await
+                .expect("fs factory"),
+        );
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "created_at",
+            DataType::Int64,
+            true,
+        )]));
+        let name_to_col_id =
+            std::collections::HashMap::from([(String::from("created_at"), col_id::CREATED_AT)]);
+        let filter: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            col("created_at", schema.as_ref()).expect("col"),
+            Operator::GtEq,
+            lit(150_000i64),
+        ));
+        let filter_le = Arc::new(BinaryExpr::new(
+            col("created_at", schema.as_ref()).expect("col"),
+            Operator::LtEq,
+            lit(500_000i64),
+        ));
+        let conjunction = Arc::new(BinaryExpr::new(filter, Operator::And, filter_le));
+
+        let pruned_bytes = |dir: &std::path::Path, rg_reader: bool| {
+            let fs = fs.clone();
+            let schema = schema.clone();
+            let name_to_col_id = name_to_col_id.clone();
+            let conjunction = conjunction.clone();
+            let dir = dir.to_path_buf();
+            async move {
+                let seeded = PaxSplitReader::new(
+                    schema.clone(),
+                    fs.clone(),
+                    name_to_col_id,
+                    vec![conjunction],
+                    None,
+                    None,
+                );
+                let splits =
+                    crate::datafusion::engine_adapters::pax_segment_locator::discover_pax_segments(
+                        &dir.display().to_string(),
+                        &fs,
+                    )
+                    .await
+                    .expect("discover");
+                let split = splits.first().expect("split").clone();
+                let (_, snap) = io_trace::scope(async {
+                    let out = if rg_reader {
+                        seeded
+                            .load_ranged(&split, &schema)
+                            .await
+                            .expect("v4 ranged")
+                            .expect("v4 takes the ranged path")
+                            .iter()
+                            .map(|b| b.num_rows())
+                            .sum::<usize>()
+                    } else {
+                        seeded
+                            .load_ranged(&split, &schema)
+                            .await
+                            .expect("v3 ranged")
+                            .expect("v3 takes the ranged path")
+                            .iter()
+                            .map(|b| b.num_rows())
+                            .sum::<usize>()
+                    };
+                    (out, io_trace::snapshot().expect("scope"))
+                })
+                .await;
+                (snap.bytes_read, snap.range_gets)
+            }
+        };
+
+        let (v3_bytes, _v3_gets) = pruned_bytes(&v3_dir, false).await;
+        let (v4_bytes, v4_gets) = pruned_bytes(&v4_dir, true).await;
+        eprintln!("[amp] v3@400B pruned={v3_bytes}; v4@floor pruned={v4_bytes} gets={v4_gets}");
+        assert!(
+            v4_bytes * 4 < v3_bytes,
+            "the RG floor must close the micro-granule amplification: \
+             v3={v3_bytes} v4={v4_bytes}"
+        );
+        assert!(v4_gets > 0, "ranged path engaged");
+    }
 }

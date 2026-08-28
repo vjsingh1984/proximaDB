@@ -62,10 +62,9 @@ use crate::engine_constants::{
 use crate::segment_layout::{
     BlockTierAssignment, EXTERNAL_CANONICAL_SOURCE_ID, FooterBlockEntry, FooterRowGroupStats,
     LosslessCompressionTag, LosslessTransformTag, ParameterScope, SEG_HEADER_PREFIX_LEN,
-    SEG_HEADER_PREFIX_V3_LEN, SEG_HEADER_PREFIX_V4_LEN, SEG_LAYOUT_VERSION,
-    SEG_LAYOUT_VERSION_ROW_GROUP, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentFooterIndex,
-    SegmentHeaderPrefix, SourceFidelity, SourceRole, StatsKind, StripeEncodingDescriptor, TierRole,
-    VectorTransform, compression_flags, is_coalesced_segment,
+    SEG_LAYOUT_VERSION, SegmentFooterIndex, SegmentHeaderPrefix, SourceFidelity, SourceRole,
+    StatsKind, StripeEncodingDescriptor, TierRole, VectorTransform, compression_flags,
+    is_coalesced_segment,
 };
 use crate::spill_regions::DiskVectorSpool;
 
@@ -1765,24 +1764,12 @@ impl PaxSegmentWriter {
                     tl.model.n_comp as usize,
                 ) as u64;
                 if self.rg_layout {
-                    (
-                        SEG_LAYOUT_VERSION_ROW_GROUP,
-                        SEG_HEADER_PREFIX_V4_LEN as u64,
-                        length,
-                    )
+                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, length)
                 } else {
-                    (
-                        SEG_LAYOUT_VERSION_TWO_LEVEL,
-                        SEG_HEADER_PREFIX_V3_LEN as u64,
-                        length,
-                    )
+                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, length)
                 }
             }
-            None if self.rg_layout => (
-                SEG_LAYOUT_VERSION_ROW_GROUP,
-                SEG_HEADER_PREFIX_V4_LEN as u64,
-                0,
-            ),
+            None if self.rg_layout => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
             None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
         };
         let a0_off = if two_level.is_some() { header_len } else { 0 };
@@ -2262,24 +2249,12 @@ impl PaxSegmentWriter {
                     tl.model.n_comp as usize,
                 ) as u64;
                 if self.rg_layout {
-                    (
-                        SEG_LAYOUT_VERSION_ROW_GROUP,
-                        SEG_HEADER_PREFIX_V4_LEN as u64,
-                        a0_len,
-                    )
+                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, a0_len)
                 } else {
-                    (
-                        SEG_LAYOUT_VERSION_TWO_LEVEL,
-                        SEG_HEADER_PREFIX_V3_LEN as u64,
-                        a0_len,
-                    )
+                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, a0_len)
                 }
             }
-            None if self.rg_layout => (
-                SEG_LAYOUT_VERSION_ROW_GROUP,
-                SEG_HEADER_PREFIX_V4_LEN as u64,
-                0,
-            ),
+            None if self.rg_layout => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
             None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
         };
         let a0_off = if two_level.is_some() { header_len } else { 0 };
@@ -2288,9 +2263,12 @@ impl PaxSegmentWriter {
         let sq8_off = rabitq_off + rabitq_len;
         let sq8_len = sq8_region_bytes.len() as u64;
         // TD-PAXRG-1 Region C sits between Region B and the resolver: its extent
-        // is declared in the v4 header-prefix AND mirrored as a footer section.
-        let c_off = sq8_off + sq8_len;
+        // is declared in the header-prefix AND mirrored as a footer section.
+        // Rendered fields are ZERO-WHEN-ABSENT (twin-symmetry: the spill path
+        // hardcodes 0/0); the LAYOUT offset chain below always uses the real
+        // offset regardless.
         let c_len = exact_region_bytes.as_ref().map_or(0u64, |b| b.len() as u64);
+        let c_off = if c_len > 0 { sq8_off + sq8_len } else { 0 };
         // Resolver region (TD-DELVEC-1 WI-2c): the OID→position resolver is an
         // immutable write-time component → a region *inside* the segment (atomic
         // with it on the single PUT), not a sidecar. It sits between Region B/C
@@ -2301,7 +2279,7 @@ impl PaxSegmentWriter {
         let opr_bytes = self.oid_resolver_bytes()?;
         // Blocks (Region D) begin after header [+ A0] + Region A + Region B
         // [+ C] [+ resolver].
-        let opr_off = c_off + c_len;
+        let opr_off = sq8_off + sq8_len + c_len;
         let opr_len = opr_bytes.as_ref().map_or(0u64, |b| b.len() as u64);
         let data_offset = opr_off + opr_len;
 
@@ -3356,9 +3334,9 @@ mod tests {
         write_rg_segment(&path, ROWS, true, None)?;
 
         let segment = std::fs::read(&path)?;
-        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_V4_LEN])?;
+        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_LEN])?;
         assert_eq!(
-            header.layout_version, SEG_LAYOUT_VERSION_ROW_GROUP,
+            header.layout_version, SEG_LAYOUT_VERSION,
             "rg_layout writes the v4 layout"
         );
         assert_eq!(header.c_len, 0, "Region C not emitted in Phase B");
@@ -3582,18 +3560,18 @@ mod tests {
         writer.finish()?;
 
         let segment = std::fs::read(&path)?;
-        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_V3_LEN])
-            .or_else(|_| SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_LEN]))?;
-        assert_ne!(
-            header.layout_version, SEG_LAYOUT_VERSION_ROW_GROUP,
-            "gate OFF must never emit v4"
-        );
+        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_LEN])?;
+        // Post-collapse there is a single layout version; the gate-OFF
+        // invariant is about REGION ARTIFACTS, not a version byte: no RG
+        // stats payloads, no Region C.
         let footer = SegmentFooterIndex::locate_in_segment(&segment)?
             .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
         assert!(
             footer.block_stats.iter().all(|s| s.is_none()),
             "gate OFF footers carry no RG stats payloads"
         );
+        assert_eq!(header.c_len, 0, "gate OFF emits no Region C");
+        assert_eq!(footer.c_len, 0, "gate OFF footer mirrors no Region C");
         Ok(())
     }
 
@@ -3612,8 +3590,8 @@ mod tests {
         write_rg_segment_f32(&path, 256, true, true, None)?;
 
         let segment = std::fs::read(&path)?;
-        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_V4_LEN])?;
-        assert_eq!(header.layout_version, SEG_LAYOUT_VERSION_ROW_GROUP);
+        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_LEN])?;
+        assert_eq!(header.layout_version, SEG_LAYOUT_VERSION);
         assert!(
             header.c_len > 0,
             "Region C must be present under v4 ∧ f32_tier"
@@ -4497,7 +4475,7 @@ mod tests {
     /// (identical input ⇒ identical segment bytes).
     #[test]
     fn two_level_writer_emits_v3_with_exact_cell_extents() -> Result<()> {
-        use crate::segment_layout::{SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL};
+        use crate::segment_layout::SEG_HEADER_PREFIX_LEN;
         use proximadb_records::{EmbeddingCell, EmbeddingValues};
 
         const DIM: usize = 16;
@@ -4563,8 +4541,9 @@ mod tests {
 
         // Header-prefix: version 3, A0 right after the prefix, A after A0.
         let h = SegmentHeaderPrefix::parse(&bytes)?;
-        assert_eq!(h.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL);
-        assert_eq!(h.a0_off, SEG_HEADER_PREFIX_V3_LEN as u64);
+        assert_eq!(h.layout_version, SEG_LAYOUT_VERSION);
+        assert!(h.a0_len > 0, "two-level segments declare A0 by extent");
+        assert_eq!(h.a0_off, SEG_HEADER_PREFIX_LEN as u64);
         assert!(h.a0_len > 0);
         assert_eq!(h.rabitq_off, h.a0_off + h.a0_len);
         assert_eq!(h.sq8_off, h.rabitq_off + h.rabitq_len);

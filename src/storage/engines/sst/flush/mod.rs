@@ -1086,7 +1086,7 @@ impl SstEngine {
     /// big enough to be worth a training pass? One stat + one 72-byte read.
     async fn segment_is_untrained(&self, path: &str, min_bytes: u64) -> Result<bool> {
         use proximadb_storage_common::segment_layout::{
-            SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentHeaderPrefix,
+            SEG_HEADER_PREFIX_LEN, SegmentHeaderPrefix,
         };
         let fs = self.filesystem().get_filesystem(path)?;
         let meta = fs.metadata(path).await?;
@@ -1094,10 +1094,10 @@ impl SstEngine {
             return Ok(false);
         }
         let header_bytes = fs
-            .read_range(path, 0, (SEG_HEADER_PREFIX_V3_LEN as u64).min(meta.size))
+            .read_range(path, 0, (SEG_HEADER_PREFIX_LEN as u64).min(meta.size))
             .await?;
         Ok(match SegmentHeaderPrefix::parse(&header_bytes) {
-            Ok(h) => h.layout_version != SEG_LAYOUT_VERSION_TWO_LEVEL || h.a0_len == 0,
+            Ok(h) => h.a0_len == 0,
             // Not a coalesced segment (legacy layout) — training does not
             // apply; leave it to the count arm.
             Err(_) => false,

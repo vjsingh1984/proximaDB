@@ -57,6 +57,10 @@ use proximadb_storage_common::format_splits::{ScalarPredicate, ScalarValue};
 use proximadb_storage_common::pax_block::{
     BlockIndexEntry, PaxSegmentScanner, ScanPredicate, SegmentIndex,
 };
+use proximadb_storage_common::segment_layout::{
+    SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION, SegmentFooterIndex, SegmentHeaderPrefix,
+    is_coalesced_segment,
+};
 
 use crate::observability::io_trace;
 
@@ -209,6 +213,53 @@ impl PaxSplitReader {
         if len < SEGMENT_INDEX_TRAILER_MIN {
             return Ok(None);
         }
+        // TD-PAXRG-1: a v4 row-group segment DECLARES its index (the coalesced
+        // footer + per-RG MinMax stats) in the header-prefix — no PAXZ tail
+        // probe. One small GET decides; the footer renders as the layout-neutral
+        // `SegmentIndex` the prune/fetch stages below already consume.
+        let prefix_len = (SEG_HEADER_PREFIX_LEN as u64).min(len);
+        let prefix = self
+            .filesystem_factory
+            .read_range(path, 0, prefix_len)
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("PAX ranged header read: {e}")))?;
+        let v4_index: Option<SegmentIndex> = if is_coalesced_segment(&prefix) {
+            match SegmentHeaderPrefix::parse(&prefix) {
+                Ok(h) if h.layout_version == SEG_LAYOUT_VERSION && h.footer_len > 0 => {
+                    let body = self
+                        .filesystem_factory
+                        .read_range(path, h.footer_off, h.footer_len)
+                        .await
+                        .map_err(|e| {
+                            DataFusionError::Execution(format!("PAX ranged v4 footer read: {e}"))
+                        })?;
+                    SegmentFooterIndex::parse(&body).ok().map(|footer| {
+                        let blocks = footer
+                            .blocks
+                            .iter()
+                            .zip(&footer.block_stats)
+                            .map(|(entry, stats)| BlockIndexEntry {
+                                offset: entry.offset,
+                                size: entry.size,
+                                zone: stats.as_ref().map(|s| s.zone.clone()),
+                            })
+                            .collect();
+                        SegmentIndex { blocks }
+                    })
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(v4_index) = v4_index {
+            // Fall through to the shared prune + ranged-fetch stages with the
+            // v4 index (boxed to keep the async-block sizing uniform).
+            return self
+                .load_ranged_with_index(path, v4_index, out_schema)
+                .await;
+        }
+
         // Probe the tail for the segment index, growing ×4 on a short suffix. Every
         // physical read (here and below) is accounted by the filesystem layer's own
         // io_trace hooks (`record_range_gets` + `record_bytes_read`), so this method
@@ -229,6 +280,18 @@ impl PaxSplitReader {
                 Ok(None) | Err(_) => return Ok(None),
             }
         };
+        self.load_ranged_with_index(path, index, out_schema).await
+    }
+
+    /// Shared ranged stages (TD-PAXRG-1): prune + fetch, layout-agnostic —
+    /// `index` is either the PAXZ v2 trailer (v1/v3 segments) or the v4
+    /// footer's block table rendered with per-RG zone summaries.
+    async fn load_ranged_with_index(
+        &self,
+        path: &str,
+        index: SegmentIndex,
+        out_schema: &SchemaRef,
+    ) -> DFResult<Option<Vec<RecordBatch>>> {
         // Stage A — prune against the index zone summary (canonical columns; v1
         // entries carry no zone ⇒ conservatively keep). No per-block GET.
         let mut stage_a: Vec<&BlockIndexEntry> = Vec::new();

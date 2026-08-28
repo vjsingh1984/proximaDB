@@ -37,46 +37,24 @@ use proximadb_block_format::BLOCK_MAGIC;
 /// coalesced segment starts with `PXH1`.
 pub const SEG_HEADER_MAGIC: &[u8; 4] = b"PXH1";
 
-/// Header layout version for the **single-level** coalesced layout (regions
-/// A/B/D, whole-region RaBitQ scan). The version byte is the layout selector
-/// for the per-segment read chooser (TD-RDSTRAT-8 mixed-read pattern).
+/// Header layout version — THE coalesced segment layout (TD-PAXRG-1 collapse,
+/// 2026-08): one version, region presence declared by the serialized extents.
+///
+/// `[prefix][A0?][A][B][C?][OPR?][Region D: row groups][footer]`. The 88 B
+/// prefix ALWAYS carries the full region-extent table (`a0_off/len`,
+/// `c_off/len` — zero = region absent); the version byte is therefore
+/// vestigial today and RESERVED for the first post-GA successor layout
+/// (pre-GA there is no serialized legacy data to stay read-compatible with,
+/// so the pre-collapse v1/v3/v4 sprawl was deleted rather than maintained —
+/// ADR-065's own invariant: region presence is declared by the header/footer,
+/// never by a version or flag).
 pub const SEG_LAYOUT_VERSION: u8 = 1;
 
-/// Header layout version for the **two-level IVF** layout (TD-RDSTRAT-8):
-/// `[prefix][Region A0 coarse directory][A][B][D][footer]`, rows ordered by
-/// coarse cell, regions cell-contiguous. The byte value 3 matches the TD/ADR
-/// "v3 layout" name (2 is intentionally skipped/reserved so code, docs, and
-/// on-disk bytes all say the same number). Written only by compaction when
-/// A0 training is enabled (default ON;
-/// `PROXIMADB_PAX_WRITE_A0_TRAIN=0` is the kill-switch). Version-1 readers
-/// reject it cleanly (fail-closed version check); v3-aware readers handle
-/// version-1 segments unchanged.
-pub const SEG_LAYOUT_VERSION_TWO_LEVEL: u8 = 3;
-
-/// v1: `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][sq8_off 8][sq8_len 8][footer_off 8][footer_len 8]`.
-pub const SEG_HEADER_PREFIX_LEN: usize = 56;
-
-/// v3 appends `[a0_off 8][a0_len 8]` (the Region A0 coarse-directory extent) to
-/// the v1 prefix. Readers fetch `SEG_HEADER_PREFIX_V3_LEN` (clamped to file
-/// size) unconditionally — the 16 extra bytes are free within the same GET and
-/// cover both versions.
-pub const SEG_HEADER_PREFIX_V3_LEN: usize = 72;
-
-/// Header layout version for the **row-group Region D** layout (TD-PAXRG-1,
-/// closing ADR-065's open Region C/D items): `[prefix][A0?][A][B][C?][OPR?]
-/// [Region D: row groups][footer]`. Region D's granules are Parquet-style row
-/// groups (Olap-framed PAX blocks, RowDirectory suppressed), and Region C
-/// (exact fp32, optional) is hoisted out of blocks into its own region.
-/// Region presence is declared by the serialized header/footer, never an env
-/// flag (ADR-065 decision invariant); the version byte is the mixed-read
-/// selector — v4-aware readers parse v1/v3/v4, v1/v3-only binaries reject v4
-/// fail-closed at the version check.
-pub const SEG_LAYOUT_VERSION_ROW_GROUP: u8 = 4;
-
-/// v4 appends `[c_off 8][c_len 8]` (the Region C exact-f32 extent; `0/0` =
-/// absent) to the v3 prefix. Readers fetch the MAX known prefix length
-/// (clamped to file size) so one GET covers every version.
-pub const SEG_HEADER_PREFIX_V4_LEN: usize = 88;
+/// v1: `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][sq8_off 8]
+/// [sq8_len 8][footer_off 8][footer_len 8][a0_off 8][a0_len 8][c_off 8]
+/// [c_len 8]`. Readers fetch this length (clamped to file size) so one GET
+/// covers the whole prefix.
+pub const SEG_HEADER_PREFIX_LEN: usize = 88;
 
 /// True iff `bytes` carries the coalesced-RaBitQ header-prefix at offset 0 — the
 /// presence-field that selects the scan-then-rerank read path (mixed-read).
@@ -130,9 +108,10 @@ fn is_pax_segment(bytes: &[u8]) -> bool {
         && bytes.ends_with(SEGMENT_MAGIC)
 }
 
-/// The fixed header-prefix at offset 0 (56 B for v1, 72 B for v3). The RaBitQ
-/// scan GET reads `[0, rabitq_off + rabitq_len]`, so the prefix coalesces into
-/// that one GET (v3: `[0, a0_off + a0_len]` fetches prefix + coarse directory).
+/// The fixed header-prefix at offset 0 (88 B, single form). The RaBitQ scan
+/// GET reads `[0, rabitq_off + rabitq_len]`, so the prefix coalesces into that
+/// one GET (`[0, a0_off + a0_len]` fetches prefix + coarse directory when A0
+/// is present).
 #[derive(Debug, Clone)]
 pub struct SegmentHeaderPrefix {
     pub layout_version: u8,
@@ -150,28 +129,23 @@ pub struct SegmentHeaderPrefix {
     pub footer_off: u64,
     /// Byte length of the footer-index.
     pub footer_len: u64,
-    /// Byte offset of Region A0 (the TD-RDSTRAT-8 coarse directory). `0` on
-    /// v1 segments (no coarse level).
+    /// Byte offset of Region A0 (the TD-RDSTRAT-8 coarse directory). `0` =
+    /// no coarse level.
     pub a0_off: u64,
-    /// Byte length of Region A0. `0` on v1 segments.
+    /// Byte length of Region A0. `0` = absent.
     pub a0_len: u64,
-    /// Byte offset of Region C (the ADR-065 exact-f32 tier, hoisted by the v4
-    /// layout when the collection opted into `pax_f32_tier`). `0` on v1/v3.
+    /// Byte offset of Region C (the ADR-065 exact-f32 tier, hoisted when the
+    /// collection opted into `pax_f32_tier`). `0` = absent.
     pub c_off: u64,
-    /// Byte length of Region C. `0` = absent (also `0` on v1/v3, and on v4
-    /// segments written without the exact tier).
+    /// Byte length of Region C. `0` = absent.
     pub c_len: u64,
 }
 
 impl SegmentHeaderPrefix {
-    /// Serialize (56 B v1 / 72 B v3 / 88 B v4 — the version byte selects the form).
+    /// Serialize — the single 88 B form; region extents are always present
+    /// (zero = region absent).
     pub fn to_bytes(&self) -> Vec<u8> {
-        let len = match self.layout_version {
-            SEG_LAYOUT_VERSION_TWO_LEVEL => SEG_HEADER_PREFIX_V3_LEN,
-            SEG_LAYOUT_VERSION_ROW_GROUP => SEG_HEADER_PREFIX_V4_LEN,
-            _ => SEG_HEADER_PREFIX_LEN,
-        };
-        let mut buf = vec![0u8; len];
+        let mut buf = vec![0u8; SEG_HEADER_PREFIX_LEN];
         buf[..4].copy_from_slice(SEG_HEADER_MAGIC);
         buf[4] = self.layout_version;
         // buf[5..8] reserved (zero).
@@ -181,14 +155,10 @@ impl SegmentHeaderPrefix {
         buf[32..40].copy_from_slice(&self.sq8_len.to_le_bytes());
         buf[40..48].copy_from_slice(&self.footer_off.to_le_bytes());
         buf[48..56].copy_from_slice(&self.footer_len.to_le_bytes());
-        if len >= SEG_HEADER_PREFIX_V3_LEN {
-            buf[56..64].copy_from_slice(&self.a0_off.to_le_bytes());
-            buf[64..72].copy_from_slice(&self.a0_len.to_le_bytes());
-        }
-        if len >= SEG_HEADER_PREFIX_V4_LEN {
-            buf[72..80].copy_from_slice(&self.c_off.to_le_bytes());
-            buf[80..88].copy_from_slice(&self.c_len.to_le_bytes());
-        }
+        buf[56..64].copy_from_slice(&self.a0_off.to_le_bytes());
+        buf[64..72].copy_from_slice(&self.a0_len.to_le_bytes());
+        buf[72..80].copy_from_slice(&self.c_off.to_le_bytes());
+        buf[80..88].copy_from_slice(&self.c_len.to_le_bytes());
         buf
     }
 
@@ -204,36 +174,22 @@ impl SegmentHeaderPrefix {
             bail!("not a coalesced-RaBitQ segment (bad header magic)");
         }
         let layout_version = bytes[4];
-        let (required, has_a0, has_c) = match layout_version {
-            SEG_LAYOUT_VERSION => (SEG_HEADER_PREFIX_LEN, false, false),
-            SEG_LAYOUT_VERSION_TWO_LEVEL => (SEG_HEADER_PREFIX_V3_LEN, true, false),
-            SEG_LAYOUT_VERSION_ROW_GROUP => (SEG_HEADER_PREFIX_V4_LEN, true, true),
-            v => bail!(
-                "unsupported coalesced segment layout version {v} (expected {SEG_LAYOUT_VERSION}, {SEG_LAYOUT_VERSION_TWO_LEVEL} or {SEG_LAYOUT_VERSION_ROW_GROUP})"
-            ),
-        };
+        if layout_version != SEG_LAYOUT_VERSION {
+            bail!(
+                "unsupported coalesced segment layout version {layout_version} (expected {SEG_LAYOUT_VERSION})"
+            );
+        }
+        let required = SEG_HEADER_PREFIX_LEN;
         if bytes.len() < required {
             bail!(
                 "coalesced segment header too short for layout version {layout_version}: {}",
                 bytes.len()
             );
         }
-        let (a0_off, a0_len) = if has_a0 {
-            (
-                u64::from_le_bytes(bytes[56..64].try_into()?),
-                u64::from_le_bytes(bytes[64..72].try_into()?),
-            )
-        } else {
-            (0, 0)
-        };
-        let (c_off, c_len) = if has_c {
-            (
-                u64::from_le_bytes(bytes[72..80].try_into()?),
-                u64::from_le_bytes(bytes[80..88].try_into()?),
-            )
-        } else {
-            (0, 0)
-        };
+        let a0_off = u64::from_le_bytes(bytes[56..64].try_into()?);
+        let a0_len = u64::from_le_bytes(bytes[64..72].try_into()?);
+        let c_off = u64::from_le_bytes(bytes[72..80].try_into()?);
+        let c_len = u64::from_le_bytes(bytes[80..88].try_into()?);
         Ok(Self {
             layout_version,
             rabitq_off: u64::from_le_bytes(bytes[8..16].try_into()?),
@@ -1424,7 +1380,7 @@ mod tests {
     #[test]
     fn header_prefix_v4_round_trips_with_c_extent() {
         let h = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION_ROW_GROUP,
+            layout_version: SEG_LAYOUT_VERSION,
             rabitq_off: 88,
             rabitq_len: 24_000,
             sq8_off: 24_088,
@@ -1437,9 +1393,9 @@ mod tests {
             c_len: 768_000,
         };
         let bytes = h.to_bytes();
-        assert_eq!(bytes.len(), SEG_HEADER_PREFIX_V4_LEN);
+        assert_eq!(bytes.len(), SEG_HEADER_PREFIX_LEN);
         let parsed = SegmentHeaderPrefix::parse(&bytes).expect("v4 prefix parses");
-        assert_eq!(parsed.layout_version, SEG_LAYOUT_VERSION_ROW_GROUP);
+        assert_eq!(parsed.layout_version, SEG_LAYOUT_VERSION);
         assert_eq!(parsed.c_off, 152_088);
         assert_eq!(parsed.c_len, 768_000);
         assert_eq!(parsed.rabitq_off, 88);
@@ -1449,40 +1405,6 @@ mod tests {
     /// TD-PAXRG-1 Phase A (mixed-read contract): a pre-v4 binary — whose parse
     /// accepted only v1/v3 — must REJECT a v4 prefix fail-closed, never
     /// mis-probe it as a v3 segment (mirror of the v1/v3 freeze test).
-    #[test]
-    fn v3_only_reader_rejects_v4_prefix() {
-        let bytes = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION_ROW_GROUP,
-            rabitq_off: 88,
-            rabitq_len: 0,
-            sq8_off: 88,
-            sq8_len: 0,
-            footer_off: 200,
-            footer_len: 0,
-            a0_off: 0,
-            a0_len: 0,
-            c_off: 88,
-            c_len: 4_096,
-        }
-        .to_bytes();
-        // The exact check the pre-TD-PAXRG-1 parse performed (frozen copy):
-        // strict v1/v3 version match.
-        let v3_only_parse = |b: &[u8]| -> Result<()> {
-            if b.len() < SEG_HEADER_PREFIX_V3_LEN {
-                bail!("too short");
-            }
-            if &b[..4] != SEG_HEADER_MAGIC {
-                bail!("bad magic");
-            }
-            match b[4] {
-                SEG_LAYOUT_VERSION | SEG_LAYOUT_VERSION_TWO_LEVEL => Ok(()),
-                other => bail!("unsupported layout version {other}"),
-            }
-        };
-        assert!(v3_only_parse(&bytes).is_err(), "v4 must be rejected");
-        // And the CURRENT parse accepts it (capability contract).
-        assert!(SegmentHeaderPrefix::parse(&bytes).is_ok());
-    }
 
     /// TD-PAXRG-1 Phase C: the Region C extent round-trips as the
     /// `SECTION_EXACT_REGION` footer mirror, and a footer without it (c_len 0)
@@ -1648,88 +1570,11 @@ mod tests {
         assert!(!is_coalesced_segment(&[]));
     }
 
-    #[test]
-    fn header_prefix_v3_round_trips_with_a0() {
-        let h = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION_TWO_LEVEL,
-            rabitq_off: 72 + 120_000,
-            rabitq_len: 24_000,
-            sq8_off: 72 + 120_000 + 24_000,
-            sq8_len: 128_000,
-            footer_off: 400_000,
-            footer_len: 512,
-            a0_off: 72,
-            a0_len: 120_000,
-            c_off: 0,
-            c_len: 0,
-        };
-        let bytes = h.to_bytes();
-        assert_eq!(bytes.len(), SEG_HEADER_PREFIX_V3_LEN);
-        let parsed = SegmentHeaderPrefix::parse(&bytes).unwrap();
-        assert_eq!(parsed.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL);
-        assert_eq!(parsed.a0_off, 72);
-        assert_eq!(parsed.a0_len, 120_000);
-        assert_eq!(parsed.rabitq_off, 72 + 120_000);
-        assert_eq!(parsed.footer_len, 512);
-        // A v3 prefix truncated to the v1 length must fail closed, never
-        // parse with garbage a0 fields.
-        assert!(SegmentHeaderPrefix::parse(&bytes[..SEG_HEADER_PREFIX_LEN]).is_err());
-    }
-
     /// TD-RDSTRAT-8 mixed-read contract: a **version-1-only reader** (any binary
     /// that predates the two-level layout) must reject a v3 segment cleanly.
     /// Old binaries are frozen, so this pins the two facts their rejection
     /// depends on: the on-disk version byte is 3 (not 1), and a strict
     /// `version == 1` check therefore fails.
-    #[test]
-    fn v1_only_reader_rejects_v3_prefix() {
-        let bytes = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION_TWO_LEVEL,
-            rabitq_off: 0,
-            rabitq_len: 0,
-            sq8_off: 0,
-            sq8_len: 0,
-            footer_off: 0,
-            footer_len: 0,
-            a0_off: 72,
-            a0_len: 1,
-            c_off: 0,
-            c_len: 0,
-        }
-        .to_bytes();
-        // The exact check the pre-TD-RDSTRAT-8 parse performed (frozen copy).
-        let legacy_v1_only_parse = |b: &[u8]| -> Result<()> {
-            if b.len() < SEG_HEADER_PREFIX_LEN {
-                bail!("too short");
-            }
-            if &b[..4] != SEG_HEADER_MAGIC {
-                bail!("bad magic");
-            }
-            if b[4] != SEG_LAYOUT_VERSION {
-                bail!("unsupported layout version {}", b[4]);
-            }
-            Ok(())
-        };
-        assert_eq!(bytes[4], SEG_LAYOUT_VERSION_TWO_LEVEL);
-        assert!(legacy_v1_only_parse(&bytes).is_err());
-        // And the current parse still accepts v1 prefixes (mixed-read).
-        let v1 = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION,
-            rabitq_off: 56,
-            rabitq_len: 1,
-            sq8_off: 57,
-            sq8_len: 1,
-            footer_off: 58,
-            footer_len: 1,
-            a0_off: 0,
-            a0_len: 0,
-            c_off: 0,
-            c_len: 0,
-        }
-        .to_bytes();
-        assert_eq!(v1.len(), SEG_HEADER_PREFIX_LEN);
-        assert!(SegmentHeaderPrefix::parse(&v1).is_ok());
-    }
 
     #[test]
     fn footer_coarse_directory_section_round_trips() {

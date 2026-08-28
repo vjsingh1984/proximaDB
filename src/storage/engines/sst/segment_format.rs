@@ -36,8 +36,7 @@ use proximadb_storage_common::pax_block::{
 #[cfg(test)]
 use proximadb_block_format::BLOCK_MAGIC;
 use proximadb_storage_common::segment_layout::{
-    SEG_HEADER_PREFIX_V4_LEN, SEG_LAYOUT_VERSION_ROW_GROUP, SegmentHeaderPrefix,
-    is_coalesced_segment,
+    SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION, SegmentHeaderPrefix, is_coalesced_segment,
 };
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
@@ -818,9 +817,7 @@ pub(crate) async fn pax_filtered_row_allow(
     filter: &proximadb_filter_expression::FilterExpression,
 ) -> Result<Option<(proximadb_block_format::RowAllow, FilteredRowAllowStats)>> {
     use proximadb_block_format::{PaxBlockReader, RowAllow, evaluate_block, record::FlatRow};
-    use proximadb_storage_common::segment_layout::{
-        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
-    };
+    use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
 
     // 1. Header prefix → coalesced? (mirrors the cascade's detection).
     let size = fs
@@ -2104,7 +2101,7 @@ pub async fn install_pax_cache_seed_from_local_file(
     survivor: Option<&SurvivorRangeCache>,
 ) -> anyhow::Result<bool> {
     use proximadb_storage_common::segment_layout::{
-        SEG_HEADER_PREFIX_V3_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
+        SEG_HEADER_PREFIX_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
     };
 
     let mut file = std::fs::File::open(local_path)
@@ -2113,7 +2110,7 @@ pub async fn install_pax_cache_seed_from_local_file(
         .metadata()
         .map_err(|error| anyhow::anyhow!("stat local PAX {}: {error}", local_path.display()))?
         .len();
-    let header_len = (SEG_HEADER_PREFIX_V3_LEN as u64).min(file_len);
+    let header_len = (SEG_HEADER_PREFIX_LEN as u64).min(file_len);
     let header_bytes = read_local_segment_range(&mut file, local_path, 0, header_len)?;
     let header = SegmentHeaderPrefix::parse(&header_bytes)
         .map_err(|error| anyhow::anyhow!("parse local PAX header: {error}"))?;
@@ -2191,9 +2188,7 @@ pub async fn prefetch_segment_invariants(
     path: &str,
     cache: &SegmentInvariantsCache,
 ) -> anyhow::Result<bool> {
-    use proximadb_storage_common::segment_layout::{
-        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SegmentHeaderPrefix,
-    };
+    use proximadb_storage_common::segment_layout::SegmentHeaderPrefix;
     if cache.get(path).is_some() {
         return Ok(false); // already warm
     }
@@ -2205,7 +2200,7 @@ pub async fn prefetch_segment_invariants(
     if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
         return Ok(false);
     }
-    let read_len = (SEG_HEADER_PREFIX_V3_LEN as u64).min(size);
+    let read_len = (SEG_HEADER_PREFIX_LEN as u64).min(size);
     let header_bytes = fs
         .read_range(path, 0, read_len)
         .await
@@ -2537,7 +2532,7 @@ fn prefix_prefetch_bytes() -> Option<u64> {
 /// (clamped to file size) so one read covers v1/v3/v4; `SegmentHeaderPrefix::parse`
 /// branches on the version byte.
 pub(crate) fn coalesced_header_prefetch_floor() -> usize {
-    SEG_HEADER_PREFIX_V4_LEN
+    SEG_HEADER_PREFIX_LEN
 }
 
 fn split_probe_metadata_cache_enabled() -> bool {
@@ -2969,8 +2964,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
 ) -> Result<Option<Vec<CascadeHit>>> {
     use proximadb_block_format::{PaxBlockReader, RaBitQRegion, coalesced_sq8, col_id};
     use proximadb_storage_common::segment_layout::{
-        SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL,
-        SegmentFooterIndex, SegmentHeaderPrefix,
+        SEG_HEADER_PREFIX_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
     };
 
     // ADR-065 co-design diagnostic: per-GET size trace. When PROXIMADB_TRACE_GETS
@@ -3052,8 +3046,9 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     //    nprobe nearest cells (whole Region A never fetched); else the
     //    single-level whole-region scan (cold: 1 GET; hot: 0 — Arc clone). Any
     //    probe miss falls through, fail-safe, to the whole-region path.
-    let probe_armed = header.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL
-        && header.a0_len > 0
+    // TD-PAXRG-1 collapse: A0 presence is declared by its extent, not a
+    // version byte.
+    let probe_armed = header.a0_len > 0
         && coarse_probe_enabled()
         // ADR-089 P1: filtered queries take the whole-region allowed rank
         // (see `row_allow` doc above) — never the geometric probe.
@@ -3614,13 +3609,15 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     // bytes (an RG is up to the multi-MiB granule; the OID chunk is ~tens of
     // bytes per row). Non-v4 segments keep the TD-RDSTRAT-12 §3 r4
     // peek·batch·feed whole-block tail, verbatim.
-    let v4_chunk_fetch = header.layout_version == SEG_LAYOUT_VERSION_ROW_GROUP
-        && topk_blocks.iter().all(|&bi| {
-            footer
-                .block_stats
-                .get(bi)
-                .is_some_and(|s| s.as_ref().is_some_and(|stats| stats.oid_chunk_len > 0))
-        });
+    // TD-PAXRG-1 collapse: the RG-stats payload IS the v4 marker — non-RG
+    // segments carry no stats payloads, so presence alone gates the chunk arm
+    // (single layout version — no version check remains).
+    let v4_chunk_fetch = topk_blocks.iter().all(|&bi| {
+        footer
+            .block_stats
+            .get(bi)
+            .is_some_and(|s| s.as_ref().is_some_and(|stats| stats.oid_chunk_len > 0))
+    });
     if v4_chunk_fetch {
         // TD-PAXRG-1 Phase D: per-RG OID-chunk fetch — the footer's stats
         // payload addresses each RG's chunk; decode via decode_str_chunk.
@@ -3867,7 +3864,7 @@ mod tests {
     /// layout version and `parse` branches on the version byte.
     #[test]
     fn v4_header_get_fetches_88_bytes() {
-        assert_eq!(coalesced_header_prefetch_floor(), SEG_HEADER_PREFIX_V4_LEN);
+        assert_eq!(coalesced_header_prefetch_floor(), SEG_HEADER_PREFIX_LEN);
         assert_eq!(coalesced_header_prefetch_floor(), 88);
         assert!(coalesced_header_prefetch_floor() > 72, "floor grew past v3");
     }
@@ -3980,8 +3977,8 @@ mod tests {
 
         // Sanity: the v4 file really is the v4 layout.
         let v4_bytes = std::fs::read(&v4_path).unwrap();
-        let header = SegmentHeaderPrefix::parse(&v4_bytes[..SEG_HEADER_PREFIX_V4_LEN]).unwrap();
-        assert_eq!(header.layout_version, SEG_LAYOUT_VERSION_ROW_GROUP);
+        let header = SegmentHeaderPrefix::parse(&v4_bytes[..SEG_HEADER_PREFIX_LEN]).unwrap();
+        assert_eq!(header.layout_version, SEG_LAYOUT_VERSION);
 
         let inner = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
             .await
@@ -6268,9 +6265,7 @@ mod tests {
         enable_coalesced_rabitq();
         use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
         use proximadb_storage_common::coarse_directory::CoarseDirectory;
-        use proximadb_storage_common::segment_layout::{
-            SEG_LAYOUT_VERSION, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentHeaderPrefix,
-        };
+        use proximadb_storage_common::segment_layout::{SEG_LAYOUT_VERSION, SegmentHeaderPrefix};
 
         const DIM: usize = 64;
         const N: usize = 400;
@@ -6312,7 +6307,7 @@ mod tests {
         let v3_bytes = std::fs::read(&v3_path).unwrap();
         let h = SegmentHeaderPrefix::parse(&v3_bytes).unwrap();
         assert_eq!(
-            h.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL,
+            h.layout_version, SEG_LAYOUT_VERSION,
             "PROXIMADB_PAX_WRITE_A0_TRAIN=1 compaction must emit the v3 layout"
         );
         let a0 =

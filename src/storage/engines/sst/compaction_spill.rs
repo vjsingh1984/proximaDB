@@ -11,7 +11,9 @@ use proximadb_block_format::{
     FlatRow, PaxBlockReader, sq8_codes_offset, sq8_decode_codes, sq8_region_header_len,
 };
 use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
-use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
+use proximadb_storage_common::segment_layout::{
+    SEG_HEADER_PREFIX_LEN, SegmentFooterIndex, SegmentHeaderPrefix,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -695,7 +697,9 @@ pub(crate) async fn resolve_external_mvcc_from_segments(
         let deleted_rows = deleted_positions.get(input_index);
         let size = source.size(path).await?;
         stats.source_sizes.push(size);
-        let prefix_len = size.min(72);
+        // TD-PAXRG-1 collapse: the single 88 B header form — fetch the full
+        // prefix (a 72-byte probe predates the collapse and now fails parse).
+        let prefix_len = size.min(SEG_HEADER_PREFIX_LEN as u64);
         let prefix = source.read_range(path, 0, prefix_len).await?;
         stats.observe_range(prefix_len);
 
