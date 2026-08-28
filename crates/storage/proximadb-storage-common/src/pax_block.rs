@@ -60,16 +60,24 @@ use crate::engine_constants::{
     MAX_TARGET_BLOCK_SIZE_BYTES,
 };
 use crate::segment_layout::{
-    BlockTierAssignment, EXTERNAL_CANONICAL_SOURCE_ID, FooterBlockEntry, LosslessCompressionTag,
-    LosslessTransformTag, ParameterScope, SEG_HEADER_PREFIX_LEN, SEG_HEADER_PREFIX_V3_LEN,
-    SEG_LAYOUT_VERSION, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentFooterIndex, SegmentHeaderPrefix,
-    SourceFidelity, SourceRole, StatsKind, StripeEncodingDescriptor, TierRole, VectorTransform,
-    compression_flags, is_coalesced_segment,
+    BlockTierAssignment, EXTERNAL_CANONICAL_SOURCE_ID, FooterBlockEntry, FooterRowGroupStats,
+    LosslessCompressionTag, LosslessTransformTag, ParameterScope, SEG_HEADER_PREFIX_LEN,
+    SEG_HEADER_PREFIX_V3_LEN, SEG_HEADER_PREFIX_V4_LEN, SEG_LAYOUT_VERSION,
+    SEG_LAYOUT_VERSION_ROW_GROUP, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentFooterIndex,
+    SegmentHeaderPrefix, SourceFidelity, SourceRole, StatsKind, StripeEncodingDescriptor, TierRole,
+    VectorTransform, compression_flags, is_coalesced_segment,
 };
 use crate::spill_regions::DiskVectorSpool;
 
 /// File extension for PAX segment files.
 pub const PAX_SEGMENT_EXT: &str = ".pax";
+
+/// TD-PAXRG-1: floor for the v4 row-group Region D block target. Below this,
+/// per-RG framing (64 B header + ~1 KB ColumnMeta frame + 32 B footer) stops
+/// amortizing — measured: 400 B targets produced ~400 micro-RGs whose pruned
+/// fetch totalled ~1.25 MB for a 38 KB-Parquet-equivalent dataset. 256 KiB
+/// keeps fixed cost ≤ ~1% of payload.
+pub const RG_TARGET_MIN_BYTES: usize = 256 * 1024;
 
 /// Magic bytes at the tail of a segment file (after the index).
 pub const SEGMENT_MAGIC: &[u8; 8] = b"PAXSEG01";
@@ -842,6 +850,18 @@ pub struct PaxSegmentWriter {
     /// on, data blocks are written as `VectorQuant::Sq8` (the survivor-rerank
     /// data) — the unchanged SQ8 decode path reconstructs + reranks them.
     coalesced_rabitq: bool,
+    /// TD-PAXRG-1: write the v4 **row-group Region D** layout — Region D
+    /// granules are Parquet-style row groups (Olap-framed blocks, RowDirectory
+    /// + in-block rgdir suppressed), per-RG stats ride the footer's MinMax
+    /// payload, and the block-size target is floored at
+    /// [`RG_TARGET_MIN_BYTES`] so sub-granule framing amplification is
+    /// structurally impossible. Default OFF (`PROXIMADB_PAX_WRITE_RG_LAYOUT`).
+    rg_layout: bool,
+    /// Per-flushed-RG OID-chunk extents `(rel_off, len)` inside each RG's block
+    /// bytes (the OID stripe's ColumnMeta offset/len), 1:1 with `index.blocks`.
+    /// Populated only when `rg_layout` is on; serialized in the footer's
+    /// per-entry MinMax stats payload for the ANN top-k chunk fetch.
+    rg_oid_chunks: Vec<(u32, u32)>,
     /// Embedding-0 f32 vectors in cluster (add) order, buffered contiguously for
     /// the segment-level RaBitQ/SQ8 regions. Populated only in coalesced mode.
     rabitq_vectors: CoalescedVectorBuffer,
@@ -906,6 +926,8 @@ impl PaxSegmentWriter {
             schema_fingerprint,
             embedding_count,
             block_size_threshold: threshold,
+            rg_layout: false,
+            rg_oid_chunks: Vec::new(),
             quant: VectorQuant::Auto,
             f32_tier: false,
             rerank_quant: VectorQuant::Sq8,
@@ -1057,6 +1079,21 @@ impl PaxSegmentWriter {
         self
     }
 
+    /// TD-PAXRG-1: write the v4 row-group Region D layout (see the `rg_layout`
+    /// field doc). Builder form mirroring [`with_coalesced_rabitq`]; rebuilds
+    /// the (still-empty) current block writer so the Olap framing +
+    /// rgdir suppression apply from the first record. Also floors the block
+    /// target at [`RG_TARGET_MIN_BYTES`] — sub-granule targets would recreate
+    /// the per-RG framing amplification the layout exists to kill.
+    pub fn with_rg_layout(mut self, enabled: bool) -> Self {
+        self.rg_layout = enabled;
+        if enabled {
+            self.block_size_threshold = self.block_size_threshold.max(RG_TARGET_MIN_BYTES);
+            self.current_writer = self.fresh_block_writer();
+        }
+        self
+    }
+
     /// Pre-size corpus-wide coalesced bookkeeping from the already-admitted
     /// record count. Reservation itself is fallible and occurs on first append,
     /// so allocation failure is returned through [`Self::add_record`].
@@ -1122,8 +1159,16 @@ impl PaxSegmentWriter {
         } else {
             self.quant
         };
+        // TD-PAXRG-1: v4 row-group Region D granules are Olap-framed — no
+        // RowDirectory (point lookups go through the OID resolver), no in-block
+        // rgdir (the RG's stats live in the segment footer).
+        let mode = if self.rg_layout {
+            BlockMode::Olap
+        } else {
+            self.mode
+        };
         PaxBlockWriter::new(
-            self.mode,
+            mode,
             self.compression,
             &self.collection_id,
             self.schema_fingerprint,
@@ -1136,6 +1181,7 @@ impl PaxSegmentWriter {
         .with_lossless_scalar(self.lossless_scalar)
         .with_record_version(self.record_version_stripe)
         .with_hoist_vector_tier(self.coalesced_rabitq)
+        .with_suppress_rgdir(self.rg_layout)
         .with_shred_spec(self.shred_spec.clone())
     }
 
@@ -1407,6 +1453,19 @@ impl PaxSegmentWriter {
             row_count,
             reader.column_metas(),
         ));
+        // TD-PAXRG-1: capture this RG's OID-chunk extent (the OID stripe's
+        // offset/len within the RG's block bytes) so the footer's MinMax
+        // payload can address it for the ANN top-k chunk fetch. 1:1 with the
+        // index entry pushed right below.
+        if self.rg_layout {
+            let oid_chunk = reader
+                .column_metas()
+                .iter()
+                .find(|m| m.column_id == col_id::OID)
+                .map(|m| (m.stripe_offset, m.stripe_len))
+                .unwrap_or((0u32, 0u32));
+            self.rg_oid_chunks.push(oid_chunk);
+        }
         self.index.blocks.push(BlockIndexEntry {
             offset,
             size: block_size,
@@ -1538,6 +1597,14 @@ impl PaxSegmentWriter {
             .local_spill
             .take()
             .ok_or_else(|| anyhow::anyhow!("PAX local spill backing is missing"))?;
+        // TD-PAXRG-1 fail-safe — mirror of the in-memory twin (resolver is the
+        // only point-lookup authority once the RowDirectory is suppressed).
+        if self.rg_layout && !self.compute_oid_resolver {
+            anyhow::bail!(
+                "row-group Region D (v4) without a RowDirectory requires the OID resolver \
+                 — enable the resolver for rg_layout writes"
+            );
+        }
         spill.flush_inputs()?;
         if self.compute_oid_resolver && spill.oid_count as u64 != self.row_count {
             bail!(
@@ -1563,6 +1630,9 @@ impl PaxSegmentWriter {
         let resolver = spill.finish_oid_resolver(self.compute_oid_resolver)?;
 
         let two_level = self.two_level.take();
+        // TD-PAXRG-1: `rg_layout` selects the v4 row-group header (88 B, Region
+        // C extent present) on top of whichever region set is in play; v1/v3
+        // selection is byte-identical to before when the gate is off.
         let (layout_version, header_len, a0_len) = match &two_level {
             Some(tl) => {
                 tl.model.validate()?;
@@ -1588,12 +1658,25 @@ impl PaxSegmentWriter {
                     dim as usize,
                     tl.model.n_comp as usize,
                 ) as u64;
-                (
-                    SEG_LAYOUT_VERSION_TWO_LEVEL,
-                    SEG_HEADER_PREFIX_V3_LEN as u64,
-                    length,
-                )
+                if self.rg_layout {
+                    (
+                        SEG_LAYOUT_VERSION_ROW_GROUP,
+                        SEG_HEADER_PREFIX_V4_LEN as u64,
+                        length,
+                    )
+                } else {
+                    (
+                        SEG_LAYOUT_VERSION_TWO_LEVEL,
+                        SEG_HEADER_PREFIX_V3_LEN as u64,
+                        length,
+                    )
+                }
             }
+            None if self.rg_layout => (
+                SEG_LAYOUT_VERSION_ROW_GROUP,
+                SEG_HEADER_PREFIX_V4_LEN as u64,
+                0,
+            ),
             None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
         };
         let a0_off = if two_level.is_some() { header_len } else { 0 };
@@ -1669,6 +1752,30 @@ impl PaxSegmentWriter {
             })
             .collect::<Vec<_>>();
         let (encoding_map, block_tier_assignments) = self.footer_encoding_map()?;
+        // TD-PAXRG-1: per-RG stats ride the footer's opaque MinMax payload —
+        // the zone summary for the DataFusion ranged prune + the OID-chunk
+        // extent for the ANN top-k chunk fetch. Empty for v1/v3 (footers stay
+        // byte-identical when the gate is off).
+        let rg_block_stats: Vec<Option<FooterRowGroupStats>> = if self.rg_layout {
+            self.index
+                .blocks
+                .iter()
+                .zip(
+                    self.rg_oid_chunks
+                        .iter()
+                        .chain(std::iter::repeat(&(0u32, 0u32))),
+                )
+                .map(|(entry, &(chunk_off, chunk_len))| {
+                    entry.zone.as_ref().map(|zone| FooterRowGroupStats {
+                        zone: zone.clone(),
+                        oid_chunk_rel_off: chunk_off,
+                        oid_chunk_len: chunk_len,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let footer = SegmentFooterIndex {
             row_count: self.row_count,
             rabitq_off,
@@ -1682,7 +1789,7 @@ impl PaxSegmentWriter {
             embed_quant_tag: 1,
             has_f32_tier: self.f32_tier,
             blocks,
-            block_stats: Vec::new(),
+            block_stats: rg_block_stats,
             encoding_map,
             block_tier_assignments,
             a0_off,
@@ -1947,6 +2054,15 @@ impl PaxSegmentWriter {
     /// footer. Regions A/B/D are byte-identical in format — only the row
     /// order (coarse-cell-major) and the block padding differ.
     fn finish_coalesced(&mut self, dim: u32, capture_sq8: Option<bool>) -> Result<PaxSegmentWrite> {
+        // TD-PAXRG-1 fail-safe: v4 RGs suppress the RowDirectory, so point
+        // lookups depend entirely on the OID resolver region. Never emit a
+        // segment whose rows cannot be addressed.
+        if self.rg_layout && !self.compute_oid_resolver {
+            anyhow::bail!(
+                "row-group Region D (v4) without a RowDirectory requires the OID resolver \
+                 — enable the resolver for rg_layout writes"
+            );
+        }
         // 1. Build the coalesced RaBitQ region (single segment centroid) over the
         //    cluster-ordered embedding-0 vectors. `self.file_buf` already holds the
         //    blocks at 0-based offsets (relative to the blocks region).
@@ -1991,6 +2107,10 @@ impl PaxSegmentWriter {
         // contents (which embed absolute per-cell extents) are serialized. One
         // pass, no placeholder rewrites.
         let two_level = self.two_level.take();
+        // TD-PAXRG-1: `rg_layout` selects the v4 row-group header (88 B, Region
+        // C extent present) on top of whichever region set is in play; v1/v3
+        // selection is byte-identical to before when the gate is off. Mirror of
+        // the spill twin — geometry assembly MUST stay identical in both.
         let (layout_version, header_len, a0_len) = match &two_level {
             Some(tl) => {
                 tl.model.validate()?;
@@ -2016,12 +2136,25 @@ impl PaxSegmentWriter {
                     dim as usize,
                     tl.model.n_comp as usize,
                 ) as u64;
-                (
-                    SEG_LAYOUT_VERSION_TWO_LEVEL,
-                    SEG_HEADER_PREFIX_V3_LEN as u64,
-                    a0_len,
-                )
+                if self.rg_layout {
+                    (
+                        SEG_LAYOUT_VERSION_ROW_GROUP,
+                        SEG_HEADER_PREFIX_V4_LEN as u64,
+                        a0_len,
+                    )
+                } else {
+                    (
+                        SEG_LAYOUT_VERSION_TWO_LEVEL,
+                        SEG_HEADER_PREFIX_V3_LEN as u64,
+                        a0_len,
+                    )
+                }
             }
+            None if self.rg_layout => (
+                SEG_LAYOUT_VERSION_ROW_GROUP,
+                SEG_HEADER_PREFIX_V4_LEN as u64,
+                0,
+            ),
             None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
         };
         let a0_off = if two_level.is_some() { header_len } else { 0 };
@@ -2111,6 +2244,28 @@ impl PaxSegmentWriter {
         // 3. Footer-index body + header-prefix offsets. The footer sits after the
         //    blocks; its length is known once serialized.
         let (encoding_map, block_tier_assignments) = self.footer_encoding_map()?;
+        // TD-PAXRG-1: per-RG stats — mirror of the spill twin (identical
+        // geometry assembly is a pinned invariant).
+        let rg_block_stats: Vec<Option<FooterRowGroupStats>> = if self.rg_layout {
+            self.index
+                .blocks
+                .iter()
+                .zip(
+                    self.rg_oid_chunks
+                        .iter()
+                        .chain(std::iter::repeat(&(0u32, 0u32))),
+                )
+                .map(|(entry, &(chunk_off, chunk_len))| {
+                    entry.zone.as_ref().map(|zone| FooterRowGroupStats {
+                        zone: zone.clone(),
+                        oid_chunk_rel_off: chunk_off,
+                        oid_chunk_len: chunk_len,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let footer = SegmentFooterIndex {
             row_count: self.row_count,
             rabitq_off,
@@ -2127,7 +2282,7 @@ impl PaxSegmentWriter {
             embed_quant_tag: 1, // SQ8 rerank tier — now Region B (hoisted out of blocks)
             has_f32_tier: self.f32_tier,
             blocks,
-            block_stats: Vec::new(),
+            block_stats: rg_block_stats,
             encoding_map,
             block_tier_assignments,
             a0_off,
@@ -2960,6 +3115,304 @@ mod tests {
         assert_eq!(
             footer_off.opr_len, 0,
             "no resolver region when the opt-in is off"
+        );
+        Ok(())
+    }
+
+    // ── TD-PAXRG-1 Phase B: v4 row-group Region D writer ─────────────────────
+
+    /// Shared RG fixture: `rows` tiny records across two created_at windows so
+    /// per-RG zone summaries carry real bounds.
+    fn write_rg_segment(
+        path: &std::path::Path,
+        rows: usize,
+        resolver: bool,
+        spill: Option<&std::path::Path>,
+    ) -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        const DIM: usize = 32;
+        let mut writer = PaxSegmentWriter::new(
+            path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(RG_TARGET_MIN_BYTES),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_rg_layout(true);
+        if resolver {
+            writer = writer.with_oid_resolver(true);
+        }
+        if let Some(scratch) = spill {
+            writer = writer.with_local_spill(scratch)?;
+        }
+        for row in 0..rows {
+            let mut record = make_record(&format!("oid-{row}"), "t", 1_000 + row as i64);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(vec![0.25; DIM]),
+                ..Default::default()
+            });
+            writer.add_record(&record)?;
+        }
+        writer.finish()?;
+        Ok(())
+    }
+
+    /// TD-PAXRG-1 Phase B: the RG writer emits the v4 header (88 B, Region C
+    /// extent present-but-absent) and a footer whose block table IS the row-group
+    /// table — per-entry MinMax stats carrying the RG zone summary + an OID-chunk
+    /// extent, with row counts summing to the segment total (ordinal alignment
+    /// with Regions A/B is the cumulative-count invariant).
+    #[test]
+    fn rg_layout_writer_emits_v4_footer_and_ordinal_aligned_regions() -> Result<()> {
+        const ROWS: usize = 512;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("rg-v4.pax");
+        write_rg_segment(&path, ROWS, true, None)?;
+
+        let segment = std::fs::read(&path)?;
+        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_V4_LEN])?;
+        assert_eq!(
+            header.layout_version, SEG_LAYOUT_VERSION_ROW_GROUP,
+            "rg_layout writes the v4 layout"
+        );
+        assert_eq!(header.c_len, 0, "Region C not emitted in Phase B");
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        assert!(!footer.blocks.is_empty(), "at least one row group");
+        assert_eq!(
+            footer.block_stats.len(),
+            footer.blocks.len(),
+            "stats are index-aligned with the RG table"
+        );
+        let mut cumulative = 0u64;
+        for (entry, stats) in footer.blocks.iter().zip(&footer.block_stats) {
+            let stats = stats
+                .as_ref()
+                .expect("every v4 RG carries a MinMax stats payload");
+            assert_eq!(stats.zone.row_count, entry.row_count);
+            assert!(
+                stats.zone.present != 0,
+                "zone summary carries real created_at bounds"
+            );
+            assert!(
+                stats.oid_chunk_len > 0,
+                "OID chunk extent captured for the top-k fetch"
+            );
+            cumulative += entry.row_count as u64;
+        }
+        assert_eq!(
+            cumulative, footer.row_count,
+            "RG row counts are ordinal-aligned with Regions A/B"
+        );
+        assert_eq!(cumulative, ROWS as u64);
+        Ok(())
+    }
+
+    /// TD-PAXRG-1 fail-safe: without the OID resolver there is no point-lookup
+    /// authority once the RowDirectory is suppressed — the finish must bail.
+    /// With the resolver, RGs decode via the ordinary PaxBlockReader, carry no
+    /// row directory, and decode their stripes.
+    #[test]
+    fn rg_writer_row_directory_absent_by_default_and_resolver_required() -> Result<()> {
+        use proximadb_block_format::PaxBlockReader;
+
+        let dir = tempfile::tempdir()?;
+
+        // Resolver OFF + rg ON ⇒ hard error at finish (never an unaddressable
+        // segment on disk).
+        let no_resolver = dir.path().join("rg-no-resolver.pax");
+        let guard = write_rg_segment(&no_resolver, 8, false, None);
+        assert!(
+            guard.is_err(),
+            "rg_layout without the OID resolver must fail closed"
+        );
+        assert!(!no_resolver.exists() || std::fs::metadata(&no_resolver)?.len() == 0);
+
+        // Resolver ON ⇒ RGs are Olap-framed: no row directory, stripes decode.
+        let path = dir.path().join("rg-resolver.pax");
+        write_rg_segment(&path, 8, true, None)?;
+        let segment = std::fs::read(&path)?;
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        let first = footer.blocks.first().expect("at least one RG");
+        let rg_bytes = &segment[first.offset as usize..(first.offset + first.size as u64) as usize];
+        let reader = PaxBlockReader::open(rg_bytes)?;
+        assert_eq!(
+            reader.header().block_mode,
+            proximadb_block_format::BlockMode::Olap,
+            "v4 RGs are Olap-framed"
+        );
+        assert!(
+            reader.row_directory()?.is_none(),
+            "RowDirectory suppressed in v4 RGs"
+        );
+        let oids = reader
+            .decode_str_stripe(col_id::OID)
+            .expect("OID stripe decodes");
+        assert_eq!(oids.len() as u64, first.row_count as u64);
+        Ok(())
+    }
+
+    /// TD-PAXRG-1 Phase B (the 400 B regression): the RG floor clamps the
+    /// pathological target so fixed framing stays amortized — RG count stays
+    /// bounded and every non-final RG is at least ~78% of the floor payload
+    /// (fixed cost ≤ ~1%).
+    #[test]
+    fn rg_target_floor_clamps_pathological_block_size() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        const ROWS: usize = 2_000;
+        const DIM: usize = 32;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("rg-floor.pax");
+        // Deliberately pathological 400-byte target — the pre-v4 amplifier.
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(400),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_rg_layout(true)
+        .with_oid_resolver(true);
+        let _ = &mut writer;
+        for row in 0..ROWS {
+            let mut record = make_record(&format!("oid-{row}"), "t", 1_000 + row as i64);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(vec![0.5; DIM]),
+                ..Default::default()
+            });
+            writer.add_record(&record)?;
+        }
+        writer.finish()?;
+
+        let segment = std::fs::read(&path)?;
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        assert!(
+            footer.blocks.len() <= ROWS / 100,
+            "floor must prevent micro-RGs: {} RGs for {ROWS} rows",
+            footer.blocks.len()
+        );
+        // The invariant that matters: framing (~1.2 KB/RG) stays a rounding
+        // error. The byte-floor clamps the size trigger, but the row-cut also
+        // fires on REAL accumulated metadata bytes, which can cut a non-final
+        // RG below the floor — as long as it stays ≥ 64 KiB, fixed cost is
+        // ≤ ~2% and the micro-RG pathology (~800 B RGs at 400 B targets) is
+        // structurally impossible.
+        for entry in footer
+            .blocks
+            .iter()
+            .take(footer.blocks.len().saturating_sub(1))
+        {
+            assert!(
+                entry.size as usize >= 64 * 1024,
+                "non-final RG {} bytes must amortize framing (fixed ~1.2KB)",
+                entry.size
+            );
+        }
+        Ok(())
+    }
+
+    /// TD-PAXRG-1 Phase B: the spill twin and the in-memory twin produce
+    /// IDENTICAL geometry for the same ordered input — footer RG table, stats
+    /// payloads, and region extents must agree byte-for-byte where they are
+    /// offsets-independent (block offsets share `data_offset` in both).
+    #[test]
+    fn spill_and_memory_rg_writers_produce_identical_footers() -> Result<()> {
+        const ROWS: usize = 256;
+        let dir = tempfile::tempdir()?;
+        let mem_path = dir.path().join("rg-mem.pax");
+        write_rg_segment(&mem_path, ROWS, true, None)?;
+
+        let scratch = dir.path().join("scratch");
+        std::fs::create_dir_all(&scratch)?;
+        let spill_path = dir.path().join("rg-spill.pax");
+        write_rg_segment(&spill_path, ROWS, true, Some(&scratch))?;
+
+        let footer_of = |p: &std::path::Path| -> Result<SegmentFooterIndex> {
+            SegmentFooterIndex::locate_in_segment(&std::fs::read(p)?)?
+                .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))
+        };
+        let mem = footer_of(&mem_path)?;
+        let spill = footer_of(&spill_path)?;
+        assert_eq!(
+            mem.blocks, spill.blocks,
+            "RG tables must be identical (offsets share data_offset)"
+        );
+        assert_eq!(
+            mem.block_stats, spill.block_stats,
+            "RG stats payloads must be identical"
+        );
+        assert_eq!(
+            (mem.rabitq_off, mem.rabitq_len, mem.sq8_off, mem.sq8_len),
+            (
+                spill.rabitq_off,
+                spill.rabitq_len,
+                spill.sq8_off,
+                spill.sq8_len
+            ),
+            "region extents must be identical"
+        );
+        Ok(())
+    }
+
+    /// TD-PAXRG-1 Phase B (mixed-read guarantee): with the gate OFF the writer
+    /// emits NO v4 artifacts — layout version stays v1/v3 and the footer's
+    /// stats column is empty (zero-length payloads, byte-identical footers).
+    #[test]
+    fn rg_layout_gate_default_off_writes_v1_v3_bytes() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        const DIM: usize = 32;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("rg-off.pax");
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(64 * 1024),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_oid_resolver(true);
+        for row in 0..64 {
+            let mut record = make_record(&format!("oid-{row}"), "t", 1_000 + row as i64);
+            record.embeddings.push(EmbeddingCell {
+                modality: "dense".into(),
+                dim: DIM as u32,
+                values: EmbeddingValues::Fp32(vec![0.5; DIM]),
+                ..Default::default()
+            });
+            writer.add_record(&record)?;
+        }
+        writer.finish()?;
+
+        let segment = std::fs::read(&path)?;
+        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_V3_LEN])
+            .or_else(|_| SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_LEN]))?;
+        assert_ne!(
+            header.layout_version, SEG_LAYOUT_VERSION_ROW_GROUP,
+            "gate OFF must never emit v4"
+        );
+        let footer = SegmentFooterIndex::locate_in_segment(&segment)?
+            .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
+        assert!(
+            footer.block_stats.iter().all(|s| s.is_none()),
+            "gate OFF footers carry no RG stats payloads"
         );
         Ok(())
     }

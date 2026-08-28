@@ -424,6 +424,9 @@ pub(crate) fn pax_spill_compaction_writer(
     .with_record_version(true)
     .with_block_centroids(cluster)
     .with_coalesced_rabitq(true)
+    // TD-PAXRG-1: the spill twin mirrors the in-memory writer's v4 flag so
+    // compaction output matches flush output for the same gate state.
+    .with_rg_layout(rg_layout_enabled())
     .with_expected_rows(expected_rows);
     #[cfg(feature = "cold-deletion-vectors")]
     {
@@ -474,6 +477,11 @@ fn write_pax_segment_ordered(
     // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
     // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
     .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled())
+    // TD-PAXRG-1: v4 row-group Region D — requires the coalesced layout
+    // (Regions A/B are the premise of the wedge); default OFF.
+    .with_rg_layout(
+        rg_layout_enabled() && quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled(),
+    )
     .with_expected_rows(records.len());
     // TD-DELVEC-1 WI-3a: capture the OID→position resolver (footer region, WI-2c)
     // so a cold-resident delete (WI-3b) can set a deletion-vector bit without
@@ -955,6 +963,26 @@ pub fn coalesced_rabitq_enabled() -> bool {
             .map(str::to_ascii_lowercase)
             .as_deref(),
         Some("0" | "off" | "false" | "no")
+    )
+}
+
+/// TD-PAXRG-1: write the v4 **row-group Region D** layout — Region D granules
+/// are Parquet-style row groups (Olap-framed, RowDirectory + in-block rgdir
+/// suppressed), per-RG stats ride the footer's MinMax payload, and the RG
+/// target is floored at 256 KiB. Opt-in, default OFF (presence-style: set
+/// `PROXIMADB_PAX_WRITE_RG_LAYOUT=1|true|on|yes` to enable; `=0` is the kill
+/// value). Read side is UNCONDITIONAL — v4-aware readers parse v1/v3/v4
+/// (mixed-read contract, ADR-065 Q2). Flip precondition: the TD-PAXRG-1
+/// Phase-G gates (SIFT recall floors, amplification/GET parity, round-trip).
+pub fn rg_layout_enabled() -> bool {
+    matches!(
+        std::env::var("PROXIMADB_PAX_WRITE_RG_LAYOUT")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "on" | "yes")
     )
 }
 
