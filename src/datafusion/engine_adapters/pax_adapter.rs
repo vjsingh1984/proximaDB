@@ -71,7 +71,15 @@ use crate::storage::formats::FileSplit;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// `true` when the PAX-native OLAP scan is opted in (TD-OLAP-1 slice 1).
-/// Default OFF — the reader is constructed/tested but not routed until slice 2.
+/// Default OFF — **do not enable in production until slice 2 dispatch is
+/// wired** (see the TD-OLAP-1 slice-2 design record): with the gate ON the
+/// scheduler STAMPS `DataFusionLocal` for pax-backed OLAP shapes, but the
+/// dispatch block still requires `parquet_backed`, so Volcano serves while
+/// the cost model attributes Volcano's measured costs to DataFusion cells
+/// (attribution poisoning). Flipping this default is gated on the slice-2
+/// requirements (WAL-delta reconciliation, path reconciliation,
+/// `pax_backed` predicate refinement), not on the storage layout (which
+/// defaulted to row-group Region D on 2026-08-28).
 pub fn pax_reader_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {

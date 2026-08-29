@@ -1697,16 +1697,10 @@ impl PaxSegmentWriter {
             .local_spill
             .take()
             .ok_or_else(|| anyhow::anyhow!("PAX local spill backing is missing"))?;
-        // TD-PAXRG-1: the spill path streams f32 vectors through a disk spool
-        // and does not retain them for a Region C emit — spill writes keep the
-        // f32 tier off (`pax_spill_compaction_writer` already does); fail loudly
-        // on the unsupported combination rather than silently dropping exactness.
-        if self.rg_layout && self.f32_tier {
-            anyhow::bail!(
-                "Region C (exact tier) hoist on the spill path is not supported yet \
-                 — spill writes must keep the f32 tier off"
-            );
-        }
+        // TD-PAXRG-1: Region C on the spill twin — the spool's raw-f32 file IS
+        // the Region C payload, so the emit is a finish-time header + copy
+        // (mirror of the memory twin), gated on row-group layout ∧ f32 tier.
+        let emit_exact = self.rg_layout && self.f32_tier;
         spill.flush_inputs()?;
         if self.compute_oid_resolver && spill.oid_count as u64 != self.row_count {
             bail!(
@@ -1720,7 +1714,7 @@ impl PaxSegmentWriter {
             .take()
             .ok_or_else(|| anyhow::anyhow!("PAX spill vector spool is missing"))?;
         let seed = RABITQ_SEED_BASE ^ (col_id::EMBED_BASE as u64);
-        let regions = vectors.finish(seed)?;
+        let regions = vectors.finish(seed, emit_exact)?;
         if regions.row_count as u64 != self.row_count || regions.dim != dim {
             bail!(
                 "PAX spill vector rows/dim ({}/{}) != segment ({}/{dim})",
@@ -1774,8 +1768,11 @@ impl PaxSegmentWriter {
         let rabitq_len = regions.rabitq_len;
         let sq8_off = rabitq_off + rabitq_len;
         let sq8_len = regions.sq8_len;
+        // TD-PAXRG-1: Region C extent (zero-when-absent — twin invariant).
+        let c_len = regions.exact().map_or(0u64, |(_, len)| len);
+        let c_off = if c_len > 0 { sq8_off + sq8_len } else { 0 };
         let resolver_len = resolver.as_ref().map_or(0, |(_, length)| *length);
-        let opr_off = sq8_off + sq8_len;
+        let opr_off = sq8_off + sq8_len + c_len;
         let opr_len = resolver_len;
         let data_offset = opr_off + opr_len;
 
@@ -1786,6 +1783,11 @@ impl PaxSegmentWriter {
                 let codes_base_a =
                     rabitq_off + rabitq_region_header_len(dim) as u64 + n_rows.div_ceil(8) as u64;
                 let codes_base_b = sq8_off + sq8_codes_offset(n_rows) as u64;
+                // TD-PAXRG-1: Region C per-cell extents (mirror of the memory
+                // twin) so selective probing can address C the same way it
+                // addresses A/B.
+                let stride_c = dim as u64 * 4;
+                let codes_base_c = c_off + exact_region_header_len(n_rows);
                 let mut cells = Vec::with_capacity(tl.model.k_c());
                 let mut row = 0u64;
                 for (index, &rows) in tl.model.cell_rows.iter().enumerate() {
@@ -1794,6 +1796,11 @@ impl PaxSegmentWriter {
                     } else {
                         tl.cell_end_blocks[index - 1]
                     };
+                    let (cell_c_off, cell_c_len) = if c_len > 0 {
+                        (codes_base_c + row * stride_c, rows * stride_c)
+                    } else {
+                        (0, 0)
+                    };
                     cells.push(CoarseCellEntry {
                         row_begin: row,
                         row_end: row + rows,
@@ -1801,8 +1808,8 @@ impl PaxSegmentWriter {
                         a_len: rows * stride_a,
                         b_off: codes_base_b + row * dim as u64,
                         b_len: rows * dim as u64,
-                        c_off: 0,
-                        c_len: 0,
+                        c_off: cell_c_off,
+                        c_len: cell_c_len,
                         d_block_begin,
                         d_block_end: tl.cell_end_blocks[index],
                     });
@@ -1888,10 +1895,8 @@ impl PaxSegmentWriter {
             a0_len,
             opr_off,
             opr_len,
-            // TD-PAXRG-1: the spill path keeps the f32 tier off (guarded above),
-            // so the spill twin never emits Region C.
-            c_off: 0,
-            c_len: 0,
+            c_off,
+            c_len,
         };
         let footer_body = footer.to_bytes()?;
         let footer_off = data_offset + spill.blocks_len;
@@ -1906,8 +1911,8 @@ impl PaxSegmentWriter {
             footer_len,
             a0_off,
             a0_len,
-            c_off: 0,
-            c_len: 0,
+            c_off,
+            c_len,
         };
         let header_bytes = header.to_bytes();
         let mut tail = Vec::with_capacity(16);
@@ -1925,6 +1930,9 @@ impl PaxSegmentWriter {
         }
         total = copy_counted(&mut output, regions.rabitq_path(), total)?;
         total = copy_counted(&mut output, regions.sq8_path(), total)?;
+        if let Some((exact_path, _)) = regions.exact() {
+            total = copy_counted(&mut output, exact_path, total)?;
+        }
         if let Some((path, _)) = &resolver {
             total = copy_counted(&mut output, path, total)?;
         }
@@ -4940,6 +4948,92 @@ mod tests {
             v4_len <= v3_len,
             "row-group layout must not be larger at rest: v3={v3_len} v4={v4_len}              (RowDirectory removal should make it smaller)"
         );
+        Ok(())
+    }
+    /// TD-PAXRG-1 closeout: the spill twin with rg + f32 tier emits Region C
+    /// (previously a bail), stays byte-identical to the in-memory twin, and
+    /// round-trips EXACT embeddings through Region C.
+    #[test]
+    fn rg_spill_with_f32_region_c_round_trips_and_matches_memory_twin() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        const DIM: usize = 16;
+        const ROWS: usize = 64;
+        let dir = tempfile::tempdir()?;
+        let scratch = dir.path().join("scratch");
+        std::fs::create_dir_all(&scratch)?;
+
+        let build = |path: &std::path::Path, spill: Option<&std::path::Path>| -> Result<()> {
+            let mut writer = PaxSegmentWriter::new(
+                path,
+                BlockMode::Pax,
+                BlockCompression::None,
+                "col",
+                0,
+                1,
+                Some(RG_TARGET_MIN_BYTES),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_coalesced_rabitq(true)
+            .with_f32_tier(true)
+            .with_rg_layout(true)
+            .with_oid_resolver(true);
+            if let Some(spill_root) = spill {
+                writer = writer.with_local_spill(spill_root)?;
+            }
+            for row in 0..ROWS {
+                let mut record = make_record(&format!("oid-{row}"), "t", 1_000 + row as i64);
+                record.embeddings.push(EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: DIM as u32,
+                    values: EmbeddingValues::Fp32(
+                        (0..DIM)
+                            .map(|d| (row * 11 + d * 3) as f32 * 0.017)
+                            .collect(),
+                    ),
+                    ..Default::default()
+                });
+                writer.add_record(&record)?;
+            }
+            writer.finish()?;
+            Ok(())
+        };
+
+        let mem_path = dir.path().join("mem.pax");
+        build(&mem_path, None)?;
+        let spill_path = dir.path().join("spill.pax");
+        build(&spill_path, Some(&scratch))?;
+
+        // Byte-identical twins INCLUDING Region C.
+        assert_eq!(
+            std::fs::metadata(&mem_path)?.len(),
+            std::fs::metadata(&spill_path)?.len(),
+            "twins must agree on total length (C present in both)"
+        );
+        let mem_bytes = std::fs::read(&mem_path)?;
+        let spill_bytes = std::fs::read(&spill_path)?;
+        assert_eq!(mem_bytes, spill_bytes, "twins must be byte-identical");
+
+        // Region C declared + exact authority holds.
+        let header = SegmentHeaderPrefix::parse(&mem_bytes[..SEG_HEADER_PREFIX_LEN])?;
+        assert!(header.c_len > 0, "Region C present under rg + f32 tier");
+        let footer = SegmentFooterIndex::locate_in_segment(&mem_bytes)?
+            .ok_or_else(|| anyhow::anyhow!("footer missing"))?;
+        assert_eq!(footer.c_len, header.c_len);
+        assert!(footer.has_f32_tier);
+
+        // Exact round-trip: every embedding reconstructs bitwise from Region C.
+        let recs = crate::pax_block::read_pax_segment_records(&mem_bytes, &[], &[], None)?;
+        assert_eq!(recs.len(), ROWS);
+        for (row, rec) in recs.iter().enumerate() {
+            let cell = rec.embeddings.first().expect("embedding present");
+            let proximadb_records::EmbeddingValues::Fp32(values) = &cell.values else {
+                panic!("must decode to Fp32");
+            };
+            let expected: Vec<f32> = (0..DIM)
+                .map(|d| (row * 11 + d * 3) as f32 * 0.017)
+                .collect();
+            assert_eq!(values, &expected, "row {row} exact via Region C");
+        }
         Ok(())
     }
 }

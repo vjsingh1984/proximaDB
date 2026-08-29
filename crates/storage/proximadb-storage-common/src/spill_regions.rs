@@ -27,6 +27,10 @@ pub struct DiskEncodedRegions {
     task_directory: tempfile::TempDir,
     rabitq_path: PathBuf,
     sq8_path: PathBuf,
+    /// Region C (exact f32) spooled file — `Some` only when the finish was
+    /// asked to emit it (`emit_exact`); payload is byte-for-byte the wire form
+    /// of the in-memory encoder's Region C (TD-PAXRG-1).
+    exact_path: Option<PathBuf>,
     pub row_count: u32,
     pub dim: u32,
     pub centroid: Vec<f32>,
@@ -42,6 +46,14 @@ impl DiskEncodedRegions {
 
     pub fn sq8_path(&self) -> &Path {
         &self.sq8_path
+    }
+
+    /// Region C (exact f32) spooled path + length, when emitted.
+    pub fn exact(&self) -> Option<(&Path, u64)> {
+        self.exact_path.as_ref().map(|p| {
+            let len = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+            (p.as_path(), len)
+        })
     }
 
     pub fn scratch_path(&self) -> &Path {
@@ -166,7 +178,12 @@ impl DiskVectorSpool {
         self.dim
     }
 
-    pub fn finish(mut self, seed: u64) -> Result<DiskEncodedRegions> {
+    /// Encode the spooled corpus into the coalesced regions. When `emit_exact`
+    /// is set (TD-PAXRG-1: row-group layout ∧ f32 tier), the spooled raw-f32
+    /// file is materialized as **Region C** — `[row_count u32][dim u32]
+    /// [validity][n·dim·f32]` — by header + copy; the spool's encoding is
+    /// byte-for-byte the wire form already.
+    pub fn finish(mut self, seed: u64, emit_exact: bool) -> Result<DiskEncodedRegions> {
         if self.row_count == 0 || self.dim == 0 || self.present_count == 0 {
             bail!("cannot encode empty PAX coalesced spill regions");
         }
@@ -184,6 +201,13 @@ impl DiskVectorSpool {
         let sq8_path = self.task_directory.path().join("region-b.sq8");
         let rabitq_len = self.encode_rabitq(&rabitq_path, seed, &centroid)?;
         let sq8_len = self.encode_sq8(&sq8_path, &sq8_params)?;
+        let exact_path = if emit_exact {
+            let path = self.task_directory.path().join("region-c.f32");
+            let len = self.encode_exact(&path)?;
+            Some((path, len))
+        } else {
+            None
+        };
         let dim = u32::try_from(self.dim)
             .map_err(|_| anyhow::anyhow!("PAX coalesced spill dimension exceeds u32"))?;
 
@@ -191,6 +215,7 @@ impl DiskVectorSpool {
             task_directory: self.task_directory,
             rabitq_path,
             sq8_path,
+            exact_path: exact_path.map(|(path, _)| path),
             row_count: self.row_count,
             dim,
             centroid,
@@ -198,6 +223,27 @@ impl DiskVectorSpool {
             rabitq_len,
             sq8_len,
         })
+    }
+
+    /// Materialize Region C: `[row_count u32][dim u32][validity]` header + a
+    /// sequential copy of the spooled raw-f32 corpus (its encoding already
+    /// matches the wire form row-for-row).
+    fn encode_exact(&self, output: &Path) -> Result<u64> {
+        let mut writer = BufWriter::with_capacity(VECTOR_BUFFER_BYTES, create_new(&output)?);
+        writer.write_all(&self.row_count.to_le_bytes())?;
+        writer.write_all(
+            &u32::try_from(self.dim)
+                .map_err(|_| anyhow::anyhow!("PAX coalesced spill dimension exceeds u32"))?
+                .to_le_bytes(),
+        )?;
+        writer.write_all(&self.validity)?;
+
+        writer.flush()?;
+        let mut input = vector_reader(&self.vectors_path)?;
+        std::io::copy(&mut input, &mut writer)?;
+        writer.flush()?;
+        writer.get_ref().sync_data()?;
+        Ok(writer.get_ref().metadata()?.len())
     }
 
     fn encode_rabitq(&self, output: &Path, seed: u64, centroid: &[f32]) -> Result<u64> {
@@ -331,7 +377,9 @@ mod tests {
                 .push(vector.as_ref().map(Vec::as_slice))
                 .expect("push");
         }
-        let regions = spool.finish(RABITQ_SEED_BASE).expect("encode regions");
+        let regions = spool
+            .finish(RABITQ_SEED_BASE, false)
+            .expect("encode regions");
         let refs = vectors
             .iter()
             .map(|vector| vector.as_ref().map(Vec::as_slice))
@@ -360,7 +408,7 @@ mod tests {
         let task_path = {
             let mut spool = DiskVectorSpool::new(root.path()).expect("spool");
             spool.push(Some(&[1.0, 2.0])).expect("push");
-            let regions = spool.finish(7).expect("finish");
+            let regions = spool.finish(7, false).expect("finish");
             regions.scratch_path().to_path_buf()
         };
         assert!(!task_path.exists());

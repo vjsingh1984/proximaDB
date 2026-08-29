@@ -464,6 +464,8 @@ pub(crate) fn pax_spill_compaction_writer(
     collection_id: &str,
     embedding_count: usize,
     rerank_quant: VectorQuant,
+    f32_tier: bool,
+    rg_layout: bool,
     target_block: Option<usize>,
     expected_rows: usize,
     two_level: Option<proximadb_storage_common::coarse_directory::CoarseModel>,
@@ -482,7 +484,10 @@ pub(crate) fn pax_spill_compaction_writer(
         target_block,
     )
     .with_quant(VectorQuant::RaBitQ)
-    .with_f32_tier(false)
+    // TD-PAXRG-1: exact tier from the INTERSECTION rule — the caller resolves
+    // `pax_inputs_have_f32_tier(&task.input_files)`; under rg_layout the tier
+    // emits as Region C on the spill twin (f32 spool + header/copy).
+    .with_f32_tier(f32_tier)
     .with_rerank_quant(rerank_quant)
     .with_lossless_clustered(lossless_clustered_enabled() && two_level.is_some())
     .with_lossless_scalar(lossless_scalar_enabled())
@@ -491,9 +496,10 @@ pub(crate) fn pax_spill_compaction_writer(
     .with_record_version(true)
     .with_block_centroids(cluster)
     .with_coalesced_rabitq(true)
-    // TD-PAXRG-1: the spill twin mirrors the in-memory writer's v4 flag so
-    // compaction output matches flush output for the same gate state.
-    .with_rg_layout(rg_layout_enabled())
+    // TD-PAXRG-1: the spill twin mirrors the in-memory writer's rg flag
+    // (caller-resolved: per-collection tag > env > default) so compaction
+    // output matches flush output for the same gate state.
+    .with_rg_layout(rg_layout)
     .with_expected_rows(expected_rows);
     // TD-PAXRG-1: the OID resolver capture is UNCONDITIONAL — it is additive
     // (a small footer region; absent ⇒ legacy behavior) and row-group

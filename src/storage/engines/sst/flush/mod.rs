@@ -907,6 +907,16 @@ impl SstEngine {
                             collection_dir,
                             l0_threshold,
                             precision_hint,
+                            // TD-PAXRG-1: per-collection `pax_rg_layout` tag >
+                            // env > default (resolved at the enqueue seam where
+                            // the collection config is in scope).
+                            params
+                                .collection_config
+                                .as_ref()
+                                .and_then(|c| c.config.as_ref())
+                                .map(|cfg| cfg.tags.as_slice())
+                                .and_then(pax_rg_layout_tag)
+                                .or_else(|| Some(resolve_pax_rg_layout(&[]))),
                         )
                         .await
                 }
@@ -1399,7 +1409,7 @@ fn pax_rg_layout_tag(tags: &[String]) -> Option<bool> {
 /// Resolve the row-group Region D write switch. Precedence: per-collection
 /// `pax_rg_layout` tag > env `PROXIMADB_PAX_WRITE_RG_LAYOUT` > default OFF.
 /// Only effective for RaBitQ-coalesced writes (Regions A/B are the premise).
-fn resolve_pax_rg_layout(tags: &[String]) -> bool {
+pub(crate) fn resolve_pax_rg_layout(tags: &[String]) -> bool {
     let per_collection = pax_rg_layout_tag(tags);
     per_collection
         .unwrap_or_else(|| crate::storage::engines::sst::segment_format::rg_layout_enabled())

@@ -388,6 +388,12 @@ impl VectorRouteDecision {
 
 /// TD-OLAP-1 slice 2: PAX-native OLAP scan gate (inline — not imported from
 /// `pax_adapter` so compute_scheduler compiles without `datafusion-integration`).
+///
+/// WARNING (TD-PAXRG-1 closeout): enabling this gate today changes only
+/// DECISION STAMPING — dispatch still requires `parquet_backed`, so Volcano
+/// serves while the cost model attributes Volcano's measured costs to
+/// DataFusion cells. Do not default-ON until the slice-2 dispatch wiring
+/// (see the TD-OLAP-1 slice-2 design record) lands.
 fn pax_reader_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {

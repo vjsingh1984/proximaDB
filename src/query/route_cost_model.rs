@@ -42,7 +42,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use arc_swap::ArcSwap;
 
-use crate::observability::io_trace::{IoTraceSnapshot, VectorAccessTrace};
+use crate::observability::io_trace::{IoTraceSnapshot, VectorAccessTrace, VectorCachePolicy};
 use crate::query::compute_scheduler::{QueryShape, backend_label};
 use crate::query::table_write_plan::ComputeBackend;
 
@@ -107,18 +107,35 @@ impl VectorCacheOutcome {
         // Physical I/O is authoritative. Lower-tier misses followed by an L1
         // or L2 hit are still warm when no object-store GET escaped the cache;
         // any cache hit plus a physical GET is mixed. With io-trace compiled
-        // out, absence of cache counters is missing evidence, never bypass.
+        // out, absence of cache counters is missing evidence — UNLESS the
+        // route-time policy declares the regime uncached: `Disabled` is stamped
+        // always-on from the real engine cache handles, so physical GETs under
+        // a Disabled policy are a KNOWN uncached regime (bypass) regardless of
+        // whether the probe counters were compiled in.
         if snap.get_ops == 0 && hits > 0 {
             Self::Warm
         } else if snap.get_ops > 0 && hits > 0 {
             Self::Mixed
         } else if snap.get_ops > 0 && misses > 0 {
             Self::Cold
+        } else if snap.get_ops > 0 && Self::policy_declares_uncached(snap) {
+            Self::Bypass
         } else if cfg!(feature = "io-trace") && snap.get_ops > 0 {
             Self::Bypass
         } else {
             Self::Unknown
         }
+    }
+
+    /// True when every recorded access ran under an explicitly `Disabled`
+    /// cache policy — route-time evidence that no cache tier exists to be
+    /// consulted, independent of the `io-trace` feature.
+    fn policy_declares_uncached(snap: &IoTraceSnapshot) -> bool {
+        !snap.vector_accesses.is_empty()
+            && snap
+                .vector_accesses
+                .iter()
+                .all(|a| a.cache_policy == VectorCachePolicy::Disabled)
     }
 
     pub fn as_str(self) -> &'static str {
@@ -1543,6 +1560,73 @@ mod tests {
         };
         assert_eq!(
             VectorCacheOutcome::from_snapshot(&uncached_read),
+            if cfg!(feature = "io-trace") {
+                VectorCacheOutcome::Bypass
+            } else {
+                VectorCacheOutcome::Unknown
+            }
+        );
+    }
+
+    /// TD-PAXRG-1 closeout: a `Disabled` route-time cache policy is stamped
+    /// always-on from the real engine cache handles — physical GETs under it
+    /// are a KNOWN uncached regime, so the outcome is `Bypass`
+    /// feature-independently (previously feature-off builds reported
+    /// `unknown`, which made every cache-free paired-cost cohort inadmissible).
+    #[test]
+    fn disabled_policy_with_gets_is_bypass() {
+        use crate::observability::io_trace::{
+            VectorAccessPath, VectorCachePolicy, VectorSearchIntent, VectorStorageScope,
+        };
+
+        let access = |policy: VectorCachePolicy| VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 128,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: VectorSearchIntent::Approximate,
+            actual_path: VectorAccessPath::Ann,
+            storage_scope: VectorStorageScope::Local,
+            cache_policy: policy,
+        };
+
+        // Disabled policy + physical GETs ⇒ Bypass, with and without io-trace.
+        let disabled = IoTraceSnapshot {
+            vector_accesses: vec![access(VectorCachePolicy::Disabled)],
+            get_ops: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&disabled),
+            VectorCacheOutcome::Bypass
+        );
+
+        // Multi-access: Disabled everywhere ⇒ still a known uncached regime.
+        let disabled_multi = IoTraceSnapshot {
+            vector_accesses: vec![
+                access(VectorCachePolicy::Disabled),
+                access(VectorCachePolicy::Disabled),
+            ],
+            get_ops: 3,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&disabled_multi),
+            VectorCacheOutcome::Bypass
+        );
+
+        // One Unknown-policy access ⇒ policy evidence incomplete ⇒ the
+        // feature-off build stays Unknown (fail-closed preserved).
+        let mixed_policy = IoTraceSnapshot {
+            vector_accesses: vec![
+                access(VectorCachePolicy::Disabled),
+                access(VectorCachePolicy::Unknown),
+            ],
+            get_ops: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&mixed_policy),
             if cfg!(feature = "io-trace") {
                 VectorCacheOutcome::Bypass
             } else {

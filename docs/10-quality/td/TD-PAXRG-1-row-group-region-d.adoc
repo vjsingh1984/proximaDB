@@ -118,12 +118,35 @@ byte-identical to develop (zero diff in the vector-query/observability chains)
 and the failure hits the legacy-baseline arm identically. Belongs to the
 observability owners; it gates the paired-COST evidence, not the recall result.
 
-== Deferred follow-up
+== Closeout (2026-08-29) — deferred items resolved
 
-Compaction-side per-collection tag threading (`pax_spill_compaction_writer`
-reads the env gate only; the task carries collection identity but not config).
-Relevant only for a mixed on/off fleet post-flip; the layout is
-reader-unconditional so a drifted output is correct, just not intent-matched.
+* **Region C on the spill twin: SHIPPED.** The spool's raw-f32 file IS the
+  Region C payload; `DiskVectorSpool::finish(seed, emit_exact)` materializes
+  it by header + copy (the `finish_oid_resolver` pattern). Twin byte-identity
+  extended to rg+f32 (`rg_spill_with_f32_region_c_round_trips_and_matches_
+  memory_twin`); A0 per-cell C extents populated on spill.
+* **Spill exact-tier downgrade fixed**: `pax_spill_compaction_writer` resolves
+  `f32_tier` from `pax_inputs_have_f32_tier(&task.input_files)` (intersection
+  rule) instead of hardcoding off — an all-exact input set no longer loses the
+  tier when the spill executor runs.
+* **Compaction `pax_rg_layout` tag threading: SHIPPED** — `SstCompactionTask
+  ::rg_layout: Option<bool>` (mirror of `precision_hint`), resolved by both
+  producers (flush + trait_impl) via `resolve_pax_rg_layout`, carried through
+  training follow-ups, honored at both executors.
+* **Cohort gate `outcome=unknown`: FIXED** (`VectorCacheOutcome::from_snapshot`
+  policy-aware Bypass: `Disabled` policy + physical GETs ⇒ `Bypass`,
+  feature-independent; qa-gate sift job aligned to the `--features io-trace`
+  build contract ci.yml already documented). Pre-existing — control-verified
+  byte-identical classification on develop.
+* **Slice-2 route-dispatch design record**: added to TD-OLAP-1 (WAL-delta
+  reconciliation, path reconciliation, `pax_backed` refinement, dispatch
+  wiring, EXPLAIN alignment). `PROXIMADB_DF_PAX_READER` stays default-OFF with
+  explicit attribution-poisoning warnings on both gate definitions.
+
+Still open (measure-then-decide or independent tracks): wedge-payload at-rest
+promotion vs export-duplicate; RG target-size raise (post-flip traces);
+RG-granular compaction rewrite; HELIX/SWIFT format ports (bespoke writers —
+a per-engine format decision, not configuration); TD-CACHE-10.
 
 == Per-collection config
 
