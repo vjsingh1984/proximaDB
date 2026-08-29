@@ -1144,3 +1144,19 @@ hardware = "Local macOS arm64 (Apple Silicon, 64GB); docker azurite 3.36.0 + tox
 date = "2026-08-29"
 version = "feat/rdstrat-12-highttt-ab off develop @ d96254603; binary 0d511be43525f6c1c05a0287473c048122aa63a1d30869aa49e2145eacb74d64 (--features azure)"
 notes = "WAL batches through the proxy hit a 30s object_store send-timeout stall (az CLI PUTs of identical 1.36MB bodies complete in ~0.55s through the same proxy), so durable WAL was moved to PROXIMADB_WAL_LOCAL_DIR (the ADR-069 production tiering); flush segment PUTs and all query-phase GETs traversed the proxy and are the measured surface. Default 50ms harness latency gates trip in both arms by construction; artifacts written regardless. The prior session's azurite/toxiproxy stack was torn down externally mid-campaign and recreated as proximadb-rdstrat-{azurite,toxiproxy}. Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "selector_depth_policy_nfc_dev_2026_08_27"
+claim = "On the #1726 NFCorpus dev protocol (324 queries, bm25+bge RRF union pool of 57,306 query-source pairs, pinned MiniLM 4bebbd56 cached scores), rerank depth policy deterministically controls delivered Recall@100: every bounded depth D in {10, 20, 100} preserves the union-order Recall@100 of 0.3208 exactly (top-100 membership is structurally unchanged when only the top-D is reordered), while the shipped unbounded rerank-all policy uniquely loses it (0.3136, -0.0072) by pushing mid-tail relevant sources past rank 100. The #1726 selector regression is therefore a depth-policy artifact, not model quality. Dev-selected candidate rerank@20 leads the incumbent on all four metrics (NDCG@10 0.3385 vs 0.3320; Recall@10 0.1593 vs 0.1542; NDCG@100 0.3078 vs 0.3013; Recall@100 0.3208 vs 0.3136) but no paired delta clears significance at n=324 (NDCG@10 +0.006503 CI [-0.001850, +0.014628]; Recall@100 +0.007238 CI [-0.002569, +0.017110]), so nothing is promoted and the held-out split remains sealed."
+metric = "source-granularity NDCG/Recall@10/@100 over rerank depths with deterministic membership analysis + paired query-bootstrap intervals (10,000 samples, seed 17)"
+status = "measured"
+asserted_in = [
+  "docs/12-design/TD-SELECTOR-1_selector-benchmark-framework.adoc",
+]
+bench_source = "scripts/bench/rerank_source_candidates.py"
+bench_command = "rerank_source_candidates.py materialize --run union-source-run.jsonl --cache score-cache --rerank-count {10,20,100} and --rerank-all; evaluate_source_retrieval.py --run-granularity source --require-complete-k 10 100 --k 10 100 200; compare_retrieval_runs.py --bootstrap-samples 10000 --seed 17 (baseline = shipped rerank-all run; the --rerank-all reproduction is byte-identical, sha256 30325bd876661f74...)"
+artifact = "docs/12-design/TD-SELECTOR-1_selector-benchmark-framework.adoc"
+hardware = "Deterministic materialization + evaluation of cached model scores on local macOS arm64; no model inference in this claim"
+date = "2026-08-27"
+version = "develop a953388dd; score cache 3a46eb32 producer pinned to cross-encoder/ms-marco-MiniLM-L6-v2 4bebbd56; union run 5cc96a04; qrels + occurrences per dev metrics manifests"
+notes = "Development split only; held-out test split untouched (no promotable candidate). The Recall@100 equality across bounded depths is structural (top-100 set = union top-100 set for any D <= 100), verified per-query by identical delivered sets, not by sampling. Production CrossModalReranker bounds reorder depth at rerank_top_k=100 (bounded shape) but drops the tail past rerank_top_k rather than preserving it - recorded in the TD as a follow-up with its own eval; no behavior changed in this claim."
