@@ -1,3 +1,4 @@
+# isort: skip_file
 """
 Offline unit tests for embedding_providers.providers.{local,testing}.
 
@@ -107,22 +108,22 @@ from proximadb_sdk.embedding_providers.core import (  # noqa: E402
     ModelMetadata,
     ProviderConfig,
 )
-from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.local import (
     bge as bge_mod,
-)
+)  # noqa: E402
 from proximadb_sdk.embedding_providers.providers.local import e5 as e5_mod  # noqa: E402
-from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.local import (
     gte_qwen as gte_qwen_mod,
-)
+)  # noqa: E402
 from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
     sentence_transformer as st_mod,
 )
-from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.local import (
     sfr as sfr_mod,
-)
-from proximadb_sdk.embedding_providers.providers.testing import (  # noqa: E402
+)  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.testing import (
     simulated as sim_mod,
-)
+)  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
