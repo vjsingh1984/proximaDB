@@ -387,6 +387,52 @@ Held-out confirmation proceeds per the sealed protocol — one scoring pass over
 the pre-registered pair (incumbent MiniLM + BGE@20) on the fused test pool, no
 selection freedom.
 
+=== Gate 3b held-out confirmation (2026-08-29)
+
+The sealed test split was scored ONCE over the pre-registered pair — the incumbent
+(MiniLM rerank-all) and the dev-selected candidate (BGE rerank@20) — on the fused
+test union pool (bm25 + bge control legs, RRF k=60, top-k 200, 323 queries).
+Same evaluation provenance as dev (control-leg occurrences; qrels = normalized
+test source_qrels). No selection freedom was exercised on the held-out split.
+
+[cols="3,2,2,2,2"]
+|===
+|Held-out (test, 323 q) |NDCG@10 |Rec@10 |NDCG@100 |Rec@100
+
+|union-order
+|0.3667 |0.1730 |0.3356 |0.3253
+
+|MiniLM rerank-all (incumbent)
+|0.3538 |0.1633 |0.3245 |0.3098
+
+|BGE rerank@20 (candidate)
+|0.3665 |0.1770 |0.3340 |0.3253
+|===
+
+Verdict — honest, split:
+
+1. **The pre-registered primary metric did NOT confirm.** BGE@20 vs incumbent,
+   NDCG@10 Δ +0.012627 (+3.57%), CI [−0.000754, +0.026174] — the interval grazes
+   zero. The dev-significant precision gain is directionally consistent on
+   held-out but not proven. **No precision promotion.**
+2. **Recall@100 IS held-out significant:** BGE@20 vs incumbent Δ +0.015522
+   (+5.01%), CI [+0.002787, +0.028281].
+3. **The incumbent is dominated by plain union-order on all four held-out
+   metrics** (e.g. NDCG@10 0.3538 vs 0.3667; Recall@100 0.3098 vs 0.3253): the
+   #1726 shipped unbounded-MiniLM policy is a confirmed out-of-sample
+   regression, not a dev-split artifact. It should be retired — which the merged
+   tail-preservation + bounded-depth semantics (#1763) make both expressible
+   and safe.
+4. **Net recommendation:** retire unbounded MiniLM rerank-all (harm proven
+   out-of-sample); BGE rerank@20 is an opt-in candidate — never worse than
+   union-order on any held-out metric, significantly better than the incumbent
+   on recall — but its precision advantage over union-order is unproven
+   (0.3665 vs 0.3667, dead even). Not a default-on promotion.
+
+C2 (length bucketing) and int8 remain conditional on an operator adopting
+BGE@20 with a latency budget; the merged config wiring (#1763) makes the
+policy expressible either way.
+
 === Production-shape mapping
 
 `CrossModalReranker` (`crates/query/proximadb-query/src/reranking.rs:536`) does
