@@ -1160,6 +1160,10 @@ impl IoTraceSnapshot {
             && self.embedding_output_tokens == 0
             && self.compute_ms.is_empty()
             && self.vector_accesses.is_empty()
+            // TD-RDSTRAT-12 §2: wave-only queries (bounded-concurrent
+            // read_ranges with no other metered I/O) are NOT empty — a trace
+            // carrying only wave metrics must still reach the billing observer.
+            && self.read_ranges_fetch_rounds == 0
     }
 
     /// Total embedding tokens (input + output).
@@ -1312,11 +1316,16 @@ pub fn record_read_ranges(fetch_rounds: u64, max_inflight: u64) {
 /// This bridges the layer boundary: the storage layer records metrics globally
 /// (avoiding upward dependencies), and this function (in the observability layer)
 /// drains them and forwards to the per-query io_trace. Call this after operations
-/// that use `FileSystem::read_ranges` with parallelism enabled. No-op if no
-/// metrics were recorded or outside an active io_trace scope.
+/// that use `FileSystem::read_ranges` with parallelism enabled.
+///
+/// Scope-gated BY DESIGN: outside an active io_trace scope the FS slot is left
+/// untouched so no-scope callers (unit tests, background scans) keep the
+/// last-wave visibility the raw slot always provided — `record_read_ranges`
+/// would no-op anyway, so draining there would only destroy the metrics.
 pub fn drain_and_forward_read_ranges_metrics() {
     use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
-    if let Some(metrics) = drain_read_ranges_metrics() {
+    let in_scope = IO_TRACE.try_with(|_| true).is_ok();
+    if in_scope && let Some(metrics) = drain_read_ranges_metrics() {
         record_read_ranges(metrics.fetch_rounds, metrics.max_inflight);
     }
 }

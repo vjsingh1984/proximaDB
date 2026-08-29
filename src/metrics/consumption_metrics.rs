@@ -782,11 +782,33 @@ pub fn install_billing_observer() {
                 &*IVF_WHOLE_REGION_FALLBACK_TOTAL,
                 snap.ivf_whole_region_fallback,
             ),
+            // TD-RDSTRAT-12 §2: bounded-concurrent wave meters. Wave sites bridge
+            // the FS single-slot metrics into this scope additively (see
+            // `drain_and_forward_read_ranges_metrics` callers); the closure drain
+            // below is the catch-all for waves no site bridged.
+            (
+                &*READ_RANGES_FETCH_ROUNDS_TOTAL,
+                snap.read_ranges_fetch_rounds,
+            ),
         ] {
             if value > 0 {
                 counter.with_label_values(&[t_id]).inc_by(value as f64);
             }
         }
+        // GaugeVec cannot join the CounterVec tuple above: set it separately and
+        // never clobber a previously-observed peak with 0.
+        if snap.read_ranges_max_inflight > 0 {
+            READ_RANGES_MAX_INFLIGHT
+                .with_label_values(&[t_id])
+                .set(snap.read_ranges_max_inflight as f64);
+        }
+        // Production caller for the FS→Prometheus drain (TD-RDSTRAT-12 §2): the
+        // FS single-slot metrics are `take()`-drained exactly once — either a
+        // wave site already forwarded them into this scope via
+        // `drain_and_forward_read_ranges_metrics` (which `take()`s first), or
+        // this catch-all emits them here. Mutually exclusive per metric
+        // instance by `take()` semantics.
+        drain_and_emit_read_ranges_metrics(t_id);
     })));
 }
 
@@ -1405,5 +1427,35 @@ mod tests {
         assert_eq!(snap.embedding_input_tokens, 100);
         assert_eq!(snap.embedding_output_tokens, 200);
         assert_eq!(snap.egress_bytes, 1000);
+    }
+
+    /// TD-RDSTRAT-12 §2: the billing observer must surface the wave metrics —
+    /// `read_ranges_fetch_rounds` as a counter and `read_ranges_max_inflight`
+    /// as a guarded gauge — at scope close. Teeth: breaks if the tuple/gauge
+    /// wiring regresses or `is_empty()` drops wave-only traces again.
+    #[tokio::test]
+    async fn billing_observer_emits_read_ranges_wave_metrics() {
+        use crate::observability::io_trace;
+
+        install_billing_observer();
+        let tenant = "rdstrat12_wave_obs";
+
+        io_trace::instrument(Some(tenant.to_string()), "test.read_ranges_wave", async {
+            io_trace::record_read_ranges(3, 8);
+        })
+        .await;
+
+        assert_eq!(
+            READ_RANGES_FETCH_ROUNDS_TOTAL
+                .with_label_values(&[tenant])
+                .get(),
+            3.0,
+            "wave fetch-rounds must reach the per-tenant counter at scope close"
+        );
+        assert_eq!(
+            READ_RANGES_MAX_INFLIGHT.with_label_values(&[tenant]).get(),
+            8.0,
+            "wave peak-inflight must reach the per-tenant gauge at scope close"
+        );
     }
 }
