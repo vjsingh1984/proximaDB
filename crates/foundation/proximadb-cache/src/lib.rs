@@ -127,7 +127,11 @@ impl CacheKey {
         Self::with_scope(CacheScope::Shared, kind, key)
     }
 
-    fn persistent_key(&self, namespace: &str) -> String {
+    /// TD-RDSTRAT-12 §3: the persistent-tier key format, exposed so engine-side
+    /// residency peeks can probe the raw L2 store for entries the write path
+    /// created under this exact key — without duplicating (and drifting from)
+    /// the namespace/scope/kind encoding here.
+    pub fn persistent_key(&self, namespace: &str) -> String {
         format!(
             "{namespace}/{}/{}:{}",
             self.scope.persistent_component(),
