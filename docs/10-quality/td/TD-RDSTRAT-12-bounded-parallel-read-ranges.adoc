@@ -28,7 +28,7 @@ The TD specifies two env knobs, acceptance criteria, and io_trace additions.
 | `read_ranges_buffered` helper | ✅ **Implemented** (lines 477-492 of `proximadb-storage-filesystem-types/src/lib.rs`) — order-preserving, short-circuit-on-error, unit-tested
 | `PROXIMADB_FS_READ_RANGES_PARALLEL` | ✅ **Implemented** — env gate registered, default 0 (sequential)
 | `FileSystem::read_ranges` parallel path | ✅ **Implemented** (lines 620-636) — delegates to `read_ranges_buffered` when `PARALLEL > 1`
-| `PROXIMADB_READ_RANGES_INFLIGHT` | ✅ **Implemented** (2026-08-26) — `FileSystem::read_ranges_prefetch()` method with INFLIGHT cap (lib.rs:780-851); zero production callers
+| `PROXIMADB_READ_RANGES_INFLIGHT` | ✅ **Implemented** (2026-08-26) — `FileSystem::read_ranges_prefetch()` method with INFLIGHT cap (lib.rs:780-851); production caller = IVF probe cold tail (see §3)
 | `fetch_rounds` + `max_inflight` in io_trace | ✅ **Implemented for general path** (2026-08-26) — `io_trace::record_read_ranges()` + `read_ranges_fetch_rounds` / `read_ranges_max_inflight` metrics (io_trace.rs:684-686, 887-891)
 | SIFT1M cold p50 ≥2× improvement | ⚠️ **Rewired + re-measured** — parity & mechanism proven (positive control); −4.3% p50 on ≈0-RTT local bed; acceptance needs high-RTT rerun (see §3)
 |===
@@ -111,6 +111,29 @@ Evidence: `rdstrat12_sift1m_inflight_batch_v2` (ledger) +
 `docs/_internal/status/RDSTRAT12_SIFT1M_INFLIGHT_BATCH_V2_2026_08_27.adoc`;
 round-1 falsification preserved at `rdstrat12_sift1m_inflight_inert` +
 `RDSTRAT12_SIFT1M_INFLIGHT_INERT_2026_08_26.adoc`.
+
+==== Round 3 (2026-08-29): 50 ms RTT A/B — acceptance still not met; the dominant RTT term is OUTSIDE the batched path
+
+High-RTT pair (Azurite + Toxiproxy symmetric 25+25 ms; `--features azure`
+server; durable WAL local per ADR-069 after WAL PUTs hit a 30 s
+object_store stall through the proxy): object_cold p50 1552.4 → 1517.4 ms
+(**1.02×**) at parity (GETs/q 14.33 vs 14.40; bytes 45.90 vs 45.99 MB;
+recall 0.9874). The baseline is sequential-RTT-dominated exactly as the
+model predicts — but the wave cannot show because:
+
+. **84% of cold bytes (Region-B SQ8 rerank, 38.4 MB/q, ~9 GETs/q) are
+  fetched through the survivor-cache per-range path — NOT the probe cold
+  tail §3 batched.** This is the dominant RTT term and the next target.
+. The azure 4 MiB coalesce policy re-plans the probe's 5-fetch Region-A
+  tail to 1-2 physical GETs inside `read_ranges_prefetch` — a wave of one.
+. Gate reachability on azure verified (wrapper overrides only single
+  `read_range`; trait defaults run; positive control covers the wave).
+
+Remaining work to close §3 acceptance: extend cold-tail batching to the
+Region-B survivor path; expose read_ranges wave-width per query; re-run at
+real-cloud latency on a quiet box. Evidence:
+`rdstrat12_sift1m_highttt_50ms_r3` +
+`docs/_internal/status/RDSTRAT12_SIFT1M_HIGHRTT_2026_08_29.adoc`.
 
 === 4. Update ENV_GATE_REGISTRY
 

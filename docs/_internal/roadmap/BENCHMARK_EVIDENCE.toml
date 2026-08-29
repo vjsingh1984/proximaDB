@@ -1128,3 +1128,19 @@ hardware = "Local macOS arm64 (Apple Silicon, 64GB), release-server build, seria
 date = "2026-08-27"
 version = "feat/rdstrat-12-sift1m-evidence @ ad6a4fcdd (binary edc555b2181b2ed0921800a3da5e5139a8b1c564eb72bf90f6b1ac3b8e6681bd)"
 notes = "Full arm table: post_write 57.29→55.94ms p50; local_disk_warm 68.82→66.38ms; object_cold 55.37→52.98ms p50 / 71.63→75.87 p95; qps 17.63→17.58 cold. Harness default 50ms latency gates tripped in BOTH arms under residual load (exit=1 both sides; result.json still written) — procedural, not differential. Positive control: probe_cold_tail_records_read_ranges_metrics_when_inflight_armed (INFLIGHT=4 → drain Some{max_inflight≥1,fetch_rounds≥1}; repeat query adds none). Fixture lesson encoded there: a segment inside PROXIMADB_PAX_PREFIX_PREFETCH_BYTES or one gap-coalesced range never reaches the cold queue. Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "rdstrat12_sift1m_highttt_50ms_r3"
+claim = "TD-RDSTRAT-12 §3 round 3 (50 ms symmetric RTT via Toxiproxy over dedicated Azurite, SIFT1M, 2 settled segments): the acceptance ratio is 1.02x — baseline object_cold p50 1552.4 ms vs treatment (INFLIGHT=32) 1517.4 ms at parity (GETs/q 14.33 vs 14.40, bytes/q 45.90 vs 45.99 MB, recall@100 0.9874 vs 0.9875). The baseline IS sequential-RTT-dominated as predicted (14.33 GETs x ~100 ms + ~55 ms compute), but the batched wave cannot show because (1) 84% of cold bytes (38.4 MB/q Region-B SQ8 rerank) are fetched through the survivor-cache per-range path §3 never batched, and (2) the azure 4 MiB range-coalesce policy re-plans the probe's 5-fetch Region-A cold tail down to 1-2 physical GETs inside read_ranges_prefetch — a wave of one. The INFLIGHT gate is reachable on the azure backend (wrapper overrides only single read_range; trait defaults run). Acceptance stays deferred until Region-B batching lands and read_ranges wave-width is observable per query."
+metric = "object_cold p50 ratio at parity + GETs/q + bytes/q + recall@100 + region_a/region_b bytes split"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-12-bounded-parallel-read-ranges.adoc",
+]
+bench_source = "scripts/bench/sift1m_get_reduction.py"
+bench_command = "PROXIMADB_READ_RANGES_INFLIGHT={0,32} AZURITE_BLOB_STORAGE_URL=http://127.0.0.1:11001 PROXIMADB_AZURE_EMULATOR=1 AZURE_STORAGE_USE_EMULATOR=true AZURE_ALLOW_HTTP=true AZURE_STORAGE_ACCOUNT=devstoreaccount1 AZURE_STORAGE_ENDPOINT=http://127.0.0.1:11001/devstoreaccount1 PROXIMADB_WAL_LOCAL_DIR=<root>/wallocal python3 scripts/bench/sift1m_get_reduction.py --root <root> --binary target/release-server/proximadb-server --rows 1000000 --port 5678 --queries 100 --top-k 100 --post-write-max-gets 5000 --settle-timeout-secs 2400 --azurite --storage-url az://rdstrat12highttt/<arm>  # server binary built with --features azure; toxics 25ms+25ms"
+artifact = "docs/_internal/status/RDSTRAT12_SIFT1M_HIGHRTT_2026_08_29.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB); docker azurite 3.36.0 + toxiproxy 2.12.0 on localhost; box load 15-25 during runs (shared with concurrent sessions' builds)"
+date = "2026-08-29"
+version = "feat/rdstrat-12-highttt-ab off develop @ d96254603; binary 0d511be43525f6c1c05a0287473c048122aa63a1d30869aa49e2145eacb74d64 (--features azure)"
+notes = "WAL batches through the proxy hit a 30s object_store send-timeout stall (az CLI PUTs of identical 1.36MB bodies complete in ~0.55s through the same proxy), so durable WAL was moved to PROXIMADB_WAL_LOCAL_DIR (the ADR-069 production tiering); flush segment PUTs and all query-phase GETs traversed the proxy and are the measured surface. Default 50ms harness latency gates trip in both arms by construction; artifacts written regardless. The prior session's azurite/toxiproxy stack was torn down externally mid-campaign and recreated as proximadb-rdstrat-{azurite,toxiproxy}. Indicative dev-machine run, not an SLA."
