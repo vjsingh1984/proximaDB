@@ -4903,4 +4903,61 @@ mod tests {
         assert_eq!(rows, vec![5, 5], "one RG per coarse cell");
         Ok(())
     }
+    /// TD-PAXRG-1 Phase G (at-rest evidence): for the SAME corpus, the
+    /// row-group layout is SMALLER than the legacy block layout — v4 deletes
+    /// the 32 B/row RowDirectory and the in-block rgdir from every granule and
+    /// adds only the ~95 B/RG footer stats payload. This is the honest
+    /// at-rest comparison (v4 vs v3, identical data) — the Parquet-total
+    /// comparison on narrow data is a documented boundary, not a claim.
+    #[test]
+    fn rg_layout_at_rest_is_not_larger_than_legacy_blocks() -> Result<()> {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+        const DIM: usize = 32;
+        const ROWS: usize = 4_000;
+        let dir = tempfile::tempdir()?;
+        let build = |path: &std::path::Path, rg: bool| -> Result<u64> {
+            let mut writer = PaxSegmentWriter::new(
+                path,
+                BlockMode::Pax,
+                BlockCompression::None,
+                "col",
+                0,
+                1,
+                Some(RG_TARGET_MIN_BYTES),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_coalesced_rabitq(true)
+            .with_oid_resolver(true);
+            if rg {
+                writer = writer.with_rg_layout(true);
+            }
+            for row in 0..ROWS {
+                let ts = (row + 1) as i64 * 1000;
+                let mut record = make_record(&format!("oid-{row}"), "t", ts);
+                record.created_at_ns = ts;
+                record.updated_at_ns = ts;
+                record.embeddings.push(EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: DIM as u32,
+                    values: EmbeddingValues::Fp32(vec![0.25; DIM]),
+                    ..Default::default()
+                });
+                writer.add_record(&record)?;
+            }
+            writer.finish()?;
+            Ok(std::fs::metadata(path)?.len())
+        };
+
+        let v3_len = build(&dir.path().join("size-v3.pax"), false)?;
+        let v4_len = build(&dir.path().join("size-v4.pax"), true)?;
+        eprintln!(
+            "[size] legacy={v3_len} rg_layout={v4_len} ({:.1}% of legacy)",
+            v4_len as f64 / v3_len as f64 * 100.0
+        );
+        assert!(
+            v4_len <= v3_len,
+            "row-group layout must not be larger at rest: v3={v3_len} v4={v4_len}              (RowDirectory removal should make it smaller)"
+        );
+        Ok(())
+    }
 }

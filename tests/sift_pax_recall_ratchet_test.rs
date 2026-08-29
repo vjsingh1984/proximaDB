@@ -515,7 +515,26 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         // ranks authoritative inserted vectors, not lossy SQ8 reconstructions.
         std::env::set_var("PROXIMADB_PAX_F32_TIER", "1");
     }
+    run_sift_ratchet("baseline").await;
+}
 
+/// TD-PAXRG-1 Phase G: the SAME ratchet with the row-group Region D layout
+/// ON (`PROXIMADB_PAX_WRITE_RG_LAYOUT=1`) — Regions A/B are byte-identical so
+/// recall must hold (read-path plumbing integrity at scale: footer-index
+/// ranged reads, RG zone pruning, OID-chunk top-k, Region C exact rerank).
+/// Also under f32 tier ⇒ the Region C hoist is exercised end-to-end.
+#[tokio::test]
+async fn sift_pax_cascade_recall_at_10_ratchet_rg_layout() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_F32_TIER", "1");
+        std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "1");
+    }
+    run_sift_ratchet("rg_layout").await;
+}
+
+async fn run_sift_ratchet(label: &str) {
     let base_path = match dataset_path("sift_base.fvecs") {
         Some(p) => p,
         None => {
@@ -567,7 +586,7 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         VectorStorageScope::Unknown,
         "paired SIFT evidence requires a known local or remote storage URL: {storage_base}"
     );
-    let collection = collection("sift_pax_ratchet", storage_base);
+    let collection = collection(&format!("sift_pax_ratchet_{label}"), storage_base);
     // Unset cache-budget gates preserve the controlled cache-free baseline.
     // Explicit existing budgets opt this same harness into the corresponding
     // route-time policy; no parallel benchmark or new env gate is needed.
@@ -800,7 +819,7 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     assert!(measured > 0, "no queries succeeded — cannot report recall");
     let recall = recall_sum / measured as f64;
     eprintln!(
-        "SIFT PAX cascade recall@{TOP_K} = {recall:.4} over {measured} queries \
+        "SIFT PAX cascade recall@{TOP_K} [{label}] = {recall:.4} over {measured} queries \
          (N={n}, floor={floor}, brute-force-GT rows={brute_force_rows})",
     );
     exact_us.sort_unstable();

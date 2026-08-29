@@ -495,10 +495,11 @@ pub(crate) fn pax_spill_compaction_writer(
     // compaction output matches flush output for the same gate state.
     .with_rg_layout(rg_layout_enabled())
     .with_expected_rows(expected_rows);
-    #[cfg(feature = "cold-deletion-vectors")]
-    {
-        writer = writer.with_oid_resolver(true);
-    }
+    // TD-PAXRG-1: the OID resolver capture is UNCONDITIONAL — it is additive
+    // (a small footer region; absent ⇒ legacy behavior) and row-group
+    // Region D's fail-safe requires it for point lookups. Gating it behind a
+    // rollout feature made default-ON rg unwritable in feature-off builds.
+    writer = writer.with_oid_resolver(true);
     if let Some(model) = two_level {
         writer = writer.with_two_level(model);
     }
@@ -545,20 +546,16 @@ fn write_pax_segment_ordered(
     // ADR-061 pre-GA in-place amendment; `PROXIMADB_PAX_COALESCED_RABITQ=0` opts
     // out to the legacy in-block RaBitQ layout for mixed-read / measurement).
     .with_coalesced_rabitq(quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled())
-    // TD-PAXRG-1: v4 row-group Region D — requires the coalesced layout
-    // (Regions A/B are the premise of the wedge); default OFF.
-    .with_rg_layout(
-        rg_layout_enabled() && quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled(),
-    )
+    // TD-PAXRG-1: row-group Region D — requires the coalesced layout
+    // (Regions A/B are the premise of the wedge); resolved upstream
+    // (per-collection tag > env > default OFF).
+    .with_rg_layout(rg_layout && quant == VectorQuant::RaBitQ && coalesced_rabitq_enabled())
     .with_expected_rows(records.len());
     // TD-DELVEC-1 WI-3a: capture the OID→position resolver (footer region, WI-2c)
     // so a cold-resident delete (WI-3b) can set a deletion-vector bit without
-    // rewriting the segment. Feature-gated; default builds are byte-for-byte
-    // unchanged (the resolver is emitted only when this feature is on).
-    #[cfg(feature = "cold-deletion-vectors")]
-    {
-        writer = writer.with_oid_resolver(true);
-    }
+    // rewriting the segment. Capture is UNCONDITIONAL (additive + mixed-read-
+    // safe) — row-group Region D's fail-safe requires it in every build.
+    writer = writer.with_oid_resolver(true);
     // TD-RDSTRAT-8 rev 3: the persisted IVF probe directory (v3 layout) — the
     // plan's runs are its IOP-derived cells, so the writer pads blocks at the
     // same boundaries the model's cell_rows describe (a cell = whole D-blocks).

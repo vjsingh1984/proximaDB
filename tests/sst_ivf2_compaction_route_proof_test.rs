@@ -26,7 +26,7 @@ use proximadb_proto::v1::{Collection, CollectionConfig, StorageAssignment, Stora
 use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 use proximadb_storage_common::coarse_directory::CoarseDirectory;
 use proximadb_storage_common::segment_layout::{
-    SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentHeaderPrefix, is_coalesced_segment,
+    SEG_LAYOUT_VERSION, SegmentHeaderPrefix, is_coalesced_segment,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -257,7 +257,7 @@ async fn test_ivf2_compaction_route_emits_v3_and_searches() -> Result<()> {
     );
     let v3: Vec<_> = versions
         .iter()
-        .filter(|(_, v)| *v == SEG_LAYOUT_VERSION_TWO_LEVEL)
+        .filter(|(_, v)| *v == SEG_LAYOUT_VERSION)
         .collect();
     assert!(
         !v3.is_empty(),
@@ -302,7 +302,7 @@ async fn test_ivf2_off_compaction_route_stays_v1() -> Result<()> {
     assert!(
         versions
             .iter()
-            .all(|(_, v)| *v != SEG_LAYOUT_VERSION_TWO_LEVEL),
+            .all(|(_, v)| *v != SEG_LAYOUT_VERSION),
         "without PROXIMADB_PAX_WRITE_A0_TRAIN no v3 segment may exist (found: {versions:?})"
     );
     let ids = search_ids(&engine, &coll, vector_for(17)).await;
