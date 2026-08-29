@@ -5,10 +5,13 @@
 //! ## Endpoints
 //!
 //! ### Catalog Management
-//! - `POST /api/v1/catalogs` - Register a new external catalog
-//! - `GET /api/v1/catalogs` - List all registered catalogs
-//! - `GET /api/v1/catalogs/{name}` - Get catalog details
-//! - `DELETE /api/v1/catalogs/{name}` - Unregister a catalog
+//! - `POST /api/v2/catalogs` - Register a new external catalog
+//! - `GET /api/v2/catalogs` - List all registered catalogs
+//! - `GET /api/v2/catalogs/{name}` - Get catalog details
+//! - `DELETE /api/v2/catalogs/{name}` - Unregister a catalog
+//!
+//! (Moved from /api/v1/catalogs 2026-08-29: that prefix is 410'd by default
+//! by the v1 sunset middleware, which made this surface dead-on-arrival.)
 //!
 //! ### Namespace Operations
 //! - `POST /api/v1/catalogs/{catalog}/namespaces` - Create namespace
@@ -481,7 +484,7 @@ pub async fn drop_table(
 pub fn configure_routes() -> Router<CatalogApiState> {
     Router::new()
         // Catalog operations
-        // Paths are relative: this router is nested under `/api/v1/catalogs`
+        // Paths are relative: this router is nested under `/api/v2/catalogs`
         // in `handlers.rs`. They used to repeat the prefix, which nested to
         // `/api/v1/catalogs/api/v1/catalogs/...` — the documented endpoints did
         // not exist at their documented paths. Two `.route("/")` calls would
@@ -808,5 +811,98 @@ mod tests {
 
         assert_eq!(proto_ns.levels, vec!["db", "schema"]);
         assert_eq!(proto_ns.properties.get("key"), Some(&"value".to_string()));
+    }
+
+    // ---- TD-V1SUNSET-1 census finding 4: the serving teeth this surface lacked ----
+
+    /// Build the router the way PRODUCTION does: configure_routes() nested under
+    /// its mount prefix, wrapped by the v1_sunset middleware with compat OFF
+    /// (the default). The path collision lived here for weeks because no test
+    /// ever SERVED this router — the CI feature lane only compiles it.
+    fn serving_router() -> axum::Router {
+        let state =
+            CatalogApiState::new(std::sync::Arc::new(crate::catalog::CatalogManager::new()));
+        axum::Router::new()
+            .nest("/api/v2/catalogs", configure_routes().with_state(state))
+            .layer(axum::middleware::from_fn_with_state(
+                false,
+                crate::network::middleware::v1_sunset::v1_sunset_middleware,
+            ))
+    }
+
+    /// THE property that was broken: the enterprise surface must be reachable
+    /// under the DEFAULT configuration (feature on, compat off). At its old
+    /// /api/v1/catalogs home this returned 410 — dead-on-arrival.
+    #[tokio::test]
+    async fn enterprise_surface_is_reachable_under_default_config() {
+        use tower::ServiceExt;
+
+        let app = serving_router();
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v2/catalogs")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // POSITIVE assertion, deliberately not assert_ne!(410): a negative
+        // check tolerates 404 (path unmatched) — which is exactly what the
+        // original collision produced, so a merely-not-410 test passes on the
+        // bug. Reachable + fail-closed is the contract: the ROUTE answered
+        // (not 404/410), and TD-CAT-8's operator gate then denies the
+        // unauthenticated request with 401.
+        assert_eq!(
+            resp.status().as_u16(),
+            401,
+            "reachable under default config = the route answered and authz failed closed"
+        );
+    }
+
+    /// The sunset contract still holds: /api/v1/catalogs (and any /api/v1 path)
+    /// answers 410 with compat off — including paths that once hosted this
+    /// surface. Relocation must not weaken the sunset.
+    #[tokio::test]
+    async fn the_old_v1_home_still_410s() {
+        use tower::ServiceExt;
+
+        let app = serving_router();
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/catalogs")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 410);
+    }
+
+    /// Authz travels with the path: TD-CAT-8's fail-closed operator gate must
+    /// still deny an authenticated non-operator on the NEW path — a path move
+    /// that silently dropped authz would be worse than the 410.
+    #[tokio::test]
+    async fn authz_travels_with_the_new_path() {
+        use tower::ServiceExt;
+
+        let app = serving_router();
+        // No auth context extension at all → fail-closed Unauthorized.
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(axum::http::Method::DELETE)
+                    .uri("/api/v2/catalogs/some-catalog")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status().as_u16(),
+            401,
+            "no auth context must fail closed"
+        );
     }
 }

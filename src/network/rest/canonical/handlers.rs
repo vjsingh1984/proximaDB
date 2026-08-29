@@ -1806,8 +1806,14 @@ pub fn create_router(state: AppState) -> axum::Router {
             let catalog_state = CatalogApiState::new(state.catalog_manager.clone());
             catalog::configure_routes().with_state(catalog_state)
         };
-        router = router.nest("/api/v1/catalogs", catalog_router);
-        info!("✅ External Catalog API endpoints enabled at /api/v1/catalogs");
+        // Nested under /api/v2 (the sole canonical prefix, SUPPORTED_SURFACE):
+        // this surface previously lived at /api/v1/catalogs, where the v1_sunset
+        // middleware 410'd it by default (TD-V1SUNSET-1 census finding 4) —
+        // dead-on-arrival whenever the feature was on. Clean cut, no alias: the
+        // surface was never reachable in a default deployment (double-prefix bug
+        // until TD-CAT-8, then 410), and no SDK or client references the path.
+        router = router.nest("/api/v2/catalogs", catalog_router);
+        info!("✅ External Catalog API endpoints enabled at /api/v2/catalogs");
     }
 
     // Iceberg REST Catalog server — always on, no feature gate needed.
@@ -2005,9 +2011,11 @@ pub fn create_router(state: AppState) -> axum::Router {
     );
     // NOTE: the legacy /api/v1 vector/collection/search/hybrid REST surfaces were
     // removed in the API-standardization hard-rename; those paths now fall through
-    // to a migration hint redirecting to /api/v2 (see `v1_replacement_for`). The
-    // only live /api/v1 mount is the Iceberg REST catalog adapter at
-    // /api/v1/catalogs. Do not re-advertise the removed routes here — that misleads
+    // to a migration hint redirecting to /api/v2 (see `v1_replacement_for`). There
+    // is NO live /api/v1 mount: the enterprise catalog surface moved to
+    // /api/v2/catalogs (2026-08-29; it was 410'd at its old /api/v1/catalogs home
+    // by the default-off sunset), and the Iceberg REST catalog serves at
+    // /iceberg/v1. Do not re-advertise removed routes here — that misleads
     // callers into thinking v1 REST is still served.
     // (/api/v1/experimental/hybrid/search was removed 2026-05-26; it was
     // mock-backed. The real hybrid path is /api/v2/hybrid/search.)

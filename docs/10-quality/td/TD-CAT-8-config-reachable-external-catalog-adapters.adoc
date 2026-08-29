@@ -43,6 +43,9 @@ dead code, and it makes this a design decision rather than housekeeping.
 
 The reachability map above is right about the *Rust* surface and wrong about the
 *configuration* surface. The one config path — `POST /api/v1/catalogs` — calls
+(path moved to `POST /api/v2/catalogs` 2026-08-29: the `/api/v1` prefix is
+410'd by default by the v1 sunset middleware, which left this surface
+dead-on-arrival at its old home — see TD-V1SUNSET-1 reconciliation.)
 `convert_proto_catalog_config` (`src/network/rest/canonical/catalog.rs:450`), whose parameter is
 `_proto_config` and whose body is an unconditional
 `Err(ApiError::NotImplemented("Catalog config conversion not yet implemented"))`. **Every**
@@ -261,6 +264,7 @@ authentication is not authorization: any authenticated principal could have drop
 
 It had not bitten because **the router was mounted at the wrong path**: `configure_routes`
 registered absolute `/api/v1/catalogs/...` paths, and `handlers.rs` nested that router *under*
+(historical note: the mount prefix is now `/api/v2/catalogs` — see the note above)
 `/api/v1/catalogs`, so every endpoint answered at `/api/v1/catalogs/api/v1/catalogs/...`. The
 documented API did not exist at its documented path.
 
