@@ -6,7 +6,7 @@ numpy>=1.24.0
 requests>=2.28.0
 
 # BERT embeddings - smallest model only
-sentence-transformers>=2.2.0
+sentence-transformers>=6.0.0
 # CPU-only version. Floor is >=2.13.0 for CVE-2025-3000 (memory corruption via
 # torch.jit.script): the previous `>=2.0.0,<2.1.0` capped BELOW the fix, so the
 # range could only ever resolve to a vulnerable build. The demo uses only
