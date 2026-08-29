@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Rewired + re-measured (2026-08-27)** — IVF probe cold tail now batches through `read_ranges_prefetch`; parity proven, mechanism proven; ≥2× acceptance requires a high-RTT backend rerun. See §3.
+| Status | **Round 4 (2026-08-29): Region-B/Region-D cold tails waved + opt-in mega-GET split + wave metrics restored** — the full cascade now waves under `PROXIMADB_READ_RANGES_INFLIGHT`; verdict campaign pending on the quiet-box high-RTT bed.
 | Priority | **P2** — performance optimization for cold queries; not correctness-blocked.
 | Severity | Feature-complete; gate reachable and proven fired by positive control.
 | Component | `crates/storage/proximadb-storage-filesystem-types/src/lib.rs` — `read_ranges_buffered`, `FileSystem::read_ranges`, `FileSystem::read_ranges_prefetch`
@@ -134,6 +134,37 @@ Region-B survivor path; expose read_ranges wave-width per query; re-run at
 real-cloud latency on a quiet box. Evidence:
 `rdstrat12_sift1m_highttt_50ms_r3` +
 `docs/_internal/status/RDSTRAT12_SIFT1M_HIGHRTT_2026_08_29.adoc`.
+
+==== Round 4 (2026-08-29): the full cascade waves — implementation complete, verdict campaign next
+
+Adversarial review of round 3 DISPROVED its wave-of-one mechanism (azure
+`range_coalesce_policy()` is `None` ⇒ identity re-plan; the probe tail waved
+with real width) and located the true masks: the settled bed's overlapping
+queries RAM-hit most probe-tail ranges, and Region-B's scattered-survivor
+path collapses to ONE mega-GET (GET-optimal, RTT-terrible). Changes:
+
+. **Region-B clustered loop** now uses the probe's peek·batch·feed (classify
+  via the new side-effect-free 4-tier `SurvivorRangeCache::peek_parent_residency`;
+  ONE bounded `read_ranges_prefetch` for true-cold ranges; consume through the
+  ORIGINAL `get_or_fetch_in_parent` seam — TD-CACHE-5/6 semantics, counters
+  and rank ordering unchanged).
+. **Region-D OID tail** batched identically (plain `get_or_fetch` seam).
+. **Whole-region fallback mega-GET** can be wave-split STRICTLY OPT-IN via new
+  gate `PROXIMADB_READ_RANGES_WAVE_SPLIT_MB` (default OFF; trades +N−1 billed
+  GETs for ceil(N/width)×RTT; per-chunk exact-key L1/L2 entries replace the
+  search-path parent entry — equal bytes, finer LRU granularity; write-time
+  parent seeding unaffected). Co-design tension surfaced: TD-RDSTRAT-8
+  GET-economy vs RTT-economy — the evidence campaign decides any default move.
+. **§2 wave metrics restored** (third certified-dead-code seam this TD found):
+  scope-gated bridge at every wave site, billing-observer counter + guarded
+  gauge, catch-all drain caller, harness scrape + per-phase `read_ranges_wave`
+  + `cold_cohort` verdict population in result.json. `is_empty()` now counts
+  wave-only traces.
+. **Footer-GET hoist** (data-independent of survivors) recorded as follow-up.
+
+Verdict protocol: round-3 bed + playbook, quiet box, 3× interleaved arms
+A0 none / A1 INFLIGHT=8 / A2 A1+WAVE_SPLIT_MB=8, cold-cohort p50 ≤ 0.5×A0 at
+GET-parity for A1, result-identity hashes byte-identical across arms.
 
 === 4. Update ENV_GATE_REGISTRY
 

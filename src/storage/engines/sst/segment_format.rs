@@ -1145,6 +1145,43 @@ struct CoalescedFetch {
     blocks: Vec<usize>,
 }
 
+/// TD-RDSTRAT-12 §3 round 4 (opt-in wave-split): aligned chunks covering
+/// `[region_off, region_off + region_len)`, last chunk carrying the remainder.
+/// Chunk size comes from the site's `IopsBudget` target so the split ranges
+/// match the backend's coalescing profile (4 MiB on azure://).
+fn plan_wave_split_ranges(
+    region_off: u64,
+    region_len: u64,
+    chunk: u64,
+) -> Vec<std::ops::Range<u64>> {
+    let chunk = chunk.max(1);
+    let mut ranges = Vec::with_capacity(region_len.div_ceil(chunk) as usize);
+    let mut start = region_off;
+    let end = region_off.saturating_add(region_len);
+    while start < end {
+        let stop = start.saturating_add(chunk).min(end);
+        ranges.push(start..stop);
+        start = stop;
+    }
+    ranges
+}
+
+/// TD-RDSTRAT-12 §3 round 4: `PROXIMADB_READ_RANGES_WAVE_SPLIT_MB` — minimum
+/// Region-B whole-region-fallback size (MiB) eligible for an opt-in wave split.
+/// Unset ⇒ OFF (the fallback issues its single whole-region GET unchanged, the
+/// TD-RDSTRAT-8 GET-economical default). Composes with
+/// `PROXIMADB_READ_RANGES_INFLIGHT`: with the cap ≤ 1 the wave runs
+/// sequentially, so an armed threshold without an armed cap is inert by
+/// construction (the wave metrics make that visible).
+fn wave_split_threshold_mb() -> Option<u64> {
+    static WAVE_SPLIT_MB: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *WAVE_SPLIT_MB.get_or_init(|| {
+        std::env::var("PROXIMADB_READ_RANGES_WAVE_SPLIT_MB")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    })
+}
+
 /// Plan coalesced ranged GETs over a set of survivor block indices using the
 /// shared `ObjectRangeCoalescePolicy` thresholds (ADR-062 D3 — the GET win is the
 /// *policy* planning merged ranges; `FileSystem::read_ranges` only executes them).
@@ -2717,6 +2754,11 @@ async fn coarse_probe_survivors(
             }
             *slot = Some(buf);
         }
+        // TD-RDSTRAT-12 §2: fold this wave's FS single-slot metrics into the
+        // per-query io_trace additively (`fetch_add`/`fetch_max`) — a query
+        // issuing several waves (probe tail + Region-B + Region-D) would
+        // otherwise lose all but the last to the single-overwrite slot.
+        crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
     }
 
     // Consume pass: materialize each fetch's bytes IN ORDER, running the exact
@@ -3165,86 +3207,316 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         // TD-CACHE-6: the whole-Region-B fallback is ONE well-known range —
         // cache it through the seam so hot repeats stop re-paying the
         // largest GET on the path (admission/floors decide residency).
-        let region_arc: Arc<[u8]> = if let Some(sc) = survivor_cache {
-            sc.get_or_fetch_in_parent(
-                CacheKind::QuantizedCodes,
-                path,
-                header.sq8_off,
-                header.sq8_len,
-                header.sq8_off,
-                header.sq8_len,
-                || async {
-                    let b = fs
-                        .read_range(path, header.sq8_off, header.sq8_len)
-                        .await
-                        .map_err(std::io::Error::other)?;
-                    crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
-                    if trace_on {
-                        record_get(CacheTier::SurvivorPayload, header.sq8_len);
+        //
+        // TD-RDSTRAT-12 §3 round 4 (STRICTLY OPT-IN): under a high-RTT backend
+        // that single mega-GET is the dominant cold-latency term
+        // (1×(RTT + region/BW) ≈ seconds), so when BOTH gates are armed —
+        // `PROXIMADB_READ_RANGES_INFLIGHT > 1` and
+        // `PROXIMADB_READ_RANGES_WAVE_SPLIT_MB` ≥ region size — split it into
+        // `IopsBudget`-sized chunks and wave them. This DELIBERATELY trades
+        // +N−1 billed GETs for ceil(N/width)×RTT latency (TD-RDSTRAT-8
+        // GET-economy vs RTT-economy; the default-OFF gate keeps the
+        // GET-economical baseline untouched). Accepted cache trade: per-chunk
+        // loaders populate exact-key L1/L2 entries — the search-path parent L2
+        // entry never forms; warm serving flows through per-chunk exact tiers
+        // (equal total bytes, finer LRU granularity, demanded-chunk reads),
+        // and write-time parent seeding still serves via peek step 3.
+        let wave_split_active = matches!(wave_split_threshold_mb(), Some(threshold_mb) if
+            header.sq8_len >= threshold_mb.saturating_mul(1024 * 1024));
+        if wave_split_active {
+            let chunk = iop_target;
+            let split_ranges = plan_wave_split_ranges(header.sq8_off, header.sq8_len, chunk);
+            let mut chunk_bytes: Vec<Option<Vec<u8>>> = vec![None; split_ranges.len()];
+            let batched = match fs.read_ranges_prefetch(path, split_ranges.clone()).await {
+                Ok(bufs) => bufs,
+                Err(_) => {
+                    // Defensive fallback to the sequential baseline shape.
+                    let mut seq = Vec::with_capacity(split_ranges.len());
+                    for range in &split_ranges {
+                        let b = fs
+                            .read_range(path, range.start, range.end - range.start)
+                            .await
+                            .map_err(|err| {
+                                anyhow::anyhow!(
+                                    "coalesced scan Region B split fallback {path}: {err}"
+                                )
+                            })?;
+                        crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
+                        if trace_on {
+                            record_get(CacheTier::SurvivorPayload, range.end - range.start);
+                        }
+                        seq.push(b);
                     }
-                    Ok(b)
-                },
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?
-        } else {
-            let b = fs
-                .read_range(path, header.sq8_off, header.sq8_len)
-                .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
-            crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
-            if trace_on {
-                record_get(CacheTier::SurvivorPayload, header.sq8_len);
-            }
-            Arc::from(b)
-        };
-        let region = coalesced_sq8::Sq8Region::from_bytes(&region_arc)?;
-        for &g in &survivors {
-            if let Some(codes) = region.row_codes(g)
-                && let Some(score) =
-                    rerank_sq8_distance(metric, query, codes, &sq8_params, query_norm_squared)
+                    seq
+                }
+            };
+            for ((range, buf), slot) in split_ranges.iter().zip(batched).zip(chunk_bytes.iter_mut())
             {
-                scored.push((g, score));
+                crate::observability::io_trace::record_pax_region_bytes(0, buf.len() as u64);
+                if trace_on {
+                    record_get(CacheTier::SurvivorPayload, range.end - range.start);
+                }
+                *slot = Some(buf);
+            }
+            crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
+            tracing::debug!(
+                path,
+                region_bytes = header.sq8_len,
+                chunks = split_ranges.len(),
+                "Region-B whole-region fallback wave-split"
+            );
+            // Feed each chunk through the SAME parent seam (W1) so per-chunk
+            // exact L1/L2 entries, hot-key tracking and counters behave
+            // exactly like the clustered path's ranges.
+            let mut region_buf = vec![0u8; header.sq8_len as usize];
+            for (range, slot) in split_ranges.iter().zip(chunk_bytes.iter_mut()) {
+                let chunk_len = (range.end - range.start) as usize;
+                let mut pre = slot.take().ok_or_else(|| {
+                    anyhow::anyhow!("coalesced scan Region B split {path}: chunk missing")
+                })?;
+                let chunk_off = range.start;
+                let rel = (chunk_off - header.sq8_off) as usize;
+                if let Some(sc) = survivor_cache {
+                    let fed: Arc<[u8]> = sc
+                        .get_or_fetch_in_parent(
+                            CacheKind::QuantizedCodes,
+                            path,
+                            chunk_off,
+                            chunk_len as u64,
+                            header.sq8_off,
+                            header.sq8_len,
+                            || async {
+                                Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
+                                    std::mem::take(&mut pre),
+                                )
+                            },
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("coalesced scan Region B split feed {path}: {e}")
+                        })?;
+                    region_buf[rel..rel + chunk_len].copy_from_slice(&fed);
+                } else {
+                    region_buf[rel..rel + chunk_len].copy_from_slice(&pre);
+                }
+            }
+            let region = coalesced_sq8::Sq8Region::from_bytes(&region_buf)?;
+            for &g in &survivors {
+                if let Some(codes) = region.row_codes(g)
+                    && let Some(score) =
+                        rerank_sq8_distance(metric, query, codes, &sq8_params, query_norm_squared)
+                {
+                    scored.push((g, score));
+                }
+            }
+        } else {
+            let region_arc: Arc<[u8]> = if let Some(sc) = survivor_cache {
+                sc.get_or_fetch_in_parent(
+                    CacheKind::QuantizedCodes,
+                    path,
+                    header.sq8_off,
+                    header.sq8_len,
+                    header.sq8_off,
+                    header.sq8_len,
+                    || async {
+                        let b = fs
+                            .read_range(path, header.sq8_off, header.sq8_len)
+                            .await
+                            .map_err(std::io::Error::other)?;
+                        crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
+                        if trace_on {
+                            record_get(CacheTier::SurvivorPayload, header.sq8_len);
+                        }
+                        Ok(b)
+                    },
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?
+            } else {
+                let b = fs
+                    .read_range(path, header.sq8_off, header.sq8_len)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
+                crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
+                if trace_on {
+                    record_get(CacheTier::SurvivorPayload, header.sq8_len);
+                }
+                Arc::from(b)
+            };
+            let region = coalesced_sq8::Sq8Region::from_bytes(&region_arc)?;
+            for &g in &survivors {
+                if let Some(codes) = region.row_codes(g)
+                    && let Some(score) =
+                        rerank_sq8_distance(metric, query, codes, &sq8_params, query_norm_squared)
+                {
+                    scored.push((g, score));
+                }
             }
         }
     } else {
         // Clustered survivors (IVF/Hilbert locality): fetch the few tight coalesced
         // ranges — pure dense SQ8, the minimal-bytes path.
         let dim64 = dim as u64;
+        // TD-RDSTRAT-12 §3 round 4: peek·batch·feed (mirror of the probe site).
+        // Classify: survivor-RAM/persistent residency (exact L1, parent L1
+        // slice, parent L2, exact L2 — all side-effect-free) splits each
+        // planned range into SiteServed (the seam will serve it; loader can
+        // only run on an LRU race) vs Cold (the loader WILL run → batch it).
+        enum RegionBSlot {
+            SiteServed,
+            Cold(usize),
+        }
+        let mut slots: Vec<RegionBSlot> = Vec::with_capacity(sq8_fetches.len());
+        let mut cold_ranges: Vec<std::ops::Range<u64>> = Vec::new();
         for fetch in &sq8_fetches {
+            match survivor_cache {
+                Some(sc)
+                    if sc
+                        .peek_parent_residency(
+                            CacheKind::QuantizedCodes,
+                            path,
+                            fetch.start,
+                            fetch.end - fetch.start,
+                            header.sq8_off,
+                            header.sq8_len,
+                        )
+                        .await
+                        .is_some() =>
+                {
+                    slots.push(RegionBSlot::SiteServed);
+                }
+                _ => {
+                    slots.push(RegionBSlot::Cold(cold_ranges.len()));
+                    cold_ranges.push(fetch.start..fetch.end);
+                }
+            }
+        }
+        // One bounded-concurrent wave for every true-cold range (INFLIGHT cap;
+        // unset/≤1 ⇒ the trait runs it sequentially — byte-for-byte baseline).
+        // D4 memory bound: wave transient = min(INFLIGHT, N) × max_range_bytes
+        // ≤ 32 × 4 MiB = 128 MiB; one bounded read_ranges_prefetch, never an
+        // unbounded join_all.
+        //
+        // Metrics parity: every buffer corresponds to exactly one physical GET
+        // the sequential loop would have issued inside its loader, so the
+        // per-buffer `record_pax_region_bytes` / `record_get` fires HERE, once,
+        // at batch time (Cold loaders below stay silent).
+        let mut cold_bytes: Vec<Option<Vec<u8>>> = vec![None; cold_ranges.len()];
+        if !cold_ranges.is_empty() {
+            let batched = match fs.read_ranges_prefetch(path, cold_ranges.clone()).await {
+                Ok(bufs) => bufs,
+                Err(_) => {
+                    // Defensive fallback to the sequential baseline shape.
+                    let mut seq = Vec::with_capacity(cold_ranges.len());
+                    for range in &cold_ranges {
+                        let b = fs
+                            .read_range(path, range.start, range.end - range.start)
+                            .await
+                            .map_err(|err| {
+                                anyhow::anyhow!(
+                                    "coalesced scan SQ8 survivor fallback {path}: {err}"
+                                )
+                            })?;
+                        crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
+                        if trace_on {
+                            record_get(CacheTier::SurvivorPayload, range.end - range.start);
+                        }
+                        seq.push(b);
+                    }
+                    seq
+                }
+            };
+            for ((range, buf), slot) in cold_ranges.iter().zip(batched).zip(cold_bytes.iter_mut()) {
+                crate::observability::io_trace::record_pax_region_bytes(0, buf.len() as u64);
+                if trace_on {
+                    record_get(CacheTier::SurvivorPayload, range.end - range.start);
+                }
+                *slot = Some(buf);
+            }
+            crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
+        }
+        // Consume in plan order through the ORIGINAL seam (counters, hot-key
+        // tracking, LRU admission unchanged); then the verbatim per-fetch
+        // rerank so `scored` insertion order — and the stable top-k sort's
+        // tie-breaking — stays identical to the sequential baseline.
+        for (fetch_i, fetch) in sq8_fetches.iter().enumerate() {
             let start = fetch.start;
             let range_len = fetch.end - fetch.start;
+            let pre = match &slots[fetch_i] {
+                RegionBSlot::Cold(i) => Some(cold_bytes[*i].take().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "coalesced scan SQ8 survivor fetch {path}: cold fetch {i} missing"
+                    )
+                })?),
+                RegionBSlot::SiteServed => None,
+            };
             // ADR-065 Q3: survivor-range cache. On a hit the loader never runs,
-            // so `fs.read_range` + `record_get` (the billed GET) fire only on a
-            // miss — bytes-not-billed for free, via the existing backend seam.
+            // so the billed GET fires only on a true miss — bytes-not-billed
+            // for free, via the existing backend seam.
             let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
-                sc.get_or_fetch_in_parent(
-                    CacheKind::QuantizedCodes,
-                    path,
-                    start,
-                    range_len,
-                    header.sq8_off,
-                    header.sq8_len,
-                    || async move {
-                        let b = fs.read_range(path, start, range_len).await?;
+                match pre {
+                    Some(mut pre) => sc
+                        .get_or_fetch_in_parent(
+                            CacheKind::QuantizedCodes,
+                            path,
+                            start,
+                            range_len,
+                            header.sq8_off,
+                            header.sq8_len,
+                            || async {
+                                Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
+                                    std::mem::take(&mut pre),
+                                )
+                            },
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}")
+                        })?,
+                    None => {
+                        // SiteServed (or a peek/consume race): the original
+                        // baseline loader — records fire iff it truly runs.
+                        sc.get_or_fetch_in_parent(
+                            CacheKind::QuantizedCodes,
+                            path,
+                            start,
+                            range_len,
+                            header.sq8_off,
+                            header.sq8_len,
+                            || async move {
+                                let b = fs.read_range(path, start, range_len).await?;
+                                crate::observability::io_trace::record_pax_region_bytes(
+                                    0,
+                                    b.len() as u64,
+                                );
+                                if trace_on {
+                                    record_get(CacheTier::SurvivorPayload, range_len);
+                                }
+                                Ok(b)
+                            },
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}")
+                        })?
+                    }
+                }
+            } else {
+                match pre {
+                    Some(b) => Arc::from(b),
+                    None => {
+                        // survivor_cache is None ⇒ every slot is Cold ⇒ pre is
+                        // Some; this arm is unreachable-defense only.
+                        let b = fs.read_range(path, start, range_len).await.map_err(|e| {
+                            anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}")
+                        })?;
                         crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
                         if trace_on {
                             record_get(CacheTier::SurvivorPayload, range_len);
                         }
-                        Ok(b)
-                    },
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}"))?
-            } else {
-                let b = fs.read_range(path, start, range_len).await.map_err(|e| {
-                    anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}")
-                })?;
-                crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
-                if trace_on {
-                    record_get(CacheTier::SurvivorPayload, range_len);
+                        Arc::from(b)
+                    }
                 }
-                Arc::from(b)
             };
             for &g in &fetch.rows {
                 let rel = (codes_base + (g as u64) * dim64).saturating_sub(fetch.start) as usize;
@@ -3313,31 +3585,120 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     );
     let oid_fetches = plan_coalesced_block_ranges(&footer, &topk_blocks, &oid_policy);
     let mut oid_of: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+    // TD-RDSTRAT-12 §3 round 4: peek·batch·feed for the OID tail (mirror of
+    // W1; plain exact-key seam — no parent tier here). Classification via the
+    // existing side-effect-free `peek_memory_exact`; one bounded-concurrent
+    // wave for the true-cold block ranges (D4 bound: min(INFLIGHT,N) ×
+    // max_range_bytes ≤ 128 MiB transient).
+    enum OidSlot {
+        SiteServed,
+        Cold(usize),
+    }
+    let mut oid_slots: Vec<OidSlot> = Vec::with_capacity(oid_fetches.len());
+    let mut oid_cold_ranges: Vec<std::ops::Range<u64>> = Vec::new();
     for fetch in &oid_fetches {
+        match survivor_cache {
+            Some(sc)
+                if sc
+                    .peek_memory_exact(CacheKind::Other, path, fetch.start, fetch.end - fetch.start)
+                    .await
+                    .is_some() =>
+            {
+                oid_slots.push(OidSlot::SiteServed);
+            }
+            _ => {
+                oid_slots.push(OidSlot::Cold(oid_cold_ranges.len()));
+                oid_cold_ranges.push(fetch.start..fetch.end);
+            }
+        }
+    }
+    let mut oid_cold_bytes: Vec<Option<Vec<u8>>> = vec![None; oid_cold_ranges.len()];
+    if !oid_cold_ranges.is_empty() {
+        let batched = match fs.read_ranges_prefetch(path, oid_cold_ranges.clone()).await {
+            Ok(bufs) => bufs,
+            Err(_) => {
+                // Defensive fallback to the sequential baseline shape.
+                let mut seq = Vec::with_capacity(oid_cold_ranges.len());
+                for range in &oid_cold_ranges {
+                    let b = fs
+                        .read_range(path, range.start, range.end - range.start)
+                        .await
+                        .map_err(|err| {
+                            anyhow::anyhow!("coalesced scan OID fallback {path}: {err}")
+                        })?;
+                    if trace_on {
+                        record_get(CacheTier::ResultPayload, range.end - range.start);
+                    }
+                    seq.push(b);
+                }
+                seq
+            }
+        };
+        // Metrics parity: the baseline loader records ONLY
+        // `record_get(ResultPayload, …)` (never region bytes) — fire it here,
+        // once per physical GET, and keep the Cold loaders silent.
+        for ((range, buf), slot) in oid_cold_ranges
+            .iter()
+            .zip(batched)
+            .zip(oid_cold_bytes.iter_mut())
+        {
+            if trace_on {
+                record_get(CacheTier::ResultPayload, range.end - range.start);
+            }
+            *slot = Some(buf);
+        }
+        crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
+    }
+    for (fetch_i, fetch) in oid_fetches.iter().enumerate() {
         let start = fetch.start;
         let range_len = fetch.end - fetch.start;
+        let pre = match &oid_slots[fetch_i] {
+            OidSlot::Cold(i) => Some(oid_cold_bytes[*i].take().ok_or_else(|| {
+                anyhow::anyhow!("coalesced scan OID fetch {path}: cold fetch {i} missing")
+            })?),
+            OidSlot::SiteServed => None,
+        };
         // ADR-065 Q3: same read-through cache as survivors (OID ranges are also
         // immutable per segment + repeat across hot queries). `CacheKind::Other`
         // separates OID stats from survivor (QuantizedCodes) stats.
         let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
-            sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
-                let b = fs.read_range(path, start, range_len).await?;
-                if trace_on {
-                    record_get(CacheTier::ResultPayload, range_len);
+            match pre {
+                Some(mut pre) => sc
+                    .get_or_fetch(CacheKind::Other, path, start, range_len, || async {
+                        Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
+                            std::mem::take(&mut pre),
+                        )
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?,
+                None => {
+                    // SiteServed (or a peek/consume race): the original
+                    // baseline loader — records fire iff it truly runs.
+                    sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
+                        let b = fs.read_range(path, start, range_len).await?;
+                        if trace_on {
+                            record_get(CacheTier::ResultPayload, range_len);
+                        }
+                        Ok(b)
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?
                 }
-                Ok(b)
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?
-        } else {
-            let b = fs
-                .read_range(path, start, range_len)
-                .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?;
-            if trace_on {
-                record_get(CacheTier::ResultPayload, range_len);
             }
-            Arc::from(b)
+        } else {
+            match pre {
+                Some(b) => Arc::from(b),
+                None => {
+                    let b = fs
+                        .read_range(path, start, range_len)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?;
+                    if trace_on {
+                        record_get(CacheTier::ResultPayload, range_len);
+                    }
+                    Arc::from(b)
+                }
+            }
         };
         for &bi in &fetch.blocks {
             let Some(b) = footer.blocks.get(bi) else {
@@ -5457,6 +5818,143 @@ mod tests {
         assert!(
             drain_read_ranges_metrics().is_none(),
             "hot repeat must not issue additional batched reads"
+        );
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_IVF_K");
+            std::env::remove_var("PROXIMADB_READ_RANGES_INFLIGHT");
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+            std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP");
+        }
+    }
+
+    /// TD-RDSTRAT-12 §3 round 4: `plan_wave_split_ranges` — aligned chunks of
+    /// `chunk` bytes covering `[off, off+len)`, last chunk carrying the
+    /// remainder. Pure-function table test (the split planner's only math).
+    #[test]
+    fn plan_wave_split_ranges_chunks_and_remainder() {
+        // Exact multiples: 3 chunks of 4.
+        assert_eq!(
+            plan_wave_split_ranges(100, 12, 4),
+            vec![100..104, 104..108, 108..112]
+        );
+        // Remainder: 4 MiB chunk + 1 B remainder.
+        assert_eq!(
+            plan_wave_split_ranges(0, 4 * 1024 * 1024 + 1, 4 * 1024 * 1024),
+            vec![0..4 * 1024 * 1024, 4 * 1024 * 1024..4 * 1024 * 1024 + 1]
+        );
+        // Region smaller than one chunk: single range.
+        assert_eq!(plan_wave_split_ranges(7, 3, 16), vec![7..10]);
+        // Degenerate: empty region ⇒ no ranges; zero chunk is clamped to 1
+        // (defensive: always terminates, one byte per range).
+        assert_eq!(
+            plan_wave_split_ranges(5, 0, 4),
+            Vec::<std::ops::Range<u64>>::new()
+        );
+        assert_eq!(
+            plan_wave_split_ranges(5, 4, 0),
+            vec![5..6, 6..7, 7..8, 8..9]
+        );
+    }
+
+    /// TD-RDSTRAT-12 §3 round 4: with INFLIGHT armed, the Region-B clustered
+    /// cold tail AND the Region-D OID tail flow through
+    /// `read_ranges_prefetch` (the FS slot holds the LAST wave's metrics ⇒
+    /// Some after the cold search, None on a hot repeat that everything
+    /// serves from the cache seam), and the search results are identical to
+    /// the repeat arm. On the tiny fixture the probe tail may already be
+    /// RAM-resident by later waves — the assertion is that SOME true-cold
+    /// wave fired and the cache seam serves the repeat with no further
+    /// physical reads.
+    #[tokio::test]
+    async fn region_b_and_oid_cold_tails_batch_when_inflight_armed() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_storage_filesystem_types::counting::{CountingFileSystem, global_counters};
+        use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
+        const DIM: usize = 64;
+        const N: usize = 400;
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "8");
+            std::env::set_var("PROXIMADB_READ_RANGES_INFLIGHT", "4");
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "1");
+            std::env::set_var("PROXIMADB_PAX_VECTOR_COALESCE_GAP", "0");
+        }
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                (0..DIM)
+                    .map(|d| (((i * 131 + d * 17) % 251) as f32) * 0.01)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| rec(&format!("r{i}"), 1000 + i as i64, v.clone()))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("v3regionbd.pax");
+        write_pax_segment_compacted(
+            &seg,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+        )
+        .unwrap();
+
+        let counting = CountingFileSystem::new(
+            std::sync::Arc::new(LocalFileSystem::new(LocalConfig::default()).await.unwrap()),
+            global_counters(),
+        );
+        let survivor = SurvivorRangeCache::new(64 * 1024 * 1024);
+        let path = seg.to_string_lossy().to_string();
+
+        let _ = drain_read_ranges_metrics();
+        let cold = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("cold search hits");
+
+        let metrics = drain_read_ranges_metrics()
+            .expect("armed INFLIGHT must route the cold tails through read_ranges_prefetch");
+        assert!(metrics.fetch_rounds >= 1 && metrics.max_inflight >= 1);
+
+        let warm = rabitq_search_segment_coalesced(
+            &counting,
+            &path,
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            Some(&survivor),
+        )
+        .await
+        .unwrap()
+        .expect("repeat search hits");
+        assert_eq!(
+            cold.iter().map(|h| h.oid.clone()).collect::<Vec<_>>(),
+            warm.iter().map(|h| h.oid.clone()).collect::<Vec<_>>(),
+            "wave arm must not change results"
+        );
+        assert!(
+            drain_read_ranges_metrics().is_none(),
+            "hot repeat must be fully served by the cache seams"
         );
 
         unsafe {
