@@ -505,15 +505,15 @@ fn assert_single_vector_access(
 /// WS8 real-dataset ratchet: PAX RaBitQ→SQ8 cascade recall@10 on SIFT1M.
 #[tokio::test]
 async fn sift_pax_cascade_recall_at_10_ratchet() {
-    // PAX write-default stays OFF in prod; opt this collection in via env so `.pax`
-    // segments flush + RaBitQ-code (the cascade is the only path that can rank
-    // them). nextest isolates each test in its own process.
+    // Post-flip the RG layout is the write default; this arm pins the LEGACY
+    // block framing via the kill-switch so the A/B contrast stays measurable.
     unsafe {
         std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
         std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
         // A paired exact/ANN cost sample is admissible only when the exact arm
         // ranks authoritative inserted vectors, not lossy SQ8 reconstructions.
         std::env::set_var("PROXIMADB_PAX_F32_TIER", "1");
+        std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "0");
     }
     run_sift_ratchet("baseline").await;
 }

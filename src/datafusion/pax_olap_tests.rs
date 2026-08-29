@@ -1364,10 +1364,45 @@ mod tests {
         };
 
         let dir = tempfile::tempdir().expect("tempdir");
-        // v3 baseline: gate off, tiny target ⇒ micro-blocks (the measured 1.25 MB).
+        // Legacy baseline: rg explicitly OFF (env-independent), tiny target ⇒
+        // micro-blocks (the measured ~1.15 MB).
         let v3_dir = dir.path().join("v3");
         std::fs::create_dir_all(&v3_dir).expect("v3 dir");
-        build(&v3_dir.join("seg.pax"), false);
+        {
+            use proximadb_records::{EmbeddingCell, EmbeddingValues};
+            let seg = v3_dir.join("seg.pax");
+            let mut writer = proximadb_storage_common::pax_block::PaxSegmentWriter::new(
+                &seg,
+                proximadb_block_format::BlockMode::Pax,
+                proximadb_block_format::BlockCompression::None,
+                "amp_col",
+                0,
+                1,
+                Some(400),
+            )
+            .with_quant(VectorQuant::RaBitQ)
+            .with_coalesced_rabitq(true)
+            .with_rg_layout(false)
+            .with_oid_resolver(true);
+            for i in 0..ROWS {
+                let ts = (i + 1) as i64 * 1000;
+                let mut r = ProximaRecord {
+                    oid: format!("r{i:05}"),
+                    tenant_id: "t".into(),
+                    created_at_ns: ts,
+                    updated_at_ns: ts,
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    modality: "dense".into(),
+                    dim: 32,
+                    values: EmbeddingValues::Fp32(vec![0.5; 32]),
+                    ..Default::default()
+                });
+                writer.add_record(&r).expect("add record");
+            }
+            writer.finish().expect("finish v3 baseline");
+        }
         // v4: same dataset, same 400-byte request, gate ON ⇒ floor-clamped RGs.
         // The writer gate is read by the SST flush resolver; for the direct
         // writer harness we rebuild with the explicit builder flag instead.
@@ -1434,7 +1469,7 @@ mod tests {
         ));
         let conjunction = Arc::new(BinaryExpr::new(filter, Operator::And, filter_le));
 
-        let pruned_bytes = |dir: &std::path::Path, rg_reader: bool| {
+        let pruned_bytes = |dir: &std::path::Path| {
             let fs = fs.clone();
             let schema = schema.clone();
             let name_to_col_id = name_to_col_id.clone();
@@ -1458,25 +1493,14 @@ mod tests {
                     .expect("discover");
                 let split = splits.first().expect("split").clone();
                 let (_, snap) = io_trace::scope(async {
-                    let out = if rg_reader {
-                        seeded
-                            .load_ranged(&split, &schema)
-                            .await
-                            .expect("v4 ranged")
-                            .expect("v4 takes the ranged path")
-                            .iter()
-                            .map(|b| b.num_rows())
-                            .sum::<usize>()
-                    } else {
-                        seeded
-                            .load_ranged(&split, &schema)
-                            .await
-                            .expect("v3 ranged")
-                            .expect("v3 takes the ranged path")
-                            .iter()
-                            .map(|b| b.num_rows())
-                            .sum::<usize>()
-                    };
+                    let out = seeded
+                        .load_ranged(&split, &schema)
+                        .await
+                        .expect("ranged load")
+                        .expect("ranged path taken (index present)")
+                        .iter()
+                        .map(|b| b.num_rows())
+                        .sum::<usize>();
                     (out, io_trace::snapshot().expect("scope"))
                 })
                 .await;
@@ -1484,8 +1508,8 @@ mod tests {
             }
         };
 
-        let (v3_bytes, _v3_gets) = pruned_bytes(&v3_dir, false).await;
-        let (v4_bytes, v4_gets) = pruned_bytes(&v4_dir, true).await;
+        let (v3_bytes, _v3_gets) = pruned_bytes(&v3_dir).await;
+        let (v4_bytes, v4_gets) = pruned_bytes(&v4_dir).await;
         eprintln!("[amp] v3@400B pruned={v3_bytes}; v4@floor pruned={v4_bytes} gets={v4_gets}");
         assert!(
             v4_bytes * 4 < v3_bytes,

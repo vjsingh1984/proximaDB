@@ -1172,6 +1172,11 @@ impl PaxSegmentWriter {
         self.rg_layout = enabled;
         if enabled {
             self.block_size_threshold = self.block_size_threshold.max(RG_TARGET_MIN_BYTES);
+            // TD-PAXRG-1 (post-flip invariant): row-group Region D suppresses
+            // the RowDirectory, so the OID resolver region IS the point-lookup
+            // authority — a format invariant of the layout, auto-enabled here
+            // rather than a caller obligation.
+            self.compute_oid_resolver = true;
             self.current_writer = self.fresh_block_writer();
         }
         self
@@ -1692,14 +1697,6 @@ impl PaxSegmentWriter {
             .local_spill
             .take()
             .ok_or_else(|| anyhow::anyhow!("PAX local spill backing is missing"))?;
-        // TD-PAXRG-1 fail-safe — mirror of the in-memory twin (resolver is the
-        // only point-lookup authority once the RowDirectory is suppressed).
-        if self.rg_layout && !self.compute_oid_resolver {
-            anyhow::bail!(
-                "row-group Region D (v4) without a RowDirectory requires the OID resolver \
-                 — enable the resolver for rg_layout writes"
-            );
-        }
         // TD-PAXRG-1: the spill path streams f32 vectors through a disk spool
         // and does not retain them for a Region C emit — spill writes keep the
         // f32 tier off (`pax_spill_compaction_writer` already does); fail loudly
@@ -2157,15 +2154,6 @@ impl PaxSegmentWriter {
     /// footer. Regions A/B/D are byte-identical in format — only the row
     /// order (coarse-cell-major) and the block padding differ.
     fn finish_coalesced(&mut self, dim: u32, capture_sq8: Option<bool>) -> Result<PaxSegmentWrite> {
-        // TD-PAXRG-1 fail-safe: v4 RGs suppress the RowDirectory, so point
-        // lookups depend entirely on the OID resolver region. Never emit a
-        // segment whose rows cannot be addressed.
-        if self.rg_layout && !self.compute_oid_resolver {
-            anyhow::bail!(
-                "row-group Region D (v4) without a RowDirectory requires the OID resolver \
-                 — enable the resolver for rg_layout writes"
-            );
-        }
         // 1. Build the coalesced RaBitQ region (single segment centroid) over the
         //    cluster-ordered embedding-0 vectors. `self.file_buf` already holds the
         //    blocks at 0-based offsets (relative to the blocks region).
@@ -3377,24 +3365,15 @@ mod tests {
     /// With the resolver, RGs decode via the ordinary PaxBlockReader, carry no
     /// row directory, and decode their stripes.
     #[test]
-    fn rg_writer_row_directory_absent_by_default_and_resolver_required() -> Result<()> {
+    fn rg_writer_row_directory_absent_and_resolver_auto_enabled() -> Result<()> {
         use proximadb_block_format::PaxBlockReader;
 
         let dir = tempfile::tempdir()?;
 
-        // Resolver OFF + rg ON ⇒ hard error at finish (never an unaddressable
-        // segment on disk).
-        let no_resolver = dir.path().join("rg-no-resolver.pax");
-        let guard = write_rg_segment(&no_resolver, 8, false, None);
-        assert!(
-            guard.is_err(),
-            "rg_layout without the OID resolver must fail closed"
-        );
-        assert!(!no_resolver.exists() || std::fs::metadata(&no_resolver)?.len() == 0);
-
-        // Resolver ON ⇒ RGs are Olap-framed: no row directory, stripes decode.
+        // Post-flip invariant: rg AUTO-ENABLES the OID resolver (the layout's
+        // point-lookup authority) — no explicit opt-in, no bail path.
         let path = dir.path().join("rg-resolver.pax");
-        write_rg_segment(&path, 8, true, None)?;
+        write_rg_segment(&path, 8, false, None)?;
         let segment = std::fs::read(&path)?;
         let footer = SegmentFooterIndex::locate_in_segment(&segment)?
             .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
@@ -3414,6 +3393,11 @@ mod tests {
             .decode_str_stripe(col_id::OID)
             .expect("OID stripe decodes");
         assert_eq!(oids.len() as u64, first.row_count as u64);
+        // Auto-enabled resolver region present even without an explicit opt-in.
+        assert!(
+            footer.opr_len > 0,
+            "rg_layout must auto-enable the OID resolver (point-lookup authority)"
+        );
         Ok(())
     }
 
@@ -3533,6 +3517,7 @@ mod tests {
     fn rg_layout_gate_default_off_writes_v1_v3_bytes() -> Result<()> {
         use proximadb_records::{EmbeddingCell, EmbeddingValues};
         const DIM: usize = 32;
+        unsafe { std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "0") };
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("rg-off.pax");
         let mut writer = PaxSegmentWriter::new(
@@ -3560,18 +3545,15 @@ mod tests {
         writer.finish()?;
 
         let segment = std::fs::read(&path)?;
-        let header = SegmentHeaderPrefix::parse(&segment[..SEG_HEADER_PREFIX_LEN])?;
-        // Post-collapse there is a single layout version; the gate-OFF
-        // invariant is about REGION ARTIFACTS, not a version byte: no RG
-        // stats payloads, no Region C.
+        // Post-flip the invariant is about REGION ARTIFACTS under the
+        // kill-switch: no RG stats payloads, no Region C.
         let footer = SegmentFooterIndex::locate_in_segment(&segment)?
             .ok_or_else(|| anyhow::anyhow!("coalesced footer missing"))?;
         assert!(
             footer.block_stats.iter().all(|s| s.is_none()),
-            "gate OFF footers carry no RG stats payloads"
+            "kill-switch footers carry no RG stats payloads"
         );
-        assert_eq!(header.c_len, 0, "gate OFF emits no Region C");
-        assert_eq!(footer.c_len, 0, "gate OFF footer mirrors no Region C");
+        assert_eq!(footer.c_len, 0, "kill-switch emits no Region C");
         Ok(())
     }
 

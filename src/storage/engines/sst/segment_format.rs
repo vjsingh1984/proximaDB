@@ -1029,23 +1029,29 @@ pub fn coalesced_rabitq_enabled() -> bool {
     )
 }
 
-/// TD-PAXRG-1: write the v4 **row-group Region D** layout — Region D granules
+/// TD-PAXRG-1: write the **row-group Region D** layout — Region D granules
 /// are Parquet-style row groups (Olap-framed, RowDirectory + in-block rgdir
-/// suppressed), per-RG stats ride the footer's MinMax payload, and the RG
-/// target is floored at 256 KiB. Opt-in, default OFF (presence-style: set
-/// `PROXIMADB_PAX_WRITE_RG_LAYOUT=1|true|on|yes` to enable; `=0` is the kill
-/// value). Read side is UNCONDITIONAL — v4-aware readers parse v1/v3/v4
-/// (mixed-read contract, ADR-065 Q2). Flip precondition: the TD-PAXRG-1
-/// Phase-G gates (SIFT recall floors, amplification/GET parity, round-trip).
+/// suppressed), per-RG stats ride the footer's MinMax payload, the RG target
+/// is floored at 256 KiB, and the OID resolver auto-captures (point-lookup
+/// authority; a format invariant of the layout, not a caller obligation).
+///
+/// DEFAULT ON (FLIPPED 2026-08-28): the TD-PAXRG-1 Phase-G evidence is
+/// complete — SIFT1M 100k recall@10 = 0.9896 identical to the legacy-block
+/// baseline (floor 0.90); at-rest 80.3% of legacy bytes (RowDirectory
+/// removal); micro-granule amplification closed 13.4×; OID-chunk top-k −34%
+/// bytes at GET parity+1; round-trip/twin/gate purity all pinned. Read side
+/// is unconditional. `PROXIMADB_PAX_WRITE_RG_LAYOUT=0|off|false|no` is the
+/// kill-switch back to the legacy block framing; the per-collection
+/// `pax_rg_layout:on|off` tag (flush) outranks the env.
 pub fn rg_layout_enabled() -> bool {
-    matches!(
+    !matches!(
         std::env::var("PROXIMADB_PAX_WRITE_RG_LAYOUT")
             .ok()
             .as_deref()
             .map(str::trim)
             .map(str::to_ascii_lowercase)
             .as_deref(),
-        Some("1" | "true" | "on" | "yes")
+        Some("0" | "off" | "false" | "no")
     )
 }
 
@@ -4940,6 +4946,12 @@ mod tests {
     #[test]
     fn coalesced_requested_f32_tier_is_emitted_and_materializes_exact() {
         enable_coalesced_rabitq();
+        // Post-flip the default write is the row-group layout, where the exact
+        // tier HOISTS to Region C (covered by
+        // `v4_f32_tier_writes_region_c_not_block_stripes` + the parity oracle).
+        // THIS test pins the legacy in-block stripe contract, so it pins the
+        // legacy framing explicitly (env-independent).
+        unsafe { std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "0") };
         use proximadb_block_format::col_id;
         use proximadb_storage_common::segment_layout::SegmentFooterIndex;
 

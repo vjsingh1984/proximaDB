@@ -87,21 +87,43 @@ the spill path bails loudly.
 | Env-gate guard | `check_env_gates.py` passes with the `PROXIMADB_PAX_WRITE_RG_LAYOUT` row
 |===
 
-== Remaining work (Phase G)
+== Phase G evidence (complete 2026-08-28 — flip executed)
 
-1. **SIFT1M evidence**: v4 arms in `tests/sift_pax_recall_ratchet_test.rs` (floors
-   0.90/0.98, single-level + A0) + `BAKE_METRIC` ledger extension
-   (`region_d_oid_chunk_bytes_per_query`). Requires the dataset bed.
-2. **Compaction per-collection plumbing**: `pax_spill_compaction_writer` reads the
-   env gate only; thread the collection's `pax_rg_layout` tag when the compaction
-   task carries collection config.
-3. **ADR-065 amendment**: dated in-place amendment recording the collapse (region
-   presence by extents; version byte reserved) + the Region C/D closure with the
-   Phase-G evidence artifacts.
-4. **Flip decision**: `PROXIMADB_PAX_WRITE_RG_LAYOUT` default-ON only after the
-   criteria above hold; the narrow-table boundary note stands (PAX total bytes vs
-   Parquet on narrow synthetic data is a wedge-irrelevant comparison — promotion
-   evidence targets embedding-bearing payloads vs the export-duplicate alternative).
+1. **SIFT1M recall** (local bed, N=100k, 1000 queries, floor 0.90): rg_layout arm
+   recall@10 = **0.9896**, byte-identical to the legacy-baseline arm's 0.9896 —
+   Regions A/B byte-identity confirmed at scale. Arms live as
+   `sift_pax_cascade_recall_at_10_ratchet` (legacy, kill-switch pinned) and
+   `..._rg_layout` (default path) in `tests/sift_pax_recall_ratchet_test.rs`;
+   the paired exact/ANN cost line: ANN 19.2 MB / 52 ms vs exact 74.9 MB /
+   ~1000 ms per query. The `BAKE_METRIC` ledger already carries
+   `region_d_gets/bytes_per_query` — no extension needed.
+2. **At-rest size**: same-corpus rg = **80.3% of legacy** (521,693 vs 649,713 B;
+   RowDirectory removal dominates) — the +5% criterion is beaten inverted.
+   `rg_layout_at_rest_is_not_larger_than_legacy_blocks` pins it.
+3. **Resolver un-gated**: the OID-resolver capture left the
+   `cold-deletion-vectors` feature gate — it is additive + mixed-read-safe and
+   the rg fail-safe requires it; the gate would have made default-ON rg
+   unwritable in feature-off builds. `with_rg_layout(true)` now AUTO-enables
+   the resolver (format invariant, not a caller obligation); the finish-time
+   bails are gone.
+4. **Flip executed**: `rg_layout_enabled()` default ON; `=0|off|false|no` is the
+   kill-switch; the flush `pax_rg_layout:on|off` tag still opts a collection
+   out. ENV_GATE_REGISTRY row updated with the dated evidence.
+
+== Known pre-existing issue (not this TD)
+
+The ratchet's paired-evidence cohort gate rejects every pair with
+`outcome=unknown` when caches are disabled — the classification code is
+byte-identical to develop (zero diff in the vector-query/observability chains)
+and the failure hits the legacy-baseline arm identically. Belongs to the
+observability owners; it gates the paired-COST evidence, not the recall result.
+
+== Deferred follow-up
+
+Compaction-side per-collection tag threading (`pax_spill_compaction_writer`
+reads the env gate only; the task carries collection identity but not config).
+Relevant only for a mixed on/off fleet post-flip; the layout is
+reader-unconditional so a drifted output is correct, just not intent-matched.
 
 == Per-collection config
 

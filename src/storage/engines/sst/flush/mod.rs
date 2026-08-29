@@ -2305,36 +2305,37 @@ mod tests {
         assert_eq!(resolve_pax_rerank_quant(&tags_bad), VectorQuant::Sq8);
     }
 
-    /// TD-PAXRG-1: the row-group Region D resolver — default OFF, env opt-in,
-    /// per-collection `pax_rg_layout:on|off` tag outranks the env, and an
-    /// unrecognized tag value falls through to the env.
+    /// TD-PAXRG-1 (post-flip): the row-group Region D resolver — default ON,
+    /// `PROXIMADB_PAX_WRITE_RG_LAYOUT=0` kill-switch, per-collection
+    /// `pax_rg_layout:on|off` tag outranks the env, and an unrecognized tag
+    /// value falls through to the env.
     #[test]
     fn resolve_pax_rg_layout_default_and_precedence() {
         use crate::storage::engines::sst::segment_format::rg_layout_enabled;
         const ENV: &str = "PROXIMADB_PAX_WRITE_RG_LAYOUT";
 
-        // Default OFF.
+        // Default ON (flipped 2026-08-28 on the TD-PAXRG-1 Phase-G evidence).
         unsafe { std::env::remove_var(ENV) };
-        assert!(!resolve_pax_rg_layout(&[]));
-
-        // Env opt-in.
-        unsafe { std::env::set_var(ENV, "1") };
         assert!(resolve_pax_rg_layout(&[]));
 
-        // Per-collection tag outranks the env — including OFF against env ON.
-        let tags_off = ["pax_rg_layout:off".to_string()];
-        assert!(!resolve_pax_rg_layout(&tags_off));
+        // Kill-switch.
+        unsafe { std::env::set_var(ENV, "0") };
+        assert!(!resolve_pax_rg_layout(&[]));
+
+        // Per-collection tag outranks the env — including ON against env OFF.
         let tags_on = ["pax_rg_layout:on".to_string()];
         assert!(resolve_pax_rg_layout(&tags_on));
+        let tags_off = ["pax_rg_layout:off".to_string()];
+        assert!(!resolve_pax_rg_layout(&tags_off));
 
-        // Unrecognized tag value falls through to the env.
+        // Unrecognized tag value falls through to the kill-switch env.
         let tags_bad = ["pax_rg_layout:maybe".to_string()];
-        assert!(resolve_pax_rg_layout(&tags_bad));
+        assert!(!resolve_pax_rg_layout(&tags_bad));
 
-        // And env OFF with no tag stays off.
+        // And with the env removed the default-ON holds.
         unsafe { std::env::remove_var(ENV) };
         assert!(resolve_pax_rg_layout(&tags_on));
-        assert!(!resolve_pax_rg_layout(&[]));
-        assert!(!rg_layout_enabled());
+        assert!(resolve_pax_rg_layout(&[]));
+        assert!(rg_layout_enabled());
     }
 }
