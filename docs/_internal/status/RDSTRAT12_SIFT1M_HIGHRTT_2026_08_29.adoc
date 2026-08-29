@@ -41,11 +41,12 @@ sequential-RTT-dominated exactly as the waves-not-sums model predicts:
    survivor-cache `get_or_fetch` per-range path (segment_format.rs
    Region-B/survivor fetch sites), NOT through the probe cold tail §3
    batched. The probe's Region-A tail is ~5 planned fetches and 0.91 MB/q.
-. **Azure coalesce policy collapses the probe tail inside the batch.**
-   The server ran the azure range-planner profile (max_range 4 MiB). The
-   trait-default `read_ranges_prefetch` re-plans its input through
-   `range_coalesce_policy()`, so 5 small adjacent probe fetches can merge
-   to 1-2 physical GETs — a wave of one wins nothing.
+. ~~Azure coalesce policy collapses the probe tail inside the batch.~~
+   **CORRECTED (round 4): DISPROVEN.** `AzureBlobFileSystem` overrides only
+   single `read_range`; the trait-default `range_coalesce_policy()` is
+   `None` ⇒ the re-plan is IDENTITY and the probe tail waved with real
+   width. The actual mask is (a): the bed's overlapping queries RAM-hit most
+   probe-tail ranges, leaving a tiny truly-cold population per query.
 . **Box load 15–25 during both arms** (other sessions' builds) adds
    shared compute noise; both arms are equally affected, but small deltas
    (<150 ms) are not resolvable.

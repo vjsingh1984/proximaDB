@@ -76,6 +76,8 @@ METRICS = (
     "proximadb_ivf_region_b_bytes_read_total",
     "proximadb_ivf_fetch_rounds_total",
     "proximadb_ivf_whole_region_fallback_total",
+    "proximadb_read_ranges_fetch_rounds_total",
+    "proximadb_read_ranges_max_inflight",
 )
 
 
@@ -1318,6 +1320,13 @@ def run_query_sweep(
     ivf_whole_region_fallbacks = metric_delta(
         before, after, "proximadb_ivf_whole_region_fallback_total"
     )
+    # TD-RDSTRAT-12 §2: bounded-concurrent wave meters. fetch_rounds is a
+    # counter delta across the phase; max_inflight is a GAUGE, so its "delta"
+    # is the value after the phase = the LAST wave's peak width (not a sum).
+    rr_fetch_rounds = metric_delta(
+        before, after, "proximadb_read_ranges_fetch_rounds_total"
+    )
+    rr_max_inflight = after.get("proximadb_read_ranges_max_inflight", 0.0)
     survivor_total = survivor_hits + survivor_misses
     invariant_total = invariant_hits + invariant_misses
     result = {
@@ -1386,6 +1395,36 @@ def run_query_sweep(
             "fetch_rounds": ivf_fetch_rounds,
             "fetch_rounds_per_query": ivf_fetch_rounds / query_count,
             "whole_region_fallbacks": ivf_whole_region_fallbacks,
+        },
+        "read_ranges_wave": {
+            # TD-RDSTRAT-12 §2: observable proof the bounded-concurrent wave
+            # fired (fetch_rounds > 0) and its width (max_inflight). Without
+            # this, "the wave fired" is an inference, not a measurement.
+            "fetch_rounds": rr_fetch_rounds,
+            "fetch_rounds_per_query": rr_fetch_rounds / query_count,
+            "max_inflight_last": rr_max_inflight,
+        },
+        # TD-RDSTRAT-12 §3 round 4: the settled bed's 100 overlapping queries
+        # mix a genuinely cold first cohort with warm repeats — the aggregate
+        # p50 hides the wave's effect. The cold cohort is the fair verdict
+        # population for the >=2x acceptance.
+        "cold_cohort": {
+            "query_count": min(10, query_count),
+            "latency_ms": {
+                "p50": percentile(sorted(latencies[: min(10, len(latencies))]), 0.50),
+                "p95": percentile(sorted(latencies[: min(10, len(latencies))]), 0.95),
+                "mean": (
+                    sum(latencies[: min(10, len(latencies))])
+                    / min(10, len(latencies))
+                    if latencies
+                    else 0.0
+                ),
+            },
+            "recall_at_k": (
+                sum(recalls[: min(10, len(recalls))]) / min(10, len(recalls))
+                if recalls
+                else 0.0
+            ),
         },
     }
     print(
@@ -1539,6 +1578,8 @@ class OwnedServer:
         coalesce_gap_bytes: int = AZURE_COALESCE_GAP_BYTES,
         coalesce_range_bytes: int = AZURE_COALESCE_RANGE_BYTES,
         adaptive_read_strategy: bool = False,
+        read_ranges_inflight: int = 0,
+        read_ranges_wave_split_mb: int = 0,
     ):
         self.binary = binary
         self.config = config
@@ -1555,6 +1596,8 @@ class OwnedServer:
         self.coalesce_gap_bytes = coalesce_gap_bytes
         self.coalesce_range_bytes = coalesce_range_bytes
         self.adaptive_read_strategy = adaptive_read_strategy
+        self.read_ranges_inflight = read_ranges_inflight
+        self.read_ranges_wave_split_mb = read_ranges_wave_split_mb
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -1584,8 +1627,20 @@ class OwnedServer:
             "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
             "PROXIMADB_PAX_COALESCE_GAP",
             "PROXIMADB_PAX_COALESCE_RANGE",
+            # TD-RDSTRAT-12 §3: arm gates must come from the CLI flags only —
+            # an invoking shell's exports would silently merge arms.
+            "PROXIMADB_READ_RANGES_INFLIGHT",
+            "PROXIMADB_READ_RANGES_WAVE_SPLIT_MB",
         ):
             environment.pop(inherited_gate, None)
+        if self.read_ranges_inflight > 0:
+            environment["PROXIMADB_READ_RANGES_INFLIGHT"] = str(
+                self.read_ranges_inflight
+            )
+        if self.read_ranges_wave_split_mb > 0:
+            environment["PROXIMADB_READ_RANGES_WAVE_SPLIT_MB"] = str(
+                self.read_ranges_wave_split_mb
+            )
         if self.adaptive_read_strategy:
             environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] = "1"
         else:
@@ -2227,6 +2282,18 @@ def main() -> int:
     parser.add_argument("--queries", type=int, default=1_000)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--settle-timeout-secs", type=int, default=1_200)
+    parser.add_argument(
+        "--read-ranges-inflight",
+        type=int,
+        default=0,
+        help="Arm PROXIMADB_READ_RANGES_INFLIGHT (bounded-concurrent wave width); 0 keeps the sequential default",
+    )
+    parser.add_argument(
+        "--read-ranges-wave-split-mb",
+        type=int,
+        default=0,
+        help="Arm PROXIMADB_READ_RANGES_WAVE_SPLIT_MB (opt-in Region-B mega-GET wave split); 0 keeps the single-GET default",
+    )
     parser.add_argument("--stable-secs", type=int, default=30)
     parser.add_argument("--max-segments", type=int, default=2)
     parser.add_argument("--require-layout-version", type=int, default=3)
@@ -2689,6 +2756,8 @@ def main() -> int:
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            read_ranges_inflight=args.read_ranges_inflight,
+            read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
         active.start()
         if args.compaction_spill:
@@ -2818,6 +2887,8 @@ def main() -> int:
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            read_ranges_inflight=args.read_ranges_inflight,
+            read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
         active.start()
         local_warm = run_query_sweep(
@@ -2855,6 +2926,8 @@ def main() -> int:
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            read_ranges_inflight=args.read_ranges_inflight,
+            read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
         active.start()
         object_cold = run_query_sweep(
