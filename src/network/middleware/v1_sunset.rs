@@ -75,10 +75,54 @@ pub async fn v1_sunset_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    if !compat_enabled && req.uri().path().starts_with("/api/v1/") {
-        return v1_gone_response(req.uri().path());
+    if req.uri().path().starts_with("/api/v1/") {
+        // TD-V1SUNSET-1 reconciliation (2026-08-28): the REST metrics layer is
+        // a post-routing route_layer, so unmatched /api/v1/* paths were never
+        // metered and the sunset window could not be verified from metrics.
+        // Count every decision HERE — the gate for Step 5 (remove this
+        // middleware) is `increase(...{outcome="gone"}[N])` against the
+        // traffic baseline, and residual compat usage shows as compat_served.
+        if compat_enabled {
+            record_sunset_response("compat_served");
+        } else {
+            record_sunset_response("gone");
+            return v1_gone_response(req.uri().path());
+        }
     }
     next.run(req).await
+}
+
+lazy_static::lazy_static! {
+    /// Per-decision sunset counter (TD-V1SUNSET-1 Step-5 gate; see the
+    /// middleware above). Labels are the two compile-time outcomes — no
+    /// request data. Panic-free registration (same shape as claim_metrics /
+    /// operational_metrics): fall back to an unregistered vec on the
+    /// pathological double-register rather than expect().
+    static ref SUNSET_RESPONSES: prometheus::CounterVec = {
+        prometheus::register_counter_vec!(
+            "proximadb_v1_sunset_responses_total",
+            "/api/v1 sunset middleware decisions: gone = answered 410 \
+             (compat off), compat_served = request passed through under \
+             PROXIMADB_REST_V1_COMPAT. TD-V1SUNSET-1 Step 5's window gate.",
+            &["outcome"]
+        )
+        .unwrap_or_else(|_| {
+            prometheus::CounterVec::new(
+                prometheus::Opts::new(
+                    "proximadb_v1_sunset_responses_total",
+                    "v1 sunset decisions",
+                ),
+                &["outcome"],
+            )
+            .unwrap_or_else(|_| unreachable!("valid counter descriptor"))
+        })
+    };
+}
+
+fn record_sunset_response(outcome: &'static str) {
+    let _ = SUNSET_RESPONSES
+        .get_metric_with_label_values(&[outcome])
+        .map(|c| c.inc());
 }
 
 fn v1_gone_response(path: &str) -> Response {
@@ -183,5 +227,73 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// TD-V1SUNSET-1 census (2026-08-28): pin the property the sunset's contract
+    /// depends on — production registers NO /api/v1 routes, so this middleware
+    /// only matters if `.layer()` fires for UNMATCHED paths. It does (probed
+    /// empirically during the census after axum fallback semantics were
+    /// questioned); this test keeps it true across axum upgrades.
+    #[tokio::test]
+    async fn unmatched_v1_path_still_gets_410_not_404() {
+        use axum::{Router, body::Body, routing::get};
+        use tower::ServiceExt;
+        // NO /api/v1 routes — mirrors production post-deletion.
+        let app: Router = Router::new()
+            .route("/api/v2/ping", get(|| async { "v2" }))
+            .layer(axum::middleware::from_fn_with_state(
+                false,
+                v1_sunset_middleware,
+            ));
+        let req = axum::http::Request::builder()
+            .uri("/api/v1/collections")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status().as_u16(),
+            410,
+            "unmatched v1 path must be 410, else the sunset middleware is dead in production"
+        );
+    }
+
+    /// The Step-5 gate counter counts both outcomes through the real middleware.
+    #[tokio::test]
+    async fn sunset_decisions_are_counted() {
+        let read = |outcome: &'static str| {
+            SUNSET_RESPONSES
+                .get_metric_with_label_values(&[outcome])
+                .map(|c| c.get())
+                .unwrap_or(0.0)
+        };
+        let gone_before = read("gone");
+        let served_before = read("compat_served");
+
+        // compat OFF: /api/v1 -> gone+1; /api/v2 untouched.
+        let resp = app(false)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::GONE);
+
+        // compat ON: /api/v1 -> compat_served+1 (passes through to the route).
+        let resp = app(true)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        assert_eq!(read("gone") - gone_before, 1.0);
+        assert_eq!(read("compat_served") - served_before, 1.0);
     }
 }

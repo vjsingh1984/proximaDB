@@ -80,10 +80,11 @@ REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of
 * *REST /api/v3* — **removed**. The document-ingest handler lives canonically at
   `POST /api/v2/collections/{id}/documents`; the former v3 308-redirect alias was
   deleted (it was never an OpenAPI/released surface). Target `/api/v2` for all clients.
-* *gRPC v1 (`proximadb.v1.*`)* — deprecated-compat; **OFF by default**. Enable only for
-  transitional client compatibility via config flag `enable_grpc_v1_compat: true` or
-  environment variable `PROXIMADB_GRPC_V1_COMPAT=1`. This compat layer is scheduled for
-  **Sunset 2026-06-30**; clients must migrate to `proximadb.v2.*` before that date.
+* *gRPC v1 (`proximadb.v1.*`)* — **REMOVED** (sunset completed). The v1 services were
+  hard-deleted; the former opt-in (`enable_grpc_v1_compat` / `PROXIMADB_GRPC_V1_COMPAT`)
+  no longer exists — setting it does nothing. The v1 *proto types* remain in-tree as
+  internal message shapes only (ratchet-tracked by `scripts/check_v1_proto_usage.py`);
+  they are not a served surface. Target `proximadb.v2.*` exclusively.
 ====
 
 === Query Surfaces (which language goes where)
@@ -207,7 +208,7 @@ primitives.
 | Converge every cross-modal blend on the `oid`-keyed fusion seam (`seed -> expand -> calibrate -> fuse-by-oid -> rank`). Do not add one-off entity/vector/document/graph join handlers.
 
 | Entity / SKS
-| Deprecated gRPC v1 `proximadb.v1.EntityService` when `enable_grpc_v1_compat=true`; legacy REST v1 entity routes and split `ProximaEntityStore` exist as compatibility/transition code
+| gRPC v1 `proximadb.v1.EntityService` removed (sunset completed — no opt-in flag remains); legacy REST v1 entity routes and split `ProximaEntityStore` exist as compatibility/transition code
 | Semantic convenience shape: entity id, metadata, embeddings, provenance, relations, temporal fields
 | Do not create v2 entity storage. A future v2 entity surface, if exposed, must be an orchestration facade over record/vector + graph + document/provenance + event/temporal history, with `TenantContext` and structural tenant paths at every I/O boundary.
 |===
