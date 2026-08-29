@@ -4,11 +4,19 @@ name: Public-overflow runner smoke
 # that a fork pull request cannot cause (push to a protected branch,
 # workflow_dispatch, schedule). Never add `pull_request` or
 # `pull_request_target` here — that would let a fork's PR execute code on
-# this self-hosted runner. See docs/12-design (public-overflow runner pool
-# design) for the full threat model.
+# this self-hosted runner.
+#
+# `push` is scoped to `main` only, not `develop`: `main` requires an
+# approving review (branch protection, checked 2026-08-29); `develop` does
+# not (status checks only -- a collaborator can push directly with zero
+# review). Since this workflow's whole safety argument rests on "code that
+# reaches push only got here through review", it must not trigger on a
+# branch where that is not actually enforced. Use workflow_dispatch (also
+# collaborator-only) to exercise this pool against develop on demand.
+# See TD-CI-3 for the full threat model and residual-risk tracking.
 on:
   push:
-    branches: [develop, main]
+    branches: [main]
     paths:
       - '.github/workflows/public-overflow-runner-smoke.yml'
   workflow_dispatch: {}
@@ -26,7 +34,9 @@ jobs:
 
       - name: Verify this is a self-hosted runner with the expected labels
         run: |
-          test "${RUNNER_ENVIRONMENT:-self-hosted}" = "self-hosted"
+          # No fallback: if RUNNER_ENVIRONMENT is unset or "github-hosted",
+          # this must fail, not silently pass.
+          test "${RUNNER_ENVIRONMENT}" = "self-hosted"
           echo "runner name: ${RUNNER_NAME}"
 
       - name: Verify NO Docker socket is mounted (no host Docker access)
@@ -37,15 +47,27 @@ jobs:
           fi
           echo "OK: no docker.sock on this runner"
 
-      - name: Verify resource cgroup caps are applied
+      - name: Verify resource cgroup caps are applied (hard assertion, not just logged)
         run: |
+          # Provisioned as `docker run --cpus=2 --memory=4g` -- assert the exact
+          # values, not just that some cap exists. A dropped flag in the
+          # provisioning script must fail this, not pass silently.
           RUNNER_CGROUP=$(awk -F: '$1 == "0" { print $3 }' /proc/self/cgroup)
           test -n "$RUNNER_CGROUP"
           test "$RUNNER_CGROUP" != "/"
-          echo "cpu.max: $(cat "/sys/fs/cgroup${RUNNER_CGROUP}/cpu.max" 2>/dev/null || echo unknown)"
-          echo "memory.max: $(cat "/sys/fs/cgroup${RUNNER_CGROUP}/memory.max" 2>/dev/null || echo unknown)"
+          CPU_MAX="$(cat "/sys/fs/cgroup${RUNNER_CGROUP}/cpu.max")"
+          MEM_MAX="$(cat "/sys/fs/cgroup${RUNNER_CGROUP}/memory.max")"
+          echo "cpu.max: $CPU_MAX"
+          echo "memory.max: $MEM_MAX"
+          test "$CPU_MAX" = "200000 100000"
+          test "$MEM_MAX" = "4294967296"
 
-      - name: Confirm trigger event is one we intended (defense in depth)
+      - name: Confirm trigger event is one we intended
+        # This is a canary, not a preventive control: by the time this step
+        # runs, the job has already executed on the runner. Its job is to
+        # fail loudly (alerting on this repo's default branch) if a future
+        # edit ever adds `pull_request`/`pull_request_target` to `on:` above,
+        # not to stop that job from having run.
         run: |
           case "${GITHUB_EVENT_NAME}" in
             push|workflow_dispatch|schedule) echo "OK: event=${GITHUB_EVENT_NAME}" ;;
