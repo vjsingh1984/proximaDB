@@ -15,6 +15,54 @@
 | Depends-on | Confirmed-zero `/api/v1` production traffic (sunset window) + SDK/client migration off `/api/v1`.
 |===
 
+== Reconciliation (2026-08-28 census)
+
+A deprecation-promises census re-verified the "Current state" section against
+`develop` and found it stale in both directions:
+
+* **The gRPC v1 opt-in no longer exists.** `enable_grpc_v1_compat` /
+  `PROXIMADB_GRPC_V1_COMPAT` have zero references in the workspace; the cited
+  `src/core/config/bootstrap_config.rs` moved to
+  `crates/platform/proximadb-runtime/src/bootstrap_config.rs` *without* the
+  flag, and the three `multi_server.rs` registration sites are gone. The v1
+  gRPC surface under `crates/platform/proximadb-api/src/grpc/` is deleted
+  (only `v2/` remains). **The gRPC sunset therefore completed as a hard
+  removal**, not as the flag-gated retirement this TD's "Current state"
+  describes. `SUPPORTED_SURFACE.adoc` still documented the flag as a live
+  mechanism until this same census corrected it.
+* **Residual (regen item, not edited):** the *generated*
+  `proximadb-proto/src/proto/proximadb.v2.rs` still carries doc comments
+  saying some v2 RPCs are "gated behind `enable_grpc_v1_compat`" (2 sites).
+  The flag being gone, those comments describe a nonexistent gate; they come
+  from the `.proto` source and need a proto-comment edit + regen, not a
+  hand-edit of generated code. Recorded here as the follow-up.
+* **Step 5's gate was unobservable.** "Sunset-window verification" requires
+  counting `/api/v1` 410 responses, but the REST metrics middleware is a
+  post-routing `route_layer` — unmatched `/api/v1/*` paths never reach it, so
+  the 410s were not metered anywhere. Same class as the TD-TENANT-3 S4 gate
+  fixed in #1757. Fixed the same way here: the `v1_sunset` middleware itself
+  now counts every decision it makes
+  (`proximadb_v1_sunset_responses_total{outcome}`), so the window is verified
+  with `increase(proximadb_v1_sunset_responses_total{outcome="gone"}[Nd])`
+  against the traffic baseline, and any residual compat opt-in usage is
+  visible as `outcome="compat_served"`.
+* **A suspected fourth defect was tested and REFUTED.** The census questioned
+  whether `.layer()` fires for UNMATCHED paths (production registers no
+  `/api/v1` routes; axum's `fallback_layer` distinction suggests it might
+  not), which would have made the 410 dead-in-production. Probed empirically:
+  **unmatched `/api/v1/*` returns 410** — the property holds and is now
+  pinned by `unmatched_v1_path_still_gets_410_not_404` so an axum upgrade
+  cannot silently break it.
+* **Live conflict found (decision needed, not fixed here):** the
+  `enterprise-catalogs` feature nests its API under `/api/v1/catalogs`
+  (`canonical/handlers.rs:1809`) — squarely inside the prefix this
+  middleware 410s when compat is off (the default). With the feature
+  enabled and compat off, the enterprise catalog surface is dead-on-arrival;
+  working around it requires re-enabling the ENTIRE v1 compat surface. CI
+  never builds the feature, so nothing would catch this. Resolving it
+  (relocate to `/api/v2/...`, or exempt the subpath) is an enterprise-facing
+  decision recorded here rather than taken.
+
 == Why this exists
 
 Both v1 kill-switches already ship (verified 2026-07-08, see the roadmap §"Current
