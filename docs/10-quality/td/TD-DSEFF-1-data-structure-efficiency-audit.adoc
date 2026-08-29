@@ -110,7 +110,8 @@ Experimental engines (feature-gated, no production traffic) — FIXED in #1737:
 * swift `engine.rs:1333` — compaction merge clones every record version
   (locator map + survivor materialization is the fix shape, TD-188 pattern).
 
-Lower-tier GA follow-ups — FIXED in #1738, except the CatalogLookup trait noted below:
+Lower-tier GA follow-ups — FIXED in #1738 (the CatalogLookup trait noted below was
+closed by #1743):
 
 * `src/storage/memtable/implementations/global_partitioned.rs:745` — MVCC
   dedup clones full records per query (TD-188 locator pattern applies).
@@ -130,8 +131,22 @@ Lower-tier GA follow-ups — FIXED in #1738, except the CatalogLookup trait note
   collect+sort range scans; a BTreeMap (see `global_partitioned.rs`
   `scan_index`) gives ordered scans natively.
 
-Still open (deliberately deferred, needs its own cross-crate PR): the
-`CatalogLookup::lookup_table` port trait still returns an owned
-`RelationalSchema` per planner lookup (5+ implementors across 3 crates);
-#1738 Arc-ified the snapshot/reader side it could reach without changing
-the trait.
+CLOSED by #1743: the `CatalogLookup::lookup_table` port trait now returns
+`Arc<RelationalSchema>` (all six implementors updated; SnapshotCatalog
+lookups are refcount bumps). #1743 also fixed the deferred-inventory's
+sibling bug the SST fallback had masked: embedded flush routed every
+collection through SST (`engine_for` used the fallback unconditionally),
+which left helix search blind and hid viper's FixedSizeList/ListArray
+point-read mismatch and nova's `Ok(None)` `vector_by_id` placeholder.
+
+One NEW debt item surfaced by #1743 (filed here rather than left in a
+code comment): viper's Parquet schema factory
+(`src/storage/engines/viper/factory.rs`, the `default_dimension = 128`
+in the `FIELD_VECTOR_FP32` schema builder carrying a "Deferred: Get
+dimension from collection config" note) hardcodes
+`FixedSizeList(Float32, 128)`. A collection whose real dimension differs
+and whose flush reaches that builder would get a mis-shaped schema. The
+axis_edge suites pass at 32-d and 1536-d today, so the exercised flush
+path evidently builds its schema dynamically elsewhere; the hardcoded
+builder is reachable-but-unexercised debt. Fix: thread the collection
+dimension through, or delete the dead builder.
