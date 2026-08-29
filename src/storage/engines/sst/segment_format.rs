@@ -3779,7 +3779,12 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             match survivor_cache {
                 Some(sc)
                     if sc
-                        .peek_memory_exact(CacheKind::Other, path, fetch.start, fetch.end - fetch.start)
+                        .peek_memory_exact(
+                            CacheKind::Other,
+                            path,
+                            fetch.start,
+                            fetch.end - fetch.start,
+                        )
                         .await
                         .is_some() =>
                 {
