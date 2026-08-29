@@ -30,12 +30,15 @@ A deprecation-promises census re-verified the "Current state" section against
   removal**, not as the flag-gated retirement this TD's "Current state"
   describes. `SUPPORTED_SURFACE.adoc` still documented the flag as a live
   mechanism until this same census corrected it.
-* **Residual (regen item, not edited):** the *generated*
-  `proximadb-proto/src/proto/proximadb.v2.rs` still carries doc comments
-  saying some v2 RPCs are "gated behind `enable_grpc_v1_compat`" (2 sites).
-  The flag being gone, those comments describe a nonexistent gate; they come
-  from the `.proto` source and need a proto-comment edit + regen, not a
-  hand-edit of generated code. Recorded here as the follow-up.
+* **Residual (regen item) — DONE 2026-08-29:** the generated
+  `proximadb-proto/src/proto/proximadb.v2.rs` doc comments said some v2 RPCs
+  were "gated behind `enable_grpc_v1_compat`" (2 sites). Verified during the
+  follow-up that those RPCs were never IN the v2 service definition — the
+  comment described absent surface as deferred surface. The proto source
+  comment now states they were not carried into v2 (their v1 home is removed;
+  definitions remain in `v1/graph.proto` as internal, ratchet-tracked types),
+  regenerated via `PROXIMADB_PROTO_REGEN=1` — a comment-only diff. The two
+  remaining flag mentions are the deliberate historical quote.
 * **Step 5's gate was unobservable.** "Sunset-window verification" requires
   counting `/api/v1` 410 responses, but the REST metrics middleware is a
   post-routing `route_layer` — unmatched `/api/v1/*` paths never reach it, so
