@@ -62,6 +62,36 @@ story (and TD-HELIX-1 is open work, not debt), NOVA is the funded
 columnar-analytics Beta. SWIFT/RAPTOR remain `experimental-engines`-gated
 dead code, a separate future cleanup.
 
+== Adversarial re-check (2026-08-29, before merge)
+
+Re-examined the decision under active attempts to falsify it, given this is
+architecturally significant. Two things surfaced that change the PR's scope
+(both addressed in this same PR) — nothing surfaced that changes the decision:
+
+* **`engine_capabilities.rs::is_feature_supported` marks `Quantization`,
+  `FilterPushdown`, and `ColumnProjection` as VIPER-exclusive** — on its
+  face, evidence VIPER has a real capability gap NOVA doesn't cover. Checked:
+  this function has **zero callers anywhere in the codebase** outside its own
+  declaration (a certified-dead-code pattern, not a routing/planning input),
+  and it predates ADR-026's pivot, which already answers the underlying
+  question at the architecture level — RaBitQ/SQ8 stacked quantization is a
+  **PAX embedding-column feature applied via AXIS across engines**, not an
+  engine-specific one (ADR-026 §"PAX across modalities"). The matrix is stale
+  documentation debt, correctly subject to removal at stage 3, not evidence
+  against retirement. NOVA's own `quantized_columns` write site
+  (`nova/engine.rs`) currently constructs `Default::default()` rather than
+  real quantized data at that call site — noted as a candidate follow-up
+  (separate from this ADR; NOVA is not being deprecated).
+* **The Python and Node.js embedded-client READMEs actively recommended
+  VIPER** ("Use `sst` for real-time, `viper` for analytics") — customer-facing
+  guidance this ADR's own SUPPORTED_SURFACE change would otherwise
+  contradict. This is now fixed in the same PR (both READMEs point to `nova`
+  for analytics/mixed workloads and flag `viper` as deprecated with a link to
+  this ADR). Rust/Go SDKs carry no VIPER guidance and needed no change.
+
+No niche, capability, or customer-facing justification for keeping VIPER
+survived this pass. The decision stands.
+
 == Decision
 
 Retire VIPER in three stages, mirroring the Chrono/TST retirement pattern
@@ -111,7 +141,12 @@ Retire VIPER in three stages, mirroring the Chrono/TST retirement pattern
   redundancy between SST and NOVA; no product evidence for a distinct
   quantized-Parquet vector story.
 * **Retire NOVA instead** — rejected: NOVA has active investment
-  (TD-040, ADR-089 integration) and its `vector_by_id` gap was fixed in
-  #1743; VIPER's was not even noticed until routing was corrected.
+  (TD-040, ADR-089 integration). #1743 gave NOVA a real `vector_by_id`
+  (previously a hardcoded `Ok(None)` stub) where VIPER's equivalent gap was
+  never even noticed until routing was corrected — but an adversarial
+  re-review of #1743 found NOVA's new implementation still lacks MVCC
+  version resolution and tombstone filtering that VIPER's has (tracked
+  separately, not a reason to retire NOVA — it's an active-development gap,
+  not a structural one).
 * **Retire all of VIPER/NOVA/HELIX now** — rejected: ADR-026's census says
   the blast radius is large; one engine at a time, evidence first.
