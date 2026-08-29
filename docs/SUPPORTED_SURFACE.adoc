@@ -143,11 +143,13 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 
 | *Graph `ExecuteHybridQuery` / `CreateGraphWithEngine` / `GetPulsarStats`*
 | Cross-modality hybrid query; engine-typed graph create; PULSAR stats
-| Still v1-only / unimplemented. `ExecuteHybridQuery` needs a v2-native
-  vector+graph fusion surface (depends on full `UnifiedHandlers`);
-  `CreateGraphWithEngine`/`GetPulsarStats` are unimplemented (PULSAR/QUASAR
-  retired). See TD-124.
-| Deferred — TD-124
+| **Absent from v2; the v1 surface they were deferred to is REMOVED** (the
+  `enable_grpc_v1_compat` gate no longer exists). Hybrid search is served by
+  REST `/api/v2/hybrid/search`; a v2-native gRPC hybrid RPC would be a new
+  design, not a port. `CreateGraphWithEngine`/`GetPulsarStats` are
+  retired/unimplemented (PULSAR/QUASAR). See TD-124 + the v2 graph.proto
+  service comment.
+| Not planned (absent)
 |===
 
 [NOTE]
