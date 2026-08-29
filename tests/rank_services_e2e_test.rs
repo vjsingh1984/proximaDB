@@ -141,6 +141,7 @@ async fn rest_install_then_search_emits_spec_metrics() -> Result<(), Box<dyn std
         services.candidate_provider.as_ref(),
         services.blueprint_factory.clone(),
         second_phase_scorer,
+        services.rerank_config.clone(),
         services.metrics.clone(),
     )
     .await

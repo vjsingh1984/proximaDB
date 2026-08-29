@@ -2503,6 +2503,7 @@ impl SharedServices {
             vector_operations_service.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>,
             fulltext_indexes.clone(),
             canonical_wal_appender.clone(),
+            opt_config,
         )
         .await;
         info!(
@@ -3358,6 +3359,7 @@ async fn build_rank_services(
     vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
     fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
     canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
+    opt_config: Option<&crate::core::config::Config>,
 ) -> (
     Arc<crate::network::rest::canonical::rank::RankServices>,
     Arc<dyn crate::services::RankProfileStore>,
@@ -3397,6 +3399,7 @@ async fn build_rank_services(
         fulltext_indexes,
         store_appender,
         &recovered_entries,
+        opt_config,
     )
     .await
 }
@@ -3490,6 +3493,7 @@ async fn build_rank_services_with_appender(
     fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
     store_appender: Arc<dyn crate::services::record_store::TableWalAppender>,
     recovered_entries: &[proximadb_storage_common::CanonicalWalEntry],
+    opt_config: Option<&crate::core::config::Config>,
 ) -> (
     Arc<crate::network::rest::canonical::rank::RankServices>,
     Arc<dyn crate::services::RankProfileStore>,
@@ -3516,7 +3520,19 @@ async fn build_rank_services_with_appender(
     // Register the spec §4.10 metric family against the process-wide
     // rank-metrics registry. Idempotent on hot-reload paths.
     let metrics = init_rank_pipeline_metrics();
-    let services = Arc::new(RankServices::new(adapter).with_metrics(metrics));
+    // TD-SELECTOR-1 gate 3: `[query.reranking]` from the server config reaches
+    // the production cross-modal reranker. Before this, the handler hardcoded
+    // `default_rerank_config()` and the config file's `rerank_top_k` was inert
+    // (loaded, validated, read by nobody).
+    let rerank_config = opt_config
+        .and_then(|c| c.query.as_ref())
+        .map(|q| q.reranking.clone())
+        .unwrap_or_else(crate::network::rest::canonical::rank::default_rerank_config);
+    let services = Arc::new(
+        RankServices::new(adapter)
+            .with_metrics(metrics)
+            .with_rerank_config(rerank_config),
+    );
 
     // Recover compiled profiles from the durable store. Validation /
     // compilation failures are logged + recorded as failed reloads — they do
@@ -3663,6 +3679,7 @@ heap_size = 50
             empty_indexes(),
             appender,
             &[],
+            None,
         )
         .await;
 
@@ -3697,6 +3714,7 @@ heap_size = 50
             empty_indexes(),
             builder_appender,
             &entries,
+            None,
         )
         .await;
 
@@ -3730,6 +3748,7 @@ heap_size = 50
             empty_indexes(),
             builder_appender,
             &entries,
+            None,
         )
         .await;
 

@@ -231,12 +231,36 @@ pub async fn handle_rank_search(
     factory: Arc<BlueprintFactory>,
     second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
 ) -> RankResult<RankSearchResponse> {
+    handle_rank_search_with_config(
+        req,
+        registry,
+        candidates,
+        factory,
+        second_phase_scorer,
+        default_rerank_config(),
+    )
+    .await
+}
+
+/// Like [`handle_rank_search`] but with an explicit cross-modal reranker
+/// config. The HTTP dispatch path passes the server's `[query.reranking]`
+/// config here; the plain wrapper keeps the built-in default for direct
+/// callers (tests, mock scaffolds).
+pub async fn handle_rank_search_with_config(
+    req: RankSearchRequest,
+    registry: &ProfileRegistry,
+    candidates: &dyn CandidateProvider,
+    factory: Arc<BlueprintFactory>,
+    second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
+    rerank_config: RerankConfig,
+) -> RankResult<RankSearchResponse> {
     handle_rank_search_with_metrics(
         req,
         registry,
         candidates,
         factory,
         second_phase_scorer,
+        rerank_config,
         None,
     )
     .await
@@ -247,12 +271,14 @@ pub async fn handle_rank_search(
 /// surface. The original entry point delegates to this with
 /// `metrics = None` so existing callers (tests, mock REST scaffolds)
 /// stay unchanged.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_rank_search_with_metrics(
     req: RankSearchRequest,
     registry: &ProfileRegistry,
     candidates: &dyn CandidateProvider,
     factory: Arc<BlueprintFactory>,
     second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
+    rerank_config: RerankConfig,
     metrics: Option<Arc<crate::observability::rank_metrics::RankPipelineMetrics>>,
 ) -> RankResult<RankSearchResponse> {
     let batch = candidates.candidates(&req).await?;
@@ -320,9 +346,7 @@ pub async fn handle_rank_search_with_metrics(
         .map(|g| g.strategy == "cross_modal")
         .unwrap_or(false)
     {
-        Some(Arc::new(CrossModalGlobalScorer::new(
-            default_rerank_config(),
-        )))
+        Some(Arc::new(CrossModalGlobalScorer::new(rerank_config)))
     } else {
         None
     };
@@ -556,6 +580,13 @@ pub struct RankServices {
     /// a control-plane RPC installs / swaps scorers at runtime
     /// (R-7c.2.1 follow-up).
     pub second_phase_scorers: dashmap::DashMap<String, Arc<dyn SecondPhaseScorer>>,
+    /// Cross-modal reranker config for the global phase. Loaded from
+    /// `[query.reranking]` in the server config and threaded into the
+    /// `CrossModalReranker` construction — before this field existed the
+    /// handler hardcoded `default_rerank_config()`, which made the config
+    /// file's `rerank_top_k` inert in production (the "config field read by
+    /// nobody" defect class). Defaults preserve the previous behavior.
+    pub rerank_config: RerankConfig,
     /// Optional Prometheus metric handles for the rank pipeline.
     /// When `Some`, `run_phases_blocking` builds a
     /// `PrometheusRankSink` and emits the spec's
@@ -579,8 +610,17 @@ impl RankServices {
             blueprint_factory: factory,
             candidate_provider,
             second_phase_scorers: dashmap::DashMap::new(),
+            rerank_config: default_rerank_config(),
             metrics: None,
         }
+    }
+
+    /// Override the cross-modal reranker config from the server's
+    /// `[query.reranking]` section. Call at server startup, before the
+    /// services are shared via `Arc`.
+    pub fn with_rerank_config(mut self, config: RerankConfig) -> Self {
+        self.rerank_config = config;
+        self
     }
 
     /// Wire a `RankPipelineMetrics` handle so per-feature latency +
@@ -841,12 +881,13 @@ pub async fn rank_search_dispatch(
         .as_deref()
         .and_then(|name| services.second_phase_scorer(name));
 
-    handle_rank_search(
+    handle_rank_search_with_config(
         req,
         services.profile_registry.as_ref(),
         services.candidate_provider.as_ref(),
         services.blueprint_factory.clone(),
         second_phase_scorer,
+        services.rerank_config.clone(),
     )
     .await
     .map_err(|e| match e {
@@ -876,7 +917,13 @@ fn arc_features_to_wire_map(
         .unwrap_or_default()
 }
 
-fn default_rerank_config() -> RerankConfig {
+/// The production cross-modal default: ENABLED with score-preserving
+/// missing-score policy. Deliberately different from `RerankConfig::default()`
+/// (disabled) — that one is the "no heuristic policy unless configured" default
+/// for config-file construction, this one is what the rank pipeline runs when a
+/// profile asks for `strategy = "cross_modal"`. Public so server startup can
+/// use it as the fallback when `[query.reranking]` is absent.
+pub fn default_rerank_config() -> RerankConfig {
     use proximadb_query::reranking::{MissingScorePolicy, ModelWeightConfig};
     RerankConfig {
         enabled: true,
@@ -1330,6 +1377,7 @@ mod tests {
             &candidates,
             factory,
             None,
+            default_rerank_config(),
             Some(metrics.clone()),
         )
         .await
@@ -1419,6 +1467,7 @@ mod tests {
             &candidates,
             factory,
             Some(scorer),
+            default_rerank_config(),
             Some(metrics.clone()),
         )
         .await
@@ -1774,6 +1823,84 @@ mod tests {
             let sv = h.score_vector.as_ref().unwrap();
             assert_eq!(sv.phase, 0, "expected PhaseId::FIRST (0)");
         }
+    }
+
+    fn install_profile_with_cross_modal(
+        reg: &ProfileRegistry,
+        factory: Arc<BlueprintFactory>,
+        name: &str,
+    ) {
+        use proximadb_rank_profile::GlobalPhaseSpec;
+        let mut spec = RankProfileSpec::new(name);
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(50),
+            rerank_count: Some(5),
+            batch_size: None,
+        });
+        spec.global_phase = Some(GlobalPhaseSpec {
+            strategy: "cross_modal".into(),
+            rerank_count: None,
+            config: serde_json::Value::Null,
+        });
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory).unwrap();
+        reg.install(compiled);
+    }
+
+    /// TD-SELECTOR-1 gate 3 config wiring: `handle_rank_search_with_config`
+    /// must reach the constructed `CrossModalReranker` — before this plumbing,
+    /// the handler hardcoded `default_rerank_config()` and `[query.reranking]`
+    /// from the server config was inert. With `rerank_top_k = 2` and `k = 5`:
+    /// the head of 2 is re-scored (docid ordering preserved here since the
+    /// cross-modal base score is the input score), the tail of 3 survives in
+    /// input order, and the response carries all 5 hits.
+    #[tokio::test]
+    async fn handler_respects_rerank_config_head_bound_and_preserves_tail() {
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        install_profile_with_cross_modal(&registry, factory.clone(), "cross_modal_cfg");
+
+        let candidates = FixedCandidates((1..=5).map(DocHandle).collect());
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 5,
+            rank_profile: Some("cross_modal_cfg".into()),
+            rank_overrides: None,
+        };
+        let rerank_config = RerankConfig {
+            enabled: true,
+            rerank_top_k: 2,
+            semantic_rerank: false,
+            diversity_optimization: false,
+            context_aware: false,
+            missing_score: proximadb_query::reranking::MissingScorePolicy::Preserve,
+            ..RerankConfig::default()
+        };
+        let resp = handle_rank_search_with_config(
+            req,
+            &registry,
+            &candidates,
+            factory,
+            None,
+            rerank_config,
+        )
+        .await
+        .unwrap();
+
+        // k = 5 honored through the tail-preserving reranker.
+        assert_eq!(resp.hits.len(), 5, "tail must survive to the k bound");
+        let ids: Vec<&str> = resp.hits.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, vec!["5", "4", "3", "2", "1"]);
+        // Head (2) re-scored → GLOBAL; tail (3) keeps its input phase.
+        let phases: Vec<u8> = resp
+            .hits
+            .iter()
+            .map(|h| h.score_vector.as_ref().map(|sv| sv.phase).unwrap_or(0))
+            .collect();
+        assert_eq!(phases, vec![2, 2, 0, 0, 0]);
     }
 
     #[tokio::test]
