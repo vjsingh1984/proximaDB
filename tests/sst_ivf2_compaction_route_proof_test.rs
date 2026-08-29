@@ -300,9 +300,7 @@ async fn test_ivf2_off_compaction_route_stays_v1() -> Result<()> {
     let versions = coalesced_versions(dir.path());
     assert!(!versions.is_empty(), "compaction must leave coalesced .pax");
     assert!(
-        versions
-            .iter()
-            .all(|(_, v)| *v != SEG_LAYOUT_VERSION),
+        versions.iter().all(|(_, v)| *v != SEG_LAYOUT_VERSION),
         "without PROXIMADB_PAX_WRITE_A0_TRAIN no v3 segment may exist (found: {versions:?})"
     );
     let ids = search_ids(&engine, &coll, vector_for(17)).await;
