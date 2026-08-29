@@ -123,7 +123,8 @@ async fn discovery_dedup_and_recluster_e2e() {
     // Dedup must work on every production engine whose read_all_records override
     // exposes flushed records to the storage-inclusive scan: SST, VIPER, NOVA,
     // and HELIX all override it now.
-    for engine in ["sst", "viper", "nova", "helix"] {
+    for engine in ["sst", "nova", "helix"] {
+        // VIPER deprecated (ADR-093)
         let name = format!("disc_dedup_{engine}_{}", nanos());
         let dim: usize = 8;
 
