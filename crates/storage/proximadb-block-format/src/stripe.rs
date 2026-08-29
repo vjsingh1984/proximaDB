@@ -96,8 +96,11 @@ pub struct ColumnMeta {
     pub is_sorted: bool,
     /// Stripe payload is LZ4-compressed after the value codec.
     pub is_lz4_compressed: bool,
-    /// Byte offset of this column's stripe from the start of the block body
-    /// (i.e., from `HEADER_SIZE + row_dir_size`).
+    /// Byte offset of this column's stripe **from the start of the block**
+    /// (header included) — `PaxBlockReader::read_stripe_raw` indexes the full
+    /// block buffer with it directly, and TD-PAXRG-1's footer RG-stats
+    /// OID-chunk extents rely on that addressing. (The historic "body-only"
+    /// wording was wrong — verified against the reader.)
     pub stripe_offset: u32,
     pub stripe_len: u32,
     pub null_count: u32,

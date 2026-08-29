@@ -1518,4 +1518,106 @@ mod tests {
         );
         assert!(v4_gets > 0, "ranged path engaged");
     }
+    /// TD-CACHE-10/attributions closeout: with the trace rebind in place,
+    /// provider-driven reads attribute to the AMBIENT io_trace scope —
+    /// bytes_read > 0 and range_gets > 0 from a ctx.sql collect (this was
+    /// measured 0/0 before the ProximaScanExec scope_with_handle rebind).
+    #[tokio::test]
+    async fn v4_provider_reads_attribute_to_ambient_scope() {
+        unsafe { std::env::set_var("PROXIMADB_DF_PAX_RANGED", "1") };
+
+        use arrow_schema::{DataType, Field, Schema};
+        use datafusion::prelude::SessionContext;
+        use proximadb_block_format::col_id;
+
+        use crate::datafusion::engine_adapters::register_pax_location;
+        use crate::observability::io_trace;
+        use crate::storage::engines::sst::segment_format::write_pax_segment;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let seg = dir.path().join("seg.pax");
+        let mut writer = proximadb_storage_common::pax_block::PaxSegmentWriter::new(
+            &seg,
+            proximadb_block_format::BlockMode::Pax,
+            proximadb_block_format::BlockCompression::None,
+            "attr_col",
+            0,
+            1,
+            Some(64 * 1024),
+        )
+        .with_quant(proximadb_block_format::VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_rg_layout(true)
+        .with_oid_resolver(true);
+        for i in 0..64 {
+            let ts = (i + 1) as i64 * 1000;
+            let mut r = proximadb_records::ProximaRecord {
+                oid: format!("r{i:03}"),
+                tenant_id: "t".into(),
+                created_at_ns: ts,
+                updated_at_ns: ts,
+                ..Default::default()
+            };
+            r.embeddings.push(proximadb_records::EmbeddingCell {
+                modality: "dense".into(),
+                dim: 32,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.5; 32]),
+                ..Default::default()
+            });
+            writer.add_record(&r).expect("add record");
+        }
+        writer.finish().expect("finish");
+
+        let fs = Arc::new(
+            FilesystemFactory::create_default()
+                .await
+                .expect("fs factory"),
+        );
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "created_at",
+            DataType::Int64,
+            true,
+        )]));
+        let name_to_col_id =
+            std::collections::HashMap::from([(String::from("created_at"), col_id::CREATED_AT)]);
+        let ctx = SessionContext::new();
+        register_pax_location(
+            &ctx,
+            "seg",
+            &dir.path().display().to_string(),
+            schema,
+            name_to_col_id,
+            fs,
+            None,
+            None,
+        )
+        .await
+        .expect("register");
+
+        let (_, snap) = io_trace::scope(async {
+            let batches = ctx
+                .sql("SELECT created_at FROM seg WHERE created_at >= 10000")
+                .await
+                .expect("plan")
+                .collect()
+                .await
+                .expect("collect");
+            let n: usize = batches.iter().map(|b| b.num_rows()).sum();
+            (n, io_trace::snapshot().expect("scope"))
+        })
+        .await;
+
+        eprintln!(
+            "[attr] ambient-attributed: bytes={} range_gets={}",
+            snap.bytes_read, snap.range_gets
+        );
+        assert!(
+            snap.bytes_read > 0 && snap.range_gets > 0,
+            "provider reads must attribute to the ambient scope after the rebind: \
+             bytes={} gets={}",
+            snap.bytes_read,
+            snap.range_gets
+        );
+    }
 }

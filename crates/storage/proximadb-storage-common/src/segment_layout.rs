@@ -449,7 +449,9 @@ const OID_RESOLVER_SECTION_LEN: usize = 16;
 /// work unchanged (mixed-read: legacy segments still use `SegmentIndex::locate`).
 #[derive(Debug, Clone)]
 pub struct SegmentFooterIndex {
-    /// Total rows in the segment (== RaBitQ region `n_rows`).
+    /// Total rows in the segment (== RaBitQ region `n_rows`). **u64 on the
+    /// wire** (4-byte prefixes truncate) — hand-built footer bodies must
+    /// serialize this as 8 bytes LE.
     pub row_count: u64,
     /// RaBitQ region extent mirror (also in the header-prefix).
     pub rabitq_off: u64,

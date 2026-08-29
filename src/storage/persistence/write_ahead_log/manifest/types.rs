@@ -186,6 +186,13 @@ pub struct GlobalManifest {
 
 /// Global LSN allocator - ensures monotonically increasing LSN across all collections.
 /// Uses AtomicU64 for lock-free allocation, eliminating contention on the write path.
+/// Per-POD monotonic LSN source (`AtomicU64`, seeded at recovery). The LSNs
+/// it allocates are **never comparable across pods** — each process owns an
+/// independent counter (TD-CACHE-10: cross-pod invalidation events therefore
+/// carry `(pod_id, lsn)` and dedup/order per pod). Any design that needs a
+/// globally comparable ordering must use a cross-pod watermark (lease
+/// generations, the directory's `freshness_watermark_lsn`) or a replicated
+/// counter — never raw allocator output.
 pub struct GlobalLsnAllocator {
     next_lsn: AtomicU64,
 }

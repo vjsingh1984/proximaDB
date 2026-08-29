@@ -268,11 +268,10 @@ mod tests {
         // at the current end, so events produced before the group exists are
         // (correctly) not delivered to it.
         let consumer = bus_b.consumer();
-        // Default topics carry 16 partitions (TopicConfig::default); all must
-        // be subscribed or poll skips the partitions without group cursors.
-        let partitions: Vec<u32> = (0..16).collect();
+        // subscribe_all: an empty/missing partition list silently receives
+        // nothing (TD-CACHE-10 closeout mitigation).
         consumer
-            .subscribe(CACHE_INVALIDATION_TOPIC, &partitions)
+            .subscribe_all(CACHE_INVALIDATION_TOPIC)
             .await
             .expect("subscribe");
 
