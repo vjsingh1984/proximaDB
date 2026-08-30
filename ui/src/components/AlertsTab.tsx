@@ -113,7 +113,6 @@ const AlertsTab: React.FC = () => {
   }, []);
 
   const filteredAlerts = filter === 'all' ? alerts : alerts.filter(alert => alert.level === filter);
-  const activeAlerts = alerts.filter(alert => !alert.resolved);
 
   const getLevelColor = (level: string) => {
     switch (level) {
