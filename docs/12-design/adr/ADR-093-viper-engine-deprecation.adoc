@@ -92,6 +92,16 @@ architecturally significant. Two things surfaced that change the PR's scope
 No niche, capability, or customer-facing justification for keeping VIPER
 survived this pass. The decision stands.
 
+A second pressure test immediately before merge (repo-wide grep for stray
+references, empirical validation of the merged #1772 catalog-cache fix
+against the pre-fix code, and a line-by-line re-read of this PR's diff)
+found two more cosmetic-only issues, both fixed in the same commit: both
+`warn!` deprecation messages in `factory.rs` had literal multi-space gaps
+baked into the string content from an unescaped multi-line literal (garbled
+log text, no functional effect), and a comment in
+`discovery_job_republish_test.rs` still listed VIPER among the tested
+engines after this PR removed it from the loop. Neither affects the
+decision or its evidence.
 == Decision
 
 Retire VIPER in three stages, mirroring the Chrono/TST retirement pattern
