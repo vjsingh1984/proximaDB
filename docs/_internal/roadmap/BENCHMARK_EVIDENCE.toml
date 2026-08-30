@@ -1176,3 +1176,19 @@ hardware = "Local macOS arm64 Apple Silicon, MPS fp32; quality-only model scorin
 date = "2026-08-29"
 version = "develop c7dbbf768; BGE revision 55611d7bca2a7133960a6d3b71e083071bbfc312 (sigmoid activation per sentence-transformers 5.6.0 for num_labels==1 without config activation - monotonic, ranking-invariant); MiniLM revision 4bebbd56fc380a66525f95b03d4ec1a4b41a4f1e; test union sha256 c7af20b7c03aac7e..."
 notes = "Sealed-split discipline held: exactly one scoring pass over the pre-registered pair (incumbent + dev-selected candidate), no depth or metric selection on test. The precision claim failing confirmation while the recall claim confirms is reported as-is; the incumbent-is-harmful finding is the actionable output (retire rerank-all; #1763 made bounded-depth + tail-preservation the expressible fix)."
+
+[[claims]]
+id = "rdstrat12_sift1m_r4_wave_cascade"
+claim = "TD-RDSTRAT-12 §3 round 4 (50 ms symmetric RTT via Toxiproxy over dedicated Azurite, SIFT1M, full cascade waving Region-B clustered + Region-D tails + opt-in mega-GET split, wave-width observable per phase): the GET-parity A1 arm (PROXIMADB_READ_RANGES_INFLIGHT=8) reduced object_cold p50 1547.7 → 962.1 ms (1.61x) and cold-cohort p50 979.7 → 636.5 ms (1.54x) at EXACT parity — GETs/q 14.40 = 14.40, bytes/q 45.99 = 45.99 MB, recall@100 0.9875 = 0.9875, result-identity hash 46650737 IDENTICAL — with the wave observably firing (297 rounds, peak width 8) and the sequential arm showing wave=0. The >=2x acceptance was NOT met at 50 ms RTT, and the measured reason is bed-composition, not mechanism: compute (~0.9 s of 517k-row rank+decode) dominates p50, capping the achievable ratio near 1.6x; at real-cloud RTT the I/O share grows and >=2x becomes reachable. The split arm (A2 = A1 + WAVE_SPLIT_MB=8) matched identity on its quiet rep (46650737) and preserved recall everywhere; its load-spike rep (p95 8.6 s, identity flipped) is discarded as environmentally corrupted."
+metric = "object_cold p50 ratio at GET parity + cold-cohort p50 + result-identity hash equality + wave rounds/width observability"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-12-bounded-parallel-read-ranges.adoc",
+]
+bench_source = "scripts/bench/sift1m_get_reduction.py"
+bench_command = "Arms: A0 (no gates) / A1 (--read-ranges-inflight 8) / A2 (--read-ranges-inflight 8 --read-ranges-wave-split-mb 8), each: python3 sift1m_get_reduction.py --root <root> --binary <azure-release-server> --rows 1000000 --port 5678 --queries 100 --top-k 100 --post-write-max-gets 5000 --settle-timeout-secs 3600 --max-segments 3 --flush-vector-threshold 200000 --azurite --storage-url az://rdstrat12highttt/r4-<arm>-<rep> --read-ranges-inflight <N> [--read-ranges-wave-split-mb 8]; server --features azure; PROXIMADB_WAL_LOCAL_DIR per arm"
+artifact = "docs/_internal/status/RDSTRAT12_SIFT1M_R4_WAVE_CASCADE_2026_08_30.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB); docker azurite 3.36.0 + toxiproxy 2.12.0 (fresh daemon after a wedged-daemon incident), 25+25 ms latency toxics; clean same-binary pairs measured at load <= 8"
+date = "2026-08-30"
+version = "develop @ 7f09a2198 (round-4 merge 47bef62e included); binary sha256 2b6b9bf36e71c93f3f571c3962cbd088d78105cccc32780484d708defb63cbe3"
+notes = "Six runs; clean same-binary pairs are rep-2 (a0_2/a1_2/a2_2) plus a2_1; a0_1/a1_1 straddle an older binary (different geometry: GETs 12.08, cells 15) and are excluded from parity verdicts. a2_2 ran under a load spike (p95 8.6 s) and flipped result-identity (2a2e6856) — discarded; its recall still matched (0.9875). The mega-GET split (A2) preserved identity on its quiet rep, proving feed correctness. The wave-metric observability (297 rounds / width 8 vs 0/0) is itself the §2 deliverable. Acceptance >=2x requires a real-cloud RTT bed where I/O dominates compute; the GET-economy vs RTT-economy split knob remains opt-in default-OFF. Indicative dev-machine run, not an SLA."
