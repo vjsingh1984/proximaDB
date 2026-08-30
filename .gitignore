@@ -323,6 +323,7 @@ docs/log/
 !clients/**/tsconfig.*.json
 !clients/python/tests/unit/grpc_drift_baseline.json
 !clients/**/package-lock.json
+!ui/package-lock.json
 !examples/**/*.json
 bert_*.json
 msmarco_*.json
