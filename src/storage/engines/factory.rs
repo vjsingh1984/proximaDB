@@ -457,7 +457,9 @@ impl StorageEngineFactory {
     /// In production, prefer async factory methods.
     pub fn create_viper() -> Result<Arc<dyn UnifiedStorageFormat>> {
         warn!(
-            "VIPER is DEPRECATED (ADR-093 / TD-VIPER-1): its columnar-analytics niche is served              by SST (default), NOVA (columnar-analytics vector), and the DataFusion/Parquet path.              Do not create new VIPER collections; existing collections remain readable."
+            "VIPER is DEPRECATED (ADR-093 / TD-VIPER-1): its columnar-analytics niche is served \
+             by SST (default), NOVA (columnar-analytics vector), and the DataFusion/Parquet path. \
+             Do not create new VIPER collections; existing collections remain readable."
         );
         info!("Creating VIPER storage engine");
         let engine = Self::block_on_with_persistent_runtime(async { ViperEngine::new().await })?;
@@ -469,7 +471,9 @@ impl StorageEngineFactory {
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_viper_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         warn!(
-            "VIPER is DEPRECATED (ADR-093 / TD-VIPER-1): its columnar-analytics niche is served              by SST (default), NOVA (columnar-analytics vector), and the DataFusion/Parquet path.              Do not create new VIPER collections; existing collections remain readable."
+            "VIPER is DEPRECATED (ADR-093 / TD-VIPER-1): its columnar-analytics niche is served \
+             by SST (default), NOVA (columnar-analytics vector), and the DataFusion/Parquet path. \
+             Do not create new VIPER collections; existing collections remain readable."
         );
         info!("Creating VIPER storage engine");
         let engine = ViperEngine::new().await?;
