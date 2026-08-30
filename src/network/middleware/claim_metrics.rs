@@ -41,9 +41,10 @@ lazy_static! {
     /// is the counter the once-per-process warn deliberately is not).
     pub static ref DEPRECATED_CLAIM_USES: CounterVec = counter_vec(
         "proximadb_deprecated_claim_uses_total",
-        "Total uses of deprecated claim names (e.g. Arrow Flight legacy tenant-alias headers). \
-         Cumulative per use; the TD-TENANT-3 S4 retirement gate is \
-         increase(...) == 0 over the observation window.",
+        "Deprecated claim-name ATTEMPTS (e.g. Arrow Flight legacy tenant-alias headers \
+         present on a request). Honoring was removed 2026-08-29 (TD-TENANT-3 S4 item 1): \
+         an attempt no longer grants a tenant; this counts detection. Names deleted at \
+         the next release boundary, after which this series goes flat by construction.",
         &["surface", "name"],
     );
 

@@ -34,7 +34,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::corpus_version::{CorpusVersionDomain, CorpusVersionStore};
+use crate::corpus_version::{CorpusVersionDomain, CorpusVersionSnapshot, CorpusVersionStore};
 
 /// One row in the JSON-on-disk shape. `serde` handles the
 /// round-trip; the shape is intentionally flat so a future migration
@@ -59,7 +59,7 @@ pub struct FileSystemCorpusVersionStore {
     /// `persist`. Held under a Mutex so concurrent persists can't
     /// race a partial update — the write lock covers both the
     /// in-memory update and the file write.
-    map: Arc<Mutex<HashMap<(CorpusVersionDomain, String, String), u64>>>,
+    map: Arc<Mutex<CorpusVersionSnapshot>>,
 }
 
 impl FileSystemCorpusVersionStore {
@@ -83,10 +83,7 @@ impl FileSystemCorpusVersionStore {
     /// rename over the target. The rename is the only atomic primitive
     /// POSIX guarantees, so this is the smallest reliable durability
     /// pattern. On Windows the rename is also atomic since Rust 1.5.
-    async fn write_snapshot(
-        &self,
-        snapshot: &HashMap<(CorpusVersionDomain, String, String), u64>,
-    ) -> anyhow::Result<()> {
+    async fn write_snapshot(&self, snapshot: &CorpusVersionSnapshot) -> anyhow::Result<()> {
         let rows: Vec<PersistedRow> = snapshot
             .iter()
             .map(|((domain, t, c), v)| PersistedRow {
@@ -148,9 +145,7 @@ impl FileSystemCorpusVersionStore {
 
 #[async_trait]
 impl CorpusVersionStore for FileSystemCorpusVersionStore {
-    async fn load_all(
-        &self,
-    ) -> anyhow::Result<HashMap<(CorpusVersionDomain, String, String), u64>> {
+    async fn load_all(&self) -> anyhow::Result<CorpusVersionSnapshot> {
         let bytes = match tokio::fs::read(&self.path).await {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -179,7 +174,7 @@ impl CorpusVersionStore for FileSystemCorpusVersionStore {
             }
         };
 
-        let map: HashMap<(CorpusVersionDomain, String, String), u64> = rows
+        let map: CorpusVersionSnapshot = rows
             .into_iter()
             .map(|r| ((r.domain, r.tenant_id, r.collection), r.version))
             .collect();

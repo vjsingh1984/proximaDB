@@ -96,17 +96,39 @@ where
     first_hit(&[TENANT_CLAIM_HEADER], false, &lookup)
 }
 
-/// Tenant claim under the canonical name, falling back to the deprecated
-/// Flight aliases — the vocabulary for Arrow Flight only.
+/// Tenant claim under the canonical name only — the vocabulary for every
+/// header-carrying surface INCLUDING Arrow Flight.
 ///
-/// The canonical name always wins, so a client sending both converges on the
-/// standard spelling rather than on whichever alias happens to sort first.
+/// TD-TENANT-3 S4 item 1 (honoring removed 2026-08-29): the legacy Flight
+/// aliases no longer grant a tenant — a client sending only an alias resolves
+/// to its credential/default tenant. Detection survives separately via
+/// [`legacy_alias_present`] so the deprecation warn and
+/// `proximadb_deprecated_claim_uses_total` counter keep firing (now counting
+/// *attempts*); the names themselves are deleted at the next release
+/// boundary. Flight therefore now uses the same vocabulary fn as REST/gRPC.
 pub fn tenant_claim_with_legacy_aliases<'a, F>(lookup: F) -> Option<ClaimHit<'a>>
 where
     F: Fn(&str) -> Option<&'a str>,
 {
-    first_hit(&[TENANT_CLAIM_HEADER], false, &lookup)
-        .or_else(|| first_hit(DEPRECATED_TENANT_CLAIM_ALIASES, true, &lookup))
+    tenant_claim(lookup)
+}
+
+/// Detect the PRESENCE of a deprecated Flight tenant-alias name, without
+/// honoring it. Returns the name that was present (trimmed, non-empty) so the
+/// caller can warn once and count the attempt. `None` when no legacy name is
+/// present.
+///
+/// This is the signal half of the S4 retirement: the entitlement is gone
+/// (see [`tenant_claim_with_legacy_aliases`]) but a legacy-sending client is
+/// still observable instead of silently falling to another tenant.
+pub fn legacy_alias_present<'a, F>(lookup: F) -> Option<&'static str>
+where
+    F: Fn(&str) -> Option<&'a str>,
+{
+    DEPRECATED_TENANT_CLAIM_ALIASES
+        .iter()
+        .find(|name| lookup(name).map(str::trim).is_some_and(|v| !v.is_empty()))
+        .copied()
 }
 
 /// Tier entitlement claim under the canonical header name (REST, gRPC, Flight).
@@ -167,20 +189,37 @@ mod tests {
         }
     }
 
+    /// S4 item 1 (2026-08-29): honoring removed — a legacy alias alone NEVER
+    /// grants a tenant, on any surface. This is the behavior change.
     #[test]
-    fn flight_vocabulary_accepts_aliases_and_flags_them() {
+    fn legacy_aliases_no_longer_grant_a_tenant() {
         for alias in DEPRECATED_TENANT_CLAIM_ALIASES {
             let m = map(&[(alias, "acme")]);
-            let hit = tenant_claim_with_legacy_aliases(accessor(&m))
-                .unwrap_or_else(|| panic!("{alias} must stay accepted on Flight"));
-            assert_eq!(hit.value, "acme");
-            assert_eq!(hit.name, *alias);
-            assert!(hit.deprecated, "{alias} must be reported as deprecated");
+            assert!(
+                tenant_claim_with_legacy_aliases(accessor(&m)).is_none(),
+                "{alias} must not grant a tenant (honoring removed, S4 item 1)"
+            );
         }
     }
 
+    /// The signal half: presence is still detected, per name, for the warn +
+    /// attempt counter.
     #[test]
-    fn canonical_name_wins_over_a_legacy_alias() {
+    fn legacy_alias_presence_is_detected_per_name() {
+        for alias in DEPRECATED_TENANT_CLAIM_ALIASES {
+            let m = map(&[(alias, "acme")]);
+            assert_eq!(legacy_alias_present(accessor(&m)), Some(*alias));
+        }
+        // Canonical-only map: no legacy presence.
+        let m = map(&[("x-tenant-id", "acme")]);
+        assert_eq!(legacy_alias_present(accessor(&m)), None);
+        // Blank legacy value: not present.
+        let blank = map(&[("tenant_id", "   ")]);
+        assert_eq!(legacy_alias_present(accessor(&blank)), None);
+    }
+
+    #[test]
+    fn canonical_name_still_grants_via_the_flight_vocabulary() {
         let m = map(&[("x-tenant-id", "canonical"), ("tenant_id", "legacy")]);
         let hit = tenant_claim_with_legacy_aliases(accessor(&m)).expect("claim");
         assert_eq!(hit.value, "canonical");
