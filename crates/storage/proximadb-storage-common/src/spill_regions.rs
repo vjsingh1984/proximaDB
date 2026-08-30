@@ -229,7 +229,7 @@ impl DiskVectorSpool {
     /// sequential copy of the spooled raw-f32 corpus (its encoding already
     /// matches the wire form row-for-row).
     fn encode_exact(&self, output: &Path) -> Result<u64> {
-        let mut writer = BufWriter::with_capacity(VECTOR_BUFFER_BYTES, create_new(&output)?);
+        let mut writer = BufWriter::with_capacity(VECTOR_BUFFER_BYTES, create_new(output)?);
         writer.write_all(&self.row_count.to_le_bytes())?;
         writer.write_all(
             &u32::try_from(self.dim)

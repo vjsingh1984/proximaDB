@@ -934,9 +934,9 @@ pub struct PaxSegmentWriter {
     /// data) — the unchanged SQ8 decode path reconstructs + reranks them.
     coalesced_rabitq: bool,
     /// TD-PAXRG-1: write the v4 **row-group Region D** layout — Region D
-    /// granules are Parquet-style row groups (Olap-framed blocks, RowDirectory
-    /// + in-block rgdir suppressed), per-RG stats ride the footer's MinMax
-    /// payload, and the block-size target is floored at
+    /// granules are Parquet-style row groups (Olap-framed blocks with the
+    /// RowDirectory and in-block rgdir suppressed), per-RG stats ride the
+    /// footer's MinMax payload, and the block-size target is floored at
     /// [`RG_TARGET_MIN_BYTES`] so sub-granule framing amplification is
     /// structurally impossible. Default OFF (`PROXIMADB_PAX_WRITE_RG_LAYOUT`).
     rg_layout: bool,
@@ -1726,9 +1726,8 @@ impl PaxSegmentWriter {
         let resolver = spill.finish_oid_resolver(self.compute_oid_resolver)?;
 
         let two_level = self.two_level.take();
-        // TD-PAXRG-1: `rg_layout` selects the v4 row-group header (88 B, Region
-        // C extent present) on top of whichever region set is in play; v1/v3
-        // selection is byte-identical to before when the gate is off.
+        // TD-PAXRG-1 collapse: all writes use the single current header; the
+        // row-group switch controls Region D framing rather than header shape.
         let (layout_version, header_len, a0_len) = match &two_level {
             Some(tl) => {
                 tl.model.validate()?;
@@ -1754,13 +1753,8 @@ impl PaxSegmentWriter {
                     dim as usize,
                     tl.model.n_comp as usize,
                 ) as u64;
-                if self.rg_layout {
-                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, length)
-                } else {
-                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, length)
-                }
+                (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, length)
             }
-            None if self.rg_layout => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
             None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
         };
         let a0_off = if two_level.is_some() { header_len } else { 0 };
@@ -2215,10 +2209,9 @@ impl PaxSegmentWriter {
         // contents (which embed absolute per-cell extents) are serialized. One
         // pass, no placeholder rewrites.
         let two_level = self.two_level.take();
-        // TD-PAXRG-1: `rg_layout` selects the v4 row-group header (88 B, Region
-        // C extent present) on top of whichever region set is in play; v1/v3
-        // selection is byte-identical to before when the gate is off. Mirror of
-        // the spill twin — geometry assembly MUST stay identical in both.
+        // TD-PAXRG-1 collapse: all writes use the single current header; the
+        // row-group switch controls Region D framing rather than header shape.
+        // Mirror of the spill twin — geometry assembly MUST stay identical.
         let (layout_version, header_len, a0_len) = match &two_level {
             Some(tl) => {
                 tl.model.validate()?;
@@ -2244,13 +2237,8 @@ impl PaxSegmentWriter {
                     dim as usize,
                     tl.model.n_comp as usize,
                 ) as u64;
-                if self.rg_layout {
-                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, a0_len)
-                } else {
-                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, a0_len)
-                }
+                (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, a0_len)
             }
-            None if self.rg_layout => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
             None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
         };
         let a0_off = if two_level.is_some() { header_len } else { 0 };
