@@ -452,14 +452,31 @@ impl<'a> PaxBlockReader<'a> {
 
     /// Decode all string values from a variable-length string column stripe.
     pub fn decode_str_stripe(&self, column_id: i32) -> Option<Vec<Option<String>>> {
-        let raw = self.read_stripe_raw(column_id)?;
+        self.decode_str_stripe_checked(column_id).ok().flatten()
+    }
+
+    /// Checked counterpart to [`Self::decode_str_stripe`].
+    ///
+    /// An absent column is `Ok(None)` for mixed-read compatibility. A present
+    /// but malformed stripe is an error so identity-bearing read paths never
+    /// silently turn corruption into missing values.
+    pub fn decode_str_stripe_checked(&self, column_id: i32) -> Result<Option<Vec<Option<String>>>> {
+        let Some(meta) = self.columns.iter().find(|m| m.column_id == column_id) else {
+            return Ok(None);
+        };
+        let raw = self.read_stripe_raw(column_id).ok_or_else(|| {
+            anyhow::anyhow!("PAX string column {column_id} has no stripe payload")
+        })?;
         let n = self.row_count() as usize;
-        let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
         if meta.stripe_len == 0 && meta.null_count as usize == n {
-            return Some(vec![None; n]);
+            return Ok(Some(vec![None; n]));
         }
-        let payload = decode_scalar_payload(meta, raw).ok()?;
-        decode_str_with_encoding(&payload, meta.encoding_id, n).ok()
+        let payload = decode_scalar_payload(meta, raw)?;
+        Ok(Some(decode_str_with_encoding(
+            &payload,
+            meta.encoding_id,
+            n,
+        )?))
     }
 
     /// Decode all f64 values from a scalar double column stripe.
@@ -933,6 +950,19 @@ pub fn decode_str_chunk(
     is_lz4: bool,
     n_rows: usize,
 ) -> Option<Vec<Option<String>>> {
+    decode_str_chunk_checked(bytes, encoding_id, is_lz4, n_rows).ok()
+}
+
+/// Checked counterpart to [`decode_str_chunk`].
+///
+/// Callers that use the decoded strings as identities should use this form so
+/// malformed chunks fail closed instead of becoming an empty result.
+pub fn decode_str_chunk_checked(
+    bytes: &[u8],
+    encoding_id: u8,
+    is_lz4: bool,
+    n_rows: usize,
+) -> Result<Vec<Option<String>>> {
     let meta = ColumnMeta {
         column_id: crate::col_id::OID,
         role: crate::stripe::ColumnRole::Identity,
@@ -951,8 +981,8 @@ pub fn decode_str_chunk(
         bloom_offset: 0,
         bloom_len: 0,
     };
-    let payload = decode_scalar_payload(&meta, bytes).ok()?;
-    decode_str_with_encoding(&payload, encoding_id, n_rows).ok()
+    let payload = decode_scalar_payload(&meta, bytes)?;
+    decode_str_with_encoding(&payload, encoding_id, n_rows)
 }
 
 pub(crate) fn decode_str_with_encoding(

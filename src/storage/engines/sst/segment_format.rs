@@ -2849,10 +2849,6 @@ async fn coarse_probe_survivors(
                         .map_err(|err| {
                             anyhow::anyhow!("coarse-probe Region A fallback {path}: {err}")
                         })?;
-                    crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
-                    if trace_on {
-                        record_get(CacheTier::ProbeIndex, range.end - range.start);
-                    }
                     seq.push(b);
                 }
                 seq
@@ -3355,10 +3351,6 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                                     "coalesced scan Region B split fallback {path}: {err}"
                                 )
                             })?;
-                        crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
-                        if trace_on {
-                            record_get(CacheTier::SurvivorPayload, range.end - range.start);
-                        }
                         seq.push(b);
                     }
                     seq
@@ -3531,10 +3523,6 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                                     "coalesced scan SQ8 survivor fallback {path}: {err}"
                                 )
                             })?;
-                        crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
-                        if trace_on {
-                            record_get(CacheTier::SurvivorPayload, range.end - range.start);
-                        }
                         seq.push(b);
                     }
                     seq
@@ -3699,14 +3687,30 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         // TD-PAXRG-1 Phase D: per-RG OID-chunk fetch — the footer's stats
         // payload addresses each RG's chunk; decode via decode_str_chunk.
         for (&bi, locals) in &block_rows {
-            let Some(b) = footer.blocks.get(bi) else {
-                continue;
-            };
-            let Some(Some(stats)) = footer.block_stats.get(bi) else {
-                continue;
-            };
-            let start = b.offset + stats.oid_chunk_rel_off as u64;
+            let b = footer.blocks.get(bi).ok_or_else(|| {
+                anyhow::anyhow!("coalesced scan OID chunk block {bi} is missing from footer")
+            })?;
+            let stats = footer
+                .block_stats
+                .get(bi)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("coalesced scan OID chunk stats missing for block {bi}")
+                })?;
+            let relative_start = u64::from(stats.oid_chunk_rel_off);
             let range_len = stats.oid_chunk_len as u64;
+            let relative_end = relative_start.checked_add(range_len).ok_or_else(|| {
+                anyhow::anyhow!("coalesced scan OID chunk extent overflows for block {bi}")
+            })?;
+            if relative_end > u64::from(b.size) {
+                anyhow::bail!(
+                    "coalesced scan OID chunk [{relative_start},{relative_end}) is outside row group {bi} size {}",
+                    b.size
+                );
+            }
+            let start = b.offset.checked_add(relative_start).ok_or_else(|| {
+                anyhow::anyhow!("coalesced scan OID chunk absolute offset overflows for block {bi}")
+            })?;
             // ADR-065 Q3: same read-through cache class as the legacy OID path.
             let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
                 sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
@@ -3728,17 +3732,34 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                 }
                 Arc::from(b)
             };
-            let oids = proximadb_block_format::decode_str_chunk(
+            if buf.len() as u64 != range_len {
+                anyhow::bail!(
+                    "coalesced scan OID chunk fetch {path} block {bi} returned {} bytes, expected {range_len}",
+                    buf.len()
+                );
+            }
+            let oids = proximadb_block_format::decode_str_chunk_checked(
                 &buf,
                 stats.oid_encoding_id,
                 stats.oid_is_lz4,
                 b.row_count as usize,
             )
-            .unwrap_or_default();
+            .map_err(|err| {
+                anyhow::anyhow!("coalesced scan OID chunk decode {path} block {bi}: {err}")
+            })?;
             for &local in locals {
-                if let Some(oid) = oids.get(local).cloned().flatten() {
-                    let g = block_start[bi] as usize + local;
-                    oid_of.insert(g, oid);
+                let oid = oids
+                    .get(local)
+                    .and_then(Option::as_ref)
+                    .filter(|oid| !oid.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "coalesced scan OID chunk decode {path} block {bi} row {local} produced no identity"
+                        )
+                    })?;
+                let g = block_start[bi] as usize + local;
+                if oid_of.insert(g, oid.clone()).is_some() {
+                    anyhow::bail!("coalesced scan OID row {g} resolved more than once");
                 }
             }
         }
@@ -3810,9 +3831,6 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                             .map_err(|err| {
                                 anyhow::anyhow!("coalesced scan OID fallback {path}: {err}")
                             })?;
-                        if trace_on {
-                            record_get(CacheTier::ResultPayload, range.end - range.start);
-                        }
                         seq.push(b);
                     }
                     seq
@@ -3885,27 +3903,54 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                 }
             };
             for &bi in &fetch.blocks {
-                let Some(b) = footer.blocks.get(bi) else {
-                    continue;
-                };
-                let rel = match b.offset.checked_sub(fetch.start) {
-                    Some(r) => r as usize,
-                    None => continue,
-                };
-                let end = rel + b.size as usize;
+                let b = footer.blocks.get(bi).ok_or_else(|| {
+                    anyhow::anyhow!("coalesced scan OID block {bi} is missing from footer")
+                })?;
+                let rel = b.offset.checked_sub(fetch.start).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "coalesced scan OID block decode {path} block {bi}: offset precedes fetch"
+                    )
+                })? as usize;
+                let end = rel.checked_add(b.size as usize).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "coalesced scan OID block decode {path} block {bi}: extent overflows"
+                    )
+                })?;
                 if end > buf.len() {
-                    continue;
+                    anyhow::bail!(
+                        "coalesced scan OID block decode {path} block {bi}: extent {rel}..{end} exceeds fetched {} bytes",
+                        buf.len()
+                    );
                 }
-                let Ok(reader) = PaxBlockReader::open(&buf[rel..end]) else {
-                    continue;
-                };
-                let oids = reader.decode_str_stripe(col_id::OID).unwrap_or_default();
-                if let Some(locals) = block_rows.get(&bi) {
-                    for &local in locals {
-                        if let Some(oid) = oids.get(local).cloned().flatten() {
-                            let g = block_start[bi] as usize + local;
-                            oid_of.insert(g, oid);
-                        }
+                let reader = PaxBlockReader::open(&buf[rel..end]).map_err(|err| {
+                    anyhow::anyhow!("coalesced scan OID block decode {path} block {bi}: {err}")
+                })?;
+                let oids = reader
+                    .decode_str_stripe_checked(col_id::OID)
+                    .map_err(|err| {
+                        anyhow::anyhow!("coalesced scan OID block decode {path} block {bi}: {err}")
+                    })?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "coalesced scan OID block decode {path} block {bi}: OID stripe missing"
+                        )
+                    })?;
+                let locals = block_rows.get(&bi).ok_or_else(|| {
+                    anyhow::anyhow!("coalesced scan OID block {bi} has no selected rows")
+                })?;
+                for &local in locals {
+                    let oid = oids
+                        .get(local)
+                        .and_then(Option::as_ref)
+                        .filter(|oid| !oid.is_empty())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "coalesced scan OID block decode {path} block {bi} row {local} produced no identity"
+                            )
+                        })?;
+                    let g = block_start[bi] as usize + local;
+                    if oid_of.insert(g, oid.clone()).is_some() {
+                        anyhow::bail!("coalesced scan OID row {g} resolved more than once");
                     }
                 }
             }
@@ -3916,8 +3961,12 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     //    canonicalizes the rank scores.
     let mut hits: Vec<CascadeHit> = Vec::with_capacity(top_k_rows.len());
     for (g, dist) in scored.iter().take(k) {
+        let oid = oid_of
+            .get(g)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("coalesced scan top-k row {g} has no resolved OID"))?;
         hits.push(CascadeHit {
-            oid: oid_of.get(g).cloned().unwrap_or_default(),
+            oid,
             distance: *dist,
             vector: None,
             position: *g as u32,
@@ -4134,6 +4183,355 @@ mod tests {
             v4_gets <= v3_gets + 2,
             "request economy within a small constant: v3={v3_gets} v4={v4_gets}"
         );
+    }
+
+    fn write_oid_failure_fixture(path: &std::path::Path, rg_layout: bool) -> Vec<Vec<f32>> {
+        use proximadb_block_format::{BlockCompression, BlockMode, VectorQuant};
+        use proximadb_storage_common::pax_block::PaxSegmentWriter;
+
+        const DIM: usize = 16;
+        let corpus: Vec<Vec<f32>> = (0..32)
+            .map(|row| {
+                (0..DIM)
+                    .map(|dim| ((row * 37 + dim * 11) % 101) as f32 * 0.01)
+                    .collect()
+            })
+            .collect();
+        let mut writer = PaxSegmentWriter::new(
+            path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(256 * 1024),
+        )
+        .with_quant(VectorQuant::RaBitQ)
+        .with_coalesced_rabitq(true)
+        .with_oid_resolver(true);
+        if rg_layout {
+            writer = writer.with_rg_layout(true);
+        }
+        for (row, vector) in corpus.iter().enumerate() {
+            writer
+                .add_record(&rec(
+                    &format!("oid-{row}"),
+                    1_000 + row as i64,
+                    vector.clone(),
+                ))
+                .expect("add fixture row");
+        }
+        writer.finish().expect("finish fixture segment");
+        corpus
+    }
+
+    fn rewrite_coalesced_footer(
+        path: &std::path::Path,
+        mutate: impl FnOnce(&mut proximadb_storage_common::segment_layout::SegmentFooterIndex),
+    ) {
+        let mut bytes = std::fs::read(path).expect("read fixture segment");
+        let header = SegmentHeaderPrefix::parse(&bytes[..SEG_HEADER_PREFIX_LEN])
+            .expect("parse fixture header");
+        let footer_start = header.footer_off as usize;
+        let footer_end = footer_start + header.footer_len as usize;
+        let mut footer = proximadb_storage_common::segment_layout::SegmentFooterIndex::parse(
+            &bytes[footer_start..footer_end],
+        )
+        .expect("parse fixture footer");
+        mutate(&mut footer);
+        let encoded = footer.to_bytes().expect("encode mutated footer");
+        assert_eq!(
+            encoded.len(),
+            header.footer_len as usize,
+            "test mutation must preserve footer geometry"
+        );
+        bytes[footer_start..footer_end].copy_from_slice(&encoded);
+        std::fs::write(path, bytes).expect("rewrite fixture segment");
+    }
+
+    #[derive(Debug)]
+    struct PrefetchErrorFileSystem {
+        inner: Arc<dyn proximadb_storage_filesystem_types::FileSystem>,
+    }
+
+    #[async_trait::async_trait]
+    impl proximadb_storage_filesystem_types::FileSystem for PrefetchErrorFileSystem {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        async fn read(&self, path: &str) -> proximadb_storage_filesystem_types::FsResult<Vec<u8>> {
+            self.inner.read(path).await
+        }
+
+        async fn read_range(
+            &self,
+            path: &str,
+            offset: u64,
+            length: u64,
+        ) -> proximadb_storage_filesystem_types::FsResult<Vec<u8>> {
+            self.inner.read_range(path, offset, length).await
+        }
+
+        async fn read_ranges_prefetch(
+            &self,
+            _path: &str,
+            _ranges: Vec<std::ops::Range<u64>>,
+        ) -> proximadb_storage_filesystem_types::FsResult<Vec<Vec<u8>>> {
+            Err(proximadb_storage_filesystem_types::FilesystemError::Io(
+                std::io::Error::other("injected prefetch failure"),
+            ))
+        }
+
+        async fn write(
+            &self,
+            path: &str,
+            data: &[u8],
+            options: Option<proximadb_storage_filesystem_types::FileOptions>,
+        ) -> proximadb_storage_filesystem_types::FsResult<()> {
+            self.inner.write(path, data, options).await
+        }
+
+        async fn append(
+            &self,
+            path: &str,
+            data: &[u8],
+        ) -> proximadb_storage_filesystem_types::FsResult<()> {
+            self.inner.append(path, data).await
+        }
+
+        async fn delete(&self, path: &str) -> proximadb_storage_filesystem_types::FsResult<()> {
+            self.inner.delete(path).await
+        }
+
+        async fn exists(&self, path: &str) -> proximadb_storage_filesystem_types::FsResult<bool> {
+            self.inner.exists(path).await
+        }
+
+        async fn metadata(
+            &self,
+            path: &str,
+        ) -> proximadb_storage_filesystem_types::FsResult<
+            proximadb_storage_filesystem_types::FsFileMetadata,
+        > {
+            self.inner.metadata(path).await
+        }
+
+        async fn list(
+            &self,
+            path: &str,
+        ) -> proximadb_storage_filesystem_types::FsResult<
+            Vec<proximadb_storage_filesystem_types::DirEntry>,
+        > {
+            self.inner.list(path).await
+        }
+
+        async fn create_dir(&self, path: &str) -> proximadb_storage_filesystem_types::FsResult<()> {
+            self.inner.create_dir(path).await
+        }
+
+        async fn create_dir_all(
+            &self,
+            path: &str,
+        ) -> proximadb_storage_filesystem_types::FsResult<()> {
+            self.inner.create_dir_all(path).await
+        }
+
+        async fn copy(
+            &self,
+            from: &str,
+            to: &str,
+        ) -> proximadb_storage_filesystem_types::FsResult<()> {
+            self.inner.copy(from, to).await
+        }
+
+        async fn move_file(
+            &self,
+            from: &str,
+            to: &str,
+        ) -> proximadb_storage_filesystem_types::FsResult<()> {
+            self.inner.move_file(from, to).await
+        }
+
+        fn filesystem_type(&self) -> &'static str {
+            "prefetch-error-test"
+        }
+
+        async fn sync(&self) -> proximadb_storage_filesystem_types::FsResult<()> {
+            self.inner.sync().await
+        }
+
+        async fn open_file(
+            &self,
+            path: &str,
+            create: bool,
+        ) -> proximadb_storage_filesystem_types::FsResult<
+            Box<dyn proximadb_storage_filesystem_types::FilesystemFile>,
+        > {
+            self.inner.open_file(path, create).await
+        }
+    }
+
+    #[tokio::test]
+    async fn v4_oid_chunk_decode_failure_fails_closed() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bad-oid-encoding.pax");
+        let corpus = write_oid_failure_fixture(&path, true);
+        rewrite_coalesced_footer(&path, |footer| {
+            for stats in footer.block_stats.iter_mut().flatten() {
+                stats.oid_encoding_id = u8::MAX;
+            }
+        });
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .expect("local filesystem");
+
+        let err = rabitq_search_segment_coalesced(
+            &fs,
+            path.to_str().expect("utf8 path"),
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            None,
+        )
+        .await
+        .expect_err("a malformed OID chunk must not produce empty-ID hits");
+        assert!(
+            err.to_string().contains("OID chunk decode"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn v4_oid_chunk_extent_outside_row_group_fails_closed() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bad-oid-extent.pax");
+        let corpus = write_oid_failure_fixture(&path, true);
+        rewrite_coalesced_footer(&path, |footer| {
+            for (block, stats) in footer.blocks.iter().zip(&mut footer.block_stats) {
+                if let Some(stats) = stats {
+                    stats.oid_chunk_rel_off = block.size;
+                }
+            }
+        });
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .expect("local filesystem");
+
+        let err = rabitq_search_segment_coalesced(
+            &fs,
+            path.to_str().expect("utf8 path"),
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            None,
+        )
+        .await
+        .expect_err("an out-of-range OID chunk must fail before I/O");
+        assert!(
+            err.to_string().contains("outside row group"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_oid_block_corruption_fails_closed() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bad-legacy-oid-block.pax");
+        let corpus = write_oid_failure_fixture(&path, false);
+        let mut bytes = std::fs::read(&path).expect("read fixture segment");
+        let footer =
+            proximadb_storage_common::segment_layout::SegmentFooterIndex::locate_in_segment(&bytes)
+                .expect("locate footer")
+                .expect("coalesced footer");
+        let block = footer.blocks.first().expect("one data block");
+        let corrupt_at = block.offset as usize + block.size as usize / 2;
+        bytes[corrupt_at] ^= 0x5a;
+        std::fs::write(&path, bytes).expect("rewrite fixture segment");
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .expect("local filesystem");
+
+        let err = rabitq_search_segment_coalesced(
+            &fs,
+            path.to_str().expect("utf8 path"),
+            &corpus[7],
+            5,
+            RankMetric::L2,
+            None,
+            None,
+        )
+        .await
+        .expect_err("a corrupt legacy OID block must not produce empty-ID hits");
+        assert!(
+            err.to_string().contains("OID block decode"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn oid_prefetch_fallback_records_each_physical_get_once() {
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        unsafe { std::env::set_var("PROXIMADB_TRACE_GETS", "1") };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("oid-prefetch-fallback.pax");
+        let corpus = write_oid_failure_fixture(&path, false);
+        let local = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .expect("local filesystem");
+        let fs = PrefetchErrorFileSystem {
+            inner: Arc::new(local),
+        };
+        let _ = drain_get_trace();
+
+        let (hits, snapshot) = crate::observability::io_trace::scope(async {
+            let hits = rabitq_search_segment_coalesced(
+                &fs,
+                path.to_str().expect("utf8 path"),
+                &corpus[7],
+                5,
+                RankMetric::L2,
+                None,
+                None,
+            )
+            .await
+            .expect("sequential fallback succeeds")
+            .expect("coalesced segment");
+            let snapshot = crate::observability::io_trace::snapshot().expect("trace scope");
+            (hits, snapshot)
+        })
+        .await;
+        assert!(hits.iter().all(|hit| !hit.oid.is_empty()));
+        let trace = drain_get_trace();
+        let oid_gets: Vec<_> = trace
+            .iter()
+            .copied()
+            .filter(|(tier, _)| *tier == CacheTier::ResultPayload)
+            .collect();
+        assert_eq!(
+            oid_gets.len(),
+            1,
+            "one fallback block read must produce one OID GET record: {oid_gets:?}"
+        );
+        let survivor_bytes: u64 = trace
+            .iter()
+            .filter(|(tier, _)| *tier == CacheTier::SurvivorPayload)
+            .map(|(_, bytes)| *bytes)
+            .sum();
+        assert_eq!(
+            snapshot.ivf_region_b_bytes, survivor_bytes,
+            "fallback Region-B bytes must equal the physical survivor GET trace"
+        );
+        unsafe { std::env::remove_var("PROXIMADB_TRACE_GETS") };
     }
 
     fn cp_cfg(mult: f32) -> crate::core::config::CoarseProbeConfig {
