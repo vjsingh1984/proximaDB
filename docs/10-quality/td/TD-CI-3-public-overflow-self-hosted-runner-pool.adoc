@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Open — piloting on proximaDB (2026-08-29).** Smoke-test workflow (`public-overflow-runner-smoke.yml`) merged; no real (non-smoke) job routed to the pool yet.
+| Status | **Open — rolled out portfolio-wide to all 18 public anvai-labs repos (2026-08-30); first live verification found and fixed a real bug in the smoke test itself (see below).** No real (non-smoke) job routed to the pool yet.
 | Dim | D5 (governance) -- self-hosted runner exposure on a public repo
 | Pillar | Security, secondary OE (CI throughput)
 | Blocks | Nothing directly. Extending real CI jobs onto this pool, or onboarding more public repos, should wait on the acceptance criteria below.
@@ -67,11 +67,14 @@ not just discouraged by convention that a future PR could quietly violate.
    logged) by the smoke workflow, to bound the cost of a misbehaving job even within the trusted-event
    lane.
 
-7. **"Require approval for all outside collaborators" for Actions** should be enabled per onboarded
-   repo (Settings -> Actions -> General). This is a human-approval gate before *any* workflow --
-   GitHub-hosted or self-hosted -- runs for a fork PR. Not settable via the REST API as far as this
-   filing found; must be toggled manually per repo. **Not yet done for proximaDB as of this filing --
-   tracked in Acceptance below.**
+7. **"Require approval for all outside collaborators" for Actions** is enabled per onboarded repo. This
+   is a human-approval gate before *any* workflow -- GitHub-hosted or self-hosted -- runs for a fork PR.
+   Contrary to this TD's original filing, this **is** settable via REST:
+   `PUT /repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval` with
+   `approval_policy=all_external_contributors` (the org/repo `actions/permissions/access` endpoint this
+   TD originally tested is a *different* setting -- external-workflow access for internal/private repos
+   -- and 422s on public repos, which is what caused the original "UI-only" conclusion). Applied to all
+   18 public anvai-labs repos 2026-08-30.
 
 == What this does NOT cover
 
@@ -80,31 +83,63 @@ not just discouraged by convention that a future PR could quietly violate.
   socket-mount risk.
 * This TD only establishes the pool and proves the isolation properties via a smoke test. No real CI
   job has been moved onto it yet -- see Acceptance.
-* Repos other than proximaDB. The pilot is intentionally scoped to one repo before wider rollout.
+
+== Real finding from first live verification (2026-08-30): the cgroup check itself was wrong
+
+The smoke workflow shipped in the introducing PR asserted cgroup caps by computing a nested host-side
+path from `/proc/self/cgroup` (`awk -F: '$1 == "0" { print $3 }'`) and reading
+`/sys/fs/cgroup${RUNNER_CGROUP}/cpu.max`. This pattern was carried over from `anvaiops`'s
+`ci-runner-smoke.yml`, which runs on a macOS/Docker-Desktop-backed runner.
+
+The first real `workflow_dispatch` run (on `victor`, dispatched from `dataserver2-public-overflow-1`)
+failed at that step. Investigation (SSH into dataserver2, `docker exec ... cat /proc/self/cgroup`)
+found the actual cause: **Docker on native Linux gives each container a private cgroup namespace by
+default.** From inside the container, `/proc/self/cgroup` reads `0::/` and `/sys/fs/cgroup` is already
+the container's own cgroup root -- there is no nested path to compute, and the check's own
+`test "$RUNNER_CGROUP" != "/"` assertion was guaranteed to fail before ever reading the actual values.
+
+Confirmed from the host side (`docker inspect --format '{{.State.Pid}}'` + reading
+`/sys/fs/cgroup/<container-scope>/cpu.max` directly) that the **provisioning was correct the whole
+time** -- `cpu.max = 200000 100000`, `memory.max = 4294967296`, exactly as configured. Only the
+in-container verification script was wrong, because it assumed the macOS/Docker-Desktop runner's cgroup
+visibility model applies to native Linux dockerd too. It does not: the two backends handle cgroup
+namespacing differently, and a check pattern is not portable between them without verification.
+
+Fixed to read `/sys/fs/cgroup/cpu.max` and `/sys/fs/cgroup/memory.max` directly (no path computation),
+and re-verified green. This is the exact failure mode TD-126/mandate-12's "review generated code for
+hallucinated dependencies/APIs, plausible-but-wrong logic" warns about -- the original check was
+plausible, consistent with an existing in-repo pattern, and wrong for the environment it actually ran
+in. It was only caught because this TD's acceptance criteria required an actual execution, not just a
+green merge.
 
 == Residual risk (accepted, tracked)
 
-Today, `proximaDB` has exactly one collaborator with push access (the repo owner), so the `develop`
-direct-push gap in point 2 above has no practical blast radius yet -- there is no second party who
-could push unreviewed code. This is a *current-state* mitigation, not a structural one: the moment a
-second collaborator gets push access to `proximaDB`, this must be revisited (either add required review
-to `develop`, or the push-to-`develop` gap becomes real). Whoever adds the next collaborator should read
-this section first.
+Every onboarded repo's `main`/`develop`/`qa` (or `master`) branches now require 1 approving review
+(admin-bypassable), applied portfolio-wide 2026-08-30 -- so the "push only fires on reviewed code"
+precondition this design depends on holds structurally, not just for proximaDB. The remaining residual
+risk is the admin-bypass itself: `enforce_admins: false` lets the repo owner merge past both the review
+requirement *and* the required status check in one action (classic branch protection has no finer-grained
+split). This is intentional (there is exactly one collaborator across every onboarded repo as of this
+filing, so requiring a second-party review would create a permanent deadlock), but it means the actual
+safety property is "the owner chooses not to bypass carelessly," not "the platform prevents unreviewed
+code from landing." The moment any onboarded repo gets a second collaborator with push access, this
+should be revisited for that repo specifically.
 
 == Acceptance
 
-* [ ] Runner group `public-overflow` (anvai-labs, id 5) locked to `restricted_to_workflows: true` with
-  `selected_workflows` pinned to `anvai-labs/proximaDB/.github/workflows/public-overflow-runner-smoke.yml@refs/heads/develop`
-  (immediately after this TD's introducing PR merges) -- and `@refs/heads/main` added once promoted.
-* [ ] "Require approval for all outside collaborators" enabled on proximaDB's Actions settings.
-* [ ] Smoke workflow demonstrated green via `workflow_dispatch` against `develop`, asserting: no
-  `docker.sock`, exact cgroup caps (`cpu.max = 200000 100000`, `memory.max = 4294967296`), and an
-  allowed trigger event.
+* [x] Runner group `public-overflow` (anvai-labs, id 5) locked to `restricted_to_workflows: true`,
+  `selected_workflows` holding all 18 onboarded repos' workflow refs (2026-08-30).
+* [x] "Require approval for all outside collaborators" enabled on all 18 onboarded repos.
+* [x] Smoke workflow demonstrated green via `workflow_dispatch` on `SecureHadoopCode` (2026-08-30,
+  post cgroup-check fix) -- see the finding above for the bug this caught on first execution.
+* [ ] Re-verify the remaining 17 repos green after the cgroup-check fix lands (in progress).
 * [ ] Before routing any real (non-smoke) job onto this pool: confirm the target job's trigger set
   contains no `pull_request`/`pull_request_target`.
-* [ ] Before onboarding a second public repo: re-verify that repo's branch protection matches the
-  "push only fires on reviewed branches" assumption this design depends on -- do not assume it matches
-  proximaDB's.
+* [ ] proximaDB's own smoke workflow currently cannot be exercised via `workflow_dispatch`: GitHub
+  requires a `workflow_dispatch`-triggered workflow to be registered on the repo's *default* branch
+  (`main`), and this file has only been merged to `develop` so far. It will become dispatchable once
+  promoted through develop -> qa -> main, or its `push` trigger (currently `main`-only, see point 2
+  above) can be exercised by an actual push once promoted.
 
 == Co-design note
 
