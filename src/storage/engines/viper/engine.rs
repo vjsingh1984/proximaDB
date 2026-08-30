@@ -95,7 +95,10 @@ use proximadb_storage_common::storage_path::StoragePath;
 /// Per-row values of a `vector_fp32` column, accepting both Arrow list flavors
 /// the engine's writers emit: `List` from the shared columnar path, and
 /// `FixedSizeList` from the viper Parquet factory.
-fn list_row_values(
+///
+/// `pub(crate)`: also reused by NOVA's point-read (`nova::engine::vector_by_id`),
+/// which shares the same Parquet schema via the writer both engines use.
+pub(crate) fn list_row_values(
     col: &dyn arrow_array::Array,
     row_idx: usize,
 ) -> Option<std::sync::Arc<dyn arrow_array::Array>> {

@@ -4,7 +4,9 @@
 use crate::core::search::{DataFreshnessTier, SearchMode};
 use crate::proto::proximadb_v1::VectorRecord;
 // Import column constants from columnar module
-use crate::storage::engines::core::formats::columnar::FIELD_ID;
+use crate::storage::engines::core::formats::columnar::{
+    FIELD_EXPIRES_AT, FIELD_ID, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
+};
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
@@ -19,7 +21,7 @@ use proximadb_compression::StandardCompression;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 // Health status handled internally
 use super::operations::{NovaCompactionOperations, NovaFlushOperations, NovaSearchOperations};
 use super::optimized_operations::OptimizedNovaOperations;
@@ -1602,12 +1604,20 @@ impl UnifiedStorageFormat for NovaEngine {
             collection_id, base_path, vector_id
         );
 
-        // Point read over this collection's flushed Parquet files (the same
-        // full-read primitive the search path uses — an ID scan needs no
-        // dimension). This was previously a `Ok(None)` placeholder, which made
-        // every NOVA point lookup a miss (upserts re-inserted existing ids)
-        // — invisible while embedded flushes were mis-routed to SST, exposed
-        // once flushes reached the real engine.
+        // Point read over this collection's flushed Parquet files. This was
+        // previously a `Ok(None)` placeholder, then (post-#1743) a naive
+        // first-match scan via `UnifiedParquetReader::read_all_records` —
+        // that reader excludes `version`/`expires_at` from the `ProximaRecord`s
+        // it builds (see columnar_reader.rs), so it can't be used for MVCC
+        // resolution or dead-record filtering. This reads the raw Arrow
+        // columns directly instead, mirroring the pattern VIPER's own
+        // point-read and the shared compaction dedup
+        // (columnar_compaction.rs::deduplicate_arrow_batches) already use —
+        // NOT VIPER's dead-record check itself, which has its own bugs (see
+        // TD-DSEFF-2): it compares the millisecond `expires_at` column
+        // against `timestamp_micros()` (1000x unit mismatch) and skips
+        // candidates mid-scan rather than resolving MVCC first, so a
+        // tombstone can lose to a stale live version instead of shadowing it.
         let data_dir = format!("{}/{}/data", base_path, collection_id);
         // Same plumbing the search path uses: base filesystem from the
         // factory + the collection-scoped UnifiedCachingFilesystem wrapper.
@@ -1632,25 +1642,225 @@ impl UnifiedStorageFormat for NovaEngine {
             .map(|e| format!("{}/{}", data_dir, e.name))
             .collect();
 
-        for file_path in files {
-            let reader =
-                crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
-                    vec![file_path],
-                    0,
-                    self.filesystem.clone(),
-                    unified_fs.clone(),
-                    collection_id.to_string(),
-                    crate::storage::engines::ENGINE_NOVA.to_string(),
-                )?;
-            let records = reader.read_all_records(0, None).await?;
-            for record in records {
-                if record.oid == vector_id {
-                    return Ok(Some(record));
+        use arrow_array::{
+            Array, BooleanArray, Float32Array, Float64Array, Int64Array, ListArray, StringArray,
+            StructArray, UInt32Array,
+        };
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+        // Resolve MVCC winner across ALL candidate rows in ALL files before
+        // any liveness check — a delete is itself a newer version and must
+        // be able to shadow an older live one (CLAUDE.md invariant 16d).
+        let mut best_match: Option<(VectorRecord, i64, i64)> = None; // (record, version, timestamp)
+
+        for file_path in &files {
+            let file_fs = self.filesystem.get_filesystem(file_path)?;
+            let data = match file_fs.read(file_path).await {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!(
+                        "NOVA: failed to read {} during point read for {}: {}",
+                        file_path, vector_id, e
+                    );
+                    continue;
+                }
+            };
+            let reader_builder =
+                match ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(
+                            "NOVA: failed to open parquet reader for {}: {}",
+                            file_path, e
+                        );
+                        continue;
+                    }
+                };
+            let mut batch_reader = reader_builder.build()?;
+            for batch in &mut batch_reader {
+                let batch = batch?;
+                let id_array = batch
+                    .column_by_name(FIELD_ID)
+                    .and_then(|col| col.as_any().downcast_ref::<StringArray>())
+                    .ok_or_else(|| anyhow!("Missing or invalid 'id' column"))?;
+                for row_idx in 0..batch.num_rows() {
+                    if id_array.value(row_idx) != vector_id {
+                        continue;
+                    }
+                    let timestamp = batch
+                        .column_by_name(FIELD_TIMESTAMP)
+                        .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+                        .map_or(0, |a| a.value(row_idx));
+                    // NOVA's schema (schema_builder.rs) declares FIELD_VERSION
+                    // as UInt32, NOT Int64 — unlike VIPER's own factory schema,
+                    // which declares it Int8 (yet another VIPER unit/type
+                    // inconsistency, out of scope here per TD-DSEFF-2).
+                    let version: i64 = batch
+                        .column_by_name(FIELD_VERSION)
+                        .and_then(|c| c.as_any().downcast_ref::<UInt32Array>())
+                        .map_or(0, |a| a.value(row_idx) as i64);
+                    let expires_at = batch
+                        .column_by_name(FIELD_EXPIRES_AT)
+                        .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+                        .and_then(|a| {
+                            if a.is_null(row_idx) {
+                                None
+                            } else {
+                                Some(a.value(row_idx))
+                            }
+                        });
+
+                    let vector_values = batch
+                        .column_by_name(FIELD_VECTOR_FP32)
+                        .and_then(|col| {
+                            crate::storage::engines::viper::engine::list_row_values(col, row_idx)
+                        })
+                        .ok_or_else(|| anyhow!("Missing or invalid 'vector_fp32' column"))?;
+                    let vector_float_array = vector_values
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .ok_or_else(|| anyhow!("Invalid vector values type"))?;
+                    let vector: Vec<f32> = (0..vector_float_array.len())
+                        .map(|i| vector_float_array.value(i))
+                        .collect();
+
+                    let updated_at = batch
+                        .column_by_name("updated_at")
+                        .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+                        .map_or(0, |a| a.value(row_idx));
+
+                    let mut metadata_map: HashMap<String, crate::proto::proximadb_v1::SqlValue> =
+                        HashMap::new();
+                    if let Some(extra_meta_col) = batch.column_by_name("extra_meta")
+                        && let Some(extra_meta_list) =
+                            extra_meta_col.as_any().downcast_ref::<ListArray>()
+                        && !extra_meta_list.is_null(row_idx)
+                    {
+                        let kv_pairs = extra_meta_list.value(row_idx);
+                        if let Some(struct_array) = kv_pairs.as_any().downcast_ref::<StructArray>()
+                            && let (Some(key_array), Some(value_array)) = (
+                                struct_array
+                                    .column(0)
+                                    .as_any()
+                                    .downcast_ref::<StringArray>(),
+                                struct_array
+                                    .column(1)
+                                    .as_any()
+                                    .downcast_ref::<StringArray>(),
+                            )
+                        {
+                            for kv_idx in 0..struct_array.len() {
+                                if !struct_array.is_null(kv_idx) {
+                                    metadata_map.insert(
+                                        key_array.value(kv_idx).to_string(),
+                                        crate::proto::proximadb_v1::SqlValue {
+                                            value: Some(
+                                                crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                                    value_array.value(kv_idx).to_string(),
+                                                ),
+                                            ),
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    for field in batch.schema().fields() {
+                        let field_name = field.name();
+                        if !matches!(
+                            field_name.as_str(),
+                            FIELD_ID
+                                | "collection_id"
+                                | FIELD_VECTOR_FP32
+                                | FIELD_TIMESTAMP
+                                | "created_at"
+                                | "updated_at"
+                                | FIELD_VERSION
+                                | FIELD_EXPIRES_AT
+                                | "extra_meta"
+                        ) && let Some(column) = batch.column_by_name(field_name)
+                            && !column.is_null(row_idx)
+                        {
+                            let string_value = match field.data_type() {
+                                arrow_schema::DataType::Utf8 => column
+                                    .as_any()
+                                    .downcast_ref::<StringArray>()
+                                    .map(|a| a.value(row_idx).to_string()),
+                                arrow_schema::DataType::Int64 => column
+                                    .as_any()
+                                    .downcast_ref::<Int64Array>()
+                                    .map(|a| a.value(row_idx).to_string()),
+                                arrow_schema::DataType::Float64 => column
+                                    .as_any()
+                                    .downcast_ref::<Float64Array>()
+                                    .map(|a| a.value(row_idx).to_string()),
+                                arrow_schema::DataType::Boolean => column
+                                    .as_any()
+                                    .downcast_ref::<BooleanArray>()
+                                    .map(|a| a.value(row_idx).to_string()),
+                                _ => None,
+                            };
+                            if let Some(sv) = string_value {
+                                metadata_map.insert(
+                                    field_name.to_string(),
+                                    crate::proto::proximadb_v1::SqlValue {
+                                        value: Some(
+                                            crate::proto::proximadb_v1::sql_value::Value::StringValue(sv),
+                                        ),
+                                    },
+                                );
+                            }
+                        }
+                    }
+
+                    let record = VectorRecord {
+                        id: vector_id.to_string(),
+                        vector,
+                        metadata: metadata_map,
+                        timestamp: Some(timestamp),
+                        updated_at: Some(updated_at),
+                        expires_at,
+                        version: Some(version as u32),
+                        source: None,
+                    };
+
+                    let is_better = match &best_match {
+                        Some((_, best_version, best_timestamp)) => {
+                            version > *best_version
+                                || (version == *best_version && timestamp > *best_timestamp)
+                        }
+                        None => true,
+                    };
+                    if is_better {
+                        best_match = Some((record, version, timestamp));
+                    }
                 }
             }
         }
 
-        Ok(None)
+        let Some((record, ..)) = best_match else {
+            return Ok(None);
+        };
+        // `From<VectorRecord> for ProximaRecord` (conversions.rs) already
+        // correctly converts the millisecond `expires_at` to `valid_to_ns`
+        // (nanoseconds) via `ms_to_ns`, preserving the `Some(0)` tombstone
+        // sentinel through the conversion — reuse it rather than re-deriving
+        // the unit conversion here.
+        let record = proximadb_records::ProximaRecord::from(record);
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        if record.is_dead(now_ns) {
+            return Ok(None);
+        }
+
+        // Populate the cache with the resolved, live record before returning.
+        if let Some(orchestrator) =
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+            && let Some(vector_cache) = orchestrator.get_vector_cache()
+        {
+            let _ = vector_cache.put(cache_key, record.clone()).await;
+        }
+
+        Ok(Some(record))
     }
 
     async fn search_vectors_unified(
