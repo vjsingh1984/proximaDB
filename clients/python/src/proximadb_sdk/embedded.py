@@ -1234,7 +1234,9 @@ prefetch_budget = 4
                 try:
                     with self._sync_http_client(timeout=1.0) as client:
                         response = client.get(f"{self.rest_url}/health")
-                    if response.status_code == 200 and self._state_belongs_to_child(state):
+                    if response.status_code == 200 and self._state_belongs_to_child(
+                        state
+                    ):
                         self._started = True
                         self._remove_generated_config()
                         return
