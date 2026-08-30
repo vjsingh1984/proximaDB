@@ -875,6 +875,26 @@ impl VectorOperationsService {
         self.query_cache.invalidate_collection(collection_id).await;
     }
 
+    /// Advance the canonical collection revision at the same successful-write
+    /// boundary used for query-cache invalidation.
+    async fn publish_content_revision(
+        &self,
+        collection_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> u64 {
+        let tenant = tenant_context
+            .map(|context| context.tenant_id.as_str())
+            .filter(|tenant| !tenant.is_empty())
+            .unwrap_or(
+                crate::services::collection::manager::CollectionService::DEFAULT_VERSION_TENANT,
+            );
+        let revision = crate::catalog::CorpusVersionRegistry::global()
+            .bump_content(tenant, collection_id)
+            .await;
+        debug!(tenant, collection_id, revision, "content revision advanced");
+        revision
+    }
+
     async fn validate_tenant_collection_access(
         &self,
         collection_id: &str,
@@ -1495,6 +1515,8 @@ impl VectorOperationsService {
         // Read-after-write coherence: a deleted record must not resurface
         // from a stale cached query result. Await so the next search sees it.
         self.invalidate_query_cache(&collection_id).await;
+        self.publish_content_revision(&collection_id, tenant_context)
+            .await;
         let total_processed = result.metrics.total_processed.max(0);
         let processing_time_us = start.elapsed().as_micros() as i64;
 
@@ -2449,6 +2471,7 @@ impl VectorOperationsService {
             .await?;
         if result.success {
             self.invalidate_query_cache(&collection_id).await;
+            self.publish_content_revision(&collection_id, None).await;
         }
         Ok(result)
     }
@@ -2504,6 +2527,7 @@ impl VectorOperationsService {
             .await?;
         if result.success {
             self.invalidate_query_cache(&collection_id).await;
+            self.publish_content_revision(&collection_id, None).await;
         }
         Ok(result)
     }
@@ -2544,6 +2568,8 @@ impl VectorOperationsService {
         // visible to the next search, not hidden behind a stale cached result.
         if result.success {
             self.invalidate_query_cache(&collection_id).await;
+            self.publish_content_revision(&collection_id, tenant_context)
+                .await;
         }
         Ok(result)
     }
@@ -2600,9 +2626,16 @@ impl VectorOperationsService {
             }
         }
 
-        self.write_coordinator()
+        let result = self
+            .write_coordinator()
             .insert_batch_internal(&collection_id, records)
-            .await
+            .await?;
+        if result.success {
+            self.invalidate_query_cache(&collection_id).await;
+            self.publish_content_revision(&collection_id, tenant_context)
+                .await;
+        }
+        Ok(result)
     }
 
     /// Check whether a rich record ID already exists in WAL or the collection's
@@ -4847,6 +4880,7 @@ impl VectorOperationsService {
             .write_vector_batch_native_arc(&collection_id, Arc::new(vectors))
             .await?;
         self.invalidate_query_cache(&collection_id).await;
+        self.publish_content_revision(&collection_id, None).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written,
@@ -4939,6 +4973,7 @@ impl VectorOperationsService {
             axis_duration
         );
         self.invalidate_query_cache(&collection_id).await;
+        self.publish_content_revision(&collection_id, None).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written: vectors.len() as i64,

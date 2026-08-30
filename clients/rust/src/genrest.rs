@@ -1816,6 +1816,8 @@ pub mod types {
     ///  "type": "object",
     ///  "required": [
     ///    "collection_id",
+    ///    "content_revision",
+    ///    "content_revision_token",
     ///    "created_at",
     ///    "dimension",
     ///    "distance_metric",
@@ -1835,6 +1837,16 @@ pub mod types {
     ///    },
     ///    "collection_id": {
     ///      "description": "Collection ID",
+    ///      "type": "string"
+    ///    },
+    ///    "content_revision": {
+    ///      "description": "Monotonic server-owned content revision for cache revalidation.",
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "content_revision_token": {
+    ///      "description": "Opaque validator that also fences server restarts.",
     ///      "type": "string"
     ///    },
     ///    "created_at": {
@@ -1901,6 +1913,10 @@ pub mod types {
         pub canonical_embedding_precision: ::std::option::Option<::std::string::String>,
         ///Collection ID
         pub collection_id: ::std::string::String,
+        ///Monotonic server-owned content revision for cache revalidation.
+        pub content_revision: i64,
+        ///Opaque validator that also fences server restarts.
+        pub content_revision_token: ::std::string::String,
         ///Creation timestamp
         pub created_at: ::std::string::String,
         ///Vector dimension
@@ -6742,9 +6758,19 @@ pub mod types {
     ///  "description": "Response shape for `scanRecords`. Empty `records` + null\n`next_cursor` signals end-of-scan. Each record matches the OpenAPI\n`RecordResponse` schema (same shape used by `getRecord`).",
     ///  "type": "object",
     ///  "required": [
+    ///    "content_revision",
+    ///    "content_revision_token",
     ///    "records"
     ///  ],
     ///  "properties": {
+    ///    "content_revision": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "content_revision_token": {
+    ///      "type": "string"
+    ///    },
     ///    "next_cursor": {
     ///      "type": [
     ///        "string",
@@ -6771,6 +6797,8 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct ScanRecordsResponse {
+        pub content_revision: i64,
+        pub content_revision_token: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub next_cursor: ::std::option::Option<::std::string::String>,
         pub records: ::std::vec::Vec<RecordV2Response>,
@@ -10150,6 +10178,9 @@ pub mod types {
                 ::std::string::String,
             >,
             collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            content_revision: ::std::result::Result<i64, ::std::string::String>,
+            content_revision_token:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
             created_at: ::std::result::Result<::std::string::String, ::std::string::String>,
             dimension: ::std::result::Result<i32, ::std::string::String>,
             distance_metric: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -10179,6 +10210,10 @@ pub mod types {
                 Self {
                     canonical_embedding_precision: Ok(Default::default()),
                     collection_id: Err("no value supplied for collection_id".to_string()),
+                    content_revision: Err("no value supplied for content_revision".to_string()),
+                    content_revision_token: Err(
+                        "no value supplied for content_revision_token".to_string()
+                    ),
                     created_at: Err("no value supplied for created_at".to_string()),
                     dimension: Err("no value supplied for dimension".to_string()),
                     distance_metric: Err("no value supplied for distance_metric".to_string()),
@@ -10216,6 +10251,26 @@ pub mod types {
                 self.collection_id = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn content_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.content_revision = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for content_revision: {e}")
+                });
+                self
+            }
+            pub fn content_revision_token<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.content_revision_token = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for content_revision_token: {e}")
+                });
                 self
             }
             pub fn created_at<T>(mut self, value: T) -> Self
@@ -10337,6 +10392,8 @@ pub mod types {
                 Ok(Self {
                     canonical_embedding_precision: value.canonical_embedding_precision?,
                     collection_id: value.collection_id?,
+                    content_revision: value.content_revision?,
+                    content_revision_token: value.content_revision_token?,
                     created_at: value.created_at?,
                     dimension: value.dimension?,
                     distance_metric: value.distance_metric?,
@@ -10356,6 +10413,8 @@ pub mod types {
                 Self {
                     canonical_embedding_precision: Ok(value.canonical_embedding_precision),
                     collection_id: Ok(value.collection_id),
+                    content_revision: Ok(value.content_revision),
+                    content_revision_token: Ok(value.content_revision_token),
                     created_at: Ok(value.created_at),
                     dimension: Ok(value.dimension),
                     distance_metric: Ok(value.distance_metric),
@@ -15871,6 +15930,9 @@ pub mod types {
         }
         #[derive(Clone, Debug)]
         pub struct ScanRecordsResponse {
+            content_revision: ::std::result::Result<i64, ::std::string::String>,
+            content_revision_token:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
             next_cursor: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
@@ -15884,6 +15946,10 @@ pub mod types {
         impl ::std::default::Default for ScanRecordsResponse {
             fn default() -> Self {
                 Self {
+                    content_revision: Err("no value supplied for content_revision".to_string()),
+                    content_revision_token: Err(
+                        "no value supplied for content_revision_token".to_string()
+                    ),
                     next_cursor: Ok(Default::default()),
                     records: Err("no value supplied for records".to_string()),
                     scanned_count: Ok(Default::default()),
@@ -15891,6 +15957,26 @@ pub mod types {
             }
         }
         impl ScanRecordsResponse {
+            pub fn content_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.content_revision = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for content_revision: {e}")
+                });
+                self
+            }
+            pub fn content_revision_token<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.content_revision_token = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for content_revision_token: {e}")
+                });
+                self
+            }
             pub fn next_cursor<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -15928,6 +16014,8 @@ pub mod types {
                 value: ScanRecordsResponse,
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
+                    content_revision: value.content_revision?,
+                    content_revision_token: value.content_revision_token?,
                     next_cursor: value.next_cursor?,
                     records: value.records?,
                     scanned_count: value.scanned_count?,
@@ -15937,6 +16025,8 @@ pub mod types {
         impl ::std::convert::From<super::ScanRecordsResponse> for ScanRecordsResponse {
             fn from(value: super::ScanRecordsResponse) -> Self {
                 Self {
+                    content_revision: Ok(value.content_revision),
+                    content_revision_token: Ok(value.content_revision_token),
                     next_cursor: Ok(value.next_cursor),
                     records: Ok(value.records),
                     scanned_count: Ok(value.scanned_count),
@@ -20102,6 +20192,9 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                409u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 410u16 => Err(Error::ErrorResponse(

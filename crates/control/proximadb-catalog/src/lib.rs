@@ -57,7 +57,10 @@ pub mod collection_dr_policy;
 // Global corpus-version registry + store trait (relocated from the root crate's
 // src/catalog so storage-side consumers like compaction can depend on it downward).
 pub mod corpus_version;
-pub use corpus_version::CorpusVersionRegistry;
+pub use corpus_version::{
+    ContentRevisionSnapshot, CorpusVersionDomain, CorpusVersionRegistry,
+    DEFAULT_CORPUS_VERSION_TENANT, process_content_revision_incarnation,
+};
 // Customer-facing DR policy mutation surface (S14 of the same contract).
 pub mod dr_policy_store;
 // DR reconciler decision logic (P3a of the same contract).
