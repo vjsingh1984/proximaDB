@@ -36,6 +36,10 @@ use tokio::sync::Mutex;
 
 use crate::corpus_version::{CorpusVersionDomain, CorpusVersionStore};
 
+/// In-memory counter key: `(domain, namespace/tenant, collection)` — the
+/// granularity at which corpus versions are bumped and persisted.
+type CorpusVersionKey = (CorpusVersionDomain, String, String);
+
 /// One row in the JSON-on-disk shape. `serde` handles the
 /// round-trip; the shape is intentionally flat so a future migration
 /// to a catalog-row backend is a column-for-field mapping.
@@ -59,7 +63,7 @@ pub struct FileSystemCorpusVersionStore {
     /// `persist`. Held under a Mutex so concurrent persists can't
     /// race a partial update — the write lock covers both the
     /// in-memory update and the file write.
-    map: Arc<Mutex<HashMap<(CorpusVersionDomain, String, String), u64>>>,
+    map: Arc<Mutex<HashMap<CorpusVersionKey, u64>>>,
 }
 
 impl FileSystemCorpusVersionStore {
@@ -85,7 +89,7 @@ impl FileSystemCorpusVersionStore {
     /// pattern. On Windows the rename is also atomic since Rust 1.5.
     async fn write_snapshot(
         &self,
-        snapshot: &HashMap<(CorpusVersionDomain, String, String), u64>,
+        snapshot: &HashMap<CorpusVersionKey, u64>,
     ) -> anyhow::Result<()> {
         let rows: Vec<PersistedRow> = snapshot
             .iter()
@@ -148,9 +152,7 @@ impl FileSystemCorpusVersionStore {
 
 #[async_trait]
 impl CorpusVersionStore for FileSystemCorpusVersionStore {
-    async fn load_all(
-        &self,
-    ) -> anyhow::Result<HashMap<(CorpusVersionDomain, String, String), u64>> {
+    async fn load_all(&self) -> anyhow::Result<HashMap<CorpusVersionKey, u64>> {
         let bytes = match tokio::fs::read(&self.path).await {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -179,7 +181,7 @@ impl CorpusVersionStore for FileSystemCorpusVersionStore {
             }
         };
 
-        let map: HashMap<(CorpusVersionDomain, String, String), u64> = rows
+        let map: HashMap<CorpusVersionKey, u64> = rows
             .into_iter()
             .map(|r| ((r.domain, r.tenant_id, r.collection), r.version))
             .collect();
