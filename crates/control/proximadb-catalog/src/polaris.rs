@@ -367,21 +367,19 @@ impl PolarisCatalog {
                 match type_name {
                     "list" => {
                         // Check if it's a vector (list of floats)
-                        if let Some(element) = obj.get("element") {
-                            if element.as_str() == Some("float")
-                                || element.as_str() == Some("double")
-                            {
-                                if let Some(length) = obj.get("length").and_then(|v| v.as_i64()) {
-                                    properties.insert("dimension".to_string(), length.to_string());
-                                }
-                                return (
-                                    ProximaType::DenseVector {
-                                        element: VectorElement::Float32,
-                                        dim: 0,
-                                    },
-                                    properties,
-                                );
-                            }
+                        if let Some(element) = obj.get("element")
+                            && (element.as_str() == Some("float")
+                                || element.as_str() == Some("double"))
+                            && let Some(length) = obj.get("length").and_then(|v| v.as_i64())
+                        {
+                            properties.insert("dimension".to_string(), length.to_string());
+                            return (
+                                ProximaType::DenseVector {
+                                    element: VectorElement::Float32,
+                                    dim: 0,
+                                },
+                                properties,
+                            );
                         }
                         ProximaType::Json
                     }

@@ -34,15 +34,13 @@ use proximadb_data_model::ProximaType;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::catalog::{Catalog, CatalogManager, TableIdentifier};
+use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::errors::{ApiError, ApiResult};
 use crate::proto::proximadb_v1::{
-    CatalogConfig, CatalogListNamespacesRequest, CatalogListNamespacesResponse, CatalogType,
-    CreateCatalogRequest, CreateCatalogResponse, CreateNamespaceRequest, CreateNamespaceResponse,
-    CreateTableRequest, CreateTableResponse, DropCatalogRequest, DropCatalogResponse,
-    DropNamespaceRequest, DropNamespaceResponse, DropTableRequest, DropTableResponse,
-    GetCatalogRequest, GetCatalogResponse, GetTableRequest, GetTableResponse, ListCatalogsRequest,
-    ListCatalogsResponse, ListTablesRequest, ListTablesResponse, Namespace, TableSchema,
+    CatalogConfig, CatalogListNamespacesResponse, CreateCatalogRequest, CreateCatalogResponse,
+    CreateNamespaceRequest, CreateNamespaceResponse, CreateTableRequest, CreateTableResponse,
+    DropCatalogResponse, DropNamespaceResponse, DropTableResponse, GetCatalogResponse,
+    GetTableResponse, ListCatalogsResponse, ListTablesResponse, Namespace, TableSchema,
 };
 use crate::security::rbac_service::{UnifiedPermission, UnifiedUserContext};
 use axum::Extension;
@@ -131,18 +129,17 @@ pub async fn create_catalog(
         .ok_or_else(|| ApiError::InvalidArgument("Catalog config is required".to_string()))?;
 
     // Check if catalog already exists
-    if !req.if_not_exists {
-        if state
+    if !req.if_not_exists
+        && state
             .catalog_manager
             .get_catalog(&config.name)
             .await
             .is_ok()
-        {
-            return Err(ApiError::Conflict(format!(
-                "Catalog '{}' already exists",
-                config.name
-            )));
-        }
+    {
+        return Err(ApiError::Conflict(format!(
+            "Catalog '{}' already exists",
+            config.name
+        )));
     }
 
     // Convert proto config to ProximaDB catalog config
@@ -281,13 +278,11 @@ pub async fn list_namespaces(
 
     let parent = vec![]; // Namespace hierarchy from query params (flat for now)
     let namespaces = catalog
-        .list_namespaces(
-            (if parent.is_empty() {
-                None
-            } else {
-                Some(&parent)
-            }),
-        )
+        .list_namespaces(if parent.is_empty() {
+            None
+        } else {
+            Some(&parent)
+        })
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to list namespaces: {}", e)))?;
 
