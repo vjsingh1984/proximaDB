@@ -153,8 +153,9 @@ The one flagged gap — `ClientAddrSource::Unobserved` was built but emitted
 nowhere, so a `ConnectInfo` wiring regression was undetectable — is closed by
 `proximadb_client_addr_unobserved_total` (emitted at the no-peer branch of
 `resolve_client_addr`, label-free: any rise means "find the unwired surface").
-Expected flat zero; the counter test pins observed/UDS paths never counting,
-and was negative-controlled against a short-circuited emit.
+Expected flat zero; the counter test pins the no-peer increment, while the
+existing request-path tests pin observed/UDS paths bypassing the `Unobserved`
+branch entirely.
 
 == Non-goals
 

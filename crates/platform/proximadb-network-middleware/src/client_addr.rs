@@ -36,33 +36,45 @@
 use axum::extract::{ConnectInfo, Request};
 use ipnet::IpNet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::LazyLock;
 
-lazy_static::lazy_static! {
-    /// TD-TENANT-4 follow-up: every `Unobserved` client-address resolution, on
-    /// any surface. Expected value: flat zero — all four TCP serve sites wire
-    /// `ConnectInfo` and the UDS path is marked `LocalSocket`. A rising
-    /// counter means a surface regressed to serving without
-    /// `into_make_service_with_connect_info`, silently degrading every
-    /// client-address decision on that surface (rate-limit keys, trusted-proxy
-    /// checks, KOU egress classification). Label-free by design: the seam
-    /// does not know its surface, and the response to any rise is "find the
-    /// unwired surface" — answerable from the serve-site list. Panic-free
-    /// registration, same shape as the root crate's claim_metrics.
-    static ref UNOBSERVED_RESOLUTIONS: prometheus::Counter = {
-        prometheus::register_counter!(
+/// TD-TENANT-4 follow-up: every `Unobserved` client-address resolution, on
+/// any surface. Expected value: flat zero — all four TCP serve sites wire
+/// `ConnectInfo` and the UDS path is marked `LocalSocket`. A rising counter
+/// means a surface regressed to serving without
+/// `into_make_service_with_connect_info`, silently degrading every
+/// client-address decision on that surface (rate-limit keys, trusted-proxy
+/// checks, KOU egress classification). Label-free by design: the seam does
+/// not know its surface, and the response to any rise is "find the unwired
+/// surface" — answerable from the serve-site list.
+///
+/// Registration failure degrades telemetry rather than panicking a request.
+/// [`initialize_client_addr_metrics`] forces this lazy at metrics-service
+/// startup so a healthy process exports an explicit zero instead of leaving
+/// operators with absent-vs-zero ambiguity.
+static UNOBSERVED_RESOLUTIONS: LazyLock<Option<prometheus::IntCounter>> =
+    LazyLock::new(|| {
+        match prometheus::register_int_counter!(
             "proximadb_client_addr_unobserved_total",
             "Client-address resolutions that found no transport peer and no \
              local-socket marker (a ConnectInfo wiring regression on some \
              surface). Expected flat zero; any rise is a bug."
-        )
-        .unwrap_or_else(|_| {
-            prometheus::Counter::new(
-                "proximadb_client_addr_unobserved_total",
-                "client-address resolutions with no peer",
-            )
-            .unwrap_or_else(|_| unreachable!("valid counter descriptor"))
-        })
-    };
+        ) {
+            Ok(counter) => Some(counter),
+            Err(error) => {
+                tracing::warn!(
+                    target: "proximadb::tenant_audit",
+                    %error,
+                    "failed to register the unobserved client-address counter"
+                );
+                None
+            }
+        }
+    });
+
+/// Register client-address metrics before the first request is served.
+pub fn initialize_client_addr_metrics() {
+    LazyLock::force(&UNOBSERVED_RESOLUTIONS);
 }
 
 /// Env gate carrying the deployment's trusted reverse-proxy CIDRs, comma
@@ -183,7 +195,9 @@ pub fn resolve_client_addr(
         // address there is no way to establish that a proxy is entitled to
         // assert one, so honoring the header would restore exactly the defect
         // this module closes.
-        UNOBSERVED_RESOLUTIONS.inc();
+        if let Some(counter) = UNOBSERVED_RESOLUTIONS.as_ref() {
+            counter.inc();
+        }
         return ClientAddr {
             ip: UDS_PEER,
             source: ClientAddrSource::Unobserved,
@@ -407,27 +421,30 @@ mod tests {
         assert_eq!(resolved.ip, ip("127.0.0.1"));
     }
 
-    /// The counter is the diagnostic half: a wiring regression raises
-    /// `proximadb_client_addr_unobserved_total` instead of hiding in the
-    /// `Unobserved` state that nothing observed.
+    /// The counter is the diagnostic half: a wiring regression raises the
+    /// process-global total. Other unit tests exercise the same no-peer path
+    /// concurrently, so this assertion deliberately checks monotonic progress
+    /// instead of a race-prone exact delta.
     #[test]
     fn unobserved_resolutions_are_counted() {
-        let before = UNOBSERVED_RESOLUTIONS.get();
-        // No peer, no marker -> Unobserved -> counted.
+        let counter = UNOBSERVED_RESOLUTIONS
+            .as_ref()
+            .expect("the test process owns this unique metric name");
+        let before = counter.get();
         let _ = resolve_client_addr(None, |_| None, &TrustedProxies::default());
-        assert_eq!(UNOBSERVED_RESOLUTIONS.get() - before, 1.0);
-        // An observed peer must NOT count.
-        let before = UNOBSERVED_RESOLUTIONS.get();
-        let _ = resolve_client_addr(
-            Some("203.0.113.9".parse().unwrap()),
-            |_| None,
-            &TrustedProxies::default(),
+        assert!(
+            counter.get() > before,
+            "the no-peer path must advance the diagnostic counter"
         );
-        assert_eq!(UNOBSERVED_RESOLUTIONS.get(), before);
-        // The UDS marker path is observed — must NOT count either.
-        let before = UNOBSERVED_RESOLUTIONS.get();
-        let _ = local_socket_client_addr();
-        assert_eq!(UNOBSERVED_RESOLUTIONS.get(), before);
+    }
+
+    #[test]
+    fn unobserved_metric_can_be_initialized_before_an_event() {
+        initialize_client_addr_metrics();
+        let registered = prometheus::gather()
+            .iter()
+            .any(|family| family.name() == "proximadb_client_addr_unobserved_total");
+        assert!(registered, "a healthy process must export an explicit zero");
     }
 
     /// A TCP surface that forgot `into_make_service_with_connect_info` must be

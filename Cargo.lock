@@ -7961,7 +7961,6 @@ version = "0.2.0"
 dependencies = [
  "axum",
  "ipnet",
- "lazy_static",
  "prometheus",
  "serde",
  "serde_json",

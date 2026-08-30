@@ -287,7 +287,6 @@ serde = { version = "1.0", features = ["derive"] }
 stacker = "0.1"
 tempfile = "3.0"
 ipnet = "2.12" # CIDR matching (KOU client-locality, TD-TENANT-4 trusted proxies)
-lazy_static = "1.5" # static metric registration (network-middleware counters)
 prometheus = "0.14" # metric export (network-middleware counters)
 thiserror = "2.0"
 tokio = { version = "1.37", features = ["full"] }
