@@ -6157,18 +6157,31 @@ mod tests {
         use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
 
         const DIM: usize = 32;
-        const N: usize = 400;
+        const N: usize = 1200;
         // Two groups DISJOINT in both vector space (near 0 vs near 10) AND
-        // created_at (1000..1199 vs 2000..2199): the writer's centroid clustering
+        // created_at (1000..1599 vs 2000..2599): the writer's centroid clustering
         // keeps blocks group-homogeneous, so their footer created_at [min,max]
         // ranges don't overlap — a `created_at >= 2000` query provably skips the
-        // low-group blocks from the fetch.
+        // low-group blocks from the fetch. The small target block + larger N
+        // guarantee MULTIPLE blocks (at the 16 KiB default this corpus packed
+        // into a single spanning block, which no footer stat can prune).
         let records: Vec<ProximaRecord> = (0..N)
             .map(|i| {
                 let low = i < N / 2;
-                let base = if low { 0.0 } else { 10.0 };
+                // ORTHOGONAL anchor dims (+x vs +y): direction-aware orderings
+                // (sign-code / Morton / PCA all agree) separate the groups, so
+                // blocks stay group-homogeneous and the footer created_at
+                // [min,max] ranges are disjoint. (Equal-direction groups
+                // interleave under every ordering, which no stat can prune.)
+                let anchor = if low { 0 } else { 1 };
                 let v: Vec<f32> = (0..DIM)
-                    .map(|d| base + (((i * 131 + d * 17) % 17) as f32) * 0.001)
+                    .map(|d| {
+                        if d == anchor {
+                            50.0
+                        } else {
+                            (((i * 131 + d * 17) % 17) as f32) * 0.001
+                        }
+                    })
                     .collect();
                 let ts = if low {
                     1000 + i as i64
@@ -6186,7 +6199,7 @@ mod tests {
             "col",
             1,
             VectorQuant::RaBitQ,
-            Some(16 * 1024),
+            Some(4 * 1024),
         )
         .unwrap();
         let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
