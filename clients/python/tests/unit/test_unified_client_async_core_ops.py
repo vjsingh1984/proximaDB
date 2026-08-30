@@ -68,6 +68,8 @@ async def test_create_collection_hits_generated_endpoint():
                 200,
                 {
                     "collection_id": "products",
+                    "content_revision": 1,
+                    "content_revision_token": "test-incarnation:1",
                     "created_at": "now",
                     "dimension": 8,
                     "engine": "sst",
@@ -102,6 +104,8 @@ async def test_get_collection_hits_generated_endpoint():
                 200,
                 {
                     "collection_id": "products",
+                    "content_revision": 1,
+                    "content_revision_token": "test-incarnation:1",
                     "created_at": "now",
                     "dimension": 16,
                     "distance_metric": "cosine",

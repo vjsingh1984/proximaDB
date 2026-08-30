@@ -38,6 +38,12 @@ pub enum CorpusVersionDomain {
     Content,
 }
 
+/// Durable snapshot keyed by revision domain, tenant, and collection identity.
+///
+/// Naming this shared boundary keeps store implementations and test doubles on
+/// the same shape without repeating the composite-key type at every call site.
+pub type CorpusVersionSnapshot = HashMap<(CorpusVersionDomain, String, String), u64>;
+
 /// Composite key: domain + tenant + collection identity.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct VersionKey {
@@ -80,8 +86,7 @@ pub trait CorpusVersionStore: Send + Sync {
     /// Read every persisted `(tenant, collection) → version` row.
     /// Called once at startup to prime the registry. Returns an empty
     /// map for a fresh install.
-    async fn load_all(&self)
-    -> anyhow::Result<HashMap<(CorpusVersionDomain, String, String), u64>>;
+    async fn load_all(&self) -> anyhow::Result<CorpusVersionSnapshot>;
 
     /// Persist a single version. Called from the registry after each
     /// successful bump or set. A backend may queue writes and flush
@@ -104,9 +109,7 @@ pub struct InMemoryCorpusVersionStore;
 
 #[async_trait]
 impl CorpusVersionStore for InMemoryCorpusVersionStore {
-    async fn load_all(
-        &self,
-    ) -> anyhow::Result<HashMap<(CorpusVersionDomain, String, String), u64>> {
+    async fn load_all(&self) -> anyhow::Result<CorpusVersionSnapshot> {
         Ok(HashMap::new())
     }
     async fn persist(
@@ -590,7 +593,7 @@ mod tests {
     /// per-call ordering is preserved for assertion.
     #[derive(Default)]
     struct RecordingStore {
-        seed: HashMap<(CorpusVersionDomain, String, String), u64>,
+        seed: CorpusVersionSnapshot,
         persisted: std::sync::Mutex<Vec<(CorpusVersionDomain, String, String, u64)>>,
     }
     impl RecordingStore {
@@ -611,9 +614,7 @@ mod tests {
     }
     #[async_trait]
     impl CorpusVersionStore for RecordingStore {
-        async fn load_all(
-            &self,
-        ) -> anyhow::Result<HashMap<(CorpusVersionDomain, String, String), u64>> {
+        async fn load_all(&self) -> anyhow::Result<CorpusVersionSnapshot> {
             Ok(self.seed.clone())
         }
         async fn persist(
@@ -639,9 +640,7 @@ mod tests {
     struct FailingStore;
     #[async_trait]
     impl CorpusVersionStore for FailingStore {
-        async fn load_all(
-            &self,
-        ) -> anyhow::Result<HashMap<(CorpusVersionDomain, String, String), u64>> {
+        async fn load_all(&self) -> anyhow::Result<CorpusVersionSnapshot> {
             Err(anyhow::anyhow!("durable store unavailable"))
         }
         async fn persist(
