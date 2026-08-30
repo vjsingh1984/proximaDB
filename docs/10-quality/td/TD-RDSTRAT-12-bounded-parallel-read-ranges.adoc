@@ -166,7 +166,7 @@ Verdict protocol: round-3 bed + playbook, quiet box, 3× interleaved arms
 A0 none / A1 INFLIGHT=8 / A2 A1+WAVE_SPLIT_MB=8, cold-cohort p50 ≤ 0.5×A0 at
 GET-parity for A1, result-identity hashes byte-identical across arms.
 
-==== Round-4 VERDICT (2026-08-30): measured — 1.61× at exact parity; mechanism validated; ≥2× re-scoped to real-cloud RTT
+==== Round-4 VERDICT (2026-08-30): measured — A1 1.61× at exact parity; ≥2× unmet; A2 identity signal unresolved
 
 Clean same-binary pairs (develop @ 7f09a2198 binary, 50 ms RTT bed):
 GETs/q 14.40 = 14.40, bytes/q 45.99 MB = 45.99 MB, recall@100
@@ -176,11 +176,17 @@ wave 297 rounds / width 8 — the §2 observability working as designed).
 Aggregate ratio 1.61×; cold-cohort 1.54×. Split arm (A2) preserved identity
 on its quiet rep and matched recall everywhere.
 
-The ≥2× acceptance was NOT met at 50 ms RTT, and the measured reason is bed
-composition: compute (~0.9 s of 517k-row rank+decode) dominates p50, capping
-the achievable ratio near 1.6×. At real-cloud RTT the I/O share grows and
-≥2× becomes reachable — the criterion is re-scoped to a real-cloud-latency
-rerun, not abandoned. Both gates stay opt-in (defaults unchanged).
+The ≥2× acceptance was NOT met at 50 ms RTT. The run did not persist a
+compute/I/O phase decomposition, so compute dominance and a higher ratio at
+real-cloud RTT remain hypotheses, not measured conclusions. A real-cloud-
+latency rerun is required to test them; the criterion is not abandoned.
+
+The A2 split arm preserved identity on one quiet rep, but its second retained
+same-binary/same-geometry rep changed both ordered and set identity for query
+23 while aggregate recall stayed equal. A host load spike explains the timing
+outlier, not the semantic divergence. A2 correctness therefore remains open
+pending reproduction and root-cause analysis. Both gates stay opt-in
+(defaults unchanged).
 
 Evidence: `rdstrat12_sift1m_r4_wave_cascade` (ledger) +
 `docs/_internal/status/RDSTRAT12_SIFT1M_R4_WAVE_CASCADE_2026_08_30.adoc`.
