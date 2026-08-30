@@ -84,6 +84,55 @@ mod tests {
     }
 
     #[test]
+    fn explicit_close_releases_ownership_before_rust_drop() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+        let db = EmbeddedProximaDB::new(config.clone()).expect("first open");
+
+        let started = std::time::Instant::now();
+        let conflict = EmbeddedProximaDB::new(config.clone());
+        assert!(conflict.is_err(), "second exclusive open must fail");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "ownership conflict must fail immediately"
+        );
+
+        db.close();
+        db.close();
+        assert!(!db.can_write(), "closed handle must be write-fenced");
+
+        let reopened = EmbeddedProximaDB::new(config)
+            .expect("close must release ownership before the old handle is dropped");
+        reopened.close();
+    }
+
+    #[test]
+    fn overlapping_secondary_storage_root_is_rejected() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let shared = temp_dir.path().join("shared");
+        let mut first = EmbeddedConfig::for_low_memory(
+            temp_dir.path().join("first").to_string_lossy().as_ref(),
+        );
+        first.storage_locations.push(StorageLocationConfig::new(
+            shared.to_string_lossy().as_ref(),
+        ));
+        let mut second = EmbeddedConfig::for_low_memory(
+            temp_dir.path().join("second").to_string_lossy().as_ref(),
+        );
+        second.storage_locations.push(StorageLocationConfig::new(
+            shared.to_string_lossy().as_ref(),
+        ));
+
+        let db = EmbeddedProximaDB::new(first).expect("first owner");
+        let conflict = EmbeddedProximaDB::new(second);
+        assert!(
+            conflict.is_err(),
+            "different primary roots must still conflict on a shared secondary root"
+        );
+        db.close();
+    }
+
+    #[test]
     fn test_embedded_execute_sql_lowers_agentic_ddl_to_catalog() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
@@ -1099,6 +1148,104 @@ mod tests {
     }
 
     #[test]
+    fn direct_embedded_record_write_publishes_content_revision() {
+        let (db, _temp_dir) = build_test_db();
+        db.create_collection("embedded_revision_col", 4, None)
+            .expect("create collection");
+        let collection = db
+            .runtime
+            .block_on(
+                db.collection_port
+                    .get_collection("embedded_revision_col", None),
+            )
+            .expect("resolve collection")
+            .expect("collection exists");
+        let before = db.runtime.block_on(
+            proximadb::catalog::CorpusVersionRegistry::global()
+                .current_content("default", &collection.id),
+        );
+
+        db.insert_proxima_records(
+            "embedded_revision_col",
+            vec![make_test_record("revision-record", 1)],
+        )
+        .expect("insert record");
+
+        let after = db.runtime.block_on(
+            proximadb::catalog::CorpusVersionRegistry::global()
+                .current_content("default", &collection.id),
+        );
+        assert_eq!(after, before + 1);
+        db.close();
+    }
+
+    #[test]
+    fn legacy_direct_and_batch_writes_publish_content_revision() {
+        let (db, _temp_dir) = build_test_db();
+        db.create_collection("legacy_revision_col", 4, None)
+            .expect("create collection");
+        let collection = db
+            .runtime
+            .block_on(
+                db.collection_port
+                    .get_collection("legacy_revision_col", None),
+            )
+            .expect("resolve collection")
+            .expect("collection exists");
+        let registry = proximadb::catalog::CorpusVersionRegistry::global();
+        let before = db
+            .runtime
+            .block_on(registry.current_content("default", &collection.id));
+
+        db.runtime
+            .block_on(
+                db.shared_services
+                    .vector_operations_service
+                    .insert_vectors_direct(
+                        &collection.id,
+                        std::sync::Arc::new(vec![make_test_record("direct", 1)]),
+                    ),
+            )
+            .expect("direct write");
+        let after_direct = db
+            .runtime
+            .block_on(registry.current_content("default", &collection.id));
+        assert_eq!(after_direct, before + 1);
+
+        db.runtime
+            .block_on(
+                db.shared_services
+                    .vector_operations_service
+                    .insert_vectors_via_batch_pipeline(
+                        &collection.id,
+                        vec![make_test_record("batch", 2)],
+                    ),
+            )
+            .expect("batch-pipeline write");
+        let after_batch = db
+            .runtime
+            .block_on(registry.current_content("default", &collection.id));
+        assert_eq!(after_batch, after_direct + 1);
+        db.close();
+    }
+
+    #[test]
+    fn closed_handle_rejects_single_vector_delete() {
+        let (db, _temp_dir) = build_test_db();
+        db.create_collection("closed_delete_col", 4, None)
+            .expect("create collection");
+        db.close();
+
+        let error = db
+            .delete_vector("closed_delete_col", "record-a")
+            .expect_err("closed handle must reject every write API");
+        assert!(
+            error.to_string().contains("closed"),
+            "write fence should identify the closed database: {error}"
+        );
+    }
+
+    #[test]
     fn test_get_collection_schema_returns_none_for_missing_collection() {
         let (db, _td) = build_test_db();
         let result = db
@@ -1212,17 +1359,79 @@ mod tests {
     }
 
     #[test]
+    fn scan_cursor_rejects_collection_mutation_between_pages() {
+        let (db, _td) = build_test_db();
+        db.create_collection("mutable_scan_col", 4, None)
+            .expect("create");
+        let records = (0..3)
+            .map(|i| make_test_record(&format!("r{i:02}"), 100 + i as i64))
+            .collect();
+        db.insert_proxima_records("mutable_scan_col", records)
+            .expect("initial insert");
+
+        let (_, cursor) = db
+            .scan_records("mutable_scan_col", None, 2)
+            .expect("first page");
+        db.insert_proxima_records("mutable_scan_col", vec![make_test_record("r99", 999)])
+            .expect("mutating insert");
+
+        let error = db
+            .scan_records("mutable_scan_col", cursor, 2)
+            .expect_err("a cursor must be fenced after collection content changes");
+        assert!(
+            error.to_string().contains("changed"),
+            "revision error should tell callers to restart: {error}"
+        );
+        db.close();
+    }
+
+    #[test]
+    fn scan_cursor_rejects_previous_embedded_incarnation() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+        let db = EmbeddedProximaDB::new(config.clone()).expect("first open");
+        db.create_collection("restart_scan_col", 4, None)
+            .expect("create");
+        let records = (0..3)
+            .map(|i| make_test_record(&format!("r{i:02}"), 100 + i as i64))
+            .collect();
+        db.insert_proxima_records("restart_scan_col", records)
+            .expect("insert");
+        let (_, cursor) = db
+            .scan_records("restart_scan_col", None, 2)
+            .expect("first page");
+        db.close();
+
+        let reopened = EmbeddedProximaDB::new(config).expect("reopen");
+        let error = reopened
+            .scan_records("restart_scan_col", cursor, 2)
+            .expect_err("cursor from a prior embedded incarnation must be rejected");
+        assert!(
+            error.to_string().contains("incarnation"),
+            "restart fence should be explicit: {error}"
+        );
+        reopened.close();
+    }
+
+    #[test]
     fn test_scan_records_rejects_stale_cursor() {
         use proximadb::services::scan_cursor::ScanCursor;
         let (db, _td) = build_test_db();
         db.create_collection("stale_col", 4, None).expect("create");
+        let canonical_id = db
+            .runtime
+            .block_on(db.collection_port.resolve_collection_id("stale_col"))
+            .expect("resolve collection")
+            .expect("collection exists");
 
         // Forge a cursor with epoch from > 24h ago.
         let stale = ScanCursor {
-            collection_id: "stale_col".to_string(),
+            collection_id: canonical_id,
             last_updated_at_ns: 0,
             last_oid: "x".to_string(),
             epoch_ns: 0, // wall clock is now ~> 24h since this
+            content_revision: None,
+            content_revision_token: None,
         };
         let raw = stale.encode().unwrap();
         let err = db.scan_records("stale_col", Some(raw), 10).unwrap_err();

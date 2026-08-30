@@ -620,6 +620,14 @@ components:
         collection_id:
           description: Collection ID
           type: string
+        content_revision:
+          description: Monotonic server-owned content revision for cache revalidation.
+          format: int64
+          minimum: 0
+          type: integer
+        content_revision_token:
+          description: Opaque validator that also fences server restarts.
+          type: string
         created_at:
           description: Creation timestamp
           type: string
@@ -673,6 +681,8 @@ components:
       - distance_metric
       - proxima_record_enabled
       - stats
+      - content_revision
+      - content_revision_token
       - index_specs
       - created_at
       type: object
@@ -2254,6 +2264,12 @@ components:
         `next_cursor` signals end-of-scan. Each record matches the OpenAPI
         `RecordResponse` schema (same shape used by `getRecord`).
       properties:
+        content_revision:
+          format: int64
+          minimum: 0
+          type: integer
+        content_revision_token:
+          type: string
         next_cursor:
           type:
           - string
@@ -2270,6 +2286,8 @@ components:
           - 'null'
       required:
       - records
+      - content_revision
+      - content_revision_token
       type: object
     SchemaChange:
       description: Description of a schema change
@@ -3401,6 +3419,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Resource not found.
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Collection changed during the scan; restart pagination.
         '410':
           content:
             application/json:

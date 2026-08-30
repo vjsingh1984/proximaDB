@@ -105,6 +105,38 @@ impl ProximaDB {
         // `[storage.optimization] enable_mmap = false` for cloud deployments.
         config.storage.validate_cloud_mmap()?;
 
+        // Wire corpus-revision durability before constructing any service.
+        // SharedServices publishes the registry through the storage port, so
+        // doing this later creates an observable in-memory-only window.
+        if let Ok(path) = std::env::var("PROXIMADB_CORPUS_VERSION_PATH") {
+            if !path.is_empty() {
+                let store = std::sync::Arc::new(crate::catalog::FileSystemCorpusVersionStore::new(
+                    path.clone(),
+                ));
+                let attached = crate::catalog::CorpusVersionRegistry::init_global_with_store(store);
+                if attached {
+                    let loaded = crate::catalog::CorpusVersionRegistry::global()
+                        .hydrate_from_store()
+                        .await;
+                    tracing::info!(
+                        path = %path,
+                        rows = loaded,
+                        "✅ corpus_version durability wired (FileSystemCorpusVersionStore)"
+                    );
+                } else {
+                    tracing::warn!(
+                        path = %path,
+                        "corpus_version durable store was already attached; refusing replacement"
+                    );
+                }
+            }
+        } else {
+            tracing::info!(
+                "PROXIMADB_CORPUS_VERSION_PATH unset; corpus_version registry \
+                 is in-memory only (restart resets all versions)"
+            );
+        }
+
         // Step 1: Create metrics collector first
         tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
         let metrics_collector = Arc::new(crate::metrics::UnifiedMetricsCollector::new());
@@ -603,51 +635,6 @@ impl ProximaDB {
             );
             None
         };
-
-        // Plan-cache corpus_version durability. When
-        // PROXIMADB_CORPUS_VERSION_PATH is set, construct a
-        // FileSystemCorpusVersionStore at that path, attach it to
-        // the global registry, and hydrate from disk before the
-        // request handlers begin serving traffic. Unset means
-        // in-memory only — restart resets all versions to 1 (which
-        // is correct for single-node deployments that prefer the
-        // simpler operational story).
-        //
-        // The init must happen before any code path touches
-        // CorpusVersionRegistry::global(); this is the earliest spot
-        // in the bootstrap where everything else is wired but
-        // requests haven't yet been served.
-        if let Ok(path) = std::env::var("PROXIMADB_CORPUS_VERSION_PATH") {
-            if !path.is_empty() {
-                let store = std::sync::Arc::new(crate::catalog::FileSystemCorpusVersionStore::new(
-                    path.clone(),
-                ));
-                let inited =
-                    crate::catalog::CorpusVersionRegistry::init_global_with_store(store.clone());
-                if inited {
-                    let loaded = crate::catalog::CorpusVersionRegistry::global()
-                        .hydrate_from_store()
-                        .await;
-                    tracing::info!(
-                        path = %path,
-                        rows = loaded,
-                        "✅ corpus_version durability wired (FileSystemCorpusVersionStore)"
-                    );
-                } else {
-                    tracing::warn!(
-                        path = %path,
-                        "corpus_version global already initialized before \
-                         PROXIMADB_CORPUS_VERSION_PATH wiring; bumps will not \
-                         persist for this process"
-                    );
-                }
-            }
-        } else {
-            tracing::info!(
-                "PROXIMADB_CORPUS_VERSION_PATH unset; corpus_version registry \
-                 is in-memory only (restart resets all versions)"
-            );
-        }
 
         // TD-TENANT-1: resolve the deployment-effective bare tenant-assertion
         // trust policy ONCE (env > [security.tenant] header_trust > deployment-

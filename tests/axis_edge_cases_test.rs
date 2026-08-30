@@ -9,7 +9,9 @@ use tempfile::TempDir;
 /// Test engines to validate.
 /// Experimental engines are only included when the feature is enabled.
 fn test_engines() -> Vec<&'static str> {
-    let mut engines = vec!["sst", "helix", "viper", "nova"];
+    // VIPER deprecated (ADR-093 / TD-VIPER-1) — removed from the
+    // all-engines conformance loop at stage 1.
+    let mut engines = vec!["sst", "helix", "nova"];
     if cfg!(feature = "experimental-engines") {
         engines.push("swift");
         engines.push("raptor");

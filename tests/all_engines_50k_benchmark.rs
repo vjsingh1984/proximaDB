@@ -25,7 +25,7 @@ const NUM_QUERIES: usize = 10;
 const BATCH_SIZE: usize = 10_000;
 
 fn benchmark_engines() -> Vec<&'static str> {
-    let mut engines = vec!["sst", "helix", "viper", "nova"];
+    let mut engines = vec!["sst", "helix", "nova"]; // VIPER deprecated (ADR-093)
     if cfg!(feature = "experimental-engines") {
         engines.push("raptor");
         engines.push("swift");

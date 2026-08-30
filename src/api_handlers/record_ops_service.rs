@@ -245,6 +245,27 @@ pub struct RecordOpsService {
 }
 
 impl RecordOpsService {
+    fn revision_tenant(tenant_id: Option<&str>) -> &str {
+        tenant_id
+            .filter(|tenant| !tenant.is_empty())
+            .unwrap_or(CollectionService::DEFAULT_VERSION_TENANT)
+    }
+
+    pub async fn content_revision_snapshot(
+        &self,
+        tenant_id: Option<&str>,
+        collection_id: &str,
+    ) -> (u64, String) {
+        let snapshot = crate::catalog::CorpusVersionRegistry::global()
+            .content_snapshot(
+                Self::revision_tenant(tenant_id),
+                collection_id,
+                crate::catalog::process_content_revision_incarnation(),
+            )
+            .await;
+        (snapshot.revision, snapshot.token)
+    }
+
     /// Build the service from the same Arcs ROOT holds.
     pub fn new(
         collection_service: Arc<CollectionService>,
@@ -441,6 +462,18 @@ impl RecordOpsService {
                 .await?
                 .map(|id| (id, collection_identifier.to_string())))
         }
+    }
+
+    /// Resolve name or object id to one canonical identity for protocol
+    /// cursors and cache validators.
+    pub async fn resolve_collection_identity_for_tenant(
+        &self,
+        collection_identifier: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<(String, String)>> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.resolve_collection_id_and_name(collection_identifier, tenant_context.as_ref())
+            .await
     }
 
     // ---- precision coercion (TD-080/TD-082) ----

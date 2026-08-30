@@ -8,7 +8,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Partially invalidated — see Reconciliation 2026-07-09.** Step 1 (REST flip) ✅ landed (#814, `9c9b0466`). Step 2 (relocate deprecation-header util) ✅ landed. Step 4 (gRPC v1 api-crate delete) ✅ *already complete* on `develop` (found pre-deleted). **Step 3 (hard-delete api-crate `rest/v1/`) is INVALIDATED** — that dir holds LIVE `/api/v2` port-backed routers, not deprecated v1 adapters; it must NOT be deleted (a rename is TD-104). Step 5 (remove `v1_sunset` middleware) remains gated on sunset-window verification.
+| Status | **RESOLVED 2026-08-29 — see the final reconciliation section.** (Earlier: partially invalidated, see Reconciliation 2026-07-09.) Step 1 (REST flip) ✅ landed (#814, `9c9b0466`). Step 2 (relocate deprecation-header util) ✅ landed. Step 4 (gRPC v1 api-crate delete) ✅ *already complete* on `develop` (found pre-deleted). **Step 3 (hard-delete api-crate `rest/v1/`) is INVALIDATED** — that dir holds LIVE `/api/v2` port-backed routers, not deprecated v1 adapters; it must NOT be deleted (a rename is TD-104). Step 5 (remove `v1_sunset` middleware) remains gated on sunset-window verification.
 | Severity | Medium — outward-facing break (REST flip `410`s all `/api/v1/*`); recovery is a one-line revert.
 | Component | Network: REST v1 sunset (`src/network/middleware/v1_sunset.rs`) + the deprecated v1 surfaces in `crates/platform/proximadb-api/src/{rest,grpc}/v1/`.
 | Tracked-by | link:../../12-design/V1_RETIREMENT_ROADMAP_2026_07_08.adoc[V1_RETIREMENT_ROADMAP] (strategy, Tier 1); link:../../12-design/adr/ADR-049-v1-to-v2-migration-to-native-model.adoc[ADR-049] (M0-c REST sunset gate); the v1-proto ratchet (`scripts/check_v1_proto_usage.py`).
@@ -72,6 +72,25 @@ feature." Stale — ci.yml has an `enterprise-catalogs` feature-matrix lane;
 the lane *compiles* the feature but never *serves* it, which is precisely
 why the collision survived a green lane. The fix is serving teeth, not a new
 lane.
+
+== Resolution (2026-08-29): Step 5 executed early, on integrator evidence
+
+The v1_sunset middleware (and with it `PROXIMADB_REST_V1_COMPAT`,
+`PROXIMADB_REST_V1_SUNSET`, the counter, and their tests) is **deleted**;
+both env gates moved to the registry's Retired-names section.
+
+**Closure basis — recorded honestly:** NOT the counter window (it never
+accumulated: no release shipped after the counter landed). The gate was
+satisfied by stronger evidence: (1) every known client is accounted for —
+our SDKs never called ProximaDB v1, and AnvaiOps (the only known gateway
+integrator) makes zero ProximaDB `/api/v1` calls and sets no compat opt-in;
+(2) `/api/v1` has been 410-by-default since #814 (2026-07-09) — ~7 weeks, so
+every working client is already off v1; (3) the migration affordance
+SURVIVES the removal: `not_found_fallback` + `v1_replacement_for` answer
+removed v1 paths with 404 + the exact `/api/v2` replacement + docs link
+(pinned by `removed_v1_paths_404_with_the_v2_replacement_named`). Only the
+machine-readable RFC 8594 headers are lost. Worst case for a hypothetical
+hand-rolled v1 caller: an equally actionable 404 instead of a 410.
 
 == Why this exists
 

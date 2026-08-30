@@ -150,3 +150,7 @@ axis_edge suites pass at 32-d and 1536-d today, so the exercised flush
 path evidently builds its schema dynamically elsewhere; the hardcoded
 builder is reachable-but-unexercised debt. Fix: thread the collection
 dimension through, or delete the dead builder.
+
+SUBSUMED by link:TD-VIPER-1-staged-retirement.adoc[TD-VIPER-1] /
+ADR-093 (2026-08-29): VIPER is deprecated with staged retirement —
+retire, don't fix; the builder disappears at stage 3.

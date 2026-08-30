@@ -41,6 +41,7 @@ proximadb = { path = "../../..", default-features = false }
 # `unified_search_native` signature. See the `abac-policy` feature below.
 proximadb-abac = { workspace = true, optional = true }
 proximadb-embedded-common = { path = "../../horizontal/proximadb-embedded-common" }
+proximadb-runtime-common.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 tokio.workspace = true

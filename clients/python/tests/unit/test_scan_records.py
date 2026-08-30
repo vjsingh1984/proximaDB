@@ -30,6 +30,16 @@ def _record(rid: str, props: dict) -> dict:
     return {"id": rid, "props": props, "version": 1, "timestamp": 123}
 
 
+def _page(records: list[dict], next_cursor: str | None) -> dict:
+    """Build the required, revision-fenced scan response contract."""
+    return {
+        "content_revision": 1,
+        "content_revision_token": "test-incarnation:1",
+        "records": records,
+        "next_cursor": next_cursor,
+    }
+
+
 class _ScanRecorder:
     """Serves canned scan pages keyed by the request's cursor, records bodies."""
 
@@ -66,7 +76,7 @@ def _sync_client(rec: _ScanRecorder) -> ProximaDBClient:
 
 
 def test_sync_scan_page_builds_filter_and_maps_results():
-    rec = _ScanRecorder([{"records": [_record("a", {"k": "v"})], "next_cursor": None}])
+    rec = _ScanRecorder([_page([_record("a", {"k": "v"})], None)])
     c = _sync_client(rec)
 
     records, cursor = c.scan_page(
@@ -89,9 +99,9 @@ def test_sync_scan_page_builds_filter_and_maps_results():
 def test_sync_scan_paginates_until_cursor_exhausted():
     rec = _ScanRecorder(
         [
-            {"records": [_record("a", {})], "next_cursor": "c1"},
-            {"records": [_record("b", {})], "next_cursor": "c2"},
-            {"records": [_record("c", {})], "next_cursor": None},
+            _page([_record("a", {})], "c1"),
+            _page([_record("b", {})], "c2"),
+            _page([_record("c", {})], None),
         ]
     )
     c = _sync_client(rec)
@@ -109,7 +119,7 @@ def test_sync_scan_paginates_until_cursor_exhausted():
 
 
 def test_sync_scan_empty():
-    rec = _ScanRecorder([{"records": [], "next_cursor": None}])
+    rec = _ScanRecorder([_page([], None)])
     c = _sync_client(rec)
     records = c.scan("docs")
     assert records == []
@@ -119,8 +129,8 @@ def test_sync_scan_empty():
 def test_sync_scan_respects_max_rows():
     rec = _ScanRecorder(
         [
-            {"records": [_record("a", {}), _record("b", {})], "next_cursor": "c1"},
-            {"records": [_record("c", {})], "next_cursor": None},
+            _page([_record("a", {}), _record("b", {})], "c1"),
+            _page([_record("c", {})], None),
         ]
     )
     c = _sync_client(rec)
@@ -149,7 +159,7 @@ async def _async_client(rec: _ScanRecorder) -> ProximaDBAsyncUnified:
 
 @pytest.mark.asyncio
 async def test_async_scan_page_builds_filter_and_maps_results():
-    rec = _ScanRecorder([{"records": [_record("a", {"k": "v"})], "next_cursor": None}])
+    rec = _ScanRecorder([_page([_record("a", {"k": "v"})], None)])
     client = await _async_client(rec)
     try:
         records, cursor = await client.scan_page(
@@ -173,8 +183,8 @@ async def test_async_scan_page_builds_filter_and_maps_results():
 async def test_async_scan_paginates_until_cursor_exhausted():
     rec = _ScanRecorder(
         [
-            {"records": [_record("a", {})], "next_cursor": "c1"},
-            {"records": [_record("b", {})], "next_cursor": None},
+            _page([_record("a", {})], "c1"),
+            _page([_record("b", {})], None),
         ]
     )
     client = await _async_client(rec)
@@ -191,7 +201,7 @@ async def test_async_scan_paginates_until_cursor_exhausted():
 
 @pytest.mark.asyncio
 async def test_async_scan_empty():
-    rec = _ScanRecorder([{"records": [], "next_cursor": None}])
+    rec = _ScanRecorder([_page([], None)])
     client = await _async_client(rec)
     try:
         records = await client.scan("docs")

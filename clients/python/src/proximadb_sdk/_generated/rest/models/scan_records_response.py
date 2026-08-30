@@ -27,11 +27,15 @@ class ScanRecordsResponse:
     `RecordResponse` schema (same shape used by `getRecord`).
 
         Attributes:
+            content_revision (int):
+            content_revision_token (str):
             records (list[RecordV2Response]):
             next_cursor (None | str | Unset):
             scanned_count (int | None | Unset):
     """
 
+    content_revision: int
+    content_revision_token: str
     records: list[RecordV2Response]
     next_cursor: None | str | Unset = UNSET
     scanned_count: int | None | Unset = UNSET
@@ -39,6 +43,10 @@ class ScanRecordsResponse:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.record_v2_response import RecordV2Response
+
+        content_revision = self.content_revision
+
+        content_revision_token = self.content_revision_token
 
         records = []
         for records_item_data in self.records:
@@ -61,6 +69,8 @@ class ScanRecordsResponse:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "content_revision": content_revision,
+                "content_revision_token": content_revision_token,
                 "records": records,
             }
         )
@@ -76,6 +86,10 @@ class ScanRecordsResponse:
         from ..models.record_v2_response import RecordV2Response
 
         d = dict(src_dict)
+        content_revision = d.pop("content_revision")
+
+        content_revision_token = d.pop("content_revision_token")
+
         records = []
         _records = d.pop("records")
         for records_item_data in _records:
@@ -102,6 +116,8 @@ class ScanRecordsResponse:
         scanned_count = _parse_scanned_count(d.pop("scanned_count", UNSET))
 
         scan_records_response = cls(
+            content_revision=content_revision,
+            content_revision_token=content_revision_token,
             records=records,
             next_cursor=next_cursor,
             scanned_count=scanned_count,

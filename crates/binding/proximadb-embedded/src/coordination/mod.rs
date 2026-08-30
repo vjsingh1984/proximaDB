@@ -13,13 +13,14 @@
 //! use proximadb::embedded::coordination::{AccessMode, FileLockManager};
 //!
 //! // Exclusive access
-//! let lock_manager = FileLockManager::new("/path/to/data", AccessMode::Exclusive)?;
+//! let lock_manager = FileLockManager::acquire("/path/to/data", AccessMode::Exclusive)?;
 //!
 //! // Shared read access
-//! let lock_manager = FileLockManager::new("/path/to/data", AccessMode::SharedRead)?;
+//! let lock_manager = FileLockManager::acquire("/path/to/data", AccessMode::SharedRead)?;
 //!
 //! // Leader/follower mode
-//! let lock_manager = FileLockManager::new("/path/to/data", AccessMode::LeaderFollower)?;
+//! let access_lock = FileLockManager::acquire("/path/to/data", AccessMode::LeaderFollower)?;
+//! let election = LeaderElection::new("/path/to/data", "node-1")?;
 //! ```
 //!
 //! ## Implementation
@@ -27,11 +28,12 @@
 //! Uses advisory file locking (flock/fcntl on Unix) for cross-process coordination.
 //! Lock files are created in the data directory with the `.lock` extension.
 
-mod file_lock;
 mod leader_election;
 
-pub use file_lock::{AccessMode, FileLockError, FileLockManager};
 pub use leader_election::{LeaderElection, LeaderElectionError, LeaderStatus};
+pub use proximadb_runtime_common::{
+    AccessMode, FileLockError, FileLockManager, FileLockSet, LockOwner,
+};
 
 /// Coordination error type combining all coordination-related errors
 #[derive(Debug)]
@@ -90,11 +92,11 @@ mod tests {
         let path = temp_dir.path().to_path_buf();
 
         // First process acquires exclusive lock
-        let lock1 = FileLockManager::new(&path, AccessMode::Exclusive);
+        let lock1 = FileLockManager::acquire(&path, AccessMode::Exclusive);
         assert!(lock1.is_ok(), "First exclusive lock should succeed");
 
         // Second process should fail to acquire exclusive lock (non-blocking)
-        let lock2 = FileLockManager::try_new(&path, AccessMode::Exclusive);
+        let lock2 = FileLockManager::acquire(&path, AccessMode::Exclusive);
         assert!(lock2.is_err(), "Second exclusive lock should fail");
     }
 
@@ -104,10 +106,10 @@ mod tests {
         let path = temp_dir.path().to_path_buf();
 
         // Multiple readers should succeed
-        let lock1 = FileLockManager::new(&path, AccessMode::SharedRead);
+        let lock1 = FileLockManager::acquire(&path, AccessMode::SharedRead);
         assert!(lock1.is_ok(), "First shared lock should succeed");
 
-        let lock2 = FileLockManager::new(&path, AccessMode::SharedRead);
+        let lock2 = FileLockManager::acquire(&path, AccessMode::SharedRead);
         assert!(lock2.is_ok(), "Second shared lock should succeed");
     }
 

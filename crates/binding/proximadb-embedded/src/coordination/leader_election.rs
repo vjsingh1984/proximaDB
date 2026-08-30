@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::file_lock::{AccessMode, FileLockManager};
+use super::{AccessMode, FileLockError, FileLockManager};
 
 /// Leader election status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +33,8 @@ impl LeaderStatus {
 /// Errors that can occur during leader election
 #[derive(Debug)]
 pub enum LeaderElectionError {
+    /// Failed to release the leader lock
+    LockError(FileLockError),
     /// Failed to acquire leader lock
     LockFailed(io::Error),
     /// Failed to read leader info
@@ -50,6 +52,7 @@ pub enum LeaderElectionError {
 impl std::fmt::Display for LeaderElectionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::LockError(e) => write!(f, "Leader lock error: {}", e),
             Self::LockFailed(e) => write!(f, "Failed to acquire leader lock: {}", e),
             Self::ReadFailed(e) => write!(f, "Failed to read leader info: {}", e),
             Self::WriteFailed(e) => write!(f, "Failed to write leader info: {}", e),
@@ -65,6 +68,7 @@ impl std::fmt::Display for LeaderElectionError {
 impl std::error::Error for LeaderElectionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::LockError(e) => Some(e),
             Self::LockFailed(e) | Self::ReadFailed(e) | Self::WriteFailed(e) => Some(e),
             _ => None,
         }
@@ -155,7 +159,7 @@ impl LeaderElection {
         let leader_info_path = data_path.join(Self::LEADER_INFO_FILE);
 
         // Try to acquire leader lock (non-blocking)
-        let lock_result = FileLockManager::try_new(data_path, AccessMode::LeaderFollower);
+        let lock_result = FileLockManager::acquire(data_path, AccessMode::LeaderFollower);
 
         match lock_result {
             Ok(lock_manager) => {
@@ -300,6 +304,9 @@ impl LeaderElection {
     /// This releases the leader lock and allows another node to become leader.
     pub fn step_down(&mut self) -> Result<(), LeaderElectionError> {
         if self.is_leader() {
+            if let Some(lock) = &self.lock_manager {
+                lock.release().map_err(LeaderElectionError::LockError)?;
+            }
             self.is_leader.store(false, Ordering::SeqCst);
             self.lock_manager = None;
 
@@ -308,6 +315,19 @@ impl LeaderElection {
             }
 
             tracing::info!("Leader election: Node '{}' stepped down", self.node_id);
+        }
+        Ok(())
+    }
+
+    /// Release leadership deterministically while the handle remains alive.
+    /// Repeated calls are harmless.
+    pub fn release(&self) -> Result<(), LeaderElectionError> {
+        if let Some(lock) = &self.lock_manager {
+            lock.release().map_err(LeaderElectionError::LockError)?;
+        }
+        self.is_leader.store(false, Ordering::SeqCst);
+        if let Ok(mut guard) = self.leader_id.write() {
+            *guard = None;
         }
         Ok(())
     }
@@ -327,7 +347,7 @@ impl LeaderElection {
             return Ok(true);
         }
 
-        let lock_result = FileLockManager::try_new(data_path, AccessMode::LeaderFollower);
+        let lock_result = FileLockManager::acquire(data_path, AccessMode::LeaderFollower);
 
         match lock_result {
             Ok(lock_manager) => {

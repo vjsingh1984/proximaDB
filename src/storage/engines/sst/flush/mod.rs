@@ -531,7 +531,8 @@ impl SstEngine {
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
                 use crate::storage::engines::sst::segment_format::{
-                    write_pax_segment_full, write_pax_segment_full_with_cache_seed,
+                    write_pax_segment_full_with_cache_seed_and_layout,
+                    write_pax_segment_full_with_layout,
                 };
                 // Local write path from the staged write (uploaded on finalize
                 // when the staging URL is remote).
@@ -577,8 +578,12 @@ impl SstEngine {
                     .map(|cfg| cfg.tags.as_slice())
                     .unwrap_or(&[]);
                 let rerank_quant = resolve_pax_rerank_quant(rerank_tags);
+                // TD-PAXRG-1: row-group Region D — per-collection
+                // `pax_rg_layout` tag > env `PROXIMADB_PAX_WRITE_RG_LAYOUT` >
+                // default OFF. No-ops for non-RaBitQ-coalesced writes.
+                let rg_layout = resolve_pax_rg_layout(rerank_tags);
                 let meta = if cache_on_write.includes_invariants() {
-                    let write = write_pax_segment_full_with_cache_seed(
+                    let write = write_pax_segment_full_with_cache_seed_and_layout(
                         std::path::Path::new(staging_path),
                         &records,
                         collection_id,
@@ -587,13 +592,14 @@ impl SstEngine {
                         rerank_quant,
                         f32_tier,
                         target_block,
+                        rg_layout,
                         cache_on_write.includes_survivors(),
                     )
                     .context("Failed to write PAX vector segment")?;
                     pax_cache_seed = write.cache_seed;
                     write.meta
                 } else {
-                    write_pax_segment_full(
+                    write_pax_segment_full_with_layout(
                         std::path::Path::new(staging_path),
                         &records,
                         collection_id,
@@ -602,6 +608,7 @@ impl SstEngine {
                         rerank_quant,
                         f32_tier,
                         target_block,
+                        rg_layout,
                     )
                     .context("Failed to write PAX vector segment")?
                 };
@@ -900,6 +907,16 @@ impl SstEngine {
                             collection_dir,
                             l0_threshold,
                             precision_hint,
+                            // TD-PAXRG-1: per-collection `pax_rg_layout` tag >
+                            // env > default (resolved at the enqueue seam where
+                            // the collection config is in scope).
+                            params
+                                .collection_config
+                                .as_ref()
+                                .and_then(|c| c.config.as_ref())
+                                .map(|cfg| cfg.tags.as_slice())
+                                .and_then(pax_rg_layout_tag)
+                                .or_else(|| Some(resolve_pax_rg_layout(&[]))),
                         )
                         .await
                 }
@@ -1086,7 +1103,7 @@ impl SstEngine {
     /// big enough to be worth a training pass? One stat + one 72-byte read.
     async fn segment_is_untrained(&self, path: &str, min_bytes: u64) -> Result<bool> {
         use proximadb_storage_common::segment_layout::{
-            SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentHeaderPrefix,
+            SEG_HEADER_PREFIX_LEN, SegmentHeaderPrefix,
         };
         let fs = self.filesystem().get_filesystem(path)?;
         let meta = fs.metadata(path).await?;
@@ -1094,10 +1111,10 @@ impl SstEngine {
             return Ok(false);
         }
         let header_bytes = fs
-            .read_range(path, 0, (SEG_HEADER_PREFIX_V3_LEN as u64).min(meta.size))
+            .read_range(path, 0, (SEG_HEADER_PREFIX_LEN as u64).min(meta.size))
             .await?;
         Ok(match SegmentHeaderPrefix::parse(&header_bytes) {
-            Ok(h) => h.layout_version != SEG_LAYOUT_VERSION_TWO_LEVEL || h.a0_len == 0,
+            Ok(h) => h.a0_len == 0,
             // Not a coalesced segment (legacy layout) — training does not
             // apply; leave it to the count arm.
             Err(_) => false,
@@ -1371,6 +1388,32 @@ fn pax_f32_tier_tag(config: &crate::proto::proximadb_v1::CollectionConfig) -> Op
 /// Precedence: per-collection `pax_f32_tier` tag > env `PROXIMADB_PAX_F32_TIER` >
 /// default OFF. The tier is read lazily (exact final rerank / `include_vectors`),
 /// so the only always-paid cost is the storage bytes — not scan/egress.
+/// Tag prefix encoding the per-collection row-group Region D layout switch
+/// (TD-PAXRG-1). Values: `on`, `off`.
+const PAX_RG_LAYOUT_TAG_PREFIX: &str = "pax_rg_layout:";
+
+/// Read the per-collection `pax_rg_layout:on|off` tag from a tag list.
+fn pax_rg_layout_tag(tags: &[String]) -> Option<bool> {
+    for tag in tags {
+        if let Some(rest) = tag.strip_prefix(PAX_RG_LAYOUT_TAG_PREFIX) {
+            return match rest.trim().to_ascii_lowercase().as_str() {
+                "on" | "true" | "yes" | "1" => Some(true),
+                "off" | "false" | "no" | "0" => Some(false),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
+/// Resolve the row-group Region D write switch. Precedence: per-collection
+/// `pax_rg_layout` tag > env `PROXIMADB_PAX_WRITE_RG_LAYOUT` > default OFF.
+/// Only effective for RaBitQ-coalesced writes (Regions A/B are the premise).
+pub(crate) fn resolve_pax_rg_layout(tags: &[String]) -> bool {
+    let per_collection = pax_rg_layout_tag(tags);
+    per_collection.unwrap_or_else(crate::storage::engines::sst::segment_format::rg_layout_enabled)
+}
+
 fn resolve_pax_f32_tier(
     collection_config: Option<&crate::proto::proximadb_v1::Collection>,
 ) -> bool {
@@ -2269,5 +2312,39 @@ mod tests {
         // and rejected at the parser: the tag only accepts sq8/fp16/f32).
         let tags_bad = ["pax_rerank_quant:rabitq".to_string()];
         assert_eq!(resolve_pax_rerank_quant(&tags_bad), VectorQuant::Sq8);
+    }
+
+    /// TD-PAXRG-1 (post-flip): the row-group Region D resolver — default ON,
+    /// `PROXIMADB_PAX_WRITE_RG_LAYOUT=0` kill-switch, per-collection
+    /// `pax_rg_layout:on|off` tag outranks the env, and an unrecognized tag
+    /// value falls through to the env.
+    #[test]
+    fn resolve_pax_rg_layout_default_and_precedence() {
+        use crate::storage::engines::sst::segment_format::rg_layout_enabled;
+        const ENV: &str = "PROXIMADB_PAX_WRITE_RG_LAYOUT";
+
+        // Default ON (flipped 2026-08-28 on the TD-PAXRG-1 Phase-G evidence).
+        unsafe { std::env::remove_var(ENV) };
+        assert!(resolve_pax_rg_layout(&[]));
+
+        // Kill-switch.
+        unsafe { std::env::set_var(ENV, "0") };
+        assert!(!resolve_pax_rg_layout(&[]));
+
+        // Per-collection tag outranks the env — including ON against env OFF.
+        let tags_on = ["pax_rg_layout:on".to_string()];
+        assert!(resolve_pax_rg_layout(&tags_on));
+        let tags_off = ["pax_rg_layout:off".to_string()];
+        assert!(!resolve_pax_rg_layout(&tags_off));
+
+        // Unrecognized tag value falls through to the kill-switch env.
+        let tags_bad = ["pax_rg_layout:maybe".to_string()];
+        assert!(!resolve_pax_rg_layout(&tags_bad));
+
+        // And with the env removed the default-ON holds.
+        unsafe { std::env::remove_var(ENV) };
+        assert!(resolve_pax_rg_layout(&tags_on));
+        assert!(resolve_pax_rg_layout(&[]));
+        assert!(rg_layout_enabled());
     }
 }

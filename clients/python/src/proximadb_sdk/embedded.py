@@ -836,9 +836,14 @@ class EmbeddedProximaDB:
         self._started = False
         self._collections: dict[str, EmbeddedCollection] = {}
         self._lock = threading.Lock()
+        self._instance_id = uuid.uuid4().hex
 
         # Resolve data directory
         self._data_dir = Path(self.config.data_dir).expanduser()
+        self._config_path = self._data_dir / f"embedded-{self._instance_id}.toml"
+        self._server_log_path = (
+            self._data_dir / f"embedded-server-{self._instance_id}.log"
+        )
         self._socket_dir = self._resolve_socket_dir()
 
     @property
@@ -1031,14 +1036,13 @@ class EmbeddedProximaDB:
 
     def _generate_config(self) -> str:
         """Generate TOML config for embedded mode."""
-        config_path = self._data_dir / "embedded-config.toml"
         self._data_dir.mkdir(parents=True, exist_ok=True)
 
         config_content = f"""# ProximaDB Embedded Mode Configuration
 # Auto-generated - do not edit manually
 
 [server]
-node_id = "embedded-node"
+node_id = "embedded-{self._instance_id}"
 bind_address = "127.0.0.1"
 port = {self.config.rest_port}
 data_dir = "{self._toml_string(self._data_dir)}"
@@ -1091,8 +1095,8 @@ engine = "{self.config.graph_engine}"
 enable_prefetch = true
 prefetch_budget = 4
 """
-        config_path.write_text(config_content)
-        return str(config_path)
+        self._config_path.write_text(config_content)
+        return str(self._config_path)
 
     async def start(self, timeout: float | None = None) -> None:
         """Start the embedded database.
@@ -1159,6 +1163,10 @@ prefetch_budget = 4
             child_env = dict(os.environ)
             child_env.setdefault("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE", "1")
             child_env.setdefault("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "8")
+            child_env.setdefault(
+                "PROXIMADB_CORPUS_VERSION_PATH",
+                str(self._data_dir / "corpus-versions.json"),
+            )
             # Own the child's lifetime. It is spawned setsid (its own process
             # group) so it survives our exit — which is how orphaned servers
             # accumulated and kept rewriting data dirs callers believed they
@@ -1166,13 +1174,23 @@ prefetch_budget = 4
             # spawn time makes ownership symmetric with the runtime-state
             # record the server writes.
             _register_owned_server(self)
-            self._process = subprocess.Popen(
-                [binary, "--config", config_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                preexec_fn=os.setsid if hasattr(os, "setsid") else None,
-                env=child_env,
-            )
+            self._data_dir.mkdir(parents=True, exist_ok=True)
+            # PIPEs without a reader eventually fill and stop the server. Keep
+            # launch-specific diagnostics in a file instead; this also prevents
+            # concurrent launch attempts from mixing output.
+            with self._server_log_path.open("ab") as server_log:
+                self._process = subprocess.Popen(
+                    [binary, "--config", config_path],
+                    stdout=server_log,
+                    stderr=subprocess.STDOUT,
+                    # The server's tracing appender uses a relative `logs/`
+                    # directory. Embedded mode owns the child environment, so
+                    # never let that path depend on the caller's cwd (which may
+                    # be read-only, deleted, or shared with another instance).
+                    cwd=str(self._data_dir),
+                    preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+                    env=child_env,
+                )
 
             # Wait for readiness. The server publishes a lifecycle record
             # (pid + phase + heartbeat) BEFORE recovery, precisely because
@@ -1198,33 +1216,34 @@ prefetch_budget = 4
             while time.time() - start_time < ceiling:
                 exit_code = self._process.poll() if self._process else None
                 if exit_code is not None:
-                    # Died during startup: surface it immediately instead of
-                    # polling a socket that will never appear.
-                    stderr_tail = ""
+                    log_tail = ""
                     try:
-                        if self._process is not None and self._process.stderr:
-                            stderr_tail = self._process.stderr.read().decode(
-                                "utf-8", "replace"
-                            )[-2000:]
+                        log_tail = self._server_log_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )[-2000:]
                     except Exception:
                         pass
                     self._process = None
+                    self._remove_generated_config()
                     raise RuntimeError(
                         "ProximaDB server exited during startup with status "
-                        f"{exit_code}. {stderr_tail}"
+                        f"{exit_code}. Server log: {self._server_log_path}. {log_tail}"
                     )
 
+                state = read_runtime_state(self._data_dir)
                 try:
                     with self._sync_http_client(timeout=1.0) as client:
                         response = client.get(f"{self.rest_url}/health")
-                    if response.status_code == 200:
+                    if response.status_code == 200 and self._state_belongs_to_child(
+                        state
+                    ):
                         self._started = True
+                        self._remove_generated_config()
                         return
                 except Exception:
                     pass
 
                 # No socket yet — consult the lifecycle record.
-                state = read_runtime_state(self._data_dir)
                 if state is not None:
                     phase = state.get("phase")
                     heartbeat = float(state.get("updated_at_ms") or 0)
@@ -1252,8 +1271,25 @@ prefetch_budget = 4
             raise TimeoutError(
                 f"ProximaDB failed to start within {ceiling:.0f}s "
                 f"(last phase: {last_phase or 'unknown'}, "
-                f"stalled {time.time() - last_progress_at:.0f}s)."
+                f"stalled {time.time() - last_progress_at:.0f}s). "
+                f"Server log: {self._server_log_path}"
             )
+
+    def _state_belongs_to_child(self, state: dict[str, Any] | None) -> bool:
+        """Prove the healthy endpoint is the subprocess this object owns."""
+        if self._process is None or state is None:
+            return False
+        try:
+            return int(state.get("pid")) == self._process.pid
+        except (TypeError, ValueError):
+            return False
+
+    def _remove_generated_config(self) -> None:
+        """Remove launch-only configuration without masking the real result."""
+        try:
+            self._config_path.unlink(missing_ok=True)
+        except OSError:
+            logger.debug("could not remove generated config", exc_info=True)
 
     def _kill_process(self) -> None:
         """Kill the server process."""
@@ -1270,6 +1306,8 @@ prefetch_budget = 4
                 else:
                     self._process.kill()
             self._process = None
+
+        self._remove_generated_config()
 
         # Cleanup: remove the fallback tmpdir (pxdb-*) when we created one.
         # The data_dir/sockets/ path is left behind for reuse/restart.

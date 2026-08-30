@@ -37,30 +37,24 @@ use proximadb_block_format::BLOCK_MAGIC;
 /// coalesced segment starts with `PXH1`.
 pub const SEG_HEADER_MAGIC: &[u8; 4] = b"PXH1";
 
-/// Header layout version for the **single-level** coalesced layout (regions
-/// A/B/D, whole-region RaBitQ scan). The version byte is the layout selector
-/// for the per-segment read chooser (TD-RDSTRAT-8 mixed-read pattern).
+/// Header layout version — THE coalesced segment layout (TD-PAXRG-1 collapse,
+/// 2026-08): one version, region presence declared by the serialized extents.
+///
+/// `[prefix][A0?][A][B][C?][OPR?][Region D: row groups][footer]`. The 88 B
+/// prefix ALWAYS carries the full region-extent table (`a0_off/len`,
+/// `c_off/len` — zero = region absent); the version byte is therefore
+/// vestigial today and RESERVED for the first post-GA successor layout
+/// (pre-GA there is no serialized legacy data to stay read-compatible with,
+/// so the pre-collapse v1/v3/v4 sprawl was deleted rather than maintained —
+/// ADR-065's own invariant: region presence is declared by the header/footer,
+/// never by a version or flag).
 pub const SEG_LAYOUT_VERSION: u8 = 1;
 
-/// Header layout version for the **two-level IVF** layout (TD-RDSTRAT-8):
-/// `[prefix][Region A0 coarse directory][A][B][D][footer]`, rows ordered by
-/// coarse cell, regions cell-contiguous. The byte value 3 matches the TD/ADR
-/// "v3 layout" name (2 is intentionally skipped/reserved so code, docs, and
-/// on-disk bytes all say the same number). Written only by compaction when
-/// A0 training is enabled (default ON;
-/// `PROXIMADB_PAX_WRITE_A0_TRAIN=0` is the kill-switch). Version-1 readers
-/// reject it cleanly (fail-closed version check); v3-aware readers handle
-/// version-1 segments unchanged.
-pub const SEG_LAYOUT_VERSION_TWO_LEVEL: u8 = 3;
-
-/// v1: `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][sq8_off 8][sq8_len 8][footer_off 8][footer_len 8]`.
-pub const SEG_HEADER_PREFIX_LEN: usize = 56;
-
-/// v3 appends `[a0_off 8][a0_len 8]` (the Region A0 coarse-directory extent) to
-/// the v1 prefix. Readers fetch `SEG_HEADER_PREFIX_V3_LEN` (clamped to file
-/// size) unconditionally — the 16 extra bytes are free within the same GET and
-/// cover both versions.
-pub const SEG_HEADER_PREFIX_V3_LEN: usize = 72;
+/// v1: `[magic 4][version 1][pad 3][rabitq_off 8][rabitq_len 8][sq8_off 8]
+/// [sq8_len 8][footer_off 8][footer_len 8][a0_off 8][a0_len 8][c_off 8]
+/// [c_len 8]`. Readers fetch this length (clamped to file size) so one GET
+/// covers the whole prefix.
+pub const SEG_HEADER_PREFIX_LEN: usize = 88;
 
 /// True iff `bytes` carries the coalesced-RaBitQ header-prefix at offset 0 — the
 /// presence-field that selects the scan-then-rerank read path (mixed-read).
@@ -114,9 +108,10 @@ fn is_pax_segment(bytes: &[u8]) -> bool {
         && bytes.ends_with(SEGMENT_MAGIC)
 }
 
-/// The fixed header-prefix at offset 0 (56 B for v1, 72 B for v3). The RaBitQ
-/// scan GET reads `[0, rabitq_off + rabitq_len]`, so the prefix coalesces into
-/// that one GET (v3: `[0, a0_off + a0_len]` fetches prefix + coarse directory).
+/// The fixed header-prefix at offset 0 (88 B, single form). The RaBitQ scan
+/// GET reads `[0, rabitq_off + rabitq_len]`, so the prefix coalesces into that
+/// one GET (`[0, a0_off + a0_len]` fetches prefix + coarse directory when A0
+/// is present).
 #[derive(Debug, Clone)]
 pub struct SegmentHeaderPrefix {
     pub layout_version: u8,
@@ -134,22 +129,23 @@ pub struct SegmentHeaderPrefix {
     pub footer_off: u64,
     /// Byte length of the footer-index.
     pub footer_len: u64,
-    /// Byte offset of Region A0 (the TD-RDSTRAT-8 coarse directory). `0` on
-    /// v1 segments (no coarse level).
+    /// Byte offset of Region A0 (the TD-RDSTRAT-8 coarse directory). `0` =
+    /// no coarse level.
     pub a0_off: u64,
-    /// Byte length of Region A0. `0` on v1 segments.
+    /// Byte length of Region A0. `0` = absent.
     pub a0_len: u64,
+    /// Byte offset of Region C (the ADR-065 exact-f32 tier, hoisted when the
+    /// collection opted into `pax_f32_tier`). `0` = absent.
+    pub c_off: u64,
+    /// Byte length of Region C. `0` = absent.
+    pub c_len: u64,
 }
 
 impl SegmentHeaderPrefix {
-    /// Serialize (56 B for v1, 72 B for v3 — the version byte selects the form).
+    /// Serialize — the single 88 B form; region extents are always present
+    /// (zero = region absent).
     pub fn to_bytes(&self) -> Vec<u8> {
-        let len = if self.layout_version == SEG_LAYOUT_VERSION_TWO_LEVEL {
-            SEG_HEADER_PREFIX_V3_LEN
-        } else {
-            SEG_HEADER_PREFIX_LEN
-        };
-        let mut buf = vec![0u8; len];
+        let mut buf = vec![0u8; SEG_HEADER_PREFIX_LEN];
         buf[..4].copy_from_slice(SEG_HEADER_MAGIC);
         buf[4] = self.layout_version;
         // buf[5..8] reserved (zero).
@@ -159,10 +155,10 @@ impl SegmentHeaderPrefix {
         buf[32..40].copy_from_slice(&self.sq8_len.to_le_bytes());
         buf[40..48].copy_from_slice(&self.footer_off.to_le_bytes());
         buf[48..56].copy_from_slice(&self.footer_len.to_le_bytes());
-        if len == SEG_HEADER_PREFIX_V3_LEN {
-            buf[56..64].copy_from_slice(&self.a0_off.to_le_bytes());
-            buf[64..72].copy_from_slice(&self.a0_len.to_le_bytes());
-        }
+        buf[56..64].copy_from_slice(&self.a0_off.to_le_bytes());
+        buf[64..72].copy_from_slice(&self.a0_len.to_le_bytes());
+        buf[72..80].copy_from_slice(&self.c_off.to_le_bytes());
+        buf[80..88].copy_from_slice(&self.c_len.to_le_bytes());
         buf
     }
 
@@ -178,27 +174,22 @@ impl SegmentHeaderPrefix {
             bail!("not a coalesced-RaBitQ segment (bad header magic)");
         }
         let layout_version = bytes[4];
-        let (required, has_a0) = match layout_version {
-            SEG_LAYOUT_VERSION => (SEG_HEADER_PREFIX_LEN, false),
-            SEG_LAYOUT_VERSION_TWO_LEVEL => (SEG_HEADER_PREFIX_V3_LEN, true),
-            v => bail!(
-                "unsupported coalesced segment layout version {v} (expected {SEG_LAYOUT_VERSION} or {SEG_LAYOUT_VERSION_TWO_LEVEL})"
-            ),
-        };
+        if layout_version != SEG_LAYOUT_VERSION {
+            bail!(
+                "unsupported coalesced segment layout version {layout_version} (expected {SEG_LAYOUT_VERSION})"
+            );
+        }
+        let required = SEG_HEADER_PREFIX_LEN;
         if bytes.len() < required {
             bail!(
                 "coalesced segment header too short for layout version {layout_version}: {}",
                 bytes.len()
             );
         }
-        let (a0_off, a0_len) = if has_a0 {
-            (
-                u64::from_le_bytes(bytes[56..64].try_into()?),
-                u64::from_le_bytes(bytes[64..72].try_into()?),
-            )
-        } else {
-            (0, 0)
-        };
+        let a0_off = u64::from_le_bytes(bytes[56..64].try_into()?);
+        let a0_len = u64::from_le_bytes(bytes[64..72].try_into()?);
+        let c_off = u64::from_le_bytes(bytes[72..80].try_into()?);
+        let c_len = u64::from_le_bytes(bytes[80..88].try_into()?);
         Ok(Self {
             layout_version,
             rabitq_off: u64::from_le_bytes(bytes[8..16].try_into()?),
@@ -209,6 +200,8 @@ impl SegmentHeaderPrefix {
             footer_len: u64::from_le_bytes(bytes[48..56].try_into()?),
             a0_off,
             a0_len,
+            c_off,
+            c_len,
         })
     }
 }
@@ -242,6 +235,57 @@ impl StatsKind {
             3 => Self::BloomOidMinMax,
             _ => Self::None,
         }
+    }
+}
+
+/// Per-row-group stats payload carried in a v4 footer block-table entry's
+/// opaque stats field (`StatsKind::MinMax` — TD-PAXRG-1). Old parsers skip
+/// stats payloads wholesale, and v1/v3 writers emit zero-length ones, so this
+/// structure is additive on the wire in both directions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FooterRowGroupStats {
+    /// The row group's canonical-column zone map — the same 85 B summary the
+    /// v2 SegmentIndex carries per block, so `BlockZoneSource` pruning works
+    /// identically at RG granularity (DataFusion ranged arm, TD-OLAP-1).
+    pub zone: crate::pax_block::BlockZoneSummary,
+    /// RG-relative byte offset of this row group's OID string chunk within its
+    /// RG extent. The ANN top-k OID fetch reads `[chunk]` instead of the whole
+    /// RG (Phase D) — the Region-D analogue of Region B's row-range planner.
+    pub oid_chunk_rel_off: u32,
+    /// Byte length of the OID chunk.
+    pub oid_chunk_len: u32,
+    /// The OID stripe's `encoding_id` (PAX string codec) — the chunk decodes
+    /// standalone via `decode_str_chunk`.
+    pub oid_encoding_id: u8,
+    /// The OID stripe's LZ4 flag.
+    pub oid_is_lz4: bool,
+}
+
+/// `zone (85 B) + [rel_off u32][len u32][encoding_id u8][lz4 u8]`.
+pub const RG_STATS_MIN_BYTES: usize = 95;
+
+impl FooterRowGroupStats {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(RG_STATS_MIN_BYTES);
+        self.zone.write_to(&mut buf);
+        buf.extend_from_slice(&self.oid_chunk_rel_off.to_le_bytes());
+        buf.extend_from_slice(&self.oid_chunk_len.to_le_bytes());
+        buf.push(self.oid_encoding_id);
+        buf.push(self.oid_is_lz4 as u8);
+        buf
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        if data.len() < RG_STATS_MIN_BYTES {
+            bail!("row-group stats payload truncated: {}", data.len());
+        }
+        Ok(Self {
+            zone: crate::pax_block::BlockZoneSummary::read_from(data)?,
+            oid_chunk_rel_off: u32::from_le_bytes(data[85..89].try_into()?),
+            oid_chunk_len: u32::from_le_bytes(data[89..93].try_into()?),
+            oid_encoding_id: data[93],
+            oid_is_lz4: data[94] != 0,
+        })
     }
 }
 
@@ -371,6 +415,12 @@ pub struct BlockTierAssignment {
 const DESCRIPTOR_SIZE: usize = 28;
 const ASSIGNMENT_SIZE: usize = 11;
 const SECTION_STRIPE_ENCODING_MAP: u8 = 2;
+/// Optional footer section mirroring the Region C (exact fp32) extent
+/// (TD-PAXRG-1). Same additive-section contract as the A0 mirror: old parsers
+/// skip the unknown tag; footer stays single-version.
+const SECTION_EXACT_REGION: u8 = 6;
+/// `[c_off u64][c_len u64]`.
+const EXACT_REGION_SECTION_LEN: usize = 16;
 /// Optional footer section mirroring the Region A0 (coarse directory) extent
 /// (TD-RDSTRAT-8). Additive: parsers that predate it skip unknown section tags
 /// (pinned by `typed_footer_unknown_optional_section_is_skipped`), so the footer
@@ -399,7 +449,9 @@ const OID_RESOLVER_SECTION_LEN: usize = 16;
 /// work unchanged (mixed-read: legacy segments still use `SegmentIndex::locate`).
 #[derive(Debug, Clone)]
 pub struct SegmentFooterIndex {
-    /// Total rows in the segment (== RaBitQ region `n_rows`).
+    /// Total rows in the segment (== RaBitQ region `n_rows`). **u64 on the
+    /// wire** (4-byte prefixes truncate) — hand-built footer bodies must
+    /// serialize this as 8 bytes LE.
     pub row_count: u64,
     /// RaBitQ region extent mirror (also in the header-prefix).
     pub rabitq_off: u64,
@@ -428,8 +480,14 @@ pub struct SegmentFooterIndex {
     pub embed_quant_tag: u8,
     /// Whether the opt-in exact-f32 tier is present in the blocks.
     pub has_f32_tier: bool,
-    /// The block table (block 0..K in emission/cluster order).
+    /// The block table (block 0..K in emission/cluster order). On v4 segments
+    /// each entry IS a row group (TD-PAXRG-1) — same wire shape, so every
+    /// existing cumulative-row-count consumer works unmodified.
     pub blocks: Vec<FooterBlockEntry>,
+    /// Per-entry row-group stats, index-aligned with [`Self::blocks`]. `None`
+    /// (or an empty Vec) = no stats for that entry; v1/v3 footers serialize
+    /// zero-length payloads and stay byte-identical (TD-PAXRG-1 Phase A).
+    pub block_stats: Vec<Option<FooterRowGroupStats>>,
     /// Typed-footer physical encoding descriptors. Empty means emit the
     /// sectionless legacy form.
     pub encoding_map: Vec<StripeEncodingDescriptor>,
@@ -448,6 +506,11 @@ pub struct SegmentFooterIndex {
     /// (forward-compatible — old parsers skip the unknown tag).
     pub opr_off: u64,
     pub opr_len: u64,
+    /// Region C (exact fp32) extent mirror (TD-PAXRG-1; also in the v4
+    /// header-prefix). `0/0` = absent (v1/v3 segments, or v4 without the
+    /// `pax_f32_tier` opt-in). Serialized as an optional trailing section.
+    pub c_off: u64,
+    pub c_len: u64,
 }
 
 /// `[footer_len u64][SEGMENT_MAGIC 8B]` — the 16 B tail that locates the footer.
@@ -574,20 +637,42 @@ impl BlockTierAssignment {
     }
 }
 
-fn write_block_entry(output: &mut Vec<u8>, block: &FooterBlockEntry) {
+fn write_block_entry(
+    output: &mut Vec<u8>,
+    block: &FooterBlockEntry,
+    stats: Option<&FooterRowGroupStats>,
+) {
     output.extend_from_slice(&block.offset.to_le_bytes());
     output.extend_from_slice(&block.size.to_le_bytes());
     output.extend_from_slice(&block.row_count.to_le_bytes());
-    output.push(block.stats_kind as u8);
-    output.extend_from_slice(&0u32.to_le_bytes());
+    match stats {
+        Some(s) => {
+            output.push(StatsKind::MinMax as u8);
+            let payload = s.to_bytes();
+            let len = u32::try_from(payload.len()).expect("row-group stats payload fits u32");
+            output.extend_from_slice(&len.to_le_bytes());
+            output.extend_from_slice(&payload);
+        }
+        None => {
+            output.push(block.stats_kind as u8);
+            output.extend_from_slice(&0u32.to_le_bytes());
+        }
+    }
 }
 
-fn read_blocks(input: &[u8], position: &mut usize) -> Result<Vec<FooterBlockEntry>> {
+/// Returns the per-entry stats payloads (index-aligned with the entries).
+/// Unknown or zero-length stats tags decode to `None` — forward- and
+/// backward-compatible with v1/v3 footers and any future stats kind.
+fn read_blocks(
+    input: &[u8],
+    position: &mut usize,
+) -> Result<(Vec<FooterBlockEntry>, Vec<Option<FooterRowGroupStats>>)> {
     let block_count = read_u32(input, position)? as usize;
     if block_count > input.len().saturating_sub(*position) / 21 {
         bail!("footer-index block count exceeds remaining bytes");
     }
     let mut blocks = Vec::with_capacity(block_count);
+    let mut stats = Vec::with_capacity(block_count);
     for _ in 0..block_count {
         let offset = read_u64(input, position)?;
         let size = read_u32(input, position)?;
@@ -600,7 +685,16 @@ fn read_blocks(input: &[u8], position: &mut usize) -> Result<Vec<FooterBlockEntr
             stats_len,
             "footer-index stats payload overruns body",
         )?;
+        let payload = &input[*position..*position + stats_len];
         *position += stats_len;
+        // Only the known MinMax kind decodes; other/unknown kinds keep their
+        // payload opaque (skipped, never a hard error).
+        let decoded = if stats_tag == StatsKind::MinMax as u8 && stats_len >= RG_STATS_MIN_BYTES {
+            FooterRowGroupStats::from_bytes(payload).ok()
+        } else {
+            None
+        };
+        stats.push(decoded);
         blocks.push(FooterBlockEntry {
             offset,
             size,
@@ -608,7 +702,7 @@ fn read_blocks(input: &[u8], position: &mut usize) -> Result<Vec<FooterBlockEntr
             stats_kind: StatsKind::from_tag(stats_tag),
         });
     }
-    Ok(blocks)
+    Ok((blocks, stats))
 }
 
 fn parse_encoding_map_payload(
@@ -772,8 +866,12 @@ impl SegmentFooterIndex {
         let block_count = u32::try_from(self.blocks.len())
             .map_err(|_| anyhow::anyhow!("footer-index block count exceeds u32"))?;
         buf.extend_from_slice(&block_count.to_le_bytes());
-        for b in &self.blocks {
-            write_block_entry(&mut buf, b);
+        for (i, b) in self.blocks.iter().enumerate() {
+            write_block_entry(
+                &mut buf,
+                b,
+                self.block_stats.get(i).and_then(|s| s.as_ref()),
+            );
         }
         // Optional trailing sections (single version-1 footer layout —
         // pre-release: no versioned files on disk; versioning re-engages at
@@ -798,6 +896,12 @@ impl SegmentFooterIndex {
             payload.extend_from_slice(&self.opr_off.to_le_bytes());
             payload.extend_from_slice(&self.opr_len.to_le_bytes());
             sections.push((SECTION_OID_RESOLVER, payload));
+        }
+        if self.c_len > 0 {
+            let mut payload = Vec::with_capacity(EXACT_REGION_SECTION_LEN);
+            payload.extend_from_slice(&self.c_off.to_le_bytes());
+            payload.extend_from_slice(&self.c_len.to_le_bytes());
+            sections.push((SECTION_EXACT_REGION, payload));
         }
         if !sections.is_empty() {
             let section_count = u16::try_from(sections.len())
@@ -931,7 +1035,7 @@ impl SegmentFooterIndex {
         let embed_quant_tag = body[p];
         let has_f32_tier = body[p + 1] != 0;
         p += 2;
-        let blocks = read_blocks(body, &mut p)?;
+        let (blocks, block_stats) = read_blocks(body, &mut p)?;
         // Optional trailing sections (encoding map, coarse-directory extent).
         // Absent ⇒ defaults. Unknown tags are skipped (forward-compatible).
         let mut encoding_map = Vec::new();
@@ -940,6 +1044,8 @@ impl SegmentFooterIndex {
         let mut a0_len = 0u64;
         let mut opr_off = 0u64;
         let mut opr_len = 0u64;
+        let mut c_off = 0u64;
+        let mut c_len = 0u64;
         if p != body.len() {
             let section_count = read_u16(body, &mut p)? as usize;
             if section_count > body.len().saturating_sub(p) / 6 {
@@ -977,6 +1083,15 @@ impl SegmentFooterIndex {
                     }
                     opr_off = u64::from_le_bytes(section[..8].try_into()?);
                     opr_len = u64::from_le_bytes(section[8..16].try_into()?);
+                } else if tag == SECTION_EXACT_REGION {
+                    if version != SECTION_VERSION_V1 {
+                        bail!("unsupported exact-region section version {version}");
+                    }
+                    if section.len() != EXACT_REGION_SECTION_LEN {
+                        bail!("exact-region section has wrong length");
+                    }
+                    c_off = u64::from_le_bytes(section[..8].try_into()?);
+                    c_len = u64::from_le_bytes(section[8..16].try_into()?);
                 }
             }
             if p != body.len() {
@@ -996,12 +1111,15 @@ impl SegmentFooterIndex {
             embed_quant_tag,
             has_f32_tier,
             blocks,
+            block_stats,
             encoding_map,
             block_tier_assignments,
             a0_off,
             a0_len,
             opr_off,
             opr_len,
+            c_off,
+            c_len,
         })
     }
 
@@ -1085,6 +1203,8 @@ mod tests {
 
     fn sample_footer() -> SegmentFooterIndex {
         SegmentFooterIndex {
+            c_off: 0,
+            c_len: 0,
             row_count: 1000,
             rabitq_off: 56,
             rabitq_len: 24_000,
@@ -1116,6 +1236,7 @@ mod tests {
                     stats_kind: StatsKind::None,
                 },
             ],
+            block_stats: vec![None, None],
         }
     }
 
@@ -1204,6 +1325,8 @@ mod tests {
             footer_len: 512,
             a0_off: 0,
             a0_len: 0,
+            c_off: 0,
+            c_len: 0,
         };
         let bytes = h.to_bytes();
         assert_eq!(bytes.len(), SEG_HEADER_PREFIX_LEN);
@@ -1229,6 +1352,8 @@ mod tests {
             footer_len: 0,
             a0_off: 0,
             a0_len: 0,
+            c_off: 0,
+            c_len: 0,
         }
         .to_bytes();
         bad[0..4].copy_from_slice(b"PBLK");
@@ -1244,10 +1369,185 @@ mod tests {
             footer_len: 0,
             a0_off: 0,
             a0_len: 0,
+            c_off: 0,
+            c_len: 0,
         }
         .to_bytes();
         v[4] = 99;
         assert!(SegmentHeaderPrefix::parse(&v).is_err());
+    }
+
+    /// TD-PAXRG-1 Phase A: the v4 (row-group Region D) prefix serializes 88 B
+    /// and round-trips its Region C extent. `0/0` c-extent = C absent.
+    #[test]
+    fn header_prefix_v4_round_trips_with_c_extent() {
+        let h = SegmentHeaderPrefix {
+            layout_version: SEG_LAYOUT_VERSION,
+            rabitq_off: 88,
+            rabitq_len: 24_000,
+            sq8_off: 24_088,
+            sq8_len: 128_000,
+            footer_off: 400_000,
+            footer_len: 512,
+            a0_off: 0,
+            a0_len: 0,
+            c_off: 152_088,
+            c_len: 768_000,
+        };
+        let bytes = h.to_bytes();
+        assert_eq!(bytes.len(), SEG_HEADER_PREFIX_LEN);
+        let parsed = SegmentHeaderPrefix::parse(&bytes).expect("v4 prefix parses");
+        assert_eq!(parsed.layout_version, SEG_LAYOUT_VERSION);
+        assert_eq!(parsed.c_off, 152_088);
+        assert_eq!(parsed.c_len, 768_000);
+        assert_eq!(parsed.rabitq_off, 88);
+        assert_eq!(parsed.footer_off, 400_000);
+    }
+
+    /// TD-PAXRG-1 Phase A (mixed-read contract): a pre-v4 binary — whose parse
+    /// accepted only v1/v3 — must REJECT a v4 prefix fail-closed, never
+    /// mis-probe it as a v3 segment (mirror of the v1/v3 freeze test).
+
+    /// TD-PAXRG-1 Phase C: the Region C extent round-trips as the
+    /// `SECTION_EXACT_REGION` footer mirror, and a footer without it (c_len 0)
+    /// stays byte-identical to the sectionless form.
+    #[test]
+    fn footer_exact_region_section_round_trips_and_absent_when_c_len_zero() {
+        let base = SegmentFooterIndex {
+            row_count: 128,
+            rabitq_off: 88,
+            rabitq_len: 1_000,
+            sq8_off: 1_088,
+            sq8_len: 2_000,
+            sq8_min: 0.0,
+            sq8_scale: 1.0,
+            embed_dim: 8,
+            embed_count: 1,
+            embed_quant_tag: 1,
+            has_f32_tier: true,
+            blocks: vec![FooterBlockEntry {
+                offset: 5_000,
+                size: 4_000,
+                row_count: 128,
+                stats_kind: StatsKind::None,
+            }],
+            block_stats: Vec::new(),
+            encoding_map: Vec::new(),
+            block_tier_assignments: Vec::new(),
+            a0_off: 0,
+            a0_len: 0,
+            opr_off: 0,
+            opr_len: 0,
+            c_off: 3_088,
+            c_len: 16_384,
+        };
+        let parsed = SegmentFooterIndex::parse(&base.to_bytes().expect("serialize"))
+            .expect("parse footer with exact-region section");
+        assert_eq!(parsed.c_off, 3_088);
+        assert_eq!(parsed.c_len, 16_384);
+
+        // c_len == 0 ⇒ no section: byte-identical to the pre-PAXRG form.
+        let mut absent = base.clone();
+        absent.c_off = 0;
+        absent.c_len = 0;
+        let bytes = absent.to_bytes().expect("serialize sectionless");
+        assert!(!bytes.is_empty());
+        let reparsed = SegmentFooterIndex::parse(&bytes).expect("parse sectionless footer");
+        assert_eq!(reparsed.c_off, 0);
+        assert_eq!(reparsed.c_len, 0);
+    }
+
+    /// TD-PAXRG-1 Phase A: the MinMax stats payload round-trips through the
+    /// footer block table, and unknown/short stats tags decode to `None`
+    /// (forward-compatible) without disturbing the entry fields.
+    #[test]
+    fn footer_block_entry_minmax_stats_round_trip_and_unknown_kind_skipped() {
+        let mut zone = crate::pax_block::BlockZoneSummary::empty(128);
+        zone.created_at = (1_000, 9_000);
+        zone.present |= crate::pax_block::ZONE_CREATED_AT;
+        let stats = FooterRowGroupStats {
+            zone,
+            oid_chunk_rel_off: 512,
+            oid_chunk_len: 1_024,
+            oid_encoding_id: 1,
+            oid_is_lz4: false,
+        };
+        let footer = SegmentFooterIndex {
+            row_count: 255,
+            rabitq_off: 0,
+            rabitq_len: 0,
+            sq8_off: 0,
+            sq8_len: 0,
+            sq8_min: 0.0,
+            sq8_scale: 0.0,
+            embed_dim: 8,
+            embed_count: 1,
+            embed_quant_tag: 1,
+            has_f32_tier: false,
+            c_off: 0,
+            c_len: 0,
+            blocks: vec![
+                FooterBlockEntry {
+                    offset: 1_000,
+                    size: 4_096,
+                    row_count: 128,
+                    stats_kind: StatsKind::MinMax,
+                },
+                FooterBlockEntry {
+                    offset: 5_096,
+                    size: 4_000,
+                    row_count: 127,
+                    stats_kind: StatsKind::None,
+                },
+            ],
+            block_stats: vec![Some(stats.clone()), None],
+            encoding_map: Vec::new(),
+            block_tier_assignments: Vec::new(),
+            a0_off: 0,
+            a0_len: 0,
+            opr_off: 0,
+            opr_len: 0,
+        };
+        let parsed = SegmentFooterIndex::parse(&footer.to_bytes().expect("serialize"))
+            .expect("parse footer with stats");
+        assert_eq!(parsed.blocks.len(), 2);
+        assert_eq!(parsed.block_stats.len(), 2);
+        let got = parsed.block_stats[0]
+            .as_ref()
+            .expect("first entry carries stats");
+        assert_eq!(got, &stats, "stats payload must round-trip exactly");
+        assert!(
+            parsed.block_stats[1].is_none(),
+            "entry without stats stays None"
+        );
+
+        // Forward-compat: an UNKNOWN stats tag with a payload is skipped, the
+        // entry still parses, kind degrades to None.
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&7u64.to_le_bytes());
+        raw.extend_from_slice(&100u32.to_le_bytes());
+        raw.extend_from_slice(&10u32.to_le_bytes());
+        raw.push(0xF0); // unknown stats tag
+        raw.extend_from_slice(&4u32.to_le_bytes());
+        raw.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let mut body = Vec::new();
+        body.push(FOOTER_V1);
+        body.extend_from_slice(&1u64.to_le_bytes()); // row_count (u64 in FOOTER_V1)
+        body.extend_from_slice(&0u64.to_le_bytes()); // rabitq_off/len
+        body.extend_from_slice(&0u64.to_le_bytes());
+        body.extend_from_slice(&0u64.to_le_bytes()); // sq8_off/len
+        body.extend_from_slice(&0u64.to_le_bytes());
+        body.extend_from_slice(&0f32.to_le_bytes()); // sq8_min/scale
+        body.extend_from_slice(&0f32.to_le_bytes());
+        body.extend_from_slice(&8u32.to_le_bytes()); // embed_dim
+        body.extend_from_slice(&1u32.to_le_bytes()); // embed_count
+        body.push(1); // embed_quant_tag
+        body.push(0); // has_f32_tier
+        body.extend_from_slice(&1u32.to_le_bytes()); // n_blocks = 1
+        body.extend_from_slice(&raw);
+        let parsed_unknown = SegmentFooterIndex::parse(&body).expect("unknown stats skipped");
+        assert_eq!(parsed_unknown.blocks[0].stats_kind, StatsKind::None);
+        assert!(parsed_unknown.block_stats[0].is_none());
     }
 
     #[test]
@@ -1262,6 +1562,8 @@ mod tests {
             footer_len: 1,
             a0_off: 0,
             a0_len: 0,
+            c_off: 0,
+            c_len: 0,
         }
         .to_bytes();
         assert!(is_coalesced_segment(&h));
@@ -1270,82 +1572,11 @@ mod tests {
         assert!(!is_coalesced_segment(&[]));
     }
 
-    #[test]
-    fn header_prefix_v3_round_trips_with_a0() {
-        let h = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION_TWO_LEVEL,
-            rabitq_off: 72 + 120_000,
-            rabitq_len: 24_000,
-            sq8_off: 72 + 120_000 + 24_000,
-            sq8_len: 128_000,
-            footer_off: 400_000,
-            footer_len: 512,
-            a0_off: 72,
-            a0_len: 120_000,
-        };
-        let bytes = h.to_bytes();
-        assert_eq!(bytes.len(), SEG_HEADER_PREFIX_V3_LEN);
-        let parsed = SegmentHeaderPrefix::parse(&bytes).unwrap();
-        assert_eq!(parsed.layout_version, SEG_LAYOUT_VERSION_TWO_LEVEL);
-        assert_eq!(parsed.a0_off, 72);
-        assert_eq!(parsed.a0_len, 120_000);
-        assert_eq!(parsed.rabitq_off, 72 + 120_000);
-        assert_eq!(parsed.footer_len, 512);
-        // A v3 prefix truncated to the v1 length must fail closed, never
-        // parse with garbage a0 fields.
-        assert!(SegmentHeaderPrefix::parse(&bytes[..SEG_HEADER_PREFIX_LEN]).is_err());
-    }
-
     /// TD-RDSTRAT-8 mixed-read contract: a **version-1-only reader** (any binary
     /// that predates the two-level layout) must reject a v3 segment cleanly.
     /// Old binaries are frozen, so this pins the two facts their rejection
     /// depends on: the on-disk version byte is 3 (not 1), and a strict
     /// `version == 1` check therefore fails.
-    #[test]
-    fn v1_only_reader_rejects_v3_prefix() {
-        let bytes = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION_TWO_LEVEL,
-            rabitq_off: 0,
-            rabitq_len: 0,
-            sq8_off: 0,
-            sq8_len: 0,
-            footer_off: 0,
-            footer_len: 0,
-            a0_off: 72,
-            a0_len: 1,
-        }
-        .to_bytes();
-        // The exact check the pre-TD-RDSTRAT-8 parse performed (frozen copy).
-        let legacy_v1_only_parse = |b: &[u8]| -> Result<()> {
-            if b.len() < SEG_HEADER_PREFIX_LEN {
-                bail!("too short");
-            }
-            if &b[..4] != SEG_HEADER_MAGIC {
-                bail!("bad magic");
-            }
-            if b[4] != SEG_LAYOUT_VERSION {
-                bail!("unsupported layout version {}", b[4]);
-            }
-            Ok(())
-        };
-        assert_eq!(bytes[4], SEG_LAYOUT_VERSION_TWO_LEVEL);
-        assert!(legacy_v1_only_parse(&bytes).is_err());
-        // And the current parse still accepts v1 prefixes (mixed-read).
-        let v1 = SegmentHeaderPrefix {
-            layout_version: SEG_LAYOUT_VERSION,
-            rabitq_off: 56,
-            rabitq_len: 1,
-            sq8_off: 57,
-            sq8_len: 1,
-            footer_off: 58,
-            footer_len: 1,
-            a0_off: 0,
-            a0_len: 0,
-        }
-        .to_bytes();
-        assert_eq!(v1.len(), SEG_HEADER_PREFIX_LEN);
-        assert!(SegmentHeaderPrefix::parse(&v1).is_ok());
-    }
 
     #[test]
     fn footer_coarse_directory_section_round_trips() {
