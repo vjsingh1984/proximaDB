@@ -331,9 +331,9 @@ in the Current Matrix stay authoritative for API-level claims. `StorageEngineStr
 | The safe default for adoption and examples.
 
 | VIPER
-| Beta
-| `Viper` variant, factory-reachable, ungated. Columnar Parquet with advanced quantization; analytics-leaning.
-| Selectable per collection; no per-engine conformance ratchet published yet — do not market above Beta by name.
+| Deprecated
+| `Viper` variant, factory-reachable, ungated (stage 1). Columnar Parquet with advanced quantization; analytics-leaning. DEPRECATED per ADR-093 — staged retirement in progress (TD-VIPER-1).
+| Do NOT create new VIPER collections: use SST (default), NOVA (columnar-analytics vector), or the DataFusion/Parquet path (analytics). Existing collections remain readable; retirement follows the Chrono wire-compat pattern (factory error for NEW collections at stage 2, code removal at stage 3).
 
 | HELIX
 | Beta
