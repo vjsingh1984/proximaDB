@@ -53,6 +53,15 @@ use proximadb_storage_ports::FilesystemPort;
 /// every delete" is the anti-pattern a single global lock recreates).
 const DV_STORE_SHARDS: usize = 16;
 
+/// TD-CACHE-10: how long a resident DV serves before `load` re-stats the
+/// shared `.dv` sidecar. Bounds cross-pod staleness (another pod's
+/// `mark_deleted` lands in shared storage; the resident map never saw it)
+/// without any transport — the sidecar is disk-authoritative and replacing
+/// the resident DV with the disk state loses nothing (local marks persist
+/// immediately under the same lock; `mark_deleted` is earliest-generation-
+/// wins idempotent).
+const DV_SIDECAR_RECHECK: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Durable, CAS'd, per-segment store of `VersionedDeletionVector`s, keyed by
 /// segment path — the single external, mutable artifact F3v needs.
 pub struct DeletionVectorStore {
@@ -66,6 +75,9 @@ struct DvEntry {
     /// lock is the CAS today; this version is the surface a future cross-replica
     /// CAS / manifest-reporting keys on (TD-0007).
     version: u64,
+    /// When this entry was loaded/last confirmed against the shared sidecar
+    /// (TD-CACHE-10 staleness re-check).
+    loaded_at: std::time::Instant,
 }
 
 impl DeletionVectorStore {
@@ -156,13 +168,21 @@ impl DeletionVectorStore {
         if !shard.contains_key(segment_path)
             && let Some(dv) = self.load_dv_from_disk(segment_path).await?
         {
-            shard.insert(segment_path.to_string(), DvEntry { dv, version: 0 });
+            shard.insert(
+                segment_path.to_string(),
+                DvEntry {
+                    dv,
+                    version: 0,
+                    loaded_at: std::time::Instant::now(),
+                },
+            );
         }
         let entry = shard
             .entry(segment_path.to_string())
             .or_insert_with(|| DvEntry {
                 dv: VersionedDeletionVector::new(),
                 version: 0,
+                loaded_at: std::time::Instant::now(),
             });
         let newly = entry.dv.mark_deleted(position, generation);
         entry.version = entry.version.wrapping_add(1);
@@ -182,11 +202,30 @@ impl DeletionVectorStore {
     /// per segment before `is_deleted_as_of` probes.
     pub async fn load(&self, segment_path: &str) -> Result<()> {
         let mut shard = self.shard_for(segment_path).write().await;
-        if shard.contains_key(segment_path) {
+        if let Some(entry) = shard.get_mut(segment_path) {
+            // TD-CACHE-10: resident entries older than the recheck window are
+            // re-confirmed against the shared sidecar — another pod's
+            // mark_deleted writes the same `.dv` file, and the resident map
+            // would otherwise never see the new bits.
+            if entry.loaded_at.elapsed() < DV_SIDECAR_RECHECK {
+                return Ok(());
+            }
+            let disk = self.load_dv_from_disk(segment_path).await?;
+            if let Some(dv) = disk {
+                entry.dv = dv;
+            }
+            entry.loaded_at = std::time::Instant::now();
             return Ok(());
         }
         if let Some(dv) = self.load_dv_from_disk(segment_path).await? {
-            shard.insert(segment_path.to_string(), DvEntry { dv, version: 0 });
+            shard.insert(
+                segment_path.to_string(),
+                DvEntry {
+                    dv,
+                    version: 0,
+                    loaded_at: std::time::Instant::now(),
+                },
+            );
         }
         Ok(())
     }
@@ -261,6 +300,57 @@ mod tests {
         let filesystem = crate::test_local_port::local_port::local_port();
         let base = format!("file://{}", temp_dir.path().display());
         (DeletionVectorStore::new(filesystem), temp_dir, base)
+    }
+
+    /// TD-CACHE-10 test hook: age a resident entry past the recheck window
+    /// without sleeping.
+    #[cfg(test)]
+    async fn force_expire(store: &DeletionVectorStore, segment_path: &str) {
+        let mut shard = store.shard_for(segment_path).write().await;
+        if let Some(entry) = shard.get_mut(segment_path) {
+            entry.loaded_at = std::time::Instant::now()
+                .checked_sub(DV_SIDECAR_RECHECK * 2)
+                .unwrap_or_else(std::time::Instant::now);
+        }
+    }
+
+    /// TD-CACHE-10: a cross-pod delete lands in the shared `.dv` sidecar; a
+    /// resident entry must refresh after the recheck window so `is_deleted_
+    /// as_of` sees the other pod's bit. Within the window the old view is
+    /// served (documented bounded staleness).
+    #[tokio::test]
+    async fn sidecar_recheck_sees_cross_pod_deletes_after_ttl() {
+        let (store_a, tmp, base) = make_store().await;
+        let seg = format!("{base}/seg.pax");
+
+        // "Pod A" writes and loads (resident).
+        assert!(store_a.mark_deleted(&seg, 1, 10).await.expect("mark"));
+        store_a.load(&seg).await.expect("load");
+
+        // "Pod B" (fresh store, same shared dir) marks ANOTHER position —
+        // the shared `.dv` sidecar now carries both bits.
+        let filesystem = crate::test_local_port::local_port::local_port();
+        let store_b = DeletionVectorStore::new(filesystem);
+        store_b.load(&seg).await.expect("pod B load");
+        assert!(store_b.mark_deleted(&seg, 2, 20).await.expect("pod B mark"));
+
+        // Pod A within the recheck window: still the old view (bounded
+        // staleness — pos 2 not yet visible).
+        assert!(!store_a.is_deleted_as_of(&seg, 2, 25).await, "within TTL");
+
+        // Pod A past the window: load re-confirms against the sidecar and
+        // the cross-pod bit becomes visible.
+        force_expire(&store_a, &seg).await;
+        store_a.load(&seg).await.expect("re-confirm load");
+        assert!(
+            store_a.is_deleted_as_of(&seg, 2, 25).await,
+            "post-recheck the cross-pod bit is visible"
+        );
+        assert!(
+            store_a.is_deleted_as_of(&seg, 1, 25).await,
+            "own bit unaffected by the refresh"
+        );
+        drop(tmp);
     }
 
     #[tokio::test]

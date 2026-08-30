@@ -101,7 +101,7 @@ pub use header::{
 };
 pub use prune::{BlockZoneSource, FieldToColumn, PruneResult, evaluate_block, evaluate_row_groups};
 pub use ranged::{BlockLayout, MetadataRanges, footer_tail_range, metadata_ranges};
-pub use reader::{PaxBlockReader, RankMetric};
+pub use reader::{PaxBlockReader, RankMetric, decode_str_chunk, decode_str_chunk_checked};
 pub use record::{
     ColumnDescriptor, FlatRow, canonical_columns, col_id, encode_f32_vec_col, encode_i64_col,
     encode_str_col, update_i64_bounds,

@@ -243,7 +243,10 @@ jobs:
       - name: Build ratchet binary
         env:
           CARGO_BUILD_JOBS: "4"
-        run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
+        # --features io-trace: the paired-evidence cohort gate is fail-closed
+        # without it (cache probes no-op ⇒ outcome=unknown ⇒ zero admissible
+        # pairs). Mirrors the ci.yml sift-recall-ratchet contract.
+        run: cargo test --release --features io-trace --test sift_pax_recall_ratchet_test --no-run
       - name: Run SIFT PAX recall ratchet (N=${{ inputs.sift_n || '100000' }})
         env:
           PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
@@ -251,7 +254,7 @@ jobs:
           PROXIMADB_SIFT_QUERIES: "1000"
           PROXIMADB_RECALL_DATASET_REQUIRED: "1"
           PROXIMADB_SIFT_CENTROID_MAX_RECALL_DROP: "0"
-        run: cargo test --release --test sift_pax_recall_ratchet_test -- --nocapture
+        run: cargo test --release --features io-trace --test sift_pax_recall_ratchet_test -- --nocapture
 
   # Validate the object-store access-tier cost lever (TD-168/TD-173) against REAL
   # cloud APIs via emulators — Azurite (Azure), MinIO (S3), fake-gcs (GCP) — the

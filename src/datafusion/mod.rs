@@ -446,3 +446,7 @@ mod tests {
         assert_eq!(config.statistics_cache_ttl_seconds, 60);
     }
 }
+
+// TDD tests for PAX-Native OLAP Scan (TD-OLAP-1)
+#[cfg(test)]
+mod pax_olap_tests;

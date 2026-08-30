@@ -179,6 +179,12 @@ pub struct PaxBlockWriter {
     /// writer in coalesced mode so survivor rerank fetches read dense Region B
     /// instead of dragging the block's full row payload.
     hoist_vector_tier: bool,
+    /// TD-PAXRG-1: suppress the in-block RowGroupBlock sub-index (`rgdir`). Set
+    /// for v4 row-group Region D blocks, where the RG **is** the granule — its
+    /// stats live in the segment footer's per-entry MinMax payload, so an
+    /// in-block sub-index would be redundant framing. `BlockFooter.rgdir_offset`
+    /// serializes 0 (readers already treat 0 as "none").
+    suppress_rgdir: bool,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -244,6 +250,7 @@ impl PaxBlockWriter {
             record_version_stripe: record_version_stripe_enabled(),
             cluster_run_starts: Vec::new(),
             hoist_vector_tier: false,
+            suppress_rgdir: false,
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -342,6 +349,14 @@ impl PaxBlockWriter {
     /// `with_f32_tier`. Set by the segment writer in coalesced mode.
     pub fn with_hoist_vector_tier(mut self, enabled: bool) -> Self {
         self.hoist_vector_tier = enabled;
+        self
+    }
+
+    /// TD-PAXRG-1: suppress the in-block RowGroupBlock sub-index for v4
+    /// row-group Region D blocks (the RG is the granule; its stats live in the
+    /// segment footer). `BlockFooter.rgdir_offset` serializes 0.
+    pub fn with_suppress_rgdir(mut self, enabled: bool) -> Self {
+        self.suppress_rgdir = enabled;
         self
     }
 
@@ -724,14 +739,20 @@ impl PaxBlockWriter {
         };
 
         // ---- Build the RowGroupBlock side region (after the vector params) ----
-        let rg_index = build_row_group_index(
-            n,
-            &self.created_at,
-            &self.updated_at,
-            &self.valid_from,
-            &self.valid_to,
-            &self.edge_weight,
-        );
+        // TD-PAXRG-1: suppressed entirely for v4 row-group Region D blocks —
+        // the RG is the granule and its stats live in the segment footer.
+        let rg_index = if self.suppress_rgdir {
+            RowGroupBlock::default()
+        } else {
+            build_row_group_index(
+                n,
+                &self.created_at,
+                &self.updated_at,
+                &self.valid_from,
+                &self.valid_to,
+                &self.edge_weight,
+            )
+        };
         let vparam_end =
             col_footer_offset + col_footer_bytes.len() as u32 + vparam_bytes.len() as u32;
         let (rgdir_bytes, rgdir_offset) = if rg_index.is_empty() {
