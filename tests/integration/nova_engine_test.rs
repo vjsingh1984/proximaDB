@@ -3,14 +3,19 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use proximadb::proto::proximadb_v1::{Collection, DistanceMetric, StorageEngine};
+use proximadb::proto::proximadb_v1::{
+    Collection, DistanceMetric, FilterableDataType, StorageEngine,
+};
 use proximadb::services::collection::manager::CollectionService;
 use proximadb::services::operations::vectors::VectorOperationsService;
 use proximadb::storage::engines::nova::NovaEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine, UnifiedStorageFormat};
-use proximadb_records::{EmbeddingCell, EmbeddingValues, LabelSet, ProximaRecord, ProximaTree};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{
+    EmbeddingCell, EmbeddingValues, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode,
+};
 use std::collections::HashMap;
 
 // Import test utilities
@@ -594,5 +599,165 @@ async fn test_nova_vector_by_id_filters_ttl_expired_and_returns_live() {
             .unwrap()
             .is_some(),
         "a record with no valid_to_ns must be returned"
+    );
+}
+
+#[tokio::test]
+async fn test_nova_vector_by_id_preserves_metadata_types_and_origin() {
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_point_read_metadata";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .with_filterable_column("category", FilterableDataType::FilterableString)
+        .with_filterable_column("count", FilterableDataType::FilterableInteger)
+        .with_filterable_column("score", FilterableDataType::FilterableFloat)
+        .with_filterable_column("active", FilterableDataType::FilterableBoolean)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    let mut record = versioned_record("metadata_vec", 4, 1, None);
+    record.origin = Some("fixture-origin".to_string());
+    record.props.insert(
+        "category".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String("books".to_string())),
+    );
+    record.props.insert(
+        "count".to_string(),
+        ProximaTreeNode::Value(ProximaValue::Int64(7)),
+    );
+    record.props.insert(
+        "score".to_string(),
+        ProximaTreeNode::Value(ProximaValue::Float64(9.5)),
+    );
+    record.props.insert(
+        "active".to_string(),
+        ProximaTreeNode::Value(ProximaValue::Boolean(true)),
+    );
+    record.props.insert(
+        "note".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String("extra".to_string())),
+    );
+    flush_one(&nova_engine, collection_id, &collection, record).await;
+
+    let found = nova_engine
+        .vector_by_id(collection_id, &base_location, "metadata_vec")
+        .await
+        .unwrap()
+        .expect("record must exist");
+
+    assert_eq!(found.origin.as_deref(), Some("fixture-origin"));
+    assert_eq!(
+        found.props.get("category"),
+        Some(&ProximaTreeNode::Value(ProximaValue::String(
+            "books".to_string()
+        )))
+    );
+    assert_eq!(
+        found.props.get("count"),
+        Some(&ProximaTreeNode::Value(ProximaValue::Int64(7)))
+    );
+    assert_eq!(
+        found.props.get("score"),
+        Some(&ProximaTreeNode::Value(ProximaValue::Float64(9.5)))
+    );
+    assert_eq!(
+        found.props.get("active"),
+        Some(&ProximaTreeNode::Value(ProximaValue::Boolean(true)))
+    );
+    assert_eq!(
+        found.props.get("note"),
+        Some(&ProximaTreeNode::Value(ProximaValue::String(
+            "extra".to_string()
+        )))
+    );
+    assert!(
+        !found.props.contains_key("source"),
+        "source is record provenance, not user metadata"
+    );
+}
+
+#[tokio::test]
+async fn test_nova_vector_by_id_fails_closed_on_unreadable_candidate_file() {
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_point_read_corrupt_file";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("uncertain_vec", 4, 1, None),
+    )
+    .await;
+    let data_dir = _temp.path().join(collection_id).join("data");
+    std::fs::write(data_dir.join("unknown-newer.parquet"), b"not parquet").unwrap();
+
+    let result = nova_engine
+        .vector_by_id(collection_id, &base_location, "uncertain_vec")
+        .await;
+    assert!(
+        result.is_err(),
+        "point reads must not return a stale candidate when another data file is unreadable"
+    );
+}
+
+#[tokio::test]
+async fn test_nova_vector_by_id_does_not_serve_cached_pre_update_version() {
+    use proximadb::storage::cache::orchestrator::CrossCacheOrchestrator;
+    use proximadb::storage::cache::specialized::vector_cache::VectorCache;
+
+    let orchestrator = Arc::new(
+        CrossCacheOrchestrator::new(1024 * 1024).with_vector_cache(Arc::new(VectorCache::new(1))),
+    );
+    CrossCacheOrchestrator::register_global(orchestrator);
+
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_point_read_cache_freshness";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("cached_vec", 4, 1, None),
+    )
+    .await;
+    let first = nova_engine
+        .vector_by_id(collection_id, &base_location, "cached_vec")
+        .await
+        .unwrap()
+        .expect("v1 must exist");
+    assert_eq!(first.record_version, 1);
+
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("cached_vec", 4, 2, None),
+    )
+    .await;
+    let second = nova_engine
+        .vector_by_id(collection_id, &base_location, "cached_vec")
+        .await
+        .unwrap()
+        .expect("v2 must exist");
+    assert_eq!(
+        second.record_version, 2,
+        "an uninvalidated point-read cache must not hide a newer flushed version"
     );
 }

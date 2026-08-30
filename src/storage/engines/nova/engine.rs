@@ -4,8 +4,11 @@
 use crate::core::search::{DataFreshnessTier, SearchMode};
 use crate::proto::proximadb_v1::VectorRecord;
 // Import column constants from columnar module
+use crate::storage::engines::core::formats::columnar::constants::QUANTIZATION_COLUMNS;
 use crate::storage::engines::core::formats::columnar::{
-    FIELD_EXPIRES_AT, FIELD_ID, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
+    FIELD_COLLECTION_ID, FIELD_EXPIRES_AT, FIELD_EXTRA_META, FIELD_ID, FIELD_IS_DELETED,
+    FIELD_ROW_GROUP_OFFSET, FIELD_ROW_INDEX, FIELD_SCHEMA_VERSION, FIELD_SOURCE, FIELD_TIMESTAMP,
+    FIELD_UPDATED_AT, FIELD_VECTOR_FP32, FIELD_VERSION,
 };
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
@@ -21,7 +24,7 @@ use proximadb_compression::StandardCompression;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 // Health status handled internally
 use super::operations::{NovaCompactionOperations, NovaFlushOperations, NovaSearchOperations};
 use super::optimized_operations::OptimizedNovaOperations;
@@ -1575,30 +1578,6 @@ impl UnifiedStorageFormat for NovaEngine {
         base_path: &str,
         vector_id: &str,
     ) -> Result<Option<proximadb_records::ProximaRecord>> {
-        // Access global unified cache through CrossCacheOrchestrator
-        let cache_key = format!("vector:{}:{}", collection_id, vector_id);
-        if let Some(orchestrator) =
-            crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
-        {
-            // Try to get from vector cache first
-            if let Some(vector_cache) = orchestrator.get_vector_cache()
-                && let Some(cached_vector) = vector_cache.get(&cache_key).await
-            {
-                // Track cache hit for access pattern learning
-                orchestrator.pattern_tracker().track_access_async(
-                    cache_key.clone(),
-                    crate::storage::cache::orchestrator::CacheType::VectorData,
-                );
-                return Ok(Some(cached_vector));
-            }
-
-            // Track cache miss
-            orchestrator.pattern_tracker().track_access_async(
-                cache_key.clone(),
-                crate::storage::cache::orchestrator::CacheType::VectorData,
-            );
-        }
-
         debug!(
             "NOVA get vector: collection={}, base_path={}, id={}",
             collection_id, base_path, vector_id
@@ -1631,11 +1610,13 @@ impl UnifiedStorageFormat for NovaEngine {
         );
 
         use proximadb_storage_filesystem_types::FileSystem as _;
-        let entries = match unified_fs.list(&data_dir).await {
-            Ok(entries) => entries,
-            // Directory might not exist yet (no flushes) — not an error.
-            Err(_) => return Ok(None),
-        };
+        // A missing data directory means the collection has not flushed yet.
+        // Any other filesystem error is material: swallowing it could make an
+        // older file look like the MVCC winner.
+        if !unified_fs.exists(&data_dir).await? {
+            return Ok(None);
+        }
+        let entries = unified_fs.list(&data_dir).await?;
         let files: Vec<String> = entries
             .into_iter()
             .filter(|e| !e.metadata.is_directory && e.name.ends_with(".parquet"))
@@ -1643,8 +1624,8 @@ impl UnifiedStorageFormat for NovaEngine {
             .collect();
 
         use arrow_array::{
-            Array, BooleanArray, Float32Array, Float64Array, Int64Array, ListArray, StringArray,
-            StructArray, UInt32Array,
+            Array, BooleanArray, Float32Array, Float64Array, Int64Array, ListArray, MapArray,
+            StringArray, StructArray, UInt32Array,
         };
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
@@ -1655,27 +1636,23 @@ impl UnifiedStorageFormat for NovaEngine {
 
         for file_path in &files {
             let file_fs = self.filesystem.get_filesystem(file_path)?;
-            let data = match file_fs.read(file_path).await {
-                Ok(d) => d,
-                Err(e) => {
-                    warn!(
-                        "NOVA: failed to read {} during point read for {}: {}",
-                        file_path, vector_id, e
-                    );
-                    continue;
-                }
-            };
-            let reader_builder =
-                match ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        warn!(
-                            "NOVA: failed to open parquet reader for {}: {}",
-                            file_path, e
-                        );
-                        continue;
-                    }
-                };
+            let data = file_fs.read(file_path).await.map_err(|e| {
+                anyhow!(
+                    "NOVA point read for '{}' could not read candidate file '{}': {}",
+                    vector_id,
+                    file_path,
+                    e
+                )
+            })?;
+            let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data))
+                .map_err(|e| {
+                    anyhow!(
+                        "NOVA point read for '{}' could not decode candidate file '{}': {}",
+                        vector_id,
+                        file_path,
+                        e
+                    )
+                })?;
             let mut batch_reader = reader_builder.build()?;
             for batch in &mut batch_reader {
                 let batch = batch?;
@@ -1684,12 +1661,13 @@ impl UnifiedStorageFormat for NovaEngine {
                     .and_then(|col| col.as_any().downcast_ref::<StringArray>())
                     .ok_or_else(|| anyhow!("Missing or invalid 'id' column"))?;
                 for row_idx in 0..batch.num_rows() {
-                    if id_array.value(row_idx) != vector_id {
+                    if id_array.is_null(row_idx) || id_array.value(row_idx) != vector_id {
                         continue;
                     }
                     let timestamp = batch
                         .column_by_name(FIELD_TIMESTAMP)
                         .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+                        .filter(|a| !a.is_null(row_idx))
                         .map_or(0, |a| a.value(row_idx));
                     // NOVA's schema (schema_builder.rs) declares FIELD_VERSION
                     // as UInt32, NOT Int64 — unlike VIPER's own factory schema,
@@ -1698,6 +1676,7 @@ impl UnifiedStorageFormat for NovaEngine {
                     let version: i64 = batch
                         .column_by_name(FIELD_VERSION)
                         .and_then(|c| c.as_any().downcast_ref::<UInt32Array>())
+                        .filter(|a| !a.is_null(row_idx))
                         .map_or(0, |a| a.value(row_idx) as i64);
                     let expires_at = batch
                         .column_by_name(FIELD_EXPIRES_AT)
@@ -1725,19 +1704,42 @@ impl UnifiedStorageFormat for NovaEngine {
                         .collect();
 
                     let updated_at = batch
-                        .column_by_name("updated_at")
+                        .column_by_name(FIELD_UPDATED_AT)
                         .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+                        .filter(|a| !a.is_null(row_idx))
                         .map_or(0, |a| a.value(row_idx));
+
+                    let source = batch
+                        .column_by_name(FIELD_SOURCE)
+                        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                        .filter(|a| !a.is_null(row_idx))
+                        .map(|a| a.value(row_idx).to_string());
 
                     let mut metadata_map: HashMap<String, crate::proto::proximadb_v1::SqlValue> =
                         HashMap::new();
-                    if let Some(extra_meta_col) = batch.column_by_name("extra_meta")
-                        && let Some(extra_meta_list) =
+                    if let Some(extra_meta_col) = batch.column_by_name(FIELD_EXTRA_META) {
+                        let (struct_array, range) = if let Some(map_array) =
+                            extra_meta_col.as_any().downcast_ref::<MapArray>()
+                            && !map_array.is_null(row_idx)
+                        {
+                            let start = map_array.value_offsets()[row_idx] as usize;
+                            let end = map_array.value_offsets()[row_idx + 1] as usize;
+                            (Some(map_array.entries().clone()), start..end)
+                        } else if let Some(list_array) =
                             extra_meta_col.as_any().downcast_ref::<ListArray>()
-                        && !extra_meta_list.is_null(row_idx)
-                    {
-                        let kv_pairs = extra_meta_list.value(row_idx);
-                        if let Some(struct_array) = kv_pairs.as_any().downcast_ref::<StructArray>()
+                            && !list_array.is_null(row_idx)
+                        {
+                            let values = list_array.value(row_idx);
+                            let len = values.len();
+                            (
+                                values.as_any().downcast_ref::<StructArray>().cloned(),
+                                0..len,
+                            )
+                        } else {
+                            (None, 0..0)
+                        };
+
+                        if let Some(struct_array) = struct_array
                             && let (Some(key_array), Some(value_array)) = (
                                 struct_array
                                     .column(0)
@@ -1749,8 +1751,11 @@ impl UnifiedStorageFormat for NovaEngine {
                                     .downcast_ref::<StringArray>(),
                             )
                         {
-                            for kv_idx in 0..struct_array.len() {
-                                if !struct_array.is_null(kv_idx) {
+                            for kv_idx in range {
+                                if !struct_array.is_null(kv_idx)
+                                    && !key_array.is_null(kv_idx)
+                                    && !value_array.is_null(kv_idx)
+                                {
                                     metadata_map.insert(
                                         key_array.value(kv_idx).to_string(),
                                         crate::proto::proximadb_v1::SqlValue {
@@ -1767,47 +1772,52 @@ impl UnifiedStorageFormat for NovaEngine {
                     }
                     for field in batch.schema().fields() {
                         let field_name = field.name();
-                        if !matches!(
+                        let is_system_field = matches!(
                             field_name.as_str(),
                             FIELD_ID
-                                | "collection_id"
+                                | FIELD_COLLECTION_ID
+                                | FIELD_ROW_GROUP_OFFSET
+                                | FIELD_ROW_INDEX
                                 | FIELD_VECTOR_FP32
                                 | FIELD_TIMESTAMP
                                 | "created_at"
-                                | "updated_at"
+                                | FIELD_UPDATED_AT
                                 | FIELD_VERSION
                                 | FIELD_EXPIRES_AT
-                                | "extra_meta"
-                        ) && let Some(column) = batch.column_by_name(field_name)
+                                | FIELD_SOURCE
+                                | FIELD_EXTRA_META
+                                | FIELD_IS_DELETED
+                                | FIELD_SCHEMA_VERSION
+                        ) || QUANTIZATION_COLUMNS
+                            .contains(&field_name.as_str());
+                        if !is_system_field
+                            && let Some(column) = batch.column_by_name(field_name)
                             && !column.is_null(row_idx)
                         {
-                            let string_value = match field.data_type() {
+                            use crate::proto::proximadb_v1::sql_value::Value;
+                            let value = match field.data_type() {
                                 arrow_schema::DataType::Utf8 => column
                                     .as_any()
                                     .downcast_ref::<StringArray>()
-                                    .map(|a| a.value(row_idx).to_string()),
+                                    .map(|a| Value::StringValue(a.value(row_idx).to_string())),
                                 arrow_schema::DataType::Int64 => column
                                     .as_any()
                                     .downcast_ref::<Int64Array>()
-                                    .map(|a| a.value(row_idx).to_string()),
+                                    .map(|a| Value::Int64Value(a.value(row_idx))),
                                 arrow_schema::DataType::Float64 => column
                                     .as_any()
                                     .downcast_ref::<Float64Array>()
-                                    .map(|a| a.value(row_idx).to_string()),
+                                    .map(|a| Value::NumberValue(a.value(row_idx))),
                                 arrow_schema::DataType::Boolean => column
                                     .as_any()
                                     .downcast_ref::<BooleanArray>()
-                                    .map(|a| a.value(row_idx).to_string()),
+                                    .map(|a| Value::BoolValue(a.value(row_idx))),
                                 _ => None,
                             };
-                            if let Some(sv) = string_value {
+                            if let Some(value) = value {
                                 metadata_map.insert(
                                     field_name.to_string(),
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(
-                                            crate::proto::proximadb_v1::sql_value::Value::StringValue(sv),
-                                        ),
-                                    },
+                                    crate::proto::proximadb_v1::SqlValue { value: Some(value) },
                                 );
                             }
                         }
@@ -1821,7 +1831,7 @@ impl UnifiedStorageFormat for NovaEngine {
                         updated_at: Some(updated_at),
                         expires_at,
                         version: Some(version as u32),
-                        source: None,
+                        source,
                     };
 
                     let is_better = match &best_match {
@@ -1852,14 +1862,9 @@ impl UnifiedStorageFormat for NovaEngine {
             return Ok(None);
         }
 
-        // Populate the cache with the resolved, live record before returning.
-        if let Some(orchestrator) =
-            crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
-            && let Some(vector_cache) = orchestrator.get_vector_cache()
-        {
-            let _ = vector_cache.put(cache_key, record.clone()).await;
-        }
-
+        // Do not use the global vector cache here: NOVA's flush path has no
+        // version-aware invalidation, so an ID-only key can hide a newer MVCC
+        // version or tombstone indefinitely.
         Ok(Some(record))
     }
 
