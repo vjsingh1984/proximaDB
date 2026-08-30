@@ -38,3 +38,21 @@ hold time for concurrent readers.
 Trace before tuning: emit `evictions` + insert latency at capacity in a bench
 before choosing; if production caches never reach 10k entries, close as
 won't-fix with the measurement attached.
+
+== Follow-up: shared eviction ring defeated the capacity bound (fixed 2026-08-29)
+
+An adversarial re-review of the #1735 implementation (option 2, sampled
+eviction) found the single `eviction_ring` was shared across all four map
+families (namespaces/tables/indexes/statistics). `maybe_evict::<T>` filters
+ring entries by membership in *the one map being checked*, so a call for one
+family silently dropped every other family's keys from the ring as "no
+longer resident" — even though they were still resident in their own map.
+Under interleaved multi-family traffic the ring got dominated by whichever
+family wrote most recently; a starved family's `maybe_evict` then found zero
+candidates while its `put_*` still inserted unconditionally, so that map grew
+past `max_entries` until the next `evict_expired` TTL sweep caught it —
+defeating the capacity bound TD-CAT-5 exists to guarantee. Fixed by giving
+each family its own ring (`namespace_ring`/`table_ring`/`index_ring`/
+`stats_ring`); regression test
+`eviction_rings_are_independent_per_family_under_interleaved_traffic` in
+`cache.rs` reproduces the cross-family starvation and fails pre-fix.

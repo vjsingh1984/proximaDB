@@ -72,10 +72,18 @@ pub struct CatalogCache {
     stats_misses: AtomicU64,
     evictions: AtomicU64,
     invalidations: AtomicU64,
-    /// Bounded ring of recently inserted keys per map family — the eviction
-    /// sample set. One ring per cache (not per map) keeps state small; each
-    /// map's puts push into the shared ring.
-    eviction_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
+    /// Bounded ring of recently inserted keys, one per map family — the
+    /// eviction sample set. Each family gets its OWN ring: a shared ring
+    /// filtered by single-map membership would treat every other family's
+    /// keys as "no longer resident" and drop them on each evict check,
+    /// starving whichever family isn't currently dominating insert traffic
+    /// (that family's `maybe_evict` would then find zero candidates while
+    /// its `put_*` keeps inserting unconditionally, growing past
+    /// `max_entries` until the next `evict_expired` sweep).
+    namespace_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
+    table_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
+    index_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
+    stats_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
 }
 
 /// Cache hit/miss/eviction counters.
@@ -132,7 +140,10 @@ impl CatalogCache {
             stats_misses: AtomicU64::new(0),
             evictions: AtomicU64::new(0),
             invalidations: AtomicU64::new(0),
-            eviction_ring: std::sync::Mutex::new(Default::default()),
+            namespace_ring: std::sync::Mutex::new(Default::default()),
+            table_ring: std::sync::Mutex::new(Default::default()),
+            index_ring: std::sync::Mutex::new(Default::default()),
+            stats_ring: std::sync::Mutex::new(Default::default()),
         }
     }
 
@@ -166,9 +177,9 @@ impl CatalogCache {
 
     pub fn put_namespace(&self, catalog: &str, namespace: &[String], ns: CatalogNamespace) {
         let key = ns_key(catalog, namespace);
-        self.maybe_evict(&self.namespaces);
+        self.maybe_evict(&self.namespaces, &self.namespace_ring);
         self.namespaces.insert(key.clone(), CacheEntry::new(ns));
-        self.track_insert(&key);
+        self.track_insert(&self.namespace_ring, &key);
     }
 
     pub fn invalidate_namespace(&self, catalog: &str, namespace: &[String]) {
@@ -200,9 +211,9 @@ impl CatalogCache {
 
     pub fn put_table(&self, catalog: &str, id: &TableIdentifier, schema: CatalogTableSchema) {
         let key = tbl_key(catalog, id);
-        self.maybe_evict(&self.tables);
+        self.maybe_evict(&self.tables, &self.table_ring);
         self.tables.insert(key.clone(), CacheEntry::new(schema));
-        self.track_insert(&key);
+        self.track_insert(&self.table_ring, &key);
     }
 
     pub fn invalidate_table_in_catalog(&self, catalog: &str, id: &TableIdentifier) {
@@ -244,9 +255,9 @@ impl CatalogCache {
 
     pub fn put_indexes(&self, catalog: &str, id: &TableIdentifier, indexes: Vec<CatalogIndex>) {
         let key = tbl_key(catalog, id);
-        self.maybe_evict(&self.indexes);
+        self.maybe_evict(&self.indexes, &self.index_ring);
         self.indexes.insert(key.clone(), CacheEntry::new(indexes));
-        self.track_insert(&key);
+        self.track_insert(&self.index_ring, &key);
     }
 
     // ---- Statistics ----
@@ -280,9 +291,9 @@ impl CatalogCache {
         stats: CatalogTableStatistics,
     ) {
         let key = tbl_key(catalog, id);
-        self.maybe_evict(&self.statistics);
+        self.maybe_evict(&self.statistics, &self.stats_ring);
         self.statistics.insert(key.clone(), CacheEntry::new(stats));
-        self.track_insert(&key);
+        self.track_insert(&self.stats_ring, &key);
     }
 
     // ---- Maintenance ----
@@ -345,20 +356,21 @@ impl CatalogCache {
 
     /// Sampled eviction (TD-CAT-5): at capacity, evict the least-recently-
     /// accessed entry among a bounded ring of the most recently inserted
-    /// keys — O(ring) single-shard reads, replacing the full-map `min_by_key`
-    /// scan under the whole-map write lock. Victim choice relaxes from exact
-    /// LRU to insert-recency-biased sampled LRU (a Redis-style approximation:
-    /// an ancient cold entry can squat until TTL expires it); TTL expiry
-    /// semantics are untouched.
-    fn maybe_evict<T>(&self, cache: &DashMap<String, CacheEntry<T>>) {
+    /// keys for THIS map's family — O(ring) single-shard reads, replacing
+    /// the full-map `min_by_key` scan under the whole-map write lock. Victim
+    /// choice relaxes from exact LRU to insert-recency-biased sampled LRU
+    /// (a Redis-style approximation: an ancient cold entry can squat until
+    /// TTL expires it); TTL expiry semantics are untouched.
+    fn maybe_evict<T>(
+        &self,
+        cache: &DashMap<String, CacheEntry<T>>,
+        ring: &std::sync::Mutex<std::collections::VecDeque<String>>,
+    ) {
         if cache.len() < self.max_entries {
             return;
         }
         let candidate: Option<String> = {
-            let mut ring = self
-                .eviction_ring
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut ring = ring.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             // Drop ring entries that are no longer resident (invalidated or
             // already evicted) while scanning for the coldest victim.
             let mut victim: Option<(String, Instant)> = None;
@@ -383,13 +395,10 @@ impl CatalogCache {
         }
     }
 
-    /// Record an inserted key in the bounded eviction-sample ring.
-    fn track_insert(&self, key: &str) {
+    /// Record an inserted key in the bounded eviction-sample ring for its family.
+    fn track_insert(&self, ring: &std::sync::Mutex<std::collections::VecDeque<String>>, key: &str) {
         const RING_CAPACITY: usize = 64;
-        let mut ring = self
-            .eviction_ring
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut ring = ring.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if ring.len() >= RING_CAPACITY {
             ring.pop_front();
         }
@@ -604,5 +613,43 @@ mod tests {
         assert!(bounded.get_table("default", &a).is_none());
         assert!(bounded.get_table("default", &b).is_some());
         assert_eq!(bounded.get_stats().evictions, 1);
+    }
+
+    /// Regression: a shared eviction-sample ring across families lets one
+    /// family's `maybe_evict` call purge another family's keys from the ring
+    /// (they're "not resident" in the map being checked), starving that
+    /// other family's own eviction. Interleave puts across all four families
+    /// at `max_entries == 1` each and assert every family stays at its cap —
+    /// under the pre-fix shared ring, the namespace map grew to 2 entries
+    /// here because the table family's evict check purged the namespace key
+    /// from the ring first.
+    #[test]
+    fn eviction_rings_are_independent_per_family_under_interleaved_traffic() {
+        let cache = CatalogCache::new(1, 60);
+        let id = TableIdentifier::new(vec!["db".into()], "t");
+
+        cache.put_namespace(
+            "main",
+            &["ns_a".into()],
+            CatalogNamespace::new(vec!["ns_a".into()]),
+        );
+        cache.put_table("default", &id, CatalogTableSchema::new("tbl_a"));
+        cache.put_table(
+            "default",
+            &TableIdentifier::new(vec!["db".into()], "t2"),
+            CatalogTableSchema::new("tbl_b"),
+        );
+        cache.put_namespace(
+            "main",
+            &["ns_b".into()],
+            CatalogNamespace::new(vec!["ns_b".into()]),
+        );
+
+        assert_eq!(
+            cache.namespaces.len(),
+            1,
+            "namespace family must stay bounded at max_entries regardless of table-family traffic"
+        );
+        assert_eq!(cache.tables.len(), 1, "table family must stay bounded");
     }
 }

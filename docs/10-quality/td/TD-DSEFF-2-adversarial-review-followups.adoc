@@ -1,0 +1,125 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-DSEFF-2: adversarial re-review of the DS-efficiency program (#1735/#1737/#1738/#1743) — remaining findings
+:toc: macro
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — item 1 fixed 2026-08-29 (see below); items 2-6 open, triaged
+| Severity | Mixed — see per-item severity
+| Component | `crates/control/proximadb-catalog/src/cache.rs`, `src/storage/engines/nova/engine.rs`, `crates/binding/proximadb-embedded/src/lib.rs`, `src/storage/memtable/implementations/skiplist.rs`, `src/network/grpc/v2/record_service.rs`, `src/storage/engines/raptor/`, `src/index/axis/management/manager.rs`, `src/storage/flush_materializer.rs`
+| Pillar | CORRECTNESS / SIMPLIFY
+|===
+
+toc::[]
+
+== Context
+
+After the data-structure-efficiency program (TD-DSEFF-1, #1735/#1737/#1738)
+and the embedded engine-routing fix (#1743) landed, an adversarial re-review
+of all four PRs' already-merged code was run at the user's request (in
+conjunction with the ADR-093 VIPER-retirement re-check). Three independently
+dispatched review passes (one per PR group) surfaced six findings. This TD
+tracks the ones not folded into ADR-093 or fixed inline.
+
+== 1. CatalogCache shared eviction ring — FIXED
+
+See link:TD-CAT-5-catalog-cache-eviction-scan.adoc[TD-CAT-5]'s follow-up
+section. High confidence, high severity (defeated the cache's own capacity
+bound under realistic multi-family traffic). Fixed same day by splitting the
+ring per map family; regression test added.
+
+== 2. NOVA `vector_by_id` lacks MVCC version resolution and tombstone filtering
+
+`src/storage/engines/nova/engine.rs` (~lines 1611-1653): #1743 replaced a
+hardcoded `Ok(None)` stub (which silently made every upsert re-insert as a
+duplicate) with a real point-read. The replacement resolves by
+first-match-in-file-listing-order rather than latest-version, and does not
+filter tombstoned/expired records at the engine layer — unlike VIPER's
+pre-existing equivalent, which has both. Confidence: high on the mechanism
+(read directly against the code); medium on production impact — the primary
+GET path has a service-layer dead-record filter
+(link:../../../CLAUDE.md[CLAUDE.md] invariant 16a) that partially mitigates,
+but any caller reading through NOVA's `vector_by_id` directly bypasses it.
+
+Candidate fix: mirror VIPER's version-resolution and `is_dead()` check at the
+NOVA read site (reuse `ProximaRecord::is_dead`, per invariant 16a — do not
+hand-roll a second predicate). Left open rather than fixed inline: this is a
+MVCC-correctness change to a live engine's read path, warranting its own
+round-trip test (upsert-then-read returns latest version; tombstone-then-read
+returns none) rather than a same-day patch bundled with an unrelated cache
+fix.
+
+== 3. Embedded migration risk from the #1743 routing fix is undocumented
+
+`crates/binding/proximadb-embedded/src/lib.rs` (~lines 2360-2363) previously
+passed an unconditional SST fallback into
+`FlushExecutionCoordinator::engine_for`, so every embedded collection —
+regardless of its declared engine — flushed as SST (the bug #1743 fixed).
+After the fix, new flushes correctly write the declared engine's format into
+the same directory, but any OLD SST-formatted data from a pre-existing
+non-SST-declared embedded collection becomes permanently invisible to that
+engine's extension-filtered readers, with no detection or migration path.
+This is a mixed-read-safety gap against
+link:../../../CLAUDE.md[CLAUDE.md] directive 8 (format transitions must be
+detectable, never flag-day). Confidence: high on the mechanism, medium on
+real-world impact — VIPER's own point-read was independently proven broken
+for its own writer's output until the same PR (see ADR-093), so a pre-
+existing non-SST *embedded* deployment that actually depended on working
+reads is unlikely to have existed; HELIX/NOVA embedded usage prior to #1743
+is unquantified.
+
+Candidate fix: a one-time startup scan (embedded open path) that, when a
+collection's declared engine is non-SST, checks whether its data directory
+contains only SST-extension files and — if so — logs a warning naming the
+mismatch and pointing at re-ingest as the remediation. Docs-only alternative:
+add a migration-risk note to the embedded README/CHANGELOG for the release
+that ships #1743's fix, so upgraders are warned even without runtime
+detection. Left open: needs a product decision on which mitigation tier is
+warranted, not a unilateral code change.
+
+== 4. raptor `select_nth_unstable_by` — nondeterministic tie-break vs. old stable sort
+
+`src/storage/engines/raptor/` (matrix_builder / writer.rs partial-sort sites
+from #1737): `select_nth_unstable_by` does not guarantee the same tie-break
+order as the previous `sort_by` at exact float ties. Low severity (raptor is
+`experimental-engines`-gated, not on the GA path) and narrow (only affects
+ordering among exactly-tied distances, not correctness of the top-k set
+itself). Recorded for completeness; not scheduled.
+
+== 5. Skiplist memtable `clear_up_to` two-phase unlocked-gap race
+
+`src/storage/memtable/implementations/skiplist.rs` (~lines 164-187, from
+#1738): removal from the `key_index` BTreeSet and removal from the DashMap
+happen as two separate un-atomic phases, leaving a window where a concurrent
+reader could observe a key present in one structure but not the other.
+Self-healing (both removals do complete) and narrow (only visible mid-clear
+under concurrent access to the range being cleared). Not scheduled; revisit
+if a range-scan-during-clear bug report ever surfaces.
+
+== 6. gRPC BatchWriteStream — un-type-enforced all-or-nothing assumption
+
+`src/network/grpc/v2/record_service.rs` (~lines 1723+, 1830-1840, from
+#1738): batching groups consecutive same-write-mode records into one
+pipeline call with per-record retry-on-failure, relying on the batch write
+path being atomically all-or-nothing. `BatchOperationResult::partial()`
+(`crates/platform/proximadb-runtime/src/batch_result.rs:81-93`) exists but
+has zero callers in this path today — if a future change to the underlying
+batch write ever returns a partial result, this call site would silently
+mishandle it. Latent landmine, not a live bug. Candidate fix: either wire
+`partial()` handling defensively now, or add a debug-assert that the
+underlying result is never partial, so a future violation fails loudly
+instead of silently. Not scheduled — no current caller returns partial.
+
+== 7. Cosmetic — not tracked further
+
+* `src/index/axis/management/manager.rs::query_hnsw_with_predicate`
+  (~lines 1986-2059, from #1735) holds a read-lock guard across the full
+  HNSW search await — contention/latency concern only, not correctness.
+* `src/storage/flush_materializer.rs`'s
+  `adr081_engine_instance_is_canonical_per_format` test (~lines 1506-1542,
+  from #1743) was mechanically weakened during the fallback→register_engine
+  rewiring and is now trivially true rather than exercising real contention
+  resolution. Worth tightening next time that test file is touched; not
+  worth a standalone PR.
