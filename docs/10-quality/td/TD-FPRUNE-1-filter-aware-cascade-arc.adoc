@@ -1,7 +1,7 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-FPRUNE-1: filter-aware PAX cascade — phased arc (ADR-089)
-:status: Open
+:status: P2 implemented end-to-end (this branch, default-OFF) — corridor-benchmark evidence gate open
 :dim: D3/D5 (compute-per-modality, object storage)
 :pillar: PERF
 
@@ -43,7 +43,8 @@ filter as the correctness backstop. This TD tracks the phases.
   TD-FLUSH-8** (auto-flush cannot resolve REST-created collections in the
   catalog — segments are never produced from the public API, so all corridor
   measurements to date were memtable-scan measurements).
-* **P2 — footer-resident block stats (zero-GET pruning). IN PROGRESS.**
+* **P2 — footer-resident block stats (zero-GET pruning). IMPLEMENTED end-to-end
+  (this branch, gates default-OFF; see P2 completion below).**
   Populate the reserved `StatsKind::MinMax` slot in the segment footer block
   table (`segment_layout.rs:222-262`; today always `StatsKind::None`,
   `pax_block.rs:2104` — the ADR-062 D5 deferral, now lifted) for filterable
@@ -123,34 +124,53 @@ filter as the correctness backstop. This TD tracks the phases.
          `stage_f_user_tag_footer_prune_via_self_describing_segment` (partition
          filter prunes ≥1 block AND allow-set stays exact). `write_pax_segment_ordered`
          gained a `shred_spec` param so the write path can shred.
-     *** ⚠️ **BENCHMARK FINDING (2026-08-14, measure-don't-assert): the SST
-         vector-flush path does NOT shred, so user-tag footer-pruning is still
-         DARK end-to-end for vector collections.** Verified on a release server
-         (both gates on) with correlated data (partition ⟂ vector cluster,
-         blocks partition-homogeneous → SHOULD prune 3/4 blocks): stage-F engages
-         (rows_matched correct) but `blocks_pruned_footer = 0` on every segment,
-         because `partition` never became a shredded column at flush →
-         `shred_field_map` empty → the field doesn't resolve. Root cause: the
-         `with_shred_spec` path is `ObjectStoreVectorRecordStore::write_mutations`
-         (`record_store.rs:4712`, the document/table store), NOT the SST
-         memtable-flush materializer (`storage/trait_components/writer.rs` →
-         `write_pax_segment` with an EMPTY shred spec). So for `engine=sst`
-         vector collections nothing shreds at flush.
-     *** ❌ **FINAL WIRING (next slice, the true end-to-end unlock):** thread the
-         collection's `promoted_keys`→`shred_spec` into the SST flush materializer
-         and pass it to `write_pax_segment` (the `_ordered` param already exists;
-         the public `write_pax_segment` helper + the SST flush caller must forward
-         it). Needs the collection schema at the flush site. Then re-run this
-         benchmark: `blocks_pruned_footer > 0` on a correlated user-tag filter,
-         and io_trace `object_gets`/`bytes_read` drop. NOTE the data-dependence:
-         footer-pruning only helps when the filtered tag CORRELATES with vector
-         clustering (like a parquet zone-map on a sorted column) — a random tag
-         (the corridor bench's `p{i%8}`) is a correct no-op, never a regression.
-  ** **Evidence gate (NEXT):** filtered search `io_trace`
-     `object_gets`/`bytes_read` drop with selectivity (pruned blocks
-     unfetched), recall unchanged, on the synthetic partition + Wikipedia
-     `lang` corpora — run the corridor benchmark with `PROXIMADB_PAX_FILTERED_CASCADE=1`
-     + `PROXIMADB_PAX_FOOTER_STATS=1`.
+     *** ✅ **RESOLVED (M1 + Gap-B, this branch): the SST vector-flush path now
+         shreds.** The 2026-08-14 finding (flush materializer passed an EMPTY
+         shred spec, so user-tag footer-pruning was DARK end-to-end for
+         `engine=sst` vector collections) is closed: `CollectionFlushPlan`
+         carries `filterable_columns` from the collection schema, and the SST
+         flush materializer forwards the shred spec into the `_shredded`
+         `write_pax_segment` variants — declared filterable tags become typed
+         PAX stripes with footer stats at flush.
+  ** **P2 completion (this branch):**
+     *** **M1/Gap-B — flush shredding:** filterable columns propagate
+         catalog→`CollectionFlushPlan`→SST flush→shredded write (above).
+     *** **Gap-A — REST mapping:** a filterable short-`text` column maps to
+         `FilterableString` (internal mapping only; `data_type`/`filterable`
+         were already in the OpenAPI spec — no spec/SDK drift).
+     *** **A1 — compaction preserves shredded columns**
+         (`extract_shred_spec_from_inputs`; compacted segments keep pruning).
+     *** **M3 — filtered coarse probe re-armed:** the geometric A0 probe
+         composes with the filter allow-set instead of bypassing.
+         `filtered_coarse_probe_holds_recall_and_cuts_bytes` proves recall
+         parity with a byte cut as a measured fact.
+     *** **M2/C2 — tag-aware two-level compaction layout:** per-partition
+         k-means over a shared global PCA makes A0 cells partition-homogeneous,
+         so an UNCORRELATED filterable tag prunes. Default-ON per-collection
+         (engages structurally only when a segment carries a shredded tag;
+         `PROXIMADB_PAX_PARTITION_LAYOUT=0` kill-switch; same A0 format —
+         mixed-read-safe). C1 evidence: integrated filtered-stack GET/byte
+         breakdown = **4.2× byte cut**; C2 evidence: unfiltered recall
+         neutral **Δ=0.000** vs global layout.
+  ** **Gate policy on landing (this branch):** `PROXIMADB_PAX_FILTERED_CASCADE`
+     and `PROXIMADB_PAX_FOOTER_STATS` land **default-OFF**, honoring the
+     2026-08-20 ENV_GATE_REGISTRY promotion criterion ("default-ON once the
+     ANN-recall ratchets pass with the cascade enabled" — external consumer
+     #1690 is measuring this gap). Flip ON in a follow-up once the SIFT PAX
+     recall ratchet runs green with both gates enabled. The original branch's
+     A3 default-ON flip was deliberately NOT carried over.
+  ** **Attribution wired (this branch):** `record_pax_footer_prune(total,
+     pruned)` lands in the query-scoped `IoTraceSnapshot`
+     (`pax_footer_total_blocks`/`pax_footer_pruned_blocks`), mirroring the
+     centroid-prune counters — `pruned > 0` proves engagement; the physical
+     savings surface in the universal `get_ops`/`bytes_read` as unfetched reads.
+  ** **Evidence gate (OPEN — deferred with rationale):** the corridor
+     benchmark (filtered p50/p99 at 20k/80k/1M vs the recorded Qdrant 8.0/52.3
+     ms baseline, synthetic partition + Wikipedia `lang`, io_trace
+     `object_gets`/`bytes_read` per filtered query) has NOT been run on this
+     branch — it needs the corridor harness + corpora and belongs in the
+     flip-ON decision, not this code PR. The in-module C1 measurement (4.2×
+     byte cut at recall parity on correlated data) is the interim evidence.
 * **P3 — per-cell stats (prune before any Region-A byte).** Optional
   footer/A0 section with per-cell dictionary/zone summaries for filterable
   columns; intersect with the geometric nprobe cut
@@ -180,11 +200,14 @@ filter as the correctness backstop. This TD tracks the phases.
 
 == Related (non-goals here)
 
-* AXIS REST `ann_filtering_mode` override (WIP branch
-  `feat/axis-rest-filter-mode`; compiles, unit-tested): a diagnostic/benchmark
-  lever for AXIS-indexed collections — NOT this fix. Landing it requires the
-  OpenAPI spec regen + all SDK regens in the same PR (mandate #15) since
-  `TypedSearchRequest` is utoipa-emitted.
+* AXIS REST `ann_filtering_mode` override: SUPERSEDED (2026-08-29 review).
+  Mode selection is now catalog-`AnnFilteringPolicy`-driven with selectivity
+  routing (`query_optimizer.rs` — "policy as the single source of truth"), and
+  a post-hoc plan-field stomp would be overridden by the policy path. The
+  former WIP branch was discarded; if a diagnostic lever is still wanted, wire
+  a request field through to the existing `AnnFilteringPolicy.force_mode`
+  (~30 lines + spec/SDK regen per mandate #15) — do not revive the old
+  plan-stomp approach.
 * WAL/unflushed side already filters at scan time
   (`search_unflushed_vectors`: bloom pre-filter + per-record eval before
   scoring) — no work needed there.
