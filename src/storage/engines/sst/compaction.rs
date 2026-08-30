@@ -2345,7 +2345,7 @@ impl Compaction {
                     // `props` (ADR-055), so re-shred with the same spec reproduces
                     // the columns. Empty (legacy/non-shredded inputs) ⇒ byte-identical.
                     let shred_spec = Self::extract_shred_spec_from_inputs(
-                        &self.filesystem_factory,
+                        &self.filesystem_port(),
                         &task.input_files,
                     )
                     .await;
@@ -2504,7 +2504,7 @@ impl Compaction {
                     // compaction (see the atomic arm above) — rebuild the spec from an
                     // input segment's self-describing footer.
                     let shred_spec = Self::extract_shred_spec_from_inputs(
-                        &self.filesystem_factory,
+                        &self.filesystem_port(),
                         &task.input_files,
                     )
                     .await;
@@ -2861,7 +2861,7 @@ impl Compaction {
     /// evolution). Any read/parse failure ⇒ empty spec (byte-identical, no shred),
     /// never a compaction failure.
     async fn extract_shred_spec_from_inputs(
-        factory: &Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        factory: &Arc<dyn proximadb_storage_ports::FilesystemPort>,
         input_files: &[PathBuf],
     ) -> Vec<(String, i32)> {
         use proximadb_storage_common::segment_layout::SegmentFooterIndex;

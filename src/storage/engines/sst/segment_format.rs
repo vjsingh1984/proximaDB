@@ -1146,6 +1146,13 @@ pub(crate) async fn pax_filtered_row_allow(
         n_rows,
         "ADR-089 stage-F row allow-set built (P2: blocks_pruned_footer = zero-GET)"
     );
+    // TD-FPRUNE-1 P2 attribution: expose the zero-GET prune engagement in the
+    // query-scoped io_trace (the physical savings already land in the universal
+    // get_ops/bytes_read as unfetched reads).
+    crate::observability::io_trace::record_pax_footer_prune(
+        stats.blocks_total as u64,
+        stats.blocks_pruned_footer as u64,
+    );
     Ok(Some((allow, stats)))
 }
 
@@ -8155,6 +8162,13 @@ mod tests {
             unsafe {
                 std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
                 std::env::set_var("PROXIMADB_IVF_K", "64");
+                // The arc's A3 default-ON flip is NOT carried (the gates land
+                // default-OFF, honoring the 2026-08-20 ENV_GATE_REGISTRY
+                // promotion criterion) — pin what this measurement depends on,
+                // per-arm like PARTITION_LAYOUT below. Removed with the rest at
+                // the end of the arm.
+                std::env::set_var("PROXIMADB_PAX_FILTERED_CASCADE", "1");
+                std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
                 // Explicit "1"/"0" (layout is now default-on, C2): "0" pins the OFF
                 // arm to the global layout via the kill-switch.
                 std::env::set_var(
@@ -8246,6 +8260,8 @@ mod tests {
                 std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
                 std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
                 std::env::remove_var("PROXIMADB_IVF_K");
+                std::env::remove_var("PROXIMADB_PAX_FILTERED_CASCADE");
+                std::env::remove_var("PROXIMADB_PAX_FOOTER_STATS");
             }
 
             let got: std::collections::HashSet<String> =
