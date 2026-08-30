@@ -422,6 +422,7 @@ pub fn write_pax_segment_compacted_shredded(
         rerank_quant,
         f32_tier,
         target_block,
+        rg_layout_enabled(),
         None,
         shred_spec,
     )?
@@ -457,6 +458,7 @@ pub fn write_pax_segment_compacted_with_cache_seed_shredded(
         rerank_quant,
         f32_tier,
         target_block,
+        rg_layout_enabled(),
         Some(include_sq8),
         shred_spec,
     )
@@ -1051,14 +1053,21 @@ pub(crate) async fn pax_filtered_row_allow(
         };
     // TD-FPRUNE-1 P2: prune blocks from the FETCH plan using footer-resident
     // stats — a block whose footer `FooterBlockStats` provably cannot match is
-    // dropped BEFORE any body GET (the zero-GET win). Blocks with no footer
-    // stats (legacy segments, or footer stats gated OFF at write) stay in,
-    // conservatively fetched. The footer verdict uses the SAME `evaluate_block`
-    // kernel as the post-fetch decode prune, so it can never drop a matching
-    // block (prune.rs soundness contract).
+    // dropped BEFORE any body GET (the zero-GET win). The payloads live in the
+    // optional `SECTION_BLOCK_FILTERABLE_STATS` footer section (they share the
+    // sparse index-tagged map the footer parse already built). Blocks with no
+    // footer stats (legacy segments, or footer stats gated OFF at write) stay
+    // in, conservatively fetched. The footer verdict uses the SAME
+    // `evaluate_block` kernel as the post-fetch decode prune, so it can never
+    // drop a matching block (prune.rs soundness contract).
+    let filterable_stats: std::collections::HashMap<u32, &[u8]> = footer
+        .block_filterable_stats
+        .iter()
+        .map(|(idx, payload)| (*idx, payload.as_slice()))
+        .collect();
     let candidate_blocks: Vec<usize> = (0..footer.blocks.len())
         .filter(|&bi| {
-            let Some(payload) = footer.blocks.get(bi).and_then(|b| b.stats.as_deref()) else {
+            let Some(payload) = filterable_stats.get(&(bi as u32)).copied() else {
                 return true; // no footer stats → must fetch
             };
             let fstats = proximadb_block_format::FooterBlockStats::from_bytes(
@@ -6282,6 +6291,7 @@ mod tests {
             VectorQuant::Sq8,
             false,
             Some(16 * 1024),
+            false,
             cluster,
             plan,
             None,

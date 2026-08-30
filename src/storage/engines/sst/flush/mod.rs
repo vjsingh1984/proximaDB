@@ -533,7 +533,6 @@ impl SstEngine {
                 use crate::storage::engines::sst::segment_format::{
                     write_pax_segment_full_with_cache_seed_and_layout,
                     write_pax_segment_full_with_layout,
-
                 };
                 // Local write path from the staged write (uploaded on finalize
                 // when the staging URL is remote).
@@ -589,7 +588,6 @@ impl SstEngine {
                 let shred_spec = resolve_flush_shred_spec(params.collection_config.as_ref());
                 let meta = if cache_on_write.includes_invariants() {
                     let write = write_pax_segment_full_with_cache_seed_and_layout(
-
                         std::path::Path::new(staging_path),
                         &records,
                         collection_id,
@@ -607,7 +605,6 @@ impl SstEngine {
                     write.meta
                 } else {
                     write_pax_segment_full_with_layout(
-
                         std::path::Path::new(staging_path),
                         &records,
                         collection_id,

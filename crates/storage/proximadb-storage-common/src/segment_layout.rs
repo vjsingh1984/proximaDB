@@ -1200,8 +1200,7 @@ impl SegmentFooterIndex {
                         let block_idx = read_u32(section, &mut q)?;
                         let len = read_u32(section, &mut q)? as usize;
                         ensure_remaining(section, q, len, "filterable-stats entry overruns")?;
-                        block_filterable_stats
-                            .push((block_idx, section[q..q + len].to_vec()));
+                        block_filterable_stats.push((block_idx, section[q..q + len].to_vec()));
                         q += len;
                     }
                 } else if tag == SECTION_SHRED_FIELD_MAP {
@@ -1341,10 +1340,7 @@ mod tests {
             a0_len: 0,
             opr_off: 0,
             opr_len: 0,
-            // TD-FPRUNE-1 P2: a sparse filterable-stats section entry for
-            // block 1, to exercise the SECTION_BLOCK_FILTERABLE_STATS
-            // round-trip (block 0 stays absent — the mixed-read baseline).
-            block_filterable_stats: vec![(1u32, vec![1, 0, 42, 7, 255])],
+            block_filterable_stats: Vec::new(),
             blocks: vec![
                 FooterBlockEntry {
                     offset: 152_056,
@@ -1781,7 +1777,10 @@ mod tests {
 
     #[test]
     fn footer_index_round_trips() {
-        let f = sample_footer();
+        let mut f = sample_footer();
+        // TD-FPRUNE-1 P2: a sparse filterable-stats section entry for block 1
+        // (block 0 stays absent — the mixed-read baseline).
+        f.block_filterable_stats = vec![(1u32, vec![1, 0, 42, 7, 255])];
         let bytes = f.to_bytes().unwrap();
         let parsed = SegmentFooterIndex::parse(&bytes).unwrap();
         assert_eq!(parsed.row_count, 1000);
@@ -1887,7 +1886,14 @@ mod tests {
         let footer = sample_typed_footer();
         let mut bytes = footer.to_bytes()?;
         let section_count_offset = typed_footer_section_count_offset(&bytes)?;
-        bytes[section_count_offset..section_count_offset + 2].copy_from_slice(&2u16.to_le_bytes());
+        // Compute the count (don't hardcode) — the footer's known-section set
+        // grows over time (A0, OID resolver, exact region, shred field map,
+        // filterable stats); the invariant under test is that ONE MORE,
+        // unknown-tagged section is skipped wholesale.
+        let original_count =
+            u16::from_le_bytes([bytes[section_count_offset], bytes[section_count_offset + 1]]);
+        bytes[section_count_offset..section_count_offset + 2]
+            .copy_from_slice(&(original_count + 1).to_le_bytes());
         bytes.push(0xfe);
         bytes.push(1);
         bytes.extend_from_slice(&3u32.to_le_bytes());
