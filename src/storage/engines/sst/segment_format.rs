@@ -4916,6 +4916,11 @@ mod tests {
     /// to the magic-detected read router.
     #[test]
     fn larger_target_block_yields_fewer_blocks() {
+        // TD-PAXRG-1: post-flip the default write is the row-group layout,
+        // whose 256 KiB floor clamps sub-floor targets — this test pins the
+        // LEGACY geometry lever, so it pins the kill-switch (nextest isolates
+        // the process).
+        unsafe { std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "0") };
         let records: Vec<ProximaRecord> = (0..512)
             .map(|i| rec(&format!("r{i}"), 1000 + i as i64, vec![i as f32 * 0.1; 64]))
             .collect();

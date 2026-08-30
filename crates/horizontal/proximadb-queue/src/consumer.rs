@@ -77,24 +77,10 @@ impl Consumer {
         &self.inner.group_id
     }
 
-    /// Acquire ownership of the requested partitions for this consumer.
-    /// Each partition's lease is acquired via the cross-process
-    /// `leases::try_acquire` CAS; a non-expired conflicting holder
-    /// produces `QueueError::LeaseConflict`.
-    /// Subscribe this group to the GIVEN partitions only. Two semantics to
-    /// know before calling (both bit a first-time consumer in tests):
-    ///
-    /// * **Only the listed partitions** get leases + group cursors — an empty
-    ///   slice subscribes to NOTHING and `poll` will never return messages.
-    ///   Prefer [`Self::subscribe_all`] unless the caller genuinely wants a
-    ///   subset.
-    /// * The group's read cursor **initializes at the partition's current
-    ///   end** on first subscribe — messages produced BEFORE the subscribe
-    ///   are not delivered. Subscribe before producing when replay-from-zero
-    ///   is expected.
-    /// Subscribe this group to ALL partitions of `topic` (leases + cursors
-    /// for every partition) — the form nearly every consumer wants. TD-CACHE-10:
-    /// subscribing with an empty partition slice silently receives nothing.
+    /// Subscribe this group to ALL partitions of `topic` (leases + group
+    /// cursors for every partition) — the form nearly every consumer wants.
+    /// TD-CACHE-10: subscribing with an empty partition slice silently
+    /// receives nothing. Lazy-creates the topic if absent.
     pub async fn subscribe_all(&self, topic: &str) -> Result<()> {
         // Lazy-create the topic first (same contract as `subscribe`).
         if self.inner.client.topic_state(topic).await.is_none() {
@@ -113,6 +99,20 @@ impl Consumer {
         self.subscribe(topic, &partitions).await
     }
 
+    /// Acquire ownership of the requested partitions for this consumer.
+    /// Each partition's lease is acquired via the cross-process
+    /// `leases::try_acquire` CAS; a non-expired conflicting holder
+    /// produces `QueueError::LeaseConflict`.
+    ///
+    /// **Only the listed partitions** get leases + group cursors — an empty
+    /// slice subscribes to NOTHING and `poll` will never return messages.
+    /// Prefer [`Self::subscribe_all`] unless the caller genuinely wants a
+    /// subset.
+    ///
+    /// The group's read cursor **initializes at the partition's current
+    /// end** on first subscribe — messages produced BEFORE the subscribe
+    /// are not delivered. Subscribe before producing when replay-from-zero
+    /// is expected.
     pub async fn subscribe(&self, topic: &str, partitions: &[PartitionId]) -> Result<()> {
         let state = match self.inner.client.topic_state(topic).await {
             Some(s) => s,

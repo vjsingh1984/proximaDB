@@ -299,10 +299,22 @@ async fn test_ivf2_off_compaction_route_stays_v1() -> Result<()> {
 
     let versions = coalesced_versions(dir.path());
     assert!(!versions.is_empty(), "compaction must leave coalesced .pax");
+    // TD-PAXRG-1 collapse: ONE layout version for all coalesced segments; the
+    // A0-presence signal is the header's `a0_len` extent (pre-collapse this
+    // asserted the version byte != TWO_LEVEL). Without A0 training: version 1,
+    // a0_len == 0.
     assert!(
-        versions.iter().all(|(_, v)| *v != SEG_LAYOUT_VERSION),
-        "without PROXIMADB_PAX_WRITE_A0_TRAIN no v3 segment may exist (found: {versions:?})"
+        versions.iter().all(|(_, v)| *v == SEG_LAYOUT_VERSION),
+        "every coalesced segment carries the single collapsed layout version"
     );
+    for (p, _) in &versions {
+        let bytes = std::fs::read(p)?;
+        let h = SegmentHeaderPrefix::parse(&bytes)?;
+        assert_eq!(
+            h.a0_len, 0,
+            "A0-off compaction must not emit a coarse directory: {p:?}"
+        );
+    }
     let ids = search_ids(&engine, &coll, vector_for(17)).await;
     assert_eq!(ids.first().map(String::as_str), Some("v0017"));
     Ok(())
