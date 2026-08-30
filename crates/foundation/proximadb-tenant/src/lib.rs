@@ -444,5 +444,6 @@ pub use identity_trust::{
 pub mod claim_vocabulary;
 pub use claim_vocabulary::{
     ClaimHit, DEPRECATED_TENANT_CLAIM_ALIASES, TENANT_CLAIM_HEADER, TIER_CLAIM_HEADER,
-    TIER_CLAIM_PG_PARAM, tenant_claim, tenant_claim_with_legacy_aliases, tier_claim, tier_claim_pg,
+    TIER_CLAIM_PG_PARAM, legacy_alias_present, tenant_claim, tenant_claim_with_legacy_aliases,
+    tier_claim, tier_claim_pg,
 };

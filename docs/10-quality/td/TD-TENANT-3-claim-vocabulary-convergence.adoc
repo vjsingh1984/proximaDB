@@ -211,8 +211,16 @@ normalization happens on the *caller* side of the seam.
 
 == S4 — open follow-ups
 
-. Retire Flight's `x-proximadb-tenant-id` / `tenant-id` / `tenant_id` aliases
-  once the deprecation warning is silent across a release.
+. Flight alias retirement — **honoring REMOVED 2026-08-29** (S4 item 1,
+  evidence-closed early): the aliases no longer grant a tenant on any surface;
+  presence is still detected (warn once per process + the
+  `proximadb_deprecated_claim_uses_total` counter, now counting attempts).
+  Residual for the next release boundary, then delete: the
+  `DEPRECATED_TENANT_CLAIM_ALIASES` const, the three names, the warn, the
+  counter, and their tests. Closure basis: integrator exhaustion (no SDK or
+  AnvaiOps reference ever sent an alias) — the counter window could not have
+  accumulated (no release shipped since it landed); honoring-removal had to
+  precede that release regardless.
 +
 [NOTE]
 ====
