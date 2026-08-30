@@ -9,9 +9,11 @@ use tempfile::TempDir;
 /// Test engines to validate.
 /// Experimental engines are only included when the feature is enabled.
 fn test_engines() -> Vec<&'static str> {
-    // VIPER deprecated (ADR-093 / TD-VIPER-1) — removed from the
-    // all-engines conformance loop at stage 1.
-    let mut engines = vec!["sst", "helix", "nova"];
+    // VIPER is deprecated (ADR-093 / TD-VIPER-1), but remains selectable
+    // through stage 1 and must support legacy reads through stage 2. Keep its
+    // existing coverage until implementation retirement; conformance ratchets
+    // must not go backwards.
+    let mut engines = vec!["sst", "helix", "viper", "nova"];
     if cfg!(feature = "experimental-engines") {
         engines.push("swift");
         engines.push("raptor");
@@ -572,6 +574,10 @@ fn test_concurrent_operations_all_engines() {
 #[test]
 fn test_suite_summary() {
     let engines = test_engines();
+    assert!(
+        engines.contains(&"viper"),
+        "VIPER must remain in the conformance matrix while its implementation supports legacy reads; see ADR-093"
+    );
     let engine_list = engines
         .iter()
         .map(|e| e.to_uppercase())
