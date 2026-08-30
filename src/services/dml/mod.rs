@@ -2934,6 +2934,31 @@ impl DmlService {
         name.rsplit('.').next().unwrap_or(name)
     }
 
+    /// TD-OLAP-18: resolve a SQL column spelling to the table's DECLARED name —
+    /// an exact match keeps its own spelling; otherwise a unique
+    /// case-insensitive match resolves (ambiguous case-variants stay
+    /// unresolved, mirroring the frontend's fold semantics). Anything else is
+    /// the same "does not exist" error the validators raise.
+    fn resolve_declared_column_name(
+        raw: &str,
+        table_schema: &CatalogTableSchema,
+    ) -> Result<String> {
+        let bare = Self::unqualified_column(raw);
+        let matches: Vec<&CatalogColumn> = table_schema
+            .columns
+            .iter()
+            .filter(|column| column.name.eq_ignore_ascii_case(bare))
+            .collect();
+        match matches.as_slice() {
+            [declared] => Ok(declared.name.clone()),
+            _ => Err(anyhow!(
+                "Column '{}' does not exist in table '{}'",
+                bare,
+                table_schema.name
+            )),
+        }
+    }
+
     fn resolve_select_predicates(
         table_schema: &CatalogTableSchema,
         predicates: &[RelationalSelectPredicateInput],
@@ -4412,6 +4437,26 @@ impl DmlService {
             &synthesized
         } else {
             columns
+        };
+        // TD-OLAP-18: normalize the provided spellings to the DECLARED column
+        // names (exact match keeps its spelling; otherwise a unique
+        // case-insensitive match resolves — same fold semantics as the read
+        // path and the SELECT predicate/projection resolvers above). Every
+        // downstream step (validation, per-column literal typing, row_values
+        // keys, default-fill, CatalogRow::validate) is then keyed by declared
+        // names, exactly as if the query had spelled them that way.
+        let folded: Vec<String>;
+        let columns: &[String] = if columns
+            .iter()
+            .all(|c| table_schema.columns.iter().any(|sc| &sc.name == c))
+        {
+            columns
+        } else {
+            folded = columns
+                .iter()
+                .map(|c| Self::resolve_declared_column_name(c, table_schema))
+                .collect::<Result<_>>()?;
+            &folded
         };
         if columns.len() != values.len() {
             return Err(anyhow!(
