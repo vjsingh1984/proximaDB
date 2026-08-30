@@ -284,10 +284,36 @@ region. It is to reuse and persist the compaction work already paid for, then
 selectively address existing A/B runs (TD-RDSTRAT-8). Region C/D follow only if
 the resulting trace still identifies them as dominant.
 
+== Amendment — row-group Region D + Region C closure (2026-08, TD-PAXRG-1)
+
+Regions C and D are implemented, closing the two open targets above:
+
+* **Region D is a row-group region** — Parquet-style granules (Olap-framed PAX
+  blocks, RowDirectory + in-block rgdir suppressed, 256 KiB target floor), per-RG
+  zone stats + OID-chunk extents in the footer's per-entry stats payload, and the
+  ANN top-k OID fetch reading footer-addressed chunks instead of whole granules.
+  Measured driver: per-block framing amplified ~15× at 400 B targets; the floor
+  makes that structurally impossible and the measured closure (v4 < ¼ of the v3
+  micro-block baseline on identical data) is pinned in TD-PAXRG-1.
+* **Region C is a hoisted exact-f32 region** — same ordinal space as A/B, extent
+  in the header prefix + footer section 6, written only under the existing
+  `pax_f32_tier` opt-in (Q4's evidence gate governs per-collection activation).
+  Reconstruction parity with in-block stripes is bitwise (pinned).
+* **Single layout version (pre-GA collapse)**: nothing serialized predates this
+  change, so the v1/v3/v4 version sprawl Q2 anticipated was deleted rather than
+  maintained. ONE version whose region extents are always serialized (zero =
+  absent) — this Decision's own invariant ("region presence is declared by the
+  serialized header/footer") made the version byte redundant. The byte is
+  reserved for the first post-GA successor; Q2's mixed-read machinery (parse
+  arms + freeze tests) re-engages then, with actual legacy bytes to protect.
+* Write side stays default-OFF (`PROXIMADB_PAX_WRITE_RG_LAYOUT`, per-collection
+  `pax_rg_layout` tag); the SIFT-recall + amplification + GET-economy flip
+  criteria live in TD-PAXRG-1 §Remaining work.
+
 == Consequences
 
-* Region B is the accepted and shipped part of this ADR. Region C and pure D
-  remain unimplemented, evidence-gated targets.
+* Region B is the accepted and shipped part of this ADR; Regions C and D are now
+  implemented (above), with D's default-ON flip evidence-gated per TD-PAXRG-1.
 * TD-RDSTRAT-8 narrows the scale end-state: a global Region-A scan plus
   whole-Region-B fallback is not acceptable indefinitely as N grows.
 * Downstream pricing dependency (TD-RDSTRAT-6 § downstream note): region

@@ -52,6 +52,8 @@ use proximadb::core::hardware_capabilities::initialize_hardware_capabilities;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
 
+mod storage_ownership;
+
 #[derive(Parser)]
 #[command(name = "proximadb-server")]
 #[command(about = "ProximaDB cloud-native vector database server")]
@@ -321,6 +323,10 @@ async fn run() -> anyhow::Result<()> {
 
     // Ensure all required directories exist
     ensure_required_directories(&config).await?;
+
+    // Runtime state is observability, not fencing. Acquire kernel-backed locks
+    // before publishing lifecycle state or initializing any engine.
+    let _storage_ownership = storage_ownership::StorageOwnershipLease::acquire(&config)?;
 
     // Publish the lifecycle record BEFORE any slow work. Recovery can run for
     // minutes on a large data dir and binds no socket until it finishes, so a

@@ -1168,6 +1168,13 @@ export interface components {
             canonical_embedding_precision?: string | null;
             /** @description Collection ID */
             collection_id: string;
+            /**
+             * Format: int64
+             * @description Monotonic server-owned content revision for cache revalidation.
+             */
+            content_revision: number;
+            /** @description Opaque validator that also fences server restarts. */
+            content_revision_token: string;
             /** @description Creation timestamp */
             created_at: string;
             /**
@@ -2089,6 +2096,9 @@ export interface components {
          *     `RecordResponse` schema (same shape used by `getRecord`).
          */
         ScanRecordsResponse: {
+            /** Format: int64 */
+            content_revision: number;
+            content_revision_token: string;
             next_cursor?: string | null;
             records: components["schemas"]["RecordV2Response"][];
             /** Format: int64 */
@@ -2952,6 +2962,15 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Collection changed during the scan; restart pagination. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

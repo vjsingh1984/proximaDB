@@ -70,7 +70,7 @@ embedded = [
 # extra deps and works core-only.
 #   pip install 'proximadb[embeddings]'
 embeddings = [
-    "sentence-transformers>=3.2,<6",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
+    "sentence-transformers>=3.2,<7",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
     # Trusted modeling code used by catalogued Nomic v1.5 imports
     # einops directly; keep the public extra sufficient for every advertised
     # open-weights model rather than relying on an ambient transitive package.
@@ -90,7 +90,7 @@ embeddings-cloud = [
 # LLM integration via Victor framework
 llm = [
     "victor-ai>=0.2.0",  # Victor AI framework for embeddings and LLM
-    "sentence-transformers>=3.2,<6",  # Local embedding models
+    "sentence-transformers>=3.2,<7",  # Local embedding models
 ]
 
 # Chunking concern (TD-126 Phase 3): text + code-aware AST chunking via
@@ -173,7 +173,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
-    "sentence-transformers>=3.2,<6",
+    "sentence-transformers>=3.2,<7",
     "requests>=2.28.0",
     "grpcio-tools>=1.80.0",
     "black>=22.0.0",
@@ -194,7 +194,7 @@ test = [
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
-    "sentence-transformers>=3.2,<6",
+    "sentence-transformers>=3.2,<7",
     "requests>=2.28.0",
     # Complete the "run the unit suite" contract: unit tests hard-import these
     # optional deps (arrow export/flight, dataframe builders, multi-bert psutil

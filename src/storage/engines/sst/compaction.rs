@@ -203,6 +203,13 @@ pub struct SstCompactionTask {
     /// `CanonicalPrecisionResolver::resolve` for the output collection;
     /// callers constructing tasks manually leave it `None`.
     pub precision_hint: Option<proximadb_records::EmbeddingScalarType>,
+    /// TD-PAXRG-1: the collection's row-group Region D write switch, resolved
+    /// by the task producer from the `pax_rg_layout` tag (precedence tag >
+    /// env > default). `None` = follow the env gate
+    /// (`PROXIMADB_PAX_WRITE_RG_LAYOUT`, default ON post-flip). The resolved
+    /// value is honored at BOTH compaction executors (spill + atomic/in-place)
+    /// so an opted-out collection's rewrite output stays intent-matched.
+    pub rg_layout: Option<bool>,
 }
 
 fn training_follow_up_threshold(
@@ -915,6 +922,7 @@ impl Compaction {
         collection_dir: &Path,
         l0_threshold: usize,
         precision_hint: Option<proximadb_records::EmbeddingScalarType>,
+        rg_layout: Option<bool>,
     ) -> Result<bool> {
         let Some(mut task) = self
             .check_compaction_needed(
@@ -927,6 +935,7 @@ impl Compaction {
         else {
             return Ok(false);
         };
+        task.rg_layout = rg_layout;
         task.collection_identity = collection_identity;
         // TD-COMPACT-6 D1: the worker clears the shared training_in_flight guard
         // for this collection on completion. It derives the collection dir from
@@ -950,6 +959,10 @@ impl Compaction {
         l0_threshold_override: Option<usize>,
         precision_hint: Option<proximadb_records::EmbeddingScalarType>,
     ) -> Result<Option<SstCompactionTask>> {
+        // TD-PAXRG-1: rg resolution happens at the task PRODUCERS (they hold
+        // the collection tags); check_compaction_needed stays config-free and
+        // defaults the field to env-follow at the write sites.
+
         debug!(
             "🔍 SST COMPACTION: Delegating to unified framework for collection: {}",
             collection_object_id
@@ -1042,6 +1055,7 @@ impl Compaction {
                 block_size_kb: None,      // Use server default
                 compression_config: None, // Use server default
                 precision_hint,
+                rg_layout: None,
             }));
         }
 
@@ -1274,7 +1288,11 @@ impl Compaction {
                         )
                         .await
                     {
-                        Ok(Some(follow_up)) => {
+                        Ok(Some(mut follow_up)) => {
+                            // TD-PAXRG-1: the follow-up carries the ORIGINAL
+                            // task's rg resolution — the collection's intent
+                            // must not drift between compaction rounds.
+                            follow_up.rg_layout = task.rg_layout;
                             let follow_up_level = follow_up.level;
                             match compaction.schedule_compaction(follow_up).await {
                                 Ok(true) => {
@@ -1716,6 +1734,12 @@ impl Compaction {
                 SpillOrdering::Ivf(output) => Some(output.model().clone()),
                 SpillOrdering::Mvcc(_) => None,
             };
+            // TD-PAXRG-1: the exact tier follows the INTERSECTION rule — the
+            // spill executor must not silently drop it when every input is
+            // exact (same resolution the non-spill arms perform).
+            let f32_tier = crate::storage::engines::sst::segment_format::pax_inputs_have_f32_tier(
+                &task.input_files,
+            );
             let mut writer =
                 crate::storage::engines::sst::segment_format::pax_spill_compaction_writer(
                     Path::new(staged.local_path()),
@@ -1723,6 +1747,8 @@ impl Compaction {
                     &collection_id,
                     1,
                     proximadb_block_format::VectorQuant::Sq8,
+                    f32_tier,
+                    crate::storage::engines::sst::segment_format::rg_layout_enabled(),
                     target_block,
                     usize::try_from(mvcc_stats.output_records).map_err(|_| {
                         crate::core::StorageError::SstEngine(

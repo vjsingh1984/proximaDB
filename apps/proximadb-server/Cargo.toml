@@ -71,6 +71,7 @@ anyhow.workspace = true
 clap.workspace = true
 proximadb = { path = "../../", default-features = false }
 proximadb-embedding = { path = "../../crates/modalities/proximadb-embedding" }
+proximadb-runtime-common.workspace = true
 tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1"
 tracing-appender = "0.2"

@@ -385,7 +385,7 @@ impl CollectionService {
     /// (single-tenant / anonymous deployments). Reads of the same
     /// corpus-version-keyed caches use the same bucket, so invalidation stays
     /// consistent regardless of whether a tenant context is present.
-    pub(crate) const DEFAULT_VERSION_TENANT: &str = "default";
+    pub(crate) const DEFAULT_VERSION_TENANT: &str = crate::catalog::DEFAULT_CORPUS_VERSION_TENANT;
 
     /// The tenant id to key corpus-version (cache-invalidation) bumps by. Falls
     /// back to [`DEFAULT_VERSION_TENANT`](Self::DEFAULT_VERSION_TENANT) so the

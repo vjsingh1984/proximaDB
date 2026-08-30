@@ -35,7 +35,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use arrow_array::{ArrayRef, BinaryArray, Float64Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::builder::{Float32Builder, ListBuilder};
+use arrow_array::{
+    ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array, RecordBatch,
+    StringArray,
+};
 use arrow_schema::{DataType, Field, SchemaRef};
 use async_trait::async_trait;
 use datafusion::error::{DataFusionError, Result as DFResult};
@@ -53,6 +57,10 @@ use proximadb_storage_common::format_splits::{ScalarPredicate, ScalarValue};
 use proximadb_storage_common::pax_block::{
     BlockIndexEntry, PaxSegmentScanner, ScanPredicate, SegmentIndex,
 };
+use proximadb_storage_common::segment_layout::{
+    SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION, SegmentFooterIndex, SegmentHeaderPrefix,
+    is_coalesced_segment,
+};
 
 use crate::observability::io_trace;
 
@@ -63,7 +71,15 @@ use crate::storage::formats::FileSplit;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// `true` when the PAX-native OLAP scan is opted in (TD-OLAP-1 slice 1).
-/// Default OFF — the reader is constructed/tested but not routed until slice 2.
+/// Default OFF — **do not enable in production until slice 2 dispatch is
+/// wired** (see the TD-OLAP-1 slice-2 design record): with the gate ON the
+/// scheduler STAMPS `DataFusionLocal` for pax-backed OLAP shapes, but the
+/// dispatch block still requires `parquet_backed`, so Volcano serves while
+/// the cost model attributes Volcano's measured costs to DataFusion cells
+/// (attribution poisoning). Flipping this default is gated on the slice-2
+/// requirements (WAL-delta reconciliation, path reconciliation,
+/// `pax_backed` predicate refinement), not on the storage layout (which
+/// defaulted to row-group Region D on 2026-08-28).
 pub fn pax_reader_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
@@ -113,6 +129,12 @@ pub struct PaxSplitReader {
     /// Translated once at construction from the resolved physical filters.
     /// Empty ⇒ no pruning (correctness-safe). AND-semantics at `block_pruned`.
     prune_predicates: Vec<(String, ScalarPredicate)>,
+    /// TD-OLAP-1 Test 2.3: Tenant ID for predicate filtering (optional).
+    /// When set, blocks are pruned at scan time if tenant hash doesn't match.
+    tenant_id: Option<String>,
+    /// TD-OLAP-1 Test 2.3: Time range for predicate filtering (optional).
+    /// When set, blocks are pruned if they don't overlap with [from_ns, to_ns].
+    time_range: Option<(i64, i64)>,
 }
 
 impl PaxSplitReader {
@@ -120,11 +142,17 @@ impl PaxSplitReader {
     /// build time. `filters` are the resolved physical filters (logical `Expr`s
     /// must be lowered to physical first — the caller's job in slice 2 routing;
     /// pass empty for the decode-only / test path).
+    ///
+    /// TD-OLAP-1 Test 2.3: `tenant_id` and `time_range` enable tenant/time
+    /// predicate filtering at the storage layer. When `None`, no filtering is
+    /// applied (backward-compatible with `ScanPredicate::default()`).
     pub fn new(
         schema: SchemaRef,
         filesystem_factory: Arc<FilesystemFactory>,
         name_to_col_id: HashMap<String, i32>,
         filters: Vec<Arc<dyn PhysicalExpr>>,
+        tenant_id: Option<String>,
+        time_range: Option<(i64, i64)>,
     ) -> Self {
         let mut prune_predicates = Vec::new();
         for f in &filters {
@@ -135,6 +163,8 @@ impl PaxSplitReader {
             filesystem_factory,
             name_to_col_id,
             prune_predicates,
+            tenant_id,
+            time_range,
         }
     }
 
@@ -178,7 +208,7 @@ impl PaxSplitReader {
     /// range-reads each surviving block's footer/metadata (NOT its body) into a
     /// [`BlockLayout`] and prunes on ALL columns, so a `props__<key>`-pruned block
     /// costs only its footer, never its body.
-    async fn load_ranged(
+    pub(crate) async fn load_ranged(
         &self,
         split: &FileSplit,
         out_schema: &SchemaRef,
@@ -191,6 +221,53 @@ impl PaxSplitReader {
         if len < SEGMENT_INDEX_TRAILER_MIN {
             return Ok(None);
         }
+        // TD-PAXRG-1: a v4 row-group segment DECLARES its index (the coalesced
+        // footer + per-RG MinMax stats) in the header-prefix — no PAXZ tail
+        // probe. One small GET decides; the footer renders as the layout-neutral
+        // `SegmentIndex` the prune/fetch stages below already consume.
+        let prefix_len = (SEG_HEADER_PREFIX_LEN as u64).min(len);
+        let prefix = self
+            .filesystem_factory
+            .read_range(path, 0, prefix_len)
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("PAX ranged header read: {e}")))?;
+        let v4_index: Option<SegmentIndex> = if is_coalesced_segment(&prefix) {
+            match SegmentHeaderPrefix::parse(&prefix) {
+                Ok(h) if h.layout_version == SEG_LAYOUT_VERSION && h.footer_len > 0 => {
+                    let body = self
+                        .filesystem_factory
+                        .read_range(path, h.footer_off, h.footer_len)
+                        .await
+                        .map_err(|e| {
+                            DataFusionError::Execution(format!("PAX ranged v4 footer read: {e}"))
+                        })?;
+                    SegmentFooterIndex::parse(&body).ok().map(|footer| {
+                        let blocks = footer
+                            .blocks
+                            .iter()
+                            .zip(&footer.block_stats)
+                            .map(|(entry, stats)| BlockIndexEntry {
+                                offset: entry.offset,
+                                size: entry.size,
+                                zone: stats.as_ref().map(|s| s.zone.clone()),
+                            })
+                            .collect();
+                        SegmentIndex { blocks }
+                    })
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(v4_index) = v4_index {
+            // Fall through to the shared prune + ranged-fetch stages with the
+            // v4 index (boxed to keep the async-block sizing uniform).
+            return self
+                .load_ranged_with_index(path, v4_index, out_schema)
+                .await;
+        }
+
         // Probe the tail for the segment index, growing ×4 on a short suffix. Every
         // physical read (here and below) is accounted by the filesystem layer's own
         // io_trace hooks (`record_range_gets` + `record_bytes_read`), so this method
@@ -211,6 +288,18 @@ impl PaxSplitReader {
                 Ok(None) | Err(_) => return Ok(None),
             }
         };
+        self.load_ranged_with_index(path, index, out_schema).await
+    }
+
+    /// Shared ranged stages (TD-PAXRG-1): prune + fetch, layout-agnostic —
+    /// `index` is either the PAXZ v2 trailer (v1/v3 segments) or the v4
+    /// footer's block table rendered with per-RG zone summaries.
+    async fn load_ranged_with_index(
+        &self,
+        path: &str,
+        index: SegmentIndex,
+        out_schema: &SchemaRef,
+    ) -> DFResult<Option<Vec<RecordBatch>>> {
         // Stage A — prune against the index zone summary (canonical columns; v1
         // entries carry no zone ⇒ conservatively keep). No per-block GET.
         let mut stage_a: Vec<&BlockIndexEntry> = Vec::new();
@@ -358,7 +447,15 @@ impl PaxSplitReader {
     /// `PaxBlockReader::open(whole_file)` CRC-fails on them, so the segment
     /// scanner is mandatory (slice 1.5 fix to #706).
     fn decode_segment(&self, bytes: &[u8], out_schema: &SchemaRef) -> DFResult<Vec<RecordBatch>> {
-        let predicate = ScanPredicate::default(); // tenant/time wired in slice 2
+        // TD-OLAP-1 Test 2.3: Wire tenant/time predicates instead of default
+        let mut predicate = ScanPredicate::default();
+        if let Some(ref tenant_id) = self.tenant_id {
+            predicate = predicate.with_tenant(tenant_id);
+        }
+        if let Some((from_ns, to_ns)) = self.time_range {
+            predicate = predicate.with_time_range(from_ns, to_ns);
+        }
+
         let mut scanner = PaxSegmentScanner::from_bytes(bytes.to_vec(), predicate)
             .map_err(|e| DataFusionError::Execution(format!("PAX segment open failed: {e}")))?;
         let mut batches = Vec::new();
@@ -401,6 +498,8 @@ impl PaxSplitReader {
     /// The target Arrow type is type-directed for the `props` tail: a `Utf8` field
     /// reconstructs the document JSON object from the msgpack tail (the `documents()`
     /// surface, TD-DOC-PUSHDOWN-1); a `Binary` field emits the raw msgpack bytes.
+    ///
+    /// TD-OLAP-1 Test 2.4: Vector stripe decode for f32 vectors (ColumnRole::Vector).
     fn decode_column(&self, reader: &PaxBlockReader, field: &Field) -> DFResult<ArrayRef> {
         let name = field.name();
         let cid = *self
@@ -416,23 +515,96 @@ impl PaxSplitReader {
             })?;
         // TypeId bytes (proximadb_codec): I64=0x03, F64=0x02, F32=0x01;
         // 0xff = variable-length (string/bytes).
-        Ok(match meta.data_type_id {
-            0x03 => Arc::new(Int64Array::from(decode_i64(reader, cid, name)?)),
-            0x02 => Arc::new(Float64Array::from(decode_f64(reader, cid, name)?)),
-            0xff if meta.role == ColumnRole::Props && field.data_type() == &DataType::Utf8 => {
+        Ok(match (meta.data_type_id, meta.role) {
+            (0x03, _) => Arc::new(Int64Array::from(decode_i64(reader, cid, name)?)),
+            (0x02, _) => Arc::new(Float64Array::from(decode_f64(reader, cid, name)?)),
+            (0xff, ColumnRole::Props) if field.data_type() == &DataType::Utf8 => {
                 Arc::new(StringArray::from(decode_props_json(reader, cid, name)?))
             }
-            0xff if meta.role == ColumnRole::Props => {
+            (0xff, ColumnRole::Props) => {
                 Arc::new(BinaryArray::from_iter(decode_bytes(reader, cid, name)?))
             }
-            0xff => Arc::new(StringArray::from(decode_str(reader, cid, name)?)),
-            other => {
+            (0xff, ColumnRole::Vector) => {
+                // TD-OLAP-1 Test 2.4: f32 vector stripe decode
+                let vectors = reader.decode_f32_vec_stripe(cid).ok_or_else(|| {
+                    DataFusionError::Execution(format!(
+                        "PAX: vector column {name} (id {cid}) decode failed"
+                    ))
+                })?;
+                Arc::new(Self::decode_f32_vectors_to_arrow(
+                    vectors,
+                    field.data_type(),
+                )?)
+            }
+            (0xff, _) => Arc::new(StringArray::from(decode_str(reader, cid, name)?)),
+            (other, _) => {
                 return Err(DataFusionError::NotImplemented(format!(
                     "PAX data_type_id {other:#x} for {name} (slice 1 covers i64/f64/str/bytes; \
-                     f32 vector decode is slice 2)"
+                     f32 vector decode is now implemented)"
                 )));
             }
         })
+    }
+
+    /// TD-OLAP-1 Test 2.4: Convert f32 vector data to Arrow arrays.
+    ///
+    /// Takes `Vec<Option<Vec<f32>>>` from `PaxBlockReader::decode_f32_vec_stripe`
+    /// and converts it to the appropriate Arrow array type (List<Float32> or
+    /// FixedSizeList<Float32>).
+    fn decode_f32_vectors_to_arrow(
+        vectors: Vec<Option<Vec<f32>>>,
+        target_type: &DataType,
+    ) -> DFResult<ArrayRef> {
+        match target_type {
+            DataType::List(field) if matches!(*field.data_type(), DataType::Float32) => {
+                // Variable-length vectors: List<Float32>
+                let mut builder = ListBuilder::new(Float32Builder::new());
+                for vec_opt in vectors {
+                    if let Some(vec) = vec_opt {
+                        builder.values().append_slice(&vec);
+                        builder.append(true);
+                    } else {
+                        builder.append(false);
+                    }
+                }
+                Ok(Arc::new(builder.finish()))
+            }
+            DataType::FixedSizeList(field, size)
+                if matches!(*field.data_type(), DataType::Float32) =>
+            {
+                // Fixed-size vectors: FixedSizeList<Float32, N>
+                let mut values = Vec::new();
+
+                for vec_opt in &vectors {
+                    if let Some(vec) = vec_opt {
+                        if vec.len() != *size as usize {
+                            return Err(DataFusionError::Execution(format!(
+                                "Vector size mismatch: expected {}, got {}",
+                                size,
+                                vec.len()
+                            )));
+                        }
+                        values.extend_from_slice(vec);
+                    } else {
+                        return Err(DataFusionError::Execution(
+                            "Null vectors not supported in FixedSizeList".to_string(),
+                        ));
+                    }
+                }
+
+                let values_array = Arc::new(Float32Array::from(values));
+                Ok(Arc::new(FixedSizeListArray::new(
+                    field.clone(),
+                    *size,
+                    values_array,
+                    None, // nulls
+                )))
+            }
+            _ => Err(DataFusionError::Execution(format!(
+                "Unsupported target type for vectors: {}",
+                target_type
+            ))),
+        }
     }
 }
 
@@ -661,7 +833,7 @@ mod tests {
         filters: Vec<Arc<dyn PhysicalExpr>>,
     ) -> PaxSplitReader {
         let fs = Arc::new(FilesystemFactory::create_default().await.unwrap());
-        PaxSplitReader::new(schema, fs, map, filters)
+        PaxSplitReader::new(schema, fs, map, filters, None, None)
     }
 
     #[tokio::test]
@@ -757,7 +929,7 @@ mod tests {
             Operator::GtEq,
             lit(150_000i64),
         ));
-        let reader = PaxSplitReader::new(schema.clone(), fs.clone(), map, vec![filter]);
+        let reader = PaxSplitReader::new(schema.clone(), fs.clone(), map, vec![filter], None, None);
 
         let (ranged_rows, snap) = io_trace::scope(async {
             let batches = reader
@@ -866,7 +1038,7 @@ mod tests {
             Operator::GtEq,
             lit(1_500_000i64),
         ));
-        let reader = PaxSplitReader::new(schema.clone(), fs.clone(), map, vec![filter]);
+        let reader = PaxSplitReader::new(schema.clone(), fs.clone(), map, vec![filter], None, None);
         assert!(
             reader.needs_footer_prune(),
             "a shredded user-column predicate must engage Stage B footer pruning"
