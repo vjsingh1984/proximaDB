@@ -59,6 +59,7 @@ const T_EXEC: &str = "trace_exec";
 const T_VECTOR: &str = "trace_vector";
 const T_VECTOR_ACCESS: &str = "trace_vector_access";
 const T_EMBEDDING: &str = "trace_embedding";
+const T_COMPUTE: &str = "trace_compute";
 
 /// Outcome of one [`IoTraceWarehouse::compact`] run.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
@@ -76,6 +77,8 @@ pub struct CompactionSummary {
     pub vector_rows: usize,
     pub vector_access_rows: usize,
     pub embedding_rows: usize,
+    /// Rows in `trace_compute` — one per `(record, engine)` from `compute_ms`.
+    pub compute_rows: usize,
 }
 
 /// Persisted source-retirement watermark (`_operator/warehouse/_watermark.json`).
@@ -179,6 +182,14 @@ impl IoTraceWarehouse {
                     T_EMBEDDING,
                     &stem,
                     build_embedding_batch(&deduped)?,
+                    &mut touched,
+                )
+                .await?;
+            summary.compute_rows += self
+                .write_segment_parquet(
+                    T_COMPUTE,
+                    &stem,
+                    build_compute_batch(&deduped)?,
                     &mut touched,
                 )
                 .await?;
@@ -509,6 +520,7 @@ fn schema_for(table: &str) -> Option<SchemaRef> {
         T_VECTOR => Some(vector_schema()),
         T_VECTOR_ACCESS => Some(vector_access_schema()),
         T_EMBEDDING => Some(embedding_schema()),
+        T_COMPUTE => Some(compute_schema()),
         _ => None,
     }
 }
@@ -643,6 +655,18 @@ fn embedding_schema() -> SchemaRef {
         req("embedding_calls", DataType::Int64),
         req("embedding_input_tokens", DataType::Int64),
         req("embedding_output_tokens", DataType::Int64),
+    ]))
+}
+
+/// One row per `(record, engine)` — the header `compute_ms{engine→ms}` map flattened
+/// so cost analytics can ask "which engine wins per query shape".
+fn compute_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        req("writer_uuid", DataType::Utf8),
+        req("sequence", DataType::Int64),
+        opt("query_id", DataType::Utf8),
+        req("engine", DataType::Utf8),
+        req("ms", DataType::Int64),
     ]))
 }
 
@@ -1022,6 +1046,37 @@ fn build_embedding_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, 
         .map_err(|e| {
             StorageError::Serialization(format!("io_trace warehouse: embedding batch: {e}"))
         })
+}
+
+fn build_compute_batch(envs: &[TraceEnvelope]) -> Result<Option<RecordBatch>, StorageError> {
+    let mut writer_uuid = Vec::new();
+    let mut sequence = Vec::new();
+    let mut query_id = Vec::new();
+    let mut engine = Vec::new();
+    let mut ms = Vec::new();
+    for e in envs {
+        // `compute_ms` is a BTreeMap, so engines emit in a stable order per record.
+        for (eng, val) in &e.header.compute_ms {
+            writer_uuid.push(e.writer_uuid.clone());
+            sequence.push(e.sequence as i64);
+            query_id.push(e.header.query_id.clone());
+            engine.push(eng.clone());
+            ms.push(*val as i64);
+        }
+    }
+    if writer_uuid.is_empty() {
+        return Ok(None);
+    }
+    let cols: Vec<ArrayRef> = vec![
+        str_arr(writer_uuid),
+        i64_arr(sequence),
+        opt_str_arr(query_id),
+        str_arr(engine),
+        i64_arr(ms),
+    ];
+    RecordBatch::try_new(compute_schema(), cols)
+        .map(Some)
+        .map_err(|e| StorageError::Serialization(format!("io_trace warehouse: compute batch: {e}")))
 }
 
 #[cfg(test)]
@@ -1413,6 +1468,38 @@ mod tests {
         );
         assert_eq!(summary.relational_rows, 0);
         assert_eq!(total_rows(&read_table(&store, T_HEADER).await), 1);
+    }
+
+    /// The per-engine `compute_ms` map flattens into `trace_compute` — one row per
+    /// (record, engine) — so cost analytics can compare engines per query shape.
+    #[tokio::test]
+    async fn compacts_per_engine_compute_satellite() {
+        use arrow_array::Array;
+        let dir = tempfile::tempdir().unwrap();
+        let (store, url) = store_url(dir.path());
+        let mut e = relational("w1", 0, 0);
+        e.header.compute_ms = std::collections::BTreeMap::from([
+            ("datafusion".to_string(), 12),
+            ("native".to_string(), 3),
+        ]);
+        write_segment(&store, "trace-compute", &[e]).await;
+
+        let summary = warehouse(&url).compact(1).await.unwrap();
+        assert_eq!(summary.compute_rows, 2, "one trace_compute row per engine");
+
+        let batches = read_table(&store, T_COMPUTE).await;
+        assert_eq!(total_rows(&batches), 2);
+        let b = &batches[0];
+        let engines = b
+            .column(b.schema().index_of("engine").unwrap())
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let names: Vec<&str> = (0..engines.len()).map(|i| engines.value(i)).collect();
+        assert!(
+            names.contains(&"datafusion") && names.contains(&"native"),
+            "engines flattened: {names:?}"
+        );
     }
 
     static TRIGGER_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
