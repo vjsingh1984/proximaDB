@@ -2338,10 +2338,14 @@ impl PostgresProtocol {
         // Simple extraction: look for FROM <table>. The scan is
         // case-insensitive over a length-preserving uppercase copy, but the
         // slice comes from the ORIGINAL text so the identifier keeps its
-        // as-spelled case and quoting — `clean_identifier` then strips quote
-        // characters and any qualifier (TD-OLAP-18: lowercasing here used to
-        // destroy both the declared case AND leave `"` chars in the name, so
-        // `SELECT ... FROM "CaseTbl"` could never resolve).
+        // as-spelled case (TD-OLAP-18: lowercasing here used to destroy the
+        // declared case, so `SELECT ... FROM CaseTbl` could never resolve
+        // against a declared-case catalog entry). Only the quote characters
+        // are stripped — the DOTTED QUALIFIER must survive, because the
+        // downstream legacy path (`CatalogManager::resolve_table`) parses
+        // `ns.table` for cross-namespace routing (dropping the qualifier, as
+        // `clean_identifier` does for column refs, broke
+        // `pgwire_enforces_cross_namespace_fk_referential_actions`).
         let upper = query.to_ascii_uppercase();
         let from_pos = upper.find("FROM ")?;
         let after_from = &query[from_pos + 5..];
@@ -2352,7 +2356,7 @@ impl PostgresProtocol {
         if table.is_empty() {
             None
         } else {
-            Some(Self::clean_identifier(table))
+            Some(table.trim_matches('"').to_string())
         }
     }
 
