@@ -250,6 +250,7 @@ impl PaxSplitReader {
                                 offset: entry.offset,
                                 size: entry.size,
                                 zone: stats.as_ref().map(|s| s.zone.clone()),
+                                footer_stats: None,
                             })
                             .collect();
                         SegmentIndex { blocks }

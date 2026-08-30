@@ -171,6 +171,7 @@ pub fn write_pax_segment_full(
         f32_tier,
         target_block,
         rg_layout_enabled(),
+        &[],
     )
 }
 
@@ -188,6 +189,7 @@ pub fn write_pax_segment_full_with_layout(
     f32_tier: bool,
     target_block: Option<usize>,
     rg_layout: bool,
+    shred_spec: &[(String, i32)],
 ) -> Result<SegmentMeta> {
     Ok(write_pax_segment_full_internal(
         path,
@@ -200,6 +202,7 @@ pub fn write_pax_segment_full_with_layout(
         target_block,
         rg_layout,
         None,
+        shred_spec,
     )?
     .meta)
 }
@@ -218,6 +221,7 @@ pub fn write_pax_segment_full_with_cache_seed_and_layout(
     target_block: Option<usize>,
     rg_layout: bool,
     include_sq8: bool,
+    shred_spec: &[(String, i32)],
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     write_pax_segment_full_internal(
         path,
@@ -230,6 +234,7 @@ pub fn write_pax_segment_full_with_cache_seed_and_layout(
         target_block,
         rg_layout,
         Some(include_sq8),
+        shred_spec,
     )
 }
 
@@ -256,6 +261,7 @@ pub fn write_pax_segment_full_with_cache_seed(
         target_block,
         rg_layout_enabled(),
         include_sq8,
+        &[],
     )
 }
 
@@ -271,6 +277,7 @@ fn write_pax_segment_full_internal(
     target_block: Option<usize>,
     rg_layout: bool,
     capture_sq8: Option<bool>,
+    shred_spec: &[(String, i32)],
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     // TD-RDSTRAT-5 S1 / TD-WLP-4 (default ON, kill-switch
     // `PROXIMADB_PAX_BLOCK_CLUSTER=0`): reorder records by the model-free
@@ -321,6 +328,7 @@ fn write_pax_segment_full_internal(
         plan,
         None, // two-level is compaction-only (TD-RDSTRAT-8)
         capture_sq8,
+        shred_spec, // TD-FPRUNE-1 M1: SST flush shreds declared filterable tags
     )
 }
 
@@ -358,6 +366,7 @@ pub fn write_pax_segment_compacted(
         target_block,
         rg_layout_enabled(),
         None,
+        &[],
     )
     .map(|write| write.meta)
 }
@@ -385,6 +394,73 @@ pub fn write_pax_segment_compacted_with_cache_seed(
         target_block,
         rg_layout_enabled(),
         Some(include_sq8),
+        &[],
+    )
+}
+
+/// TD-FPRUNE-1 (A1): [`write_pax_segment_compacted`] plus a P-Shred spec so
+/// compaction preserves shredded filterable-tag columns (see
+/// [`write_pax_segment_compacted_with_cache_seed_shredded`]).
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_compacted_shredded(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    shred_spec: &[(String, i32)],
+) -> Result<SegmentMeta> {
+    Ok(write_pax_segment_compacted_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        rg_layout_enabled(),
+        None,
+        shred_spec,
+    )?
+    .meta)
+}
+
+/// TD-FPRUNE-1 (A1): [`write_pax_segment_compacted_with_cache_seed`] plus a
+/// P-Shred spec so COMPACTION preserves the shredded filterable-tag user-columns
+/// (min/max + bloom + self-describing footer field-map) — otherwise a compacted
+/// L1/L2 segment drops them and filtered footer-pruning goes dark for it. The
+/// spec is rebuilt from an input segment's self-describing footer `shred_field_map`
+/// (no catalog/schema needed); merged records keep their `props` (ADR-055), so
+/// re-shred reproduces the columns. Empty spec ⇒ byte-identical (legacy inputs).
+#[allow(clippy::too_many_arguments)]
+pub fn write_pax_segment_compacted_with_cache_seed_shredded(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+    quant: VectorQuant,
+    rerank_quant: VectorQuant,
+    f32_tier: bool,
+    target_block: Option<usize>,
+    include_sq8: bool,
+    shred_spec: &[(String, i32)],
+) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
+    write_pax_segment_compacted_internal(
+        path,
+        records,
+        collection_id,
+        embedding_count,
+        quant,
+        rerank_quant,
+        f32_tier,
+        target_block,
+        rg_layout_enabled(),
+        Some(include_sq8),
+        shred_spec,
     )
 }
 
@@ -400,6 +476,7 @@ fn write_pax_segment_compacted_internal(
     target_block: Option<usize>,
     rg_layout: bool,
     capture_sq8: Option<bool>,
+    shred_spec: &[(String, i32)],
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     use crate::storage::engines::sst::block_cluster;
     let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
@@ -416,7 +493,19 @@ fn write_pax_segment_compacted_internal(
     let mut probe_model = None;
     let plan = if cluster {
         if coalesced && block_cluster::ivf_probe_enabled() {
-            match block_cluster::cluster_plan_ivf_probe(records, 0) {
+            // TD-FPRUNE-1 M2 (opt-in): when the segment carries a shredded
+            // filterable tag and the partition-layout gate is on, cluster
+            // partition-first (cells become partition-homogeneous → uncorrelated
+            // tags prune via the M3 probe). Falls back to the global probe plan
+            // when the tag is absent/degenerate — same A0 format either way.
+            let two_level = block_cluster::partition_layout_enabled()
+                .then(|| shred_spec.first())
+                .flatten()
+                .and_then(|(tag, _)| {
+                    block_cluster::cluster_plan_ivf_probe_partitioned(records, 0, tag)
+                })
+                .or_else(|| block_cluster::cluster_plan_ivf_probe(records, 0));
+            match two_level {
                 Some(tl) => {
                     probe_model = Some(tl.model);
                     Some(tl.plan)
@@ -452,6 +541,7 @@ fn write_pax_segment_compacted_internal(
         plan,
         probe_model,
         capture_sq8,
+        shred_spec, // TD-FPRUNE-1 A1: preserve shred columns across compaction
     )
 }
 
@@ -531,6 +621,7 @@ fn write_pax_segment_ordered(
     plan: Option<crate::storage::engines::sst::block_cluster::ClusterPlan>,
     two_level: Option<proximadb_storage_common::coarse_directory::CoarseModel>,
     capture_sq8: Option<bool>,
+    shred_spec: &[(String, i32)],
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     let lossless_clustered = lossless_clustered_enabled() && plan.is_some();
     let lossless_scalar = lossless_scalar_enabled();
@@ -548,6 +639,7 @@ fn write_pax_segment_ordered(
     .with_rerank_quant(rerank_quant)
     .with_lossless_clustered(lossless_clustered)
     .with_lossless_scalar(lossless_scalar)
+    .with_shred_spec(shred_spec.to_vec())
     .with_block_centroids(cluster)
     // ADR-062 / TD-RDSTRAT-6: hoist the RaBitQ binary tier into a coalesced
     // file-level header region for RaBitQ-quantized writes (default ON per the
@@ -867,9 +959,13 @@ pub(crate) fn pax_filtered_cascade_enabled() -> bool {
 pub(crate) struct FilteredRowAllowStats {
     pub blocks_total: usize,
     /// Blocks skipped by conservative `ColumnMeta` stats (`evaluate_block`)
-    /// without decoding a row. (P1 prunes DECODE, not fetch — footer-resident
-    /// stats that prune the fetch itself are TD-FPRUNE-1 P2.)
+    /// without decoding a row — but AFTER the block body was fetched (P1 prunes
+    /// DECODE, not fetch).
     pub blocks_pruned: usize,
+    /// TD-FPRUNE-1 P2: blocks pruned from the FETCH plan by footer-resident
+    /// stats — no body GET at all (the zero-GET win). A subset-by-mechanism of
+    /// `blocks_total`, disjoint from `blocks_pruned`.
+    pub blocks_pruned_footer: usize,
     pub rows_matched: usize,
 }
 
@@ -918,6 +1014,18 @@ pub(crate) async fn pax_filtered_row_allow(
         .await
         .map_err(|e| anyhow::anyhow!("filtered stage-F footer {path}: {e}"))?;
     let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+    // TD-FPRUNE-1 P2 engagement: resolve filter field names → PAX col-ids using
+    // canonical fields first, then the segment's self-describing shred field-map
+    // (written from the P-Shred spec). This lets a USER-TAG filter (e.g.
+    // `partition`) prune blocks — without a catalog lookup. Owned map so the
+    // resolver closure can be a per-call `&dyn Fn` temporary at each
+    // `evaluate_block` (a `&dyn Fn` held across `.await` would make the future
+    // `!Send`); the `HashMap` itself is `Send`.
+    let user_field_map: std::collections::HashMap<String, i32> =
+        footer.shred_field_map.iter().cloned().collect();
+    let resolve_field = |field: &str| -> Option<i32> {
+        pax_field_to_col(field).or_else(|| user_field_map.get(field).copied())
+    };
     let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
     let mut acc = 0u64;
     for b in &footer.blocks {
@@ -936,7 +1044,6 @@ pub(crate) async fn pax_filtered_row_allow(
     //    the DECODE via stats; pruning the FETCH needs footer-resident stats —
     //    TD-FPRUNE-1 P2.) Coalesced D blocks carry no vector stripes (ADR-065),
     //    so these bytes are scalar/metadata only.
-    let all_blocks: Vec<usize> = (0..footer.blocks.len()).collect();
     let iop_target =
         proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
     let defaults =
@@ -944,6 +1051,37 @@ pub(crate) async fn pax_filtered_row_allow(
             max_gap_bytes: (iop_target / 4).max(64 * 1024),
             max_range_bytes: iop_target,
         };
+    // TD-FPRUNE-1 P2: prune blocks from the FETCH plan using footer-resident
+    // stats — a block whose footer `FooterBlockStats` provably cannot match is
+    // dropped BEFORE any body GET (the zero-GET win). The payloads live in the
+    // optional `SECTION_BLOCK_FILTERABLE_STATS` footer section (they share the
+    // sparse index-tagged map the footer parse already built). Blocks with no
+    // footer stats (legacy segments, or footer stats gated OFF at write) stay
+    // in, conservatively fetched. The footer verdict uses the SAME
+    // `evaluate_block` kernel as the post-fetch decode prune, so it can never
+    // drop a matching block (prune.rs soundness contract).
+    let filterable_stats: std::collections::HashMap<u32, &[u8]> = footer
+        .block_filterable_stats
+        .iter()
+        .map(|(idx, payload)| (*idx, payload.as_slice()))
+        .collect();
+    let candidate_blocks: Vec<usize> = (0..footer.blocks.len())
+        .filter(|&bi| {
+            let Some(payload) = filterable_stats.get(&(bi as u32)).copied() else {
+                return true; // no footer stats → must fetch
+            };
+            let fstats = proximadb_block_format::FooterBlockStats::from_bytes(
+                payload,
+                footer.blocks[bi].row_count,
+            );
+            let keep = evaluate_block(&fstats, filter, &resolve_field)
+                != proximadb_block_format::PruneResult::Skip;
+            if !keep {
+                stats.blocks_pruned_footer += 1;
+            }
+            keep
+        })
+        .collect();
     let policy = resolve_adaptive_range_policy(
         path,
         "region_d_filter",
@@ -952,7 +1090,7 @@ pub(crate) async fn pax_filtered_row_allow(
         defaults,
         |candidate| {
             estimate_coalesced_byte_ranges(
-                all_blocks.iter().filter_map(|&index| {
+                candidate_blocks.iter().filter_map(|&index| {
                     footer
                         .blocks
                         .get(index)
@@ -962,7 +1100,7 @@ pub(crate) async fn pax_filtered_row_allow(
             )
         },
     );
-    let fetches = plan_coalesced_block_ranges(&footer, &all_blocks, &policy);
+    let fetches = plan_coalesced_block_ranges(&footer, &candidate_blocks, &policy);
     for fetch in &fetches {
         let buf = fs
             .read_range(path, fetch.start, fetch.end - fetch.start)
@@ -982,11 +1120,11 @@ pub(crate) async fn pax_filtered_row_allow(
             let reader = PaxBlockReader::open(block_bytes)
                 .map_err(|e| anyhow::anyhow!("filtered stage-F block open {path}: {e}"))?;
             // Conservative stats prune: provably-no-match blocks skip decode.
-            // NOTE: the `&pax_field_to_col` coercion is a per-call temporary —
-            // a `&dyn Fn` binding held across the fetch `.await` would make
-            // this future (and every async caller up to the REST handlers)
-            // `!Send`.
-            if evaluate_block(&reader, filter, &pax_field_to_col)
+            // NOTE: `&resolve_field` is a per-call temporary — a `&dyn Fn`
+            // binding held across the fetch `.await` would make this future (and
+            // every async caller up to the REST handlers) `!Send`. `resolve_field`
+            // borrows the owned `user_field_map` (Send), which is fine to hold.
+            if evaluate_block(&reader, filter, &resolve_field)
                 == proximadb_block_format::PruneResult::Skip
             {
                 stats.blocks_pruned += 1;
@@ -1012,9 +1150,17 @@ pub(crate) async fn pax_filtered_row_allow(
         path,
         blocks_total = stats.blocks_total,
         blocks_pruned = stats.blocks_pruned,
+        blocks_pruned_footer = stats.blocks_pruned_footer,
         rows_matched = stats.rows_matched,
         n_rows,
-        "ADR-089 P1 stage-F row allow-set built"
+        "ADR-089 stage-F row allow-set built (P2: blocks_pruned_footer = zero-GET)"
+    );
+    // TD-FPRUNE-1 P2 attribution: expose the zero-GET prune engagement in the
+    // query-scoped io_trace (the physical savings already land in the universal
+    // get_ops/bytes_read as unfetched reads).
+    crate::observability::io_trace::record_pax_footer_prune(
+        stats.blocks_total as u64,
+        stats.blocks_pruned_footer as u64,
     );
     Ok(Some((allow, stats)))
 }
@@ -2634,6 +2780,7 @@ fn split_probe_metadata_cache_enabled() -> bool {
 /// fetched, so cold-query GETs/bytes drop from O(N) to O(nprobe). Returns `None`
 /// to fall back to the single-level whole-region scan (fail-safe: A0
 /// missing/corrupt, dim mismatch, or degenerate directory).
+#[allow(clippy::too_many_arguments)]
 async fn coarse_probe_survivors(
     fs: &dyn proximadb_storage_filesystem_types::FileSystem,
     path: &str,
@@ -2646,6 +2793,9 @@ async fn coarse_probe_survivors(
     prefix: &[u8],
     invariants_cache: Option<&SegmentInvariantsCache>,
     survivor_cache: Option<&SurvivorRangeCache>,
+    // TD-FPRUNE-1 M3: when a filter is active, the probe becomes a FILTERED ANN —
+    // adaptive nprobe by matching-row count + rank restricted to allowed rows.
+    row_allow: Option<&proximadb_block_format::RowAllow>,
 ) -> Result<Option<CoarseProbeResult>> {
     use proximadb_storage_common::coarse_directory::{CoarseDirectory, project_with_model};
 
@@ -2698,12 +2848,43 @@ async fn coarse_probe_survivors(
         .collect();
     cell_dist.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     let nprobe = coarse_probe_nprobe(k_c);
-    let mut probed: Vec<usize> = cell_dist
-        .iter()
-        .filter(|(c, _)| dir.cells[*c].row_end > dir.cells[*c].row_begin)
-        .take(nprobe)
-        .map(|(c, _)| *c)
-        .collect();
+    let mut probed: Vec<usize> = match row_allow {
+        // TD-FPRUNE-1 M3: FILTERED ANN — walk cells nearest-first and accumulate
+        // PREDICATE-MATCHING rows (allow ∩ cell row-range, computed in RAM from
+        // the cell directory + the allow-set — no extra I/O). Probe until at least
+        // the geometric `nprobe` cells AND enough matching candidates to fill the
+        // survivor pool are covered: a selective filter needs MORE cells to reach
+        // k matches (the recall fix that the disarmed-probe path traded away).
+        // Cells with zero matching rows are skipped (cell ∩ filter empty ⇒ no GET).
+        Some(allow) => {
+            let target = pax_rabitq_pool_for_top_k(k, allow.len().max(1)).max(k);
+            let mut selected = Vec::new();
+            let mut matched = 0usize;
+            for (c, _) in cell_dist.iter() {
+                let cell = &dir.cells[*c];
+                if cell.row_end <= cell.row_begin {
+                    continue;
+                }
+                let cell_matched =
+                    allow.count_in_range(cell.row_begin as usize..cell.row_end as usize);
+                if cell_matched == 0 {
+                    continue;
+                }
+                selected.push(*c);
+                matched += cell_matched;
+                if selected.len() >= nprobe && matched >= target {
+                    break;
+                }
+            }
+            selected
+        }
+        None => cell_dist
+            .iter()
+            .filter(|(c, _)| dir.cells[*c].row_end > dir.cells[*c].row_begin)
+            .take(nprobe)
+            .map(|(c, _)| *c)
+            .collect(),
+    };
     if probed.is_empty() {
         return Ok(None);
     }
@@ -2944,8 +3125,17 @@ async fn coarse_probe_survivors(
         }
     }
     let pool = pax_rabitq_pool_for_top_k(k, probed_rows as usize);
-    let survivors =
-        proximadb_block_format::rank_probed_rows(&rq_header, &runs, query, metric, pool.max(k))?;
+    // TD-FPRUNE-1 M3: rank the probed cells' codes RESTRICTED to allowed rows
+    // (`row_allow`) so the survivor pool fills with predicate-matching candidates;
+    // `None` is the unfiltered whole-cell rank (unchanged).
+    let survivors = proximadb_block_format::rank_probed_rows_allowed(
+        &rq_header,
+        &runs,
+        query,
+        metric,
+        pool.max(k),
+        row_allow,
+    )?;
 
     Ok(Some(CoarseProbeResult {
         survivors,
@@ -3122,12 +3312,13 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     //    single-level whole-region scan (cold: 1 GET; hot: 0 — Arc clone). Any
     //    probe miss falls through, fail-safe, to the whole-region path.
     // TD-PAXRG-1 collapse: A0 presence is declared by its extent, not a
-    // version byte.
-    let probe_armed = header.a0_len > 0
-        && coarse_probe_enabled()
-        // ADR-089 P1: filtered queries take the whole-region allowed rank
-        // (see `row_allow` doc above) — never the geometric probe.
-        && row_allow.is_none();
+    // version byte. TD-FPRUNE-1 M3: the probe is armed UNDER A FILTER too —
+    // `coarse_probe_survivors` becomes a filtered ANN (adaptive nprobe by
+    // matching count + allowed rank), restricting the whole fetch to relevant
+    // cells instead of the whole-region scan the disarmed path traded for. A
+    // probe miss still falls through to the whole-region allowed rank below
+    // (fail-safe).
+    let probe_armed = header.a0_len > 0 && coarse_probe_enabled();
     let probe = if probe_armed {
         coarse_probe_survivors(
             fs,
@@ -3141,6 +3332,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             &header_bytes,
             cache,
             survivor_cache,
+            row_allow,
         )
         .await
         .ok()
@@ -5944,6 +6136,244 @@ mod tests {
         assert!(empty_allow.is_empty());
     }
 
+    /// ADR-089 / TD-FPRUNE-1 P2: with footer stats armed, a filtered query drops
+    /// provably-empty blocks from the FETCH plan (zero body GET). Exercised on a
+    /// CANONICAL column (`created_at_ns`) — the only fields Stage-F's
+    /// `pax_field_to_col` resolves today. Footer-pruning of USER TAGS
+    /// (partition/lang) is dark until the P-Shred-arming slice shreds filterable
+    /// props into columns AND `pax_field_to_col` resolves them (see TD note): the
+    /// footer-prune (`evaluate_block`/`pax_field_to_col` = canonical columns) and
+    /// the row-match (`evaluate_filter_proxima` = props) currently read disjoint
+    /// field namespaces. Soundness (never drops a matching block) is proven by
+    /// the block-format `footer_prune_matches_body_prune_for_same_metas` unit.
+    #[tokio::test]
+    async fn stage_f_footer_stats_prune_blocks_from_fetch() {
+        enable_coalesced_rabitq();
+        // Arm P2 footer-stats population at write. Process-global env is safe
+        // under nextest's process-per-test isolation (the repo test standard).
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
+        }
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 32;
+        const N: usize = 1200;
+        // Two groups DISJOINT in both vector space (near 0 vs near 10) AND
+        // created_at (1000..1599 vs 2000..2599): the writer's centroid clustering
+        // keeps blocks group-homogeneous, so their footer created_at [min,max]
+        // ranges don't overlap — a `created_at >= 2000` query provably skips the
+        // low-group blocks from the fetch. The small target block + larger N
+        // guarantee MULTIPLE blocks (at the 16 KiB default this corpus packed
+        // into a single spanning block, which no footer stat can prune).
+        let records: Vec<ProximaRecord> = (0..N)
+            .map(|i| {
+                let low = i < N / 2;
+                // ORTHOGONAL anchor dims (+x vs +y): direction-aware orderings
+                // (sign-code / Morton / PCA all agree) separate the groups, so
+                // blocks stay group-homogeneous and the footer created_at
+                // [min,max] ranges are disjoint. (Equal-direction groups
+                // interleave under every ordering, which no stat can prune.)
+                let anchor = if low { 0 } else { 1 };
+                let v: Vec<f32> = (0..DIM)
+                    .map(|d| {
+                        if d == anchor {
+                            50.0
+                        } else {
+                            (((i * 131 + d * 17) % 17) as f32) * 0.001
+                        }
+                    })
+                    .collect();
+                let ts = if low {
+                    1000 + i as i64
+                } else {
+                    2000 + i as i64
+                };
+                rec(&format!("r{i}"), ts, v)
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        write_pax_segment(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            Some(4 * 1024),
+        )
+        .unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+
+        // created_at_ns >= 2000 → provably excludes every low-group block.
+        let filter = proximadb_filter_expression::FilterExpression::Comparison {
+            field: "created_at_ns".to_string(),
+            operator: proximadb_filter_expression::ComparisonOperator::GreaterThanOrEqual,
+            value: serde_json::json!(2000),
+        };
+        let (_allow, stats) = pax_filtered_row_allow(&fs, p, &filter)
+            .await
+            .unwrap()
+            .expect("coalesced segment must produce a stage-F allow-set");
+
+        // The zero-GET win: ≥1 block pruned from the FETCH plan by footer stats,
+        // and never all of them (the high-group blocks survive).
+        assert!(
+            stats.blocks_pruned_footer > 0,
+            "footer stats must prune ≥1 block from the fetch (got {} of {} blocks)",
+            stats.blocks_pruned_footer,
+            stats.blocks_total,
+        );
+        assert!(
+            stats.blocks_pruned_footer < stats.blocks_total,
+            "must not prune every block ({} of {})",
+            stats.blocks_pruned_footer,
+            stats.blocks_total,
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_FOOTER_STATS");
+        }
+    }
+
+    /// ADR-089 / TD-FPRUNE-1 P2 ENGAGEMENT: a USER-TAG filter (`partition`)
+    /// footer-prunes blocks end-to-end — the segment self-describes its shredded
+    /// columns (footer `shred_field_map`), so the reader resolves the tag name →
+    /// col-id with NO catalog lookup. This is the piece that makes P2 move the
+    /// benchmark (partition/lang filters), and the allow-set stays EXACT
+    /// (row-match via props is unchanged).
+    #[tokio::test]
+    async fn stage_f_user_tag_footer_prune_via_self_describing_segment() {
+        enable_coalesced_rabitq();
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
+        }
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+        use proximadb_block_format::{PaxBlockReader, record::FlatRow};
+        use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
+
+        const DIM: usize = 32;
+        const N: usize = 400;
+        // Two groups disjoint in vector space AND partition: pA (near 0) / pB
+        // (near 10). Clustering keeps blocks partition-homogeneous, so a "pA"
+        // query provably skips the pB-only blocks — once `partition` resolves to
+        // its shredded col-id via the footer field-map.
+        let records: Vec<ProximaRecord> = (0..N)
+            .map(|i| {
+                let low = i < N / 2;
+                let base = if low { 0.0 } else { 10.0 };
+                let v: Vec<f32> = (0..DIM)
+                    .map(|d| base + (((i * 131 + d * 17) % 17) as f32) * 0.001)
+                    .collect();
+                let mut r = rec(&format!("r{i}"), 1000 + i as i64, v);
+                r.props.insert(
+                    "partition".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(
+                            if low { "pA" } else { "pB" }.to_string(),
+                        ),
+                    ),
+                );
+                r
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg.pax");
+        // Shred "partition" into user col-id 100 (the P-Shred spec the production
+        // flush path builds from the schema). write_pax_segment_ordered is the
+        // module-internal writer that threads the spec.
+        let shred = vec![("partition".to_string(), 100i32)];
+        let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
+        let plan = if cluster {
+            crate::storage::engines::sst::block_cluster::cluster_order_sq8_morton(&records, 0).map(
+                |order| crate::storage::engines::sst::block_cluster::ClusterPlan {
+                    order,
+                    runs: Vec::new(),
+                },
+            )
+        } else {
+            None
+        };
+        write_pax_segment_ordered(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+            false,
+            cluster,
+            plan,
+            None,
+            None,
+            &shred,
+        )
+        .unwrap();
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+
+        // Precondition: the segment self-describes "partition" → col 100.
+        let bytes = std::fs::read(&path).unwrap();
+        let header = SegmentHeaderPrefix::parse(&bytes).unwrap();
+        let foff = header.footer_off as usize;
+        let footer =
+            SegmentFooterIndex::parse(&bytes[foff..foff + header.footer_len as usize]).unwrap();
+        assert!(
+            footer
+                .shred_field_map
+                .iter()
+                .any(|(n, c)| n == "partition" && *c == 100),
+            "footer must self-describe the shredded partition column, got {:?}",
+            footer.shred_field_map
+        );
+
+        let (allow, stats) = pax_filtered_row_allow(&fs, p, &partition_filter("pA"))
+            .await
+            .unwrap()
+            .expect("coalesced segment must produce a stage-F allow-set");
+
+        // Correctness (robust to clustering reorder): allow-set == exactly the
+        // pA rows, verified by independent decode of each row's partition prop.
+        let mut expected = std::collections::BTreeSet::new();
+        let mut g = 0usize;
+        for b in &footer.blocks {
+            let reader = PaxBlockReader::open(
+                &bytes[b.offset as usize..(b.offset + b.size as u64) as usize],
+            )
+            .unwrap();
+            for flat in FlatRow::from_block_reader(&reader).unwrap() {
+                if flat.oid.trim_start_matches('r').parse::<usize>().unwrap() < N / 2 {
+                    expected.insert(g);
+                }
+                g += 1;
+            }
+        }
+        let got: std::collections::BTreeSet<usize> =
+            (0..N).filter(|&row| allow.contains(row)).collect();
+        assert_eq!(
+            got, expected,
+            "allow-set == pA rows exactly (user-tag prune sound)"
+        );
+        assert_eq!(allow.len(), N / 2);
+
+        // The zero-GET win on a USER TAG: ≥1 (but not all) block pruned from the
+        // fetch — proving the footer field-map resolved "partition".
+        assert!(
+            stats.blocks_pruned_footer > 0 && stats.blocks_pruned_footer < stats.blocks_total,
+            "user-tag footer prune must engage (got {} of {} blocks)",
+            stats.blocks_pruned_footer,
+            stats.blocks_total,
+        );
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_FOOTER_STATS");
+        }
+    }
+
     /// ADR-089 / TD-FPRUNE-1 P1: the row-restricted cascade returns ONLY
     /// predicate-matching hits, at recall parity with a filtered brute-force
     /// ground truth (same bar as the unfiltered cascade's recall test).
@@ -7273,5 +7703,840 @@ mod tests {
             std::env::remove_var("PROXIMADB_PAX_VECTOR_COALESCE_RANGE");
             std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
         }
+    }
+
+    /// TD-FPRUNE-1 M3: the FILTERED coarse probe holds recall AND cuts bytes.
+    /// Trace-driven: a filtered query previously DISARMED the geometric probe and
+    /// read whole Region-A/B (measured 3–7 MB vs the unfiltered 2 MB). M3 re-arms
+    /// the probe under a filter — adaptive nprobe by matching-row count + rank
+    /// restricted to allowed rows — so a filtered query becomes a filtered ANN
+    /// that touches only relevant cells. This asserts (a) recall parity vs the
+    /// FILTERED brute-force truth and (b) the probe engaged (a strict cell subset).
+    #[tokio::test]
+    async fn filtered_coarse_probe_holds_recall_and_cuts_bytes() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 32;
+        const G: usize = 8; // clusters (each on its own axis) == partitions
+        const PER: usize = 64;
+        const N: usize = G * PER;
+        const K: usize = 10;
+
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        // partition == cluster (correlated with vector space). Each cluster's
+        // members sit at increasing radius so the top-K are distinguishable.
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                let (g, j) = (i / PER, i % PER);
+                let radius = 0.1 + j as f32 * 0.03;
+                (0..DIM)
+                    .map(|d| (if d == g { 50.0 } else { 0.0 }) + radius * pseudo(i, d))
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut r = rec(&format!("r{i}"), 1000 + i as i64, v.clone());
+                r.props.insert(
+                    "partition".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(format!("p{}", i / PER)),
+                    ),
+                );
+                r
+            })
+            .collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fprobe.pax");
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+            std::env::set_var("PROXIMADB_IVF_K", "16");
+            // This test targets the GLOBAL single-directory probe; pin it off the
+            // now-default-on partition layout (C2) so its cell-count assertions hold.
+            std::env::set_var("PROXIMADB_PAX_PARTITION_LAYOUT", "0");
+        }
+        // Compacted (v3, A0) + shredded so `partition` is a footer-resolvable column.
+        write_pax_segment_compacted_shredded(
+            &path,
+            &records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            VectorQuant::Sq8,
+            false,
+            Some(16 * 1024),
+            &[("partition".to_string(), 100)],
+        )
+        .unwrap();
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+        }
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        let p = path.to_str().unwrap();
+        // Query at cluster 0's centre; filter partition=p0 (== cluster 0).
+        let query: Vec<f32> = (0..DIM).map(|d| if d == 0 { 50.0 } else { 0.0 }).collect();
+
+        // FILTERED brute-force truth: top-K among partition==p0 rows (cluster 0).
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut p0: Vec<usize> = (0..N).filter(|&i| i / PER == 0).collect();
+        p0.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            p0.iter().take(K).map(|i| format!("r{i}")).collect();
+
+        // Build the allow-set (partition==p0) from the segment's own footer.
+        let (allow, _stats) = pax_filtered_row_allow(&fs, p, &partition_filter("p0"))
+            .await
+            .unwrap()
+            .expect("shredded v3 segment yields a stage-F allow-set");
+        assert!(!allow.is_empty(), "partition=p0 must match rows");
+
+        // FILTERED probe ON, nprobe floor small — M3 expands adaptively to cover
+        // enough matching rows. Shrink the prefix prefetch (default 1 MiB slurps a
+        // small test segment WHOLE, masking the ranged-read win) and disable the
+        // cross-call metadata cache so the byte A/B below isolates the region reads
+        // — the cloud-GET cost term the co-design mandate targets.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "2");
+            std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+            std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "4096");
+            std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "0");
+        }
+        let _ = drain_get_trace();
+        let _ = drain_probe_trace();
+        let hits = rabitq_search_segment_coalesced_allowed(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            None,
+            Some(&allow),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let ptrace = drain_probe_trace();
+        let bytes_on: u64 = drain_get_trace().iter().map(|(_, b)| b).sum();
+
+        // (a) recall parity vs the FILTERED truth.
+        let got: std::collections::HashSet<String> = hits.iter().map(|h| h.oid.clone()).collect();
+        let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
+        assert!(
+            recall >= 0.9,
+            "filtered probe recall@{K} = {recall:.2} (want ≥0.9 vs filtered brute-force)"
+        );
+        // Every hit is a partition=p0 row (no cross-partition leakage).
+        for h in &hits {
+            let idx: usize = h.oid.trim_start_matches('r').parse().unwrap();
+            assert_eq!(idx / PER, 0, "hit {} is not partition p0", h.oid);
+        }
+        // (b) the probe engaged under the filter — a strict cell subset (not the
+        // whole-region fallback the disarmed path took).
+        assert_eq!(ptrace.len(), 1, "exactly one filtered probe recorded");
+        let (cells_total, cells_probed, probed_rows, _rounds) = ptrace[0];
+        assert_eq!(cells_total, 16);
+        assert!(
+            cells_probed > 0 && cells_probed < cells_total,
+            "filtered probe touched {cells_probed} of {cells_total} cells (strict subset)"
+        );
+        assert!(
+            probed_rows < N as u64,
+            "filtered probe read {probed_rows} of {N} rows (subset, not whole region)"
+        );
+
+        // (c) the byte cut is MEASURED, not asserted: re-run the SAME filtered query
+        // with the probe DISARMED (the pre-M3 behavior — whole Region-A/B allowed
+        // rank) and confirm the armed probe fetched strictly fewer bytes. With the
+        // prefix prefetch shrunk above, this reflects the ranged-GET (cloud) regime.
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
+        }
+        let _ = drain_get_trace();
+        let base = rabitq_search_segment_coalesced_allowed(
+            &fs,
+            p,
+            &query,
+            K,
+            RankMetric::L2,
+            None,
+            None,
+            Some(&allow),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let bytes_off: u64 = drain_get_trace().iter().map(|(_, b)| b).sum();
+        assert!(
+            drain_probe_trace().is_empty(),
+            "probe OFF must not record a probe (whole-region baseline)"
+        );
+        // The disarmed baseline is still correct (whole-region allowed rank) — same
+        // filtered top-K — so the armed probe trades no recall for the byte cut.
+        let base_got: std::collections::HashSet<String> =
+            base.iter().map(|h| h.oid.clone()).collect();
+        assert_eq!(got, base_got, "armed probe and whole-region baseline agree");
+        assert!(
+            bytes_on < bytes_off,
+            "filtered probe fetched {bytes_on} B vs the disarmed {bytes_off} B \
+             (want strictly fewer — the ranged-read win)"
+        );
+
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
+            std::env::remove_var("PROXIMADB_TRACE_GETS");
+            std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+            std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+            std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
+    }
+
+    /// TD-FPRUNE-1 M2: the tag-aware layout makes an UNCORRELATED tag prune —
+    /// the case M3 alone cannot help (every geometric cell holds every value, so
+    /// `count_in_range` skips nothing). With partition-by-tag layout the cells
+    /// are partition-homogeneous, so the filtered probe accumulates its matching
+    /// pool from FEWER cells. This builds the SAME uncorrelated corpus twice
+    /// (layout ON vs OFF) and asserts the ON segment reads strictly fewer rows to
+    /// serve the same filtered top-K, at recall parity and with no leakage.
+    #[tokio::test]
+    async fn partition_layout_prunes_uncorrelated_tag() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 32;
+        const P: usize = 4; // partitions (the tag)
+        const GV: usize = 8; // vector clusters (independent of the tag)
+        const N: usize = 512;
+        const K: usize = 10;
+
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        // partition = i % P; vector cluster = (i / P) % GV. Disjoint index ranges
+        // ⇒ the tag is UNCORRELATED with vector geometry (every cluster carries
+        // every partition). This is the case zone-maps/blooms cannot prune.
+        let part = |i: usize| i % P;
+        let vclust = |i: usize| (i / P) % GV;
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                let c = vclust(i);
+                (0..DIM)
+                    .map(|d| (if d == c { 50.0 } else { 0.0 }) + 0.4 * pseudo(i, d))
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut r = rec(&format!("r{i}"), 1000 + i as i64, v.clone());
+                r.props.insert(
+                    "partition".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(format!("p{}", part(i))),
+                    ),
+                );
+                r
+            })
+            .collect();
+
+        // Query at vector cluster 0; filter partition == p0 (UNCORRELATED with it).
+        let query: Vec<f32> = (0..DIM).map(|d| if d == 0 { 50.0 } else { 0.0 }).collect();
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+        let mut p0: Vec<usize> = (0..N).filter(|&i| part(i) == 0).collect();
+        p0.sort_by(|&a, &b| {
+            l2(&corpus[a], &query)
+                .partial_cmp(&l2(&corpus[b], &query))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let truth: std::collections::HashSet<String> =
+            p0.iter().take(K).map(|i| format!("r{i}")).collect();
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+
+        // Build one v3 shredded segment with the partition-layout gate `on`, and
+        // measure a filtered probe on it: returns (hits, probed_rows).
+        async fn build_and_probe(
+            fs: &LocalFileSystem,
+            records: &[ProximaRecord],
+            query: &[f32],
+            k: usize,
+            layout_on: bool,
+        ) -> (Vec<CascadeHit>, u64) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("m2.pax");
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+                std::env::set_var("PROXIMADB_IVF_K", "16");
+                // Explicit "1"/"0" (the layout is now default-on, C2): "0" is the
+                // kill-switch to the global layout for the OFF arm.
+                std::env::set_var(
+                    "PROXIMADB_PAX_PARTITION_LAYOUT",
+                    if layout_on { "1" } else { "0" },
+                );
+            }
+            write_pax_segment_compacted_shredded(
+                &path,
+                records,
+                "col",
+                1,
+                VectorQuant::RaBitQ,
+                VectorQuant::Sq8,
+                false,
+                Some(16 * 1024),
+                &[("partition".to_string(), 100)],
+            )
+            .unwrap();
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+                std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+            }
+            let p = path.to_str().unwrap();
+            let (allow, _s) = pax_filtered_row_allow(fs, p, &partition_filter("p0"))
+                .await
+                .unwrap()
+                .expect("shredded v3 segment yields an allow-set");
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "2");
+                std::env::set_var("PROXIMADB_TRACE_GETS", "1");
+                std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "0");
+            }
+            let _ = drain_probe_trace();
+            let hits = rabitq_search_segment_coalesced_allowed(
+                fs,
+                p,
+                query,
+                k,
+                RankMetric::L2,
+                None,
+                None,
+                Some(&allow),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let ptrace = drain_probe_trace();
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
+                std::env::remove_var("PROXIMADB_TRACE_GETS");
+                std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+                std::env::remove_var("PROXIMADB_IVF_K");
+            }
+            let probed_rows = ptrace.first().map(|t| t.2).unwrap_or(u64::MAX);
+            (hits, probed_rows)
+        }
+
+        let (hits_on, rows_on) = build_and_probe(&fs, &records, &query, K, true).await;
+        let (hits_off, rows_off) = build_and_probe(&fs, &records, &query, K, false).await;
+
+        // The M2 risk is a RELATIVE one — does per-partition clustering degrade
+        // recall vs the global layout at identical settings? So compare the two,
+        // not an absolute bar (1-bit RaBitQ over a 512-row toy corpus is coarse by
+        // construction; the absolute recall gate is the SIFT ratchet + a real
+        // eval, not this unit).
+        let recall = |hits: &[CascadeHit]| {
+            let got: std::collections::HashSet<String> =
+                hits.iter().map(|h| h.oid.clone()).collect();
+            truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32
+        };
+        let (r_on, r_off) = (recall(&hits_on), recall(&hits_off));
+        eprintln!(
+            "[M2] recall on={r_on:.2} off={r_off:.2} | probed_rows on={rows_on} off={rows_off}"
+        );
+        // No cross-partition leakage under the layout (the allow-set is exact).
+        for h in &hits_on {
+            let idx: usize = h.oid.trim_start_matches('r').parse().unwrap();
+            assert_eq!(part(idx), 0, "hit {} is not partition p0", h.oid);
+        }
+        // Both layouts find real neighbors (search works at all).
+        assert!(r_on > 0.0 && r_off > 0.0, "both layouts return matches");
+        // Partition clustering does not MATERIALLY degrade recall vs the global
+        // layout at the same settings (within one RaBitQ quantization step).
+        assert!(
+            r_on >= r_off - 0.15,
+            "partition layout must not hurt recall vs global: on={r_on:.2} off={r_off:.2}"
+        );
+        // THE M2 WIN: partition-homogeneous cells let the filtered probe reach its
+        // matching pool from fewer rows than the global (mixed-cell) layout, where
+        // every probed cell is only ~1/P matching. This is the uncorrelated-tag
+        // prune that M3 alone cannot deliver.
+        assert!(
+            rows_on < rows_off,
+            "partition layout must probe FEWER rows for an uncorrelated tag: \
+             on={rows_on} vs off={rows_off}"
+        );
+    }
+
+    /// TD-FPRUNE-1 C1: integrated full-stack GET/byte breakdown for a filtered PAX
+    /// query at realistic multi-block, multi-partition scale — the co-design
+    /// "trace before you tune" evidence that Slice A + M3 + M2 actually moved the
+    /// dominant cost, and which term is the RESIDUAL. It SPLITS the filtered path
+    /// into its two I/O stages — the Stage-F allow-set build (`pax_filtered_row_allow`,
+    /// reads footer-surviving Region-D blocks) vs the probe+rerank
+    /// (`rabitq_search_segment_coalesced_allowed`, reads A0 + probe cells + Region-B)
+    /// — for BOTH a correlated and an uncorrelated tag, with M2 layout off vs on.
+    /// The printed breakdown identifies the residual dominant GET/byte term (does
+    /// the allow-set build dominate? → P3 per-cell stats is justified). Assertions
+    /// are the regression guards; the eprintln is the evidence.
+    #[tokio::test]
+    async fn filtered_stack_get_byte_breakdown() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 64;
+        const P: usize = 8; // partitions (the tag)
+        const N: usize = 4096;
+        const K: usize = 10;
+
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+
+        // One filtered measurement over a freshly built segment. `correlated`
+        // decides whether the tag tracks the vector cluster; `m2_on` toggles the
+        // partition layout at compaction. Returns the per-stage GET/byte split.
+        struct Measure {
+            filesize: u64,
+            allow_gets: u64,
+            allow_bytes: u64,
+            blocks_total: usize,
+            blocks_pruned_footer: usize,
+            search_gets: u64,
+            search_bytes: u64,
+            region_a_bytes: u64,
+            region_b_bytes: u64,
+            whole_region_fallback: u64,
+            recall: f32,
+        }
+        async fn measure(
+            fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+            pseudo: &dyn Fn(usize, usize) -> f32,
+            correlated: bool,
+            m2_on: bool,
+        ) -> Measure {
+            // partition = i%P; vector cluster = correlated ? partition : (i/P)%P.
+            let part = |i: usize| i % P;
+            let vclust = |i: usize| if correlated { i % P } else { (i / P) % P };
+            let corpus: Vec<Vec<f32>> = (0..N)
+                .map(|i| {
+                    let c = vclust(i);
+                    (0..DIM)
+                        .map(|d| (if d == c { 50.0 } else { 0.0 }) + 0.4 * pseudo(i, d))
+                        .collect()
+                })
+                .collect();
+            let records: Vec<ProximaRecord> = corpus
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let mut r = rec(&format!("r{i}"), 1000 + i as i64, v.clone());
+                    r.props.insert(
+                        "partition".to_string(),
+                        proximadb_records::ProximaTreeNode::Value(
+                            proximadb_data_model::ProximaValue::String(format!("p{}", part(i))),
+                        ),
+                    );
+                    r
+                })
+                .collect();
+
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("c1.pax");
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+                std::env::set_var("PROXIMADB_IVF_K", "64");
+                // The arc's A3 default-ON flip is NOT carried (the gates land
+                // default-OFF, honoring the 2026-08-20 ENV_GATE_REGISTRY
+                // promotion criterion) — pin what this measurement depends on,
+                // per-arm like PARTITION_LAYOUT below. Removed with the rest at
+                // the end of the arm.
+                std::env::set_var("PROXIMADB_PAX_FILTERED_CASCADE", "1");
+                std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
+                // Explicit "1"/"0" (layout is now default-on, C2): "0" pins the OFF
+                // arm to the global layout via the kill-switch.
+                std::env::set_var(
+                    "PROXIMADB_PAX_PARTITION_LAYOUT",
+                    if m2_on { "1" } else { "0" },
+                );
+            }
+            // Small blocks ⇒ many Region-D blocks (footer-pruning needs blocks
+            // small enough to be partition-homogeneous after clustering).
+            write_pax_segment_compacted_shredded(
+                &path,
+                &records,
+                "col",
+                1,
+                VectorQuant::RaBitQ,
+                VectorQuant::Sq8,
+                false,
+                Some(8 * 1024),
+                &[("partition".to_string(), 100)],
+            )
+            .unwrap();
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+                std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+            }
+            let p = path.to_str().unwrap();
+            let filesize = fs.metadata(p).await.unwrap().size;
+
+            // Filtered truth: top-K among partition==p0 rows.
+            let query: Vec<f32> = (0..DIM).map(|d| if d == 0 { 50.0 } else { 0.0 }).collect();
+            let l2 =
+                |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+            let mut p0: Vec<usize> = (0..N).filter(|&i| part(i) == 0).collect();
+            p0.sort_by(|&a, &b| {
+                l2(&corpus[a], &query)
+                    .partial_cmp(&l2(&corpus[b], &query))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let truth: std::collections::HashSet<String> =
+                p0.iter().take(K).map(|i| format!("r{i}")).collect();
+
+            // Isolate the ranged-GET regime (shrink prefetch so the segment isn't
+            // slurped whole; disable the cross-call metadata cache). GET/byte are
+            // measured via the FS-leaf `io_trace` accumulator (`read_range` feeds
+            // `record_range_gets`/`record_bytes_read`) — the SAME counters the
+            // route cost model + KRU meter price — NOT `drain_get_trace` (that
+            // `GET_TRACE` is a probe-only counter and misses the Stage-F reads).
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES", "4096");
+                std::env::set_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE", "0");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+                std::env::set_var("PROXIMADB_PAX_READ_COARSE_NPROBE", "4");
+            }
+            use crate::observability::io_trace;
+
+            // Stage-F allow-set build (Region-D only), under its own trace scope.
+            let (allow_res, allow_snap) = io_trace::scope(async {
+                let r = pax_filtered_row_allow(fs, p, &partition_filter("p0")).await;
+                (r, io_trace::snapshot())
+            })
+            .await;
+            let (allow, stats) = allow_res
+                .unwrap()
+                .expect("shredded v3 segment yields an allow-set");
+            let allow_snap = allow_snap.expect("io_trace scope active");
+
+            // Probe + rerank (A0 + probe cells + Region-B), given the allow-set.
+            let (hits_res, search_snap) = io_trace::scope(async {
+                let r = rabitq_search_segment_coalesced_allowed(
+                    fs,
+                    p,
+                    &query,
+                    K,
+                    RankMetric::L2,
+                    None,
+                    None,
+                    Some(&allow),
+                )
+                .await;
+                (r, io_trace::snapshot())
+            })
+            .await;
+            let hits = hits_res.unwrap().unwrap();
+            let search_snap = search_snap.expect("io_trace scope active");
+
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_PREFIX_PREFETCH_BYTES");
+                std::env::remove_var("PROXIMADB_PAX_SPLIT_PROBE_META_CACHE");
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+                std::env::remove_var("PROXIMADB_PAX_READ_COARSE_NPROBE");
+                std::env::remove_var("PROXIMADB_IVF_K");
+                std::env::remove_var("PROXIMADB_PAX_FILTERED_CASCADE");
+                std::env::remove_var("PROXIMADB_PAX_FOOTER_STATS");
+            }
+
+            let got: std::collections::HashSet<String> =
+                hits.iter().map(|h| h.oid.clone()).collect();
+            let recall = truth.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32;
+            Measure {
+                filesize,
+                allow_gets: allow_snap.range_gets,
+                allow_bytes: allow_snap.bytes_read,
+                blocks_total: stats.blocks_total,
+                blocks_pruned_footer: stats.blocks_pruned_footer,
+                search_gets: search_snap.range_gets,
+                search_bytes: search_snap.bytes_read,
+                region_a_bytes: search_snap.ivf_region_a_bytes,
+                region_b_bytes: search_snap.ivf_region_b_bytes,
+                whole_region_fallback: search_snap.ivf_whole_region_fallback,
+                recall,
+            }
+        }
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+
+        let mut rows = Vec::new();
+        for (label, correlated, m2_on) in [
+            ("correlated       (M2 off)", true, false),
+            ("uncorrelated     (M2 off)", false, false),
+            ("uncorrelated     (M2 on )", false, true),
+        ] {
+            let m = measure(&fs, &pseudo, correlated, m2_on).await;
+            let total_bytes = m.allow_bytes + m.search_bytes;
+            let total_gets = m.allow_gets + m.search_gets;
+            eprintln!(
+                "[C1] {label} | file={fk}KB whole-scan | \
+                 allow-build: {ag} GETs {ab}KB ({bp}/{bt} D-blocks footer-pruned) | \
+                 probe+rerank: {sg} GETs {sb}KB (A={ra}KB B={rb}KB wholeB-fallback={wf}) | \
+                 TOTAL {tg} GETs {tk}KB ({pct}% of whole) | recall={r:.2}",
+                fk = m.filesize / 1024,
+                ag = m.allow_gets,
+                ab = m.allow_bytes / 1024,
+                bp = m.blocks_pruned_footer,
+                bt = m.blocks_total,
+                sg = m.search_gets,
+                sb = m.search_bytes / 1024,
+                ra = m.region_a_bytes / 1024,
+                rb = m.region_b_bytes / 1024,
+                wf = m.whole_region_fallback,
+                tg = total_gets,
+                tk = total_bytes / 1024,
+                pct = (total_bytes * 100).checked_div(m.filesize).unwrap_or(0),
+                r = m.recall,
+            );
+            // The stack composes end-to-end (finds real neighbors) in every config.
+            assert!(m.recall > 0.0, "{label}: filtered search returns matches");
+            rows.push(m);
+        }
+        // The measured residual: for an UNCORRELATED tag the Stage-F allow-set
+        // build reads ~all Region-D blocks (footer stats can't prune it), so M2's
+        // partition-homogeneous layout — which restores footer-pruning AND tightens
+        // survivor ranges — must cut BOTH the allow-build and the probe+rerank
+        // bytes. This is the end-to-end proof M2 attacks the dominant filtered term.
+        let off = &rows[1]; // uncorrelated M2 off
+        let on = &rows[2]; // uncorrelated M2 on
+        assert!(
+            on.blocks_pruned_footer > off.blocks_pruned_footer,
+            "M2 must restore footer-pruning for the uncorrelated tag: on={} off={}",
+            on.blocks_pruned_footer,
+            off.blocks_pruned_footer
+        );
+        let (on_total, off_total) = (
+            on.allow_bytes + on.search_bytes,
+            off.allow_bytes + off.search_bytes,
+        );
+        assert!(
+            on_total < off_total,
+            "M2 must cut total filtered bytes for the uncorrelated tag: on={on_total} off={off_total}"
+        );
+        // And with M2 the filtered stack reads strictly less than a whole-object
+        // scan (the cascade-OFF baseline) — the co-design win, restored.
+        assert!(
+            on_total < on.filesize,
+            "M2 uncorrelated total {on_total}B must be < whole-object {}B",
+            on.filesize
+        );
+    }
+
+    /// TD-FPRUNE-1 C2: M2's per-partition clustering must not degrade UNFILTERED
+    /// recall vs the global layout — the SILENT boundary-miss risk (a row assigned
+    /// to its within-partition centroid can fall outside the nprobe-nearest cells
+    /// of a globally-ranked unfiltered query). The SIFT ratchet cannot see this
+    /// (SIFT carries no tag, so M2 never engages there). This builds the SAME
+    /// uncorrelated-tag corpus twice (M2 off vs on) and runs UNFILTERED recall@10
+    /// vs the f32 brute-force truth over many queries, requiring the partition
+    /// layout to hold recall within tolerance of the global layout. It is the eval
+    /// that gates any M2 default change.
+    #[tokio::test]
+    async fn m2_unfiltered_recall_neutral_vs_global() {
+        enable_coalesced_rabitq();
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        const DIM: usize = 64;
+        const P: usize = 8;
+        const N: usize = 4096;
+        const K: usize = 10;
+        const NQ: usize = 32;
+
+        let pseudo = |i: usize, d: usize| -> f32 {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add((d as u64).wrapping_mul(0x632B_E59B_D9B4_E019));
+            s ^= s >> 29;
+            s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            s ^= s >> 27;
+            ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        // Uncorrelated tag (worst case for M2): partition = i%P, vector cluster =
+        // (i/P)%P — disjoint index ranges ⇒ every partition spans every cluster,
+        // so per-partition centroids overlap maximally (the boundary-miss surface).
+        let part = |i: usize| i % P;
+        let vclust = |i: usize| (i / P) % P;
+        let corpus: Vec<Vec<f32>> = (0..N)
+            .map(|i| {
+                let c = vclust(i);
+                (0..DIM)
+                    .map(|d| (if d == c { 50.0 } else { 0.0 }) + 0.6 * pseudo(i, d))
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut r = rec(&format!("r{i}"), 1000 + i as i64, v.clone());
+                r.props.insert(
+                    "partition".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(format!("p{}", part(i))),
+                    ),
+                );
+                r
+            })
+            .collect();
+
+        async fn build(
+            records: &[ProximaRecord],
+            m2_on: bool,
+        ) -> (tempfile::TempDir, std::path::PathBuf) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("c2.pax");
+            unsafe {
+                std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+                std::env::set_var("PROXIMADB_IVF_K", "64");
+                // Explicit "1"/"0" (not present/absent) so this eval is robust to
+                // the default flip — the off case is the GLOBAL layout via the
+                // kill-switch, on is the partition layout.
+                std::env::set_var(
+                    "PROXIMADB_PAX_PARTITION_LAYOUT",
+                    if m2_on { "1" } else { "0" },
+                );
+            }
+            write_pax_segment_compacted_shredded(
+                &path,
+                records,
+                "col",
+                1,
+                VectorQuant::RaBitQ,
+                VectorQuant::Sq8,
+                false,
+                Some(16 * 1024),
+                &[("partition".to_string(), 100)],
+            )
+            .unwrap();
+            unsafe {
+                std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
+                std::env::remove_var("PROXIMADB_PAX_PARTITION_LAYOUT");
+            }
+            (dir, path)
+        }
+
+        let (_d_off, path_off) = build(&records, false).await;
+        let (_d_on, path_on) = build(&records, true).await;
+        let (p_off, p_on) = (path_off.to_str().unwrap(), path_on.to_str().unwrap());
+
+        // Guard against a VACUOUS pass: M2 must actually have changed the layout
+        // (partition-contiguous rows ⇒ different physical bytes). If the two
+        // segments were byte-identical, `cluster_plan_ivf_probe_partitioned` fell
+        // back to the global plan and the recall comparison below would be a no-op.
+        let bytes_off = std::fs::read(&path_off).unwrap();
+        let bytes_on = std::fs::read(&path_on).unwrap();
+        assert_ne!(
+            bytes_off, bytes_on,
+            "M2 partition layout did not engage — segments are byte-identical"
+        );
+
+        let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
+            .await
+            .unwrap();
+        unsafe {
+            std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "1");
+        }
+
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+
+        let (mut sum_off, mut sum_on) = (0f32, 0f32);
+        for qi in (0..N).step_by(N / NQ).take(NQ) {
+            let query = &corpus[qi];
+            // f32 brute-force ground truth top-K over ALL rows (unfiltered).
+            let mut idx: Vec<usize> = (0..N).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], query)
+                    .partial_cmp(&l2(&corpus[b], query))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let gt: std::collections::HashSet<String> =
+                idx.iter().take(K).map(|i| format!("r{i}")).collect();
+            let recall = |hits: &[CascadeHit]| {
+                let got: std::collections::HashSet<String> =
+                    hits.iter().map(|h| h.oid.clone()).collect();
+                gt.iter().filter(|o| got.contains(*o)).count() as f32 / K as f32
+            };
+            let h_off =
+                rabitq_search_segment_coalesced(&fs, p_off, query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let h_on =
+                rabitq_search_segment_coalesced(&fs, p_on, query, K, RankMetric::L2, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            sum_off += recall(&h_off);
+            sum_on += recall(&h_on);
+        }
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_READ_COARSE_PROBE");
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
+        let (r_off, r_on) = (sum_off / NQ as f32, sum_on / NQ as f32);
+        eprintln!(
+            "[C2] unfiltered recall@{K} over {NQ} queries: \
+             global(M2 off)={r_off:.3}  partition(M2 on)={r_on:.3}  Δ={:.3}",
+            r_on - r_off
+        );
+        // The gate: partition clustering must hold unfiltered recall within one
+        // quantization step of the global layout. If this ever fails, M2 must stay
+        // opt-in and the dual-directory follow-up is justified.
+        assert!(
+            r_on >= r_off - 0.05,
+            "M2 partition layout degrades unfiltered recall vs global: \
+             on={r_on:.3} off={r_off:.3} (tol 0.05)"
+        );
     }
 }

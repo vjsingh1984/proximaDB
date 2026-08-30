@@ -717,29 +717,45 @@ pub(crate) fn apply_schema_definition(
     schema_id: String,
     schema_version: String,
 ) {
+    // TD-FPRUNE-1 (Gap A): a SHORT `text` column marked filterable becomes a
+    // typed filterable_column (shredded into a PAX user-column with min/max +
+    // bloom + the self-describing footer field-map), NOT a text stripe — so
+    // categorical text tags (partition/lang) footer-prune filtered vector search.
+    // `text_large` (chunked documents) is never shredded; non-filterable `text`
+    // stays a plain text stripe.
     let text_columns: Vec<String> = schema
         .columns
         .iter()
-        .filter(|c| c.data_type == "text" || c.data_type == "text_large")
+        .filter(|c| {
+            c.data_type == "text_large" || (c.data_type == "text" && c.filterable == Some(false))
+        })
         .map(|c| c.name.clone())
         .collect();
 
     // Scalar columns marked filterable (default true) become typed
     // filterable_columns so metadata filters can push down and GetCollection's
-    // indexed_fields reflects them.
+    // indexed_fields reflects them. Gap A: filterable short `text` joins them as
+    // `FilterableString` (equality-only; hashes are unordered so `supports_range`
+    // is false).
     let filterable_columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec> = schema
         .columns
         .iter()
         .filter(|c| c.filterable != Some(false))
         .filter_map(|c| {
-            rest_scalar_filterable_type(&c.data_type).map(|(data_type, supports_range)| {
-                crate::proto::proximadb_v1::FilterableColumnSpec {
-                    name: c.name.clone(),
-                    data_type,
-                    indexed: c.indexed.unwrap_or(false),
-                    supports_range,
-                    estimated_cardinality: None,
-                }
+            let (data_type, supports_range) = if c.data_type == "text" {
+                (
+                    crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                    false,
+                )
+            } else {
+                rest_scalar_filterable_type(&c.data_type)?
+            };
+            Some(crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: c.name.clone(),
+                data_type,
+                indexed: c.indexed.unwrap_or(false),
+                supports_range,
+                estimated_cardinality: None,
             })
         })
         .collect();
@@ -1272,9 +1288,25 @@ mod tests {
         use crate::proto::proximadb_v1::FilterableDataType as F;
         let schema = SchemaDefinition {
             columns: vec![
+                // TD-FPRUNE-1 Gap A: filterable short `text` (partition/lang-style
+                // categorical) → typed FilterableString filterable_column (shred).
+                ColumnDefinition {
+                    name: "lang".to_string(),
+                    data_type: "text".to_string(),
+                    indexed: Some(true),
+                    ..blank_col()
+                },
+                // Non-filterable `text` stays a plain text stripe.
+                ColumnDefinition {
+                    name: "raw".to_string(),
+                    data_type: "text".to_string(),
+                    filterable: Some(false),
+                    ..blank_col()
+                },
+                // `text_large` (chunked documents) is never shredded.
                 ColumnDefinition {
                     name: "body".to_string(),
-                    data_type: "text".to_string(),
+                    data_type: "text_large".to_string(),
                     ..blank_col()
                 },
                 ColumnDefinition {
@@ -1301,10 +1333,21 @@ mod tests {
         let mut config = crate::proto::proximadb_v1::CollectionConfig::default();
         apply_schema_definition(&mut config, &schema, "s".to_string(), "1.0.0".to_string());
 
-        // text → text_columns, not filterable_columns.
-        assert_eq!(config.text_columns, vec!["body".to_string()]);
-        // scalar filterable columns: price (indexed, range) + active; secret opted out.
-        assert_eq!(config.filterable_columns.len(), 2);
+        // text_large + non-filterable text → text_columns (not shredded).
+        assert_eq!(
+            config.text_columns,
+            vec!["raw".to_string(), "body".to_string()]
+        );
+        // filterable columns: lang (FilterableString) + price (range) + active.
+        assert_eq!(config.filterable_columns.len(), 3);
+        let lang = config
+            .filterable_columns
+            .iter()
+            .find(|c| c.name == "lang")
+            .expect("lang");
+        assert_eq!(lang.data_type, F::FilterableString as i32);
+        assert!(lang.indexed);
+        assert!(!lang.supports_range); // hashes are unordered → equality only
         let price = config
             .filterable_columns
             .iter()
@@ -1322,6 +1365,7 @@ mod tests {
         assert!(!active.indexed);
         assert!(!active.supports_range);
         assert!(!config.filterable_columns.iter().any(|c| c.name == "secret"));
+        assert!(!config.filterable_columns.iter().any(|c| c.name == "raw"));
     }
 
     #[test]

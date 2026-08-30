@@ -168,6 +168,13 @@ pub struct IoTrace {
     /// for. Cache hits contribute zero.
     ivf_region_a_bytes: AtomicU64,
     ivf_region_b_bytes: AtomicU64,
+    /// PAX Stage-F footer-stat fetch prunes (TD-FPRUNE-1 P2): how many D-blocks
+    /// the segment footer's `FooterBlockStats` provably ruled out (dropped from
+    /// the FETCH plan before any body GET) out of the blocks considered.
+    /// Attribution counter — the physical savings already land in the universal
+    /// `get_ops`/`bytes_read` as unfetched reads.
+    pax_footer_total_blocks: AtomicU64,
+    pax_footer_pruned_blocks: AtomicU64,
     /// General bounded-concurrent `read_ranges` metrics (TD-RDSTRAT-12).
     /// Populated by any `read_ranges` or `read_ranges_prefetch` call with
     /// `parallel > 1` / `inflight > 1`. Unlike IVF-specific fields, these
@@ -677,6 +684,17 @@ impl IoTrace {
             .fetch_add(region_b, Ordering::Relaxed);
     }
 
+    /// Record a PAX Stage-F footer-stat fetch-prune outcome (TD-FPRUNE-1 P2):
+    /// `total` D-blocks considered by the filtered allow-set build, `pruned`
+    /// dropped by footer-resident min/max before any body GET. `pruned > 0`
+    /// proves the zero-GET prune engaged (vs a stats-free conservative fetch).
+    pub fn record_pax_footer_prune(&self, total: u64, pruned: u64) {
+        self.pax_footer_total_blocks
+            .fetch_add(total, Ordering::Relaxed);
+        self.pax_footer_pruned_blocks
+            .fetch_add(pruned, Ordering::Relaxed);
+    }
+
     /// Record a general bounded-concurrent `read_ranges` outcome (TD-RDSTRAT-12):
     /// `fetch_rounds` = number of parallel rounds issued, `max_inflight` = peak
     /// in-flight reads in any round. Covers ALL ranged-read paths (footer fetches,
@@ -888,6 +906,8 @@ impl IoTrace {
             ivf_whole_region_fallback: self.ivf_whole_region_fallback.load(Ordering::Relaxed),
             ivf_region_a_bytes: self.ivf_region_a_bytes.load(Ordering::Relaxed),
             ivf_region_b_bytes: self.ivf_region_b_bytes.load(Ordering::Relaxed),
+            pax_footer_total_blocks: self.pax_footer_total_blocks.load(Ordering::Relaxed),
+            pax_footer_pruned_blocks: self.pax_footer_pruned_blocks.load(Ordering::Relaxed),
             read_ranges_fetch_rounds: self.read_ranges_fetch_rounds.load(Ordering::Relaxed),
             read_ranges_max_inflight: self.read_ranges_max_inflight.load(Ordering::Relaxed),
             runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
@@ -996,6 +1016,13 @@ pub struct IoTraceSnapshot {
     pub ivf_region_a_bytes: u64,
     #[serde(default)]
     pub ivf_region_b_bytes: u64,
+    /// PAX Stage-F footer-stat fetch prunes (TD-FPRUNE-1 P2): D-blocks the
+    /// footer's `FooterBlockStats` ruled out before any body GET, over the
+    /// blocks considered. `pruned > 0` proves the zero-GET prune engaged.
+    #[serde(default)]
+    pub pax_footer_total_blocks: u64,
+    #[serde(default)]
+    pub pax_footer_pruned_blocks: u64,
     /// General bounded-concurrent `read_ranges` metrics (TD-RDSTRAT-12).
     /// Populated by any `read_ranges` or `read_ranges_prefetch` call with
     /// `parallel > 1` / `inflight > 1`. Unlike IVF-specific fields, these
@@ -1302,6 +1329,14 @@ pub fn record_ivf_coarse_probe(
 /// query scope. See [`IoTrace::record_pax_region_bytes`].
 pub fn record_pax_region_bytes(region_a: u64, region_b: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_pax_region_bytes(region_a, region_b));
+}
+
+/// Record a PAX Stage-F footer-stat fetch-prune outcome for the active query
+/// (TD-FPRUNE-1 P2): `total` D-blocks considered, `pruned` dropped by
+/// footer-resident min/max before any body GET. No-ops outside a query scope.
+/// See [`IoTrace::record_pax_footer_prune`].
+pub fn record_pax_footer_prune(total: u64, pruned: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_pax_footer_prune(total, pruned));
 }
 
 /// Record general bounded-concurrent `read_ranges` metrics for the active query
