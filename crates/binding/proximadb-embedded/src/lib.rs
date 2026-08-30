@@ -72,7 +72,7 @@ pub use proximadb_embedded_common::{
 
 // Re-export coordination types for public API
 pub use coordination::{
-    AccessMode, CoordinationError, FileLockManager, LeaderElection, LeaderStatus,
+    AccessMode, CoordinationError, FileLockManager, FileLockSet, LeaderElection, LeaderStatus,
 };
 
 // Language-specific bindings - compiled when corresponding feature is enabled
@@ -793,10 +793,16 @@ pub struct EmbeddedProximaDB {
     metrics_collector: std::sync::Arc<EmbeddedMetricsCollector>,
     /// Checkpoint manager for incremental persistence
     checkpoint_manager: std::sync::Arc<CheckpointManager>,
-    /// File lock manager for multi-process coordination
-    lock_manager: Option<FileLockManager>,
+    /// One ownership lease spanning every configured local writable root.
+    lock_manager: Option<FileLockSet>,
     /// Leader election for leader/follower mode
     leader_election: Option<LeaderElection>,
+    /// Per-open fence for cursors. An embedded close/reopen is a database
+    /// incarnation change even when the host process stays alive.
+    content_revision_incarnation: String,
+    /// Makes close idempotent and prevents Drop from flushing after ownership
+    /// has already been handed to a newly opened instance.
+    closed: std::sync::atomic::AtomicBool,
 }
 
 impl EmbeddedProximaDB {
@@ -805,6 +811,80 @@ impl EmbeddedProximaDB {
     /// This initializes the database with the given configuration,
     /// including multi-disk support and WAL settings.
     pub fn new(config: EmbeddedConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let base_path = config
+            .storage_locations
+            .first()
+            .map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
+        let mut ownership_roots: Vec<std::path::PathBuf> = config
+            .storage_locations
+            .iter()
+            .filter_map(|location| {
+                location
+                    .path
+                    .strip_prefix("file://")
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| {
+                        (!location.path.contains("://"))
+                            .then(|| std::path::PathBuf::from(&location.path))
+                    })
+            })
+            .collect();
+        if let Some(path) = config.metadata_path.strip_prefix("file://") {
+            ownership_roots.push(std::path::PathBuf::from(path));
+        } else if !config.metadata_path.contains("://") {
+            ownership_roots.push(std::path::PathBuf::from(&config.metadata_path));
+        }
+
+        // Ownership is the first side effect. A losing opener must not reset
+        // process globals, construct services, or begin recovery before it
+        // learns that this database is already in use.
+        let (lock_manager, leader_election) = match config.access_mode {
+            AccessMode::Exclusive => {
+                let lock = FileLockSet::acquire(&ownership_roots, AccessMode::Exclusive).map_err(
+                    |e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to acquire exclusive lock: {}",
+                            e
+                        )))
+                    },
+                )?;
+                (Some(lock), None)
+            }
+            AccessMode::SharedRead => {
+                let lock = FileLockSet::acquire(&ownership_roots, AccessMode::SharedRead).map_err(
+                    |e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to acquire shared read lock: {}",
+                            e
+                        )))
+                    },
+                )?;
+                (Some(lock), None)
+            }
+            AccessMode::LeaderFollower => {
+                let access_lock = FileLockSet::acquire(&ownership_roots, AccessMode::SharedRead)
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to acquire leader/follower access lock: {}",
+                            e
+                        )))
+                    })?;
+                let node_id = config
+                    .node_id
+                    .clone()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let election = LeaderElection::new(&base_path, &node_id).map_err(
+                    |e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to initialize leader election: {}",
+                            e
+                        )))
+                    },
+                )?;
+                (Some(access_lock), Some(election))
+            }
+        };
+
         // [AGENT_FIX]: Forcefully reset global static state to allow multiple
         // embedded instances within the same process, which is critical for tests
         // and benchmarks. This is an unsafe workaround for a design limitation
@@ -900,11 +980,6 @@ impl EmbeddedProximaDB {
         tracing::debug!("EMBEDDED: Metrics collector initialized");
 
         // Initialize checkpoint manager for incremental persistence
-        let base_path = config
-            .storage_locations
-            .first()
-            .map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
-
         let catalog_manager = shared_services.catalog_manager.clone();
         runtime
             .block_on(async {
@@ -933,67 +1008,6 @@ impl EmbeddedProximaDB {
         });
         tracing::debug!("EMBEDDED: Checkpoint manager initialized");
 
-        // Initialize multi-process coordination based on access mode
-        let (lock_manager, leader_election) = match config.access_mode {
-            AccessMode::Exclusive => {
-                // Acquire exclusive lock
-                let lock = FileLockManager::new(&base_path, AccessMode::Exclusive).map_err(
-                    |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(format!(
-                            "Failed to acquire exclusive lock: {}",
-                            e
-                        )))
-                    },
-                )?;
-                tracing::info!("EMBEDDED: Acquired exclusive lock for multi-process coordination");
-                (Some(lock), None)
-            }
-            AccessMode::SharedRead => {
-                // Acquire shared read lock
-                let lock = FileLockManager::new(&base_path, AccessMode::SharedRead).map_err(
-                    |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(format!(
-                            "Failed to acquire shared read lock: {}",
-                            e
-                        )))
-                    },
-                )?;
-                tracing::info!(
-                    "EMBEDDED: Acquired shared read lock for multi-process coordination"
-                );
-                (Some(lock), None)
-            }
-            AccessMode::LeaderFollower => {
-                // Attempt leader election
-                let node_id = config
-                    .node_id
-                    .clone()
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                let election = LeaderElection::new(&base_path, &node_id).map_err(
-                    |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(format!(
-                            "Failed to initialize leader election: {}",
-                            e
-                        )))
-                    },
-                )?;
-
-                if election.is_leader() {
-                    tracing::info!(
-                        "EMBEDDED: Node '{}' elected as leader for multi-process coordination",
-                        node_id
-                    );
-                } else {
-                    tracing::info!(
-                        "EMBEDDED: Node '{}' is follower (leader: {:?})",
-                        node_id,
-                        election.leader_id()
-                    );
-                }
-                (None, Some(election))
-            }
-        };
-
         Ok(Self {
             config,
             runtime,
@@ -1005,6 +1019,8 @@ impl EmbeddedProximaDB {
             checkpoint_manager,
             lock_manager,
             leader_election,
+            content_revision_incarnation: uuid::Uuid::new_v4().simple().to_string(),
+            closed: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -1213,10 +1229,13 @@ impl EmbeddedProximaDB {
     /// Returns `Ok(())` if writes are allowed, or an error if not.
     fn check_write_access(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match self.config.access_mode {
-            AccessMode::Exclusive => {
-                // Exclusive mode always allows writes (we have the exclusive lock)
-                Ok(())
-            }
+            AccessMode::Exclusive => match &self.lock_manager {
+                Some(lock) if lock.is_locked() => Ok(()),
+                _ => Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "Database is closed: exclusive access lock is not held.",
+                ))),
+            },
             AccessMode::SharedRead => {
                 // SharedRead mode never allows writes
                 Err(Box::new(std::io::Error::new(
@@ -2165,14 +2184,48 @@ impl EmbeddedProximaDB {
             .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
 
-        let inbound_cursor = match cursor.as_deref() {
-            Some(raw) if !raw.is_empty() => Some(
-                proximadb::services::scan_cursor::ScanCursor::decode(raw, collection, now_ns)?,
-            ),
-            _ => None,
-        };
-
         self.runtime.block_on(async {
+            let tenant_id = self
+                .config
+                .tenant_id
+                .as_deref()
+                .filter(|tenant| !tenant.is_empty());
+            let collection_record = self
+                .collection_port
+                .get_collection(collection, tenant_id)
+                .await
+                .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(error.to_string()))
+                })?
+                .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Collection '{collection}' not found"),
+                    ))
+                })?;
+            let canonical_collection_id = collection_record.id;
+            let revision_tenant =
+                tenant_id.unwrap_or(proximadb::catalog::DEFAULT_CORPUS_VERSION_TENANT);
+            let revision = proximadb::catalog::CorpusVersionRegistry::global()
+                .content_snapshot(
+                    revision_tenant,
+                    &canonical_collection_id,
+                    &self.content_revision_incarnation,
+                )
+                .await;
+            let inbound_cursor = match cursor.as_deref() {
+                Some(raw) if !raw.is_empty() => {
+                    let decoded = proximadb::services::scan_cursor::ScanCursor::decode(
+                        raw,
+                        &canonical_collection_id,
+                        now_ns,
+                    )?;
+                    decoded.validate_content_revision(revision.revision, &revision.token)?;
+                    Some(decoded)
+                }
+                _ => None,
+            };
+
             // TD-099(3d): push cursor + limit into the WAL streaming layer via
             // the same VectorOperationsService pathway used by
             // `insert_proxima_records`, so writes and reads agree on the
@@ -2182,10 +2235,8 @@ impl EmbeddedProximaDB {
                 .shared_services
                 .vector_operations_service
                 .scan_records_paginated(
-                    collection,
-                    // Cursor identity: mint against the caller-facing name this
-                    // method decoded the inbound cursor against.
-                    collection,
+                    &canonical_collection_id,
+                    &canonical_collection_id,
                     inbound_cursor.as_ref(),
                     limit,
                     true,
@@ -2199,12 +2250,30 @@ impl EmbeddedProximaDB {
                     Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
+            let revision_after = proximadb::catalog::CorpusVersionRegistry::global()
+                .content_snapshot(
+                    revision_tenant,
+                    &canonical_collection_id,
+                    &self.content_revision_incarnation,
+                )
+                .await;
+            if revision_after != revision {
+                return Err(Box::new(std::io::Error::other(
+                    "collection changed while scanning; restart pagination",
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
+
             let next_str = match next {
-                Some(c) => Some(c.encode().map_err(
-                    |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(e))
-                    },
-                )?),
+                Some(mut c) => {
+                    c.stamp_content_revision(revision.revision, revision.token);
+                    Some(
+                        c.encode()
+                            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                                Box::new(std::io::Error::other(e))
+                            })?,
+                    )
+                }
                 None => None,
             };
 
@@ -2581,6 +2650,7 @@ impl EmbeddedProximaDB {
         collection: &str,
         vector_id: &str,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        self.check_write_access()?;
         use std::sync::Arc;
 
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
@@ -2968,6 +3038,9 @@ impl EmbeddedProximaDB {
     }
 
     pub fn close(&self) {
+        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         // Persist RL planner policy if enabled
         if let Some(ref policy_path) = self.rl_policy_path
             && let Some(planner) = proximadb::query::rl_planner::get_rl_planner()
@@ -2995,7 +3068,22 @@ impl EmbeddedProximaDB {
 
         self.flush_graph_wals();
 
+        self.release_coordination();
+
         tracing::info!("🛑 EMBEDDED: Database closed");
+    }
+
+    fn release_coordination(&self) {
+        if let Some(election) = &self.leader_election
+            && let Err(e) = election.release()
+        {
+            tracing::warn!("EMBEDDED: failed to release leadership: {}", e);
+        }
+        if let Some(lock) = &self.lock_manager
+            && let Err(e) = lock.release()
+        {
+            tracing::warn!("EMBEDDED: failed to release access lock: {}", e);
+        }
     }
 
     // ========================================================================
@@ -6186,13 +6274,18 @@ mod tests;
 /// need the guarantee should call `close()` explicitly.
 impl Drop for EmbeddedProximaDB {
     fn drop(&mut self) {
+        if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         if tokio::runtime::Handle::try_current().is_ok() {
             tracing::warn!(
                 "EMBEDDED: dropped inside a Tokio runtime; skipping graph WAL flush. \
                  Call close() explicitly to guarantee durability."
             );
+            self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.release_coordination();
             return;
         }
-        self.flush_graph_wals();
+        self.close();
     }
 }

@@ -521,6 +521,12 @@ type CollectionV2Response struct {
 	// CollectionId Collection ID
 	CollectionId string `json:"collection_id"`
 
+	// ContentRevision Monotonic server-owned content revision for cache revalidation.
+	ContentRevision int64 `json:"content_revision"`
+
+	// ContentRevisionToken Opaque validator that also fences server restarts.
+	ContentRevisionToken string `json:"content_revision_token"`
+
 	// CreatedAt Creation timestamp
 	CreatedAt string `json:"created_at"`
 
@@ -1451,9 +1457,11 @@ type ScanRecordsRequest struct {
 // `next_cursor` signals end-of-scan. Each record matches the OpenAPI
 // `RecordResponse` schema (same shape used by `getRecord`).
 type ScanRecordsResponse struct {
-	NextCursor   *string            `json:"next_cursor,omitempty"`
-	Records      []RecordV2Response `json:"records"`
-	ScannedCount *int64             `json:"scanned_count,omitempty"`
+	ContentRevision      int64              `json:"content_revision"`
+	ContentRevisionToken string             `json:"content_revision_token"`
+	NextCursor           *string            `json:"next_cursor,omitempty"`
+	Records              []RecordV2Response `json:"records"`
+	ScannedCount         *int64             `json:"scanned_count,omitempty"`
 }
 
 // SchemaChange Description of a schema change
@@ -10544,6 +10552,8 @@ type ScanRecordsHTTPResp struct {
 	JSON400 *ErrorResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *ErrorResponse
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON410 the response for an HTTP 410 `application/json` response
 	JSON410 *ErrorResponse
 }
@@ -10561,6 +10571,11 @@ func (r ScanRecordsHTTPResp) GetJSON400() *ErrorResponse {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ScanRecordsHTTPResp) GetJSON404() *ErrorResponse {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ScanRecordsHTTPResp) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON410 returns the response for an HTTP 410 `application/json` response
@@ -14100,6 +14115,13 @@ func ParseScanRecordsHTTPResp(rsp *http.Response) (*ScanRecordsHTTPResp, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
 		var dest ErrorResponse

@@ -886,6 +886,10 @@ pub struct CollectionV2Response {
     pub schema: Option<SchemaDefinition>,
     /// Collection statistics
     pub stats: CollectionStatsV2,
+    /// Monotonic server-owned content revision for cache revalidation.
+    pub content_revision: u64,
+    /// Opaque validator that also fences server restarts.
+    pub content_revision_token: String,
     /// Per-index config (HNSW/IVF params, is_primary) as persisted at create
     /// time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
     pub index_specs: Vec<IndexSpecOutput>,
@@ -1124,6 +1128,10 @@ pub async fn get_collection_v2(
             } else {
                 collection.id.clone()
             };
+            let (content_revision, content_revision_token) = state
+                .record_ops
+                .content_revision_snapshot(Some(&tenant.tenant_id), &canonical_id)
+                .await;
             let response = CollectionV2Response {
                 collection_id: canonical_id,
                 name,
@@ -1141,6 +1149,8 @@ pub async fn get_collection_v2(
                     indexed_fields,
                     text_field_count,
                 },
+                content_revision,
+                content_revision_token,
                 index_specs,
                 quantization,
                 created_at: chrono::Utc::now().to_rfc3339(),
@@ -5083,6 +5093,8 @@ mod tests {
                 indexed_fields: 0,
                 text_field_count: 0,
             },
+            content_revision: 7,
+            content_revision_token: "epoch:7".to_string(),
             index_specs: vec![IndexSpecOutput {
                 algorithm: "hnsw".into(),
                 hnsw: Some(HnswConfigOutput {

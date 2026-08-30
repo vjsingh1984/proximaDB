@@ -2320,7 +2320,22 @@ fn decode_scan_cursor(
         ScanCursorDecodeError::CollectionMismatch { .. } | ScanCursorDecodeError::Malformed(_) => {
             ApiError::InvalidArgument(e.to_string())
         }
+        ScanCursorDecodeError::ContentRevisionMismatch { .. }
+        | ScanCursorDecodeError::IncarnationMismatch => ApiError::Conflict(e.to_string()),
     })
+}
+
+fn validate_scan_content_revision(
+    cursor: Option<&ScanCursor>,
+    current_revision: u64,
+    current_token: &str,
+) -> Result<(), ApiError> {
+    if let Some(cursor) = cursor {
+        cursor
+            .validate_content_revision(current_revision, current_token)
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    }
+    Ok(())
 }
 
 /// Body of `POST /records/scan`. Mirrors the OpenAPI `ScanRecordsRequest`
@@ -2352,6 +2367,8 @@ pub struct ScanRecordsRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ScanRecordsResponse {
     pub records: Vec<RecordV2Response>,
+    pub content_revision: u64,
+    pub content_revision_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2388,6 +2405,7 @@ const SCAN_RECORDS_DEFAULT_LIMIT: usize = 1_000;
         (status = 200, description = "Page of records + optional next cursor.", body = ScanRecordsResponse),
         (status = 400, description = "Invalid request (including a cursor minted for a different collection).", body = crate::network::rest::openapi::ErrorResponse),
         (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+        (status = 409, description = "Collection changed during the scan; restart pagination.", body = crate::network::rest::openapi::ErrorResponse),
         (status = 410, description = "Cursor expired (older than 24h); restart the scan.", body = crate::network::rest::openapi::ErrorResponse),
     ),
 )]
@@ -2414,10 +2432,28 @@ pub async fn scan_records(
         .map(|d| d.as_nanos() as i64)
         .unwrap_or(0);
 
+    let (canonical_collection_id, _) = state
+        .record_ops
+        .resolve_collection_identity_for_tenant(&collection_id, Some(&tenant.tenant_id))
+        .await
+        .map_err(|error| ApiError::Internal(format!("collection resolution failed: {error}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("Collection '{collection_id}' not found")))?;
+    let (content_revision, content_revision_token) = state
+        .record_ops
+        .content_revision_snapshot(Some(&tenant.tenant_id), &canonical_collection_id)
+        .await;
+
     let inbound_cursor: Option<ScanCursor> = match request.cursor.as_deref() {
-        Some(raw) if !raw.is_empty() => Some(decode_scan_cursor(raw, &collection_id, now_ns)?),
+        Some(raw) if !raw.is_empty() => {
+            Some(decode_scan_cursor(raw, &canonical_collection_id, now_ns)?)
+        }
         _ => None,
     };
+    validate_scan_content_revision(
+        inbound_cursor.as_ref(),
+        content_revision,
+        &content_revision_token,
+    )?;
 
     // Metadata filter is parsed into the canonical FilterExpression and pushed
     // into the scan predicate (applied before the limit). Previously this field
@@ -2437,7 +2473,7 @@ pub async fn scan_records(
     let (page, next_cursor) = state
         .record_ops
         .handle_record_scan_paginated_for_tenant(
-            &collection_id,
+            &canonical_collection_id,
             inbound_cursor.as_ref(),
             effective_limit,
             include_vector,
@@ -2461,16 +2497,32 @@ pub async fn scan_records(
         .map(|record| proxima_record_to_response(record, include_vector, include_text))
         .collect();
 
+    let revision_after = state
+        .record_ops
+        .content_revision_snapshot(Some(&tenant.tenant_id), &canonical_collection_id)
+        .await;
+    if revision_after != (content_revision, content_revision_token.clone()) {
+        return Err(ApiError::Conflict(
+            "collection changed while scanning; restart pagination".to_string(),
+        ));
+    }
+
     let next_cursor_str = match next_cursor {
-        Some(c) => Some(
-            c.encode()
-                .map_err(|e| ApiError::Internal(format!("cursor encode failed: {e}")))?,
-        ),
+        Some(mut cursor) => {
+            cursor.stamp_content_revision(content_revision, content_revision_token.clone());
+            Some(
+                cursor
+                    .encode()
+                    .map_err(|e| ApiError::Internal(format!("cursor encode failed: {e}")))?,
+            )
+        }
         None => None,
     };
 
     Ok(Json(ScanRecordsResponse {
         records: serialized,
+        content_revision,
+        content_revision_token,
         next_cursor: next_cursor_str,
         scanned_count: Some(scanned_count),
     }))
@@ -2782,6 +2834,8 @@ mod tests {
             last_updated_at_ns: 1_700_000_000_000_000_000,
             last_oid: "rec-077".to_string(),
             epoch_ns: 1_700_000_000_000_000_000,
+            content_revision: None,
+            content_revision_token: None,
         }
         .encode()
         .expect("encode")
@@ -2817,6 +2871,20 @@ mod tests {
         assert!(matches!(
             decode_scan_cursor("not!valid!base64", "col-a", now_ns),
             Err(ApiError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn scan_cursor_revision_rejects_mixed_era_pages() {
+        let mut cursor =
+            ScanCursor::decode(&fixture_cursor_raw(), "col-a", 1_700_000_000_000_000_000)
+                .expect("cursor");
+        cursor.content_revision = Some(41);
+        cursor.content_revision_token = Some("epoch-a:41".into());
+        assert!(validate_scan_content_revision(Some(&cursor), 41, "epoch-a:41").is_ok());
+        assert!(matches!(
+            validate_scan_content_revision(Some(&cursor), 42, "epoch-a:42"),
+            Err(ApiError::Conflict(_))
         ));
     }
 
