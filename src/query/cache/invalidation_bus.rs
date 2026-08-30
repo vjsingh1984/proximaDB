@@ -29,12 +29,11 @@
 //! queue root activates the bus. Everything here is exercised in-process —
 //! the queue is backed by local dirs in tests.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use proximadb_queue::message::Delivery;
 use proximadb_queue::{Consumer, Message, Producer, QueueClient};
 
 /// The shared topic all cache-invalidation events flow through.

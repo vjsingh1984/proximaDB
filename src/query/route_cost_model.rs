@@ -118,9 +118,9 @@ impl VectorCacheOutcome {
             Self::Mixed
         } else if snap.get_ops > 0 && misses > 0 {
             Self::Cold
-        } else if snap.get_ops > 0 && Self::policy_declares_uncached(snap) {
-            Self::Bypass
-        } else if cfg!(feature = "io-trace") && snap.get_ops > 0 {
+        } else if snap.get_ops > 0
+            && (Self::policy_declares_uncached(snap) || cfg!(feature = "io-trace"))
+        {
             Self::Bypass
         } else {
             Self::Unknown

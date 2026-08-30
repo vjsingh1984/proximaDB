@@ -35,8 +35,15 @@ use proximadb_storage_common::pax_block::{
 // lib build stays warning-clean under clippy `-D warnings` (the CI gate).
 #[cfg(test)]
 use proximadb_block_format::BLOCK_MAGIC;
+use proximadb_storage_common::segment_layout::SEG_HEADER_PREFIX_LEN;
+// SEG_LAYOUT_VERSION / SegmentHeaderPrefix / is_coalesced_segment: production
+// call sites use the fully-qualified path (see `is_coalesced_segment` at
+// step-5 detection and `SegmentHeaderPrefix` in the header-prefix helpers) —
+// the bare names are only used inside `#[cfg(test)]`, so gating them here
+// keeps the non-test lib build warning-clean under clippy `-D warnings`.
+#[cfg(test)]
 use proximadb_storage_common::segment_layout::{
-    SEG_HEADER_PREFIX_LEN, SEG_LAYOUT_VERSION, SegmentHeaderPrefix, is_coalesced_segment,
+    SEG_LAYOUT_VERSION, SegmentHeaderPrefix, is_coalesced_segment,
 };
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;

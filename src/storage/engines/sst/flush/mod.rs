@@ -1411,8 +1411,7 @@ fn pax_rg_layout_tag(tags: &[String]) -> Option<bool> {
 /// Only effective for RaBitQ-coalesced writes (Regions A/B are the premise).
 pub(crate) fn resolve_pax_rg_layout(tags: &[String]) -> bool {
     let per_collection = pax_rg_layout_tag(tags);
-    per_collection
-        .unwrap_or_else(|| crate::storage::engines::sst::segment_format::rg_layout_enabled())
+    per_collection.unwrap_or_else(crate::storage::engines::sst::segment_format::rg_layout_enabled)
 }
 
 fn resolve_pax_f32_tier(

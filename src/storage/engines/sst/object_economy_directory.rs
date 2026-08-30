@@ -671,11 +671,11 @@ impl VectorObjectEconomyDirectoryCache {
         {
             // Replace only if still the same expired handle (a concurrent
             // invalidate/replace wins over our expiry).
-            if let Some(mut current) = self.inner.get_mut(collection_id) {
-                if Arc::ptr_eq(&handle, &current) {
-                    *current = Arc::new(CachedDirectoryHandle::new());
-                    return current.clone();
-                }
+            if let Some(mut current) = self.inner.get_mut(collection_id)
+                && Arc::ptr_eq(&handle, &current)
+            {
+                *current = Arc::new(CachedDirectoryHandle::new());
+                return current.clone();
             }
             return self
                 .inner
@@ -721,16 +721,6 @@ impl VectorObjectEconomyDirectoryCache {
     }
 }
 
-/// Source of "current committed LSN" for a collection, used by the
-/// engine-level emission path to populate
-/// [`SstableWriterDirectoryHooks::freshness_lsn`] with a real WAL cursor
-/// instead of the placeholder `0`.
-///
-/// Implementations:
-/// * `WalCursorLsnSource` (in the WAL module) delegates to the global
-///   manifest service.
-/// * [`StaticLsnSource`] is a test double that returns a fixed value.
-
 /// TD-CACHE-10: the directory-cache recheck TTL — how long a cached
 /// collection directory may serve before the next `handle_for` replaces it
 /// so the reader reloads from the shared sidecar. Bounds cross-pod staleness
@@ -751,6 +741,16 @@ pub fn directory_recheck_ttl_from_env() -> Option<std::time::Duration> {
         _ => Some(std::time::Duration::from_millis(DEFAULT_MS)),
     }
 }
+
+/// Source of "current committed LSN" for a collection, used by the
+/// engine-level emission path to populate
+/// [`SstableWriterDirectoryHooks::freshness_lsn`] with a real WAL cursor
+/// instead of the placeholder `0`.
+///
+/// Implementations:
+/// * `WalCursorLsnSource` (in the WAL module) delegates to the global
+///   manifest service.
+/// * [`StaticLsnSource`] is a test double that returns a fixed value.
 ///
 /// The trait takes `collection_id` so future per-collection cursors can
 /// be plumbed without breaking callers. The initial production impl

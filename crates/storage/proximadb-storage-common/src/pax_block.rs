@@ -934,9 +934,9 @@ pub struct PaxSegmentWriter {
     /// data) — the unchanged SQ8 decode path reconstructs + reranks them.
     coalesced_rabitq: bool,
     /// TD-PAXRG-1: write the v4 **row-group Region D** layout — Region D
-    /// granules are Parquet-style row groups (Olap-framed blocks, RowDirectory
-    /// + in-block rgdir suppressed), per-RG stats ride the footer's MinMax
-    /// payload, and the block-size target is floored at
+    /// granules are Parquet-style row groups (Olap-framed blocks, with
+    /// RowDirectory and in-block rgdir suppressed); per-RG stats ride the
+    /// footer's MinMax payload, and the block-size target is floored at
     /// [`RG_TARGET_MIN_BYTES`] so sub-granule framing amplification is
     /// structurally impossible. Default OFF (`PROXIMADB_PAX_WRITE_RG_LAYOUT`).
     rg_layout: bool,
@@ -1754,11 +1754,7 @@ impl PaxSegmentWriter {
                     dim as usize,
                     tl.model.n_comp as usize,
                 ) as u64;
-                if self.rg_layout {
-                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, length)
-                } else {
-                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, length)
-                }
+                (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, length)
             }
             None if self.rg_layout => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
             None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
@@ -2244,11 +2240,7 @@ impl PaxSegmentWriter {
                     dim as usize,
                     tl.model.n_comp as usize,
                 ) as u64;
-                if self.rg_layout {
-                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, a0_len)
-                } else {
-                    (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, a0_len)
-                }
+                (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, a0_len)
             }
             None if self.rg_layout => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
             None => (SEG_LAYOUT_VERSION, SEG_HEADER_PREFIX_LEN as u64, 0),
