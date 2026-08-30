@@ -1580,7 +1580,7 @@ impl PostgresProtocol {
             }
 
             // Check if this is a simple table query
-            if let Some(table_name) = self.extract_table_name(&upper) {
+            if let Some(table_name) = self.extract_table_name(query) {
                 // Detect store type from table name or query content
                 let store_type = self.detect_select_store_type(&table_name, &upper);
                 return match store_type {
@@ -2335,8 +2335,19 @@ impl PostgresProtocol {
     }
 
     fn extract_table_name(&self, query: &str) -> Option<String> {
-        // Simple extraction: look for FROM <table>
-        let from_pos = query.find("FROM ")?;
+        // Simple extraction: look for FROM <table>. The scan is
+        // case-insensitive over a length-preserving uppercase copy, but the
+        // slice comes from the ORIGINAL text so the identifier keeps its
+        // as-spelled case (TD-OLAP-18: lowercasing here used to destroy the
+        // declared case, so `SELECT ... FROM CaseTbl` could never resolve
+        // against a declared-case catalog entry). Only the quote characters
+        // are stripped — the DOTTED QUALIFIER must survive, because the
+        // downstream legacy path (`CatalogManager::resolve_table`) parses
+        // `ns.table` for cross-namespace routing (dropping the qualifier, as
+        // `clean_identifier` does for column refs, broke
+        // `pgwire_enforces_cross_namespace_fk_referential_actions`).
+        let upper = query.to_ascii_uppercase();
+        let from_pos = upper.find("FROM ")?;
         let after_from = &query[from_pos + 5..];
         let table_end = after_from
             .find(|c: char| c.is_whitespace() || c == ';')
@@ -2345,7 +2356,7 @@ impl PostgresProtocol {
         if table.is_empty() {
             None
         } else {
-            Some(table.to_lowercase())
+            Some(table.trim_matches('"').to_string())
         }
     }
 

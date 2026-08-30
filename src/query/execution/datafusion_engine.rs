@@ -241,7 +241,12 @@ impl DataFusionLocalEngine {
                     target: "proximadb::compute_route",
                     "DataFusion engine via DataFusion SQL frontend (fallback)"
                 );
-                ctx.sql(sql)
+                // TD-OLAP-18: DataFusion's SQL planner folds unquoted identifiers
+                // to lowercase, but the registered Parquet schemas keep their
+                // declared (possibly CamelCase) field names — repair unquoted
+                // references to the quoted declared spelling before planning.
+                let repaired = case_repair_sql_for_datafusion(sql, &catalog.schemas);
+                ctx.sql(&repaired)
                     .await
                     .map_err(|e| ExecutionError::Execution(format!("sql: {e}")))?
             }
@@ -369,6 +374,93 @@ impl proximadb_relational_frontend::CatalogLookup for ParquetSchemaCatalog {
         self.schemas
             .get(&normalize_table_key(name))
             .map(std::sync::Arc::clone)
+    }
+}
+
+/// TD-OLAP-18: repair unquoted identifier case for DataFusion's SQL planner.
+///
+/// The planner folds unquoted identifiers to lowercase (ANSI/PostgreSQL), but
+/// resolves fields against the registered Parquet schema case-SENSITIVELY — so
+/// a declared CamelCase column (`AdvEngineID`) can never be referenced without
+/// quotes, whatever case the query spells it in. Rewrite every unquoted
+/// identifier that case-insensitively matches exactly one declared column whose
+/// declared spelling is not already all-lowercase into the QUOTED declared form
+/// (`AdvEngineID` / `advengineid` → `"AdvEngineID"`). Quoted identifiers, names
+/// that fold to themselves, ambiguous case-variants, and non-column identifiers
+/// (e.g. query aliases) pass through untouched; if nothing needs repair the
+/// original SQL string is returned byte-identical. Kill switch:
+/// `PROXIMADB_IDENT_CASE_FOLD=0`.
+#[cfg(feature = "datafusion-integration")]
+fn case_repair_sql_for_datafusion(
+    sql: &str,
+    schemas: &HashMap<String, std::sync::Arc<RelationalSchema>>,
+) -> String {
+    use sqlparser::ast::{Expr as SqlExpr, Ident, visit_expressions_mut};
+    use sqlparser::dialect::GenericDialect;
+    use sqlparser::parser::Parser;
+    use std::ops::ControlFlow;
+
+    if !proximadb_relational_frontend::ident_case_fold_enabled() {
+        return sql.to_string();
+    }
+    // folded name -> Some(unique declared spelling) | None (conflicting variants)
+    let mut declared: HashMap<String, Option<String>> = HashMap::new();
+    for schema in schemas.values() {
+        for c in &schema.columns {
+            let folded = c.name.to_ascii_lowercase();
+            match declared.get_mut(&folded) {
+                None => {
+                    declared.insert(folded, Some(c.name.clone()));
+                }
+                Some(slot) => {
+                    if slot.as_deref() != Some(c.name.as_str()) {
+                        *slot = None;
+                    }
+                }
+            }
+        }
+    }
+    // All-lowercase schemas (the common native case) need no repair at all.
+    if declared
+        .iter()
+        .all(|(folded, decl)| decl.as_deref() == Some(folded.as_str()))
+    {
+        return sql.to_string();
+    }
+    let Ok(mut statements) = Parser::parse_sql(&GenericDialect {}, sql) else {
+        return sql.to_string();
+    };
+    let mut changed = false;
+    let mut repair = |id: &mut Ident| {
+        if id.quote_style.is_none()
+            && let Some(Some(decl)) = declared.get(&id.value.to_ascii_lowercase())
+            && decl != &decl.to_ascii_lowercase()
+        {
+            id.value = decl.clone();
+            id.quote_style = Some('"');
+            changed = true;
+        }
+    };
+    let _ = visit_expressions_mut(&mut statements, |expr| {
+        match expr {
+            SqlExpr::Identifier(id) => repair(id),
+            SqlExpr::CompoundIdentifier(parts) => {
+                if let Some(last) = parts.last_mut() {
+                    repair(last);
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::<()>::Continue(())
+    });
+    if changed {
+        statements
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")
+    } else {
+        sql.to_string()
     }
 }
 

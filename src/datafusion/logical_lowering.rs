@@ -156,9 +156,21 @@ fn lower<'a>(
         match node {
             LogicalNode::Scan { table, .. } => {
                 // Resolve the registered table provider by name and build a scan over it.
-                let provider = ctx.table_provider(table.name.as_str()).await?;
+                // Tables register under their normalized key (lowercase, unquoted), so a
+                // differently-cased or quoted query spelling retries folded (TD-OLAP-18).
+                let (provider, scan_name) = match ctx.table_provider(table.name.as_str()).await {
+                    Ok(p) => (p, table.name.clone()),
+                    Err(e) => {
+                        let folded = table.name.trim_matches('"').to_ascii_lowercase();
+                        if folded == table.name {
+                            return Err(e);
+                        }
+                        let p = ctx.table_provider(folded.as_str()).await.map_err(|_| e)?;
+                        (p, folded)
+                    }
+                };
                 let source = datafusion::datasource::provider_as_source(provider);
-                LogicalPlanBuilder::scan(table.name.as_str(), source, None)?.build()
+                LogicalPlanBuilder::scan(scan_name.as_str(), source, None)?.build()
             }
             LogicalNode::Filter { input, predicate } => {
                 let input = lower(ctx, input).await?;
@@ -404,7 +416,11 @@ fn lower_aggregate(named: &NamedAggregate) -> DFResult<Expr> {
 /// Translate a relational `Expr` to a DataFusion `Expr` (first-slice subset).
 fn lower_expr(e: &RExpr) -> DFResult<Expr> {
     Ok(match e {
-        RExpr::Column(c) => col(c.name.as_str()),
+        // `Column::new_unqualified` keeps the DECLARED name verbatim. `col()`
+        // would re-parse it as a SQL identifier and fold unquoted names to
+        // lowercase (DataFusion planner semantics), so a CamelCase Parquet
+        // column (`AdvEngineID`) would never resolve (TD-OLAP-18).
+        RExpr::Column(c) => Expr::Column(datafusion::common::Column::new_unqualified(&c.name)),
         RExpr::Literal { value, .. } => lit(proxima_value_to_scalar(value)?),
         RExpr::BinaryOp { op, left, right } => {
             let l = lower_expr(left)?;
