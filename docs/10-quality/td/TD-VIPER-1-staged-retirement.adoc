@@ -19,9 +19,9 @@ toc::[]
 
 |===
 | Stage | Contents | Gate to advance
-| S1 (this PR) | SUPPORTED_SURFACE → Deprecated; factory `warn!` on every VIPER construction; VIPER removed from all-engines conformance loops; TD-DSEFF-1 hardcoded-128 row marked subsumed | Soak on develop — one promotion cycle (develop→qa) with no VIPER telemetry/complaints
-| S2 | Factory errors on NEW VIPER collections (Chrono pattern: "use SST, HELIX, or NOVA"); existing collections remain readable (data is plain Parquet); migration note in docs | S1 soak + a documented migration snippet (engine swap / re-ingest)
-| S3 | Delete `src/storage/engines/viper/` + the ~19-file match-site fan-out (ADR-026 census); KEEP `StorageEngine::Viper` proto variant + string conversions forever (wire compat) | S2 soak with zero VIPER construction telemetry
+| S1 (this PR) | SUPPORTED_SURFACE → Deprecated; factory `warn!` on every VIPER construction; VIPER removed from benchmark promotion sweeps while existing conformance coverage remains; TD-DSEFF-1 hardcoded-128 row marked subsumed | Soak on develop — one promotion cycle (develop→qa) with no VIPER telemetry/complaints
+| S2 | Collection create/update validation rejects NEW VIPER selections ("use SST, HELIX, or NOVA"); context-free factory remains available for existing reads; migration note in docs | S1 soak + a documented migration snippet (engine swap / re-ingest)
+| S3 | Delete `src/storage/engines/viper/` + the ~19-file match-site fan-out (ADR-026 census); KEEP `StorageEngine::Viper` proto variant + string conversions forever (wire compat) | S2 soak with zero VIPER construction telemetry and verified empty persisted-VIPER inventory after migration
 |===
 
 == Evidence ledger
