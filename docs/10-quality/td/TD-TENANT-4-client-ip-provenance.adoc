@@ -147,6 +147,16 @@ S1 alone already fixes D2 and *narrows* D1 (an observed peer address exists to
 prefer). S2 alone would fix nothing, because with no observation there is
 nothing to fall back to. They ship together; S1 is the load-bearing half.
 
+== Follow-up closed (2026-08-30)
+
+The one flagged gap — `ClientAddrSource::Unobserved` was built but emitted
+nowhere, so a `ConnectInfo` wiring regression was undetectable — is closed by
+`proximadb_client_addr_unobserved_total` (emitted at the no-peer branch of
+`resolve_client_addr`, label-free: any rise means "find the unwired surface").
+Expected flat zero; the counter test pins the no-peer increment, while the
+existing request-path tests pin observed/UDS paths bypassing the `Unobserved`
+branch entirely.
+
 == Non-goals
 
 * **Reviving the REST rate limiter.** `rate_limit_middleware` is unmounted dead

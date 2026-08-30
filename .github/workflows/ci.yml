@@ -966,6 +966,16 @@ jobs:
           else
             cargo test -p proximadb --lib --features enterprise-catalogs catalog
           fi
+      # Residue-closure (2026-08-30): feature-gated code accumulated 9 clippy
+      # lints invisibly — CI's clippy job runs DEFAULT features and this lane
+      # only checked+served. Lint the feature code where it is built, so this
+      # debt class cannot regrow unseen. lib-only, same as the main clippy job
+      # (CI memory limits).
+      - name: clippy enterprise-catalogs (feature code is not lint-blind)
+        if: matrix.label == 'enterprise-catalogs'
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
+        run: cargo clippy -p proximadb --lib --features enterprise-catalogs -- -D warnings
 
   rust-security:
     name: Security Audit

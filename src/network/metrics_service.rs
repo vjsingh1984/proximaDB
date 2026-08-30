@@ -90,6 +90,7 @@ impl MetricsService {
         // /metrics/prometheus scrapes them as 0 before their first event
         // (absent-vs-zero ambiguity cost a diagnostic cycle in the ratchet run).
         crate::metrics::operational_metrics::touch();
+        proximadb_network_middleware::client_addr::initialize_client_addr_metrics();
         Self {
             config,
             metrics_collector,

@@ -287,6 +287,7 @@ serde = { version = "1.0", features = ["derive"] }
 stacker = "0.1"
 tempfile = "3.0"
 ipnet = "2.12" # CIDR matching (KOU client-locality, TD-TENANT-4 trusted proxies)
+prometheus = "0.14" # metric export (network-middleware counters)
 thiserror = "2.0"
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }
@@ -695,7 +696,7 @@ time = { version = "0.3", features = ["std"] }  # Time handling for certificates
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-prometheus = "0.14"
+prometheus.workspace = true
 metrics = "0.21"
 
 # Configuration
@@ -789,7 +790,7 @@ proptest = "1.0"
 # consumption counters live (tests/documents_convergence_bake.rs measures the
 # metering delta at the registry, not just the /metrics/prometheus endpoint —
 # same pin as the root [dependencies] entry).
-prometheus = "0.14"
+prometheus.workspace = true
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
 walkdir = "2"
