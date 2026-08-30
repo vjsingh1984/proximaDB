@@ -242,8 +242,11 @@ fn test_deprecated_alias_use_is_counted_per_use() {
         .unwrap_or(0.0);
 
     for _ in 0..2 {
+        // Canonical carries the grant; the legacy name is present alongside
+        // purely as the DETECTED attempt (honoring removed, S4 item 1).
         let mut metadata = tonic::metadata::MetadataMap::new();
-        metadata.insert("tenant_id", "tenant-a".parse().unwrap());
+        metadata.insert("x-tenant-id", "tenant-a".parse().unwrap());
+        metadata.insert("tenant_id", "legacy-attempt".parse().unwrap());
         assert_eq!(
             ProximaFlightService::tenant_id_from_metadata(&metadata),
             Some("tenant-a".to_string())
@@ -257,11 +260,13 @@ fn test_deprecated_alias_use_is_counted_per_use() {
     assert_eq!(label(after - before), 2.0, "counter must be per-use");
 }
 
-/// The legacy aliases stay accepted until TD-TENANT-3 S4 retires them — this
-/// is the compatibility half of "narrow, never widen": Flight clients are not
-/// broken, they are warned.
+/// S4 item 1 (2026-08-29): HONORING REMOVED. A legacy alias alone no longer
+/// resolves a tenant — the client falls to its credential/default tenant —
+/// but the attempt is still detected (warn + counter), so the change is
+/// observable rather than silent. The names are deleted at the next release
+/// boundary.
 #[test]
-fn test_tenant_id_from_flight_metadata_still_accepts_legacy_aliases() {
+fn test_flight_legacy_aliases_no_longer_grant_a_tenant() {
     for alias in proximadb_tenant::DEPRECATED_TENANT_CLAIM_ALIASES {
         let mut metadata = tonic::metadata::MetadataMap::new();
         metadata.insert(
@@ -271,8 +276,8 @@ fn test_tenant_id_from_flight_metadata_still_accepts_legacy_aliases() {
 
         assert_eq!(
             ProximaFlightService::tenant_id_from_metadata(&metadata),
-            Some("tenant-a".to_string()),
-            "{alias} must keep working until S4 removes it"
+            None,
+            "{alias} must not grant a tenant (honoring removed, S4 item 1)"
         );
     }
 }

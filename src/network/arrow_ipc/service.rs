@@ -585,23 +585,23 @@ impl ProximaFlightService {
     /// TD-TENANT-3: the shared claim vocabulary. Flight historically accepted
     /// four tenant spellings while REST and gRPC accepted one, so a claim
     /// honored here was *silently ignored* there. The alias list now lives in
-    /// `proximadb_tenant::claim_vocabulary`, the canonical name always wins,
-    /// and each legacy alias warns once so the migration is observable before
-    /// the aliases are removed (TD-TENANT-3 S4).
+    /// TD-TENANT-3 S4 item 1 (honoring removed 2026-08-29): Flight reads the
+    /// CANONICAL name only, exactly like REST and gRPC — a legacy alias no
+    /// longer grants a tenant (the client resolves to its credential/default
+    /// tenant). Presence of a legacy name is still DETECTED: warn once per
+    /// process + count every attempt, so the behavior change is observable
+    /// rather than silent. The names are deleted at the next release boundary.
     fn tenant_id_from_metadata(metadata: &tonic::metadata::MetadataMap) -> Option<String> {
-        let hit = proximadb_tenant::tenant_claim_with_legacy_aliases(|name| {
+        if let Some(alias) = proximadb_tenant::legacy_alias_present(|name| {
             metadata.get(name).and_then(|value| value.to_str().ok())
-        })?;
-        if hit.deprecated {
-            // TD-TENANT-3 S4: the counter fires on EVERY use — the retirement
-            // gate is `increase(proximadb_deprecated_claim_uses_total[7d]) == 0`
-            // — while the warn stays once per process to avoid log spam.
-            crate::network::middleware::claim_metrics::record_deprecated_claim_use(
-                "flight", hit.name,
-            );
-            Self::warn_deprecated_tenant_alias(hit.name);
+        }) {
+            crate::network::middleware::claim_metrics::record_deprecated_claim_use("flight", alias);
+            Self::warn_deprecated_tenant_alias(alias);
         }
-        Some(hit.value.to_owned())
+        proximadb_tenant::tenant_claim(|name| {
+            metadata.get(name).and_then(|value| value.to_str().ok())
+        })
+        .map(|hit| hit.value.to_owned())
     }
 
     /// Warn once per deprecated alias (not per request) — a per-request warn on

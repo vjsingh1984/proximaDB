@@ -495,16 +495,14 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
-        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
-        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
-        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
-        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
-        // temporarily re-enable v1 during migration.
-        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
-        base_router = base_router.layer(middleware::from_fn_with_state(
-            rest_v1_compat,
-            crate::network::middleware::v1_sunset::v1_sunset_middleware,
-        ));
+        // TD-V1SUNSET-1 RESOLVED (2026-08-29): the v1_sunset middleware is
+        // REMOVED. /api/v1/* now falls to `not_found_fallback`, which answers
+        // 404 + the exact /api/v2 replacement endpoint + docs link via
+        // `v1_replacement_for` — the migration signal survives; only the
+        // machine-readable Deprecation/Sunset headers are gone. Closure
+        // evidence: every known client accounted for (SDKs + AnvaiOps — no
+        // ProximaDB v1 calls, no REST_V1_COMPAT opt-ins), and /api/v1 has
+        // been 410-by-default since #814 (2026-07-09).
 
         // TD-RATE-1: mount the REST request limiter, default OFF — the gate
         // being unset adds NO layer, so the default deployment is unchanged.
@@ -861,16 +859,14 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
-        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
-        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
-        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
-        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
-        // temporarily re-enable v1 during migration.
-        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
-        base_router = base_router.layer(middleware::from_fn_with_state(
-            rest_v1_compat,
-            crate::network::middleware::v1_sunset::v1_sunset_middleware,
-        ));
+        // TD-V1SUNSET-1 RESOLVED (2026-08-29): the v1_sunset middleware is
+        // REMOVED. /api/v1/* now falls to `not_found_fallback`, which answers
+        // 404 + the exact /api/v2 replacement endpoint + docs link via
+        // `v1_replacement_for` — the migration signal survives; only the
+        // machine-readable Deprecation/Sunset headers are gone. Closure
+        // evidence: every known client accounted for (SDKs + AnvaiOps — no
+        // ProximaDB v1 calls, no REST_V1_COMPAT opt-ins), and /api/v1 has
+        // been 410-by-default since #814 (2026-07-09).
 
         // TD-RATE-1: mount the REST request limiter, default OFF — the gate
         // being unset adds NO layer, so the default deployment is unchanged.
@@ -1280,6 +1276,28 @@ fn v1_replacement_for(path: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-V1SUNSET-1 successor contract (the middleware is REMOVED): a
+    /// removed /api/v1 path must fall to `not_found_fallback` and answer 404
+    /// **with the /api/v2 replacement named in the body**. This is what makes
+    /// the removal non-silent — the migration signal survives the middleware.
+    /// Negative-controllable: without `v1_replacement_for`, the body carries
+    /// only "No route for ..." and this test fails.
+    #[tokio::test]
+    async fn removed_v1_paths_404_with_the_v2_replacement_named() {
+        let resp =
+            not_found_fallback("/api/v1/collections".parse::<axum::http::Uri>().unwrap()).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body).to_string();
+        assert!(
+            text.contains("/api/v2"),
+            "404 body must name the v2 replacement, got: {text}"
+        );
+    }
+
     use axum::body::Body;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};

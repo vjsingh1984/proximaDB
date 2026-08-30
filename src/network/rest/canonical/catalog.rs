@@ -815,19 +815,16 @@ mod tests {
 
     // ---- TD-V1SUNSET-1 census finding 4: the serving teeth this surface lacked ----
 
-    /// Build the router the way PRODUCTION does: configure_routes() nested under
-    /// its mount prefix, wrapped by the v1_sunset middleware with compat OFF
-    /// (the default). The path collision lived here for weeks because no test
-    /// ever SERVED this router — the CI feature lane only compiles it.
+    /// Build the router the way PRODUCTION does: configure_routes() nested
+    /// under its mount prefix. (The v1_sunset wrapper this once carried was
+    /// removed with TD-V1SUNSET-1's resolution — /api/v1 now falls to
+    /// `not_found_fallback` with a replacement hint; see the teeth test in
+    /// rest/server.rs. The path collision lived here for weeks because no
+    /// test ever SERVED this router — the CI feature lane only compiles it.)
     fn serving_router() -> axum::Router {
         let state =
             CatalogApiState::new(std::sync::Arc::new(crate::catalog::CatalogManager::new()));
-        axum::Router::new()
-            .nest("/api/v2/catalogs", configure_routes().with_state(state))
-            .layer(axum::middleware::from_fn_with_state(
-                false,
-                crate::network::middleware::v1_sunset::v1_sunset_middleware,
-            ))
+        axum::Router::new().nest("/api/v2/catalogs", configure_routes().with_state(state))
     }
 
     /// THE property that was broken: the enterprise surface must be reachable
@@ -860,11 +857,12 @@ mod tests {
         );
     }
 
-    /// The sunset contract still holds: /api/v1/catalogs (and any /api/v1 path)
-    /// answers 410 with compat off — including paths that once hosted this
-    /// surface. Relocation must not weaken the sunset.
+    /// The old /api/v1/catalogs home no longer exists as a route (the sunset
+    /// middleware is removed); it falls through unmatched. Its successor
+    /// contract — the 404-with-replacement-hint fallback — is pinned in
+    /// rest/server.rs's tests.
     #[tokio::test]
-    async fn the_old_v1_home_still_410s() {
+    async fn the_old_v1_home_is_no_longer_a_route() {
         use tower::ServiceExt;
 
         let app = serving_router();
@@ -877,7 +875,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status().as_u16(), 410);
+        assert_eq!(resp.status().as_u16(), 404);
     }
 
     /// Authz travels with the path: TD-CAT-8's fail-closed operator gate must

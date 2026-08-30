@@ -222,8 +222,6 @@ the emergency off) · *config-mirror* (env overrides a config field) ·
 | `PROXIMADB_QUEUE_ROOT` | Filesystem/object root that enables async ingest; unset keeps it off. | falls back to toml `root`, else `None` (async ingest off) | config-mirror; — | src/core/config.rs:341
 | `PROXIMADB_QUEUE_SYNC_MODE` | Durability/sync mode for the ingest queue. | falls back to toml, else `"strict"` | config-mirror; — | src/core/config.rs:350
 | `PROXIMADB_RELATIONAL_BOOTSTRAP_DEMO_TABLE` | Opt-in to bootstrap a demo table in the relational pipeline. | OFF | opt-in; — | src/network/postgres/relational_pipeline.rs:76
-| `PROXIMADB_REST_V1_COMPAT` | Re-enables the deprecated `/api/v1/*` REST surface (else 410 Gone). | OFF (v1 disabled) — note: const doc at v1_sunset.rs:40 wrongly says "Default ON"; parser returns false on unset | kill-switch; ADR-049 / TD-121 / TD-V1SUNSET-1 | src/network/middleware/v1_sunset.rs:52
-| `PROXIMADB_REST_V1_SUNSET` | RFC 8594 `Sunset` HTTP-date advertised when v1 is disabled. | unset → no Sunset header | opt-in; TD-V1SUNSET-1 | src/network/middleware/v1_sunset.rs:48
 | `PROXIMADB_ROUTER_QUANT_HELIX` | Under `index_policy.mode=auto` + quantization, route the collection to the HELIX engine instead of SST cold path. | OFF | opt-in; ADR-028 | src/services/collection/engine_selector.rs
 | `PROXIMADB_ROUTE_COST_OVERRIDE` | Enables the live route-cost override (global bool or comma-list of shape-class prefixes). | OFF (observe-only; unparseable → OFF) | eval; ADR-058 / TD-EXEC-2 | src/query/route_cost_model.rs:70
 | `PROXIMADB_ROUTE_RTT_BUDGET` | Hard physical-read round-trip (`get_ops`, full or ranged GET) budget for route costing. | `None` (disabled) | opt-in; TD-170 | src/query/route_cost_model.rs:854
@@ -355,4 +353,6 @@ layer; at GA, renames become alias-forever):
 * `PROXIMADB_IVF2_PROBE` → `PROXIMADB_PAX_READ_COARSE_PROBE` (2026-07-25)
 * `PROXIMADB_IVF2_NPROBE` → `PROXIMADB_PAX_READ_COARSE_NPROBE` (2026-07-25)
 * `PROXIMADB_CACHE_NVME_PATH` → `PROXIMADB_CACHE_LOCAL_DISK_PATH` (2026-07-29; pre-GA clean break)
+* `PROXIMADB_REST_V1_COMPAT` — REMOVED, not renamed (2026-08-29): the v1_sunset middleware was deleted (TD-V1SUNSET-1 RESOLVED); /api/v1 now falls to `not_found_fallback` with a v2-replacement hint. Never repurpose.
+* `PROXIMADB_REST_V1_SUNSET` — REMOVED with the same middleware (2026-08-29); the RFC 8594 header had no producer left. Never repurpose.
 * `PROXIMADB_CACHE_NVME_MAX_GB` → `PROXIMADB_CACHE_LOCAL_DISK_MAX_GB` (2026-07-29; pre-GA clean break)
