@@ -1913,3 +1913,214 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         std::env::remove_var("PROXIMADB_TRACE_GETS");
     }
 }
+
+// ============================================================================
+// TD-FPRUNE-1 flip evidence — the FILTERED leg (adversarial-review finding).
+//
+// Zero tests exercised the GATED DISPATCH before this: every filtered-cascade
+// test called `pax_filtered_row_allow` / `rabitq_search_segment_coalesced_allowed`
+// directly, bypassing the `search/mod.rs` gate, so a default-ON flip had no CI
+// coverage. This leg runs the real `search_vectors_unified` WITH a filter and
+// `PROXIMADB_PAX_FILTERED_CASCADE=1` (+ footer stats at write) and asserts:
+//   (a) filtered recall@10 vs FILTERED brute-force ground truth >= floor,
+//   (b) every returned id is in the filtered partition (predicate holds
+//       through the full dispatch + cascade allow-set stack),
+//   (c) every hit carries its metadata (the top-k rehydration — without it
+//       the cascade silently returns id+score only, downgrading the exact
+//       path's with-metadata response shape).
+// The unfiltered arms above and their `!has_filter` invariant are untouched.
+// ============================================================================
+
+const FILTERED_PARTITIONS: u32 = 8;
+
+fn partition_tag(i: u32) -> String {
+    format!("p{}", i % FILTERED_PARTITIONS)
+}
+
+async fn run_sift_filtered_cascade_ratchet() {
+    use proximadb::proto::proximadb_v1::sql_value;
+    let base_path = match dataset_path("sift_base.fvecs") {
+        Some(p) => p,
+        None => {
+            assert!(
+                !dataset_required(),
+                "required SIFT corpus is missing (PROXIMADB_RECALL_DATASET_REQUIRED=1)"
+            );
+            eprintln!("skipping filtered ratchet: no SIFT dataset");
+            return;
+        }
+    };
+    let floor = std::env::var("PROXIMADB_SIFT_RECALL_FLOOR")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.90);
+
+    let n_filter = std::env::var("PROXIMADB_SIFT_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10_000);
+    let max_queries = std::env::var("PROXIMADB_SIFT_QUERIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+
+    let engine = SstEngine::new().await.unwrap();
+    let tmp = TempDir::new().unwrap();
+    let storage_base = format!("file://{}", tmp.path().join("sift_filtered").display());
+    let collection = collection("sift_filtered_ratchet", storage_base);
+
+    // Ingest with a deterministic partition tag in metadata (→ record props).
+    let base = read_vec_records_f32(&base_path, Some(n_filter)).expect("read sift_base.fvecs");
+    let n = base.len();
+    let mut batch: Vec<VectorRecord> = Vec::with_capacity(BATCH_SIZE);
+    for (i, v) in base.iter().enumerate() {
+        let i = i as u32;
+        let mut r = vector_record(i, v.clone());
+        r.metadata.insert(
+            "partition".to_string(),
+            proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(sql_value::Value::StringValue(partition_tag(i))),
+            },
+        );
+        batch.push(r);
+        if batch.len() == BATCH_SIZE {
+            let b = std::mem::take(&mut batch);
+            flush_batch(&engine, &collection, b).await;
+        }
+    }
+    if !batch.is_empty() {
+        flush_batch(&engine, &collection, batch).await;
+    }
+    eprintln!("filtered ratchet: flushed {n} tagged base vectors");
+
+    let query_path = dataset_path("sift_query.fvecs").expect("query corpus");
+    let queries: Vec<Vec<f32>> =
+        read_vec_records_f32(&query_path, Some(max_queries)).expect("read sift_query.fvecs");
+
+    let mut recall_sum = 0.0f64;
+    let mut measured = 0usize;
+    for (qi, query) in queries.iter().enumerate() {
+        let p = partition_tag(qi as u32);
+        // Filtered brute-force GT: top-TOP_K among ONLY partition-p rows.
+        let mut candidates: Vec<(usize, f32)> = base
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| partition_tag(*i as u32) == p)
+            .map(|(i, v)| {
+                let d: f32 = v
+                    .iter()
+                    .zip(query.iter())
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum();
+                (i, d)
+            })
+            .collect();
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        let gt: Vec<String> = candidates
+            .iter()
+            .take(TOP_K)
+            .map(|(i, _)| vid(*i as u32))
+            .collect();
+
+        // The REAL dispatch, with the filter the gate keys on.
+        let ctx = StorageQueryContext {
+            search_params: Arc::new(SearchParams {
+                query_vectors: Some(vec![query.clone()]),
+                top_k: Some(TOP_K as u16),
+                distance_metric: Some(DistanceMetric::Euclidean),
+                search_mode: SearchMode::Approximate { nprobe: None },
+                filter_expression: Some(
+                    proximadb_filter_expression::FilterExpression::Comparison {
+                        field: "partition".to_string(),
+                        operator: proximadb_filter_expression::ComparisonOperator::Equals,
+                        value: serde_json::json!(p),
+                    },
+                ),
+                block_prune: BlockPruneConfig {
+                    radius_k: 0.0,
+                    force_exact: false,
+                    mode: BlockPruneMode::Ratio,
+                    ratio: 1.0,
+                    min_keep: 1,
+                    max_keep: 0,
+                    min_blocks_override: Some(0),
+                },
+                ..Default::default()
+            }),
+            collection: Arc::new(collection.clone()),
+            metadata: StorageQueryMetadata {
+                collection_id: collection.id.clone(),
+                ..Default::default()
+            },
+            user_context: None,
+            tenant_context: None,
+        };
+        let results = engine
+            .search_vectors_unified(&ctx)
+            .await
+            .expect("filtered search through the unified dispatch must succeed");
+        assert!(!results.is_empty(), "partition {p} must yield hits");
+
+        let gt_set: std::collections::HashSet<&str> = gt.iter().map(|s| s.as_str()).collect();
+        let mut hits_in_gt = 0usize;
+        for r in &results {
+            // (b) predicate: the hit's partition is the filtered one.
+            let idx: u32 =
+                r.id.trim_start_matches('v')
+                    .parse()
+                    .expect("hit id encodes its base index");
+            assert_eq!(
+                partition_tag(idx),
+                p,
+                "hit {} leaked across the filter boundary",
+                r.id
+            );
+            // (c) rehydration: metadata came back with the hit.
+            let tag = match r.metadata.get("partition") {
+                Some(proximadb_data_model::ProximaValue::String(s)) => s.as_str(),
+                other => panic!("partition metadata must rehydrate as a string, got {other:?}"),
+            };
+            assert_eq!(
+                tag, p,
+                "cascade hit must carry its rehydrated partition metadata"
+            );
+            if gt_set.contains(r.id.as_str()) {
+                hits_in_gt += 1;
+            }
+        }
+        recall_sum += hits_in_gt as f64 / TOP_K as f64;
+        measured += 1;
+    }
+    let recall = recall_sum / measured.max(1) as f64;
+    eprintln!(
+        "SIFT FILTERED cascade recall@10 = {recall:.4} over {measured} queries \
+         (N={n}, floor={floor}, partitions={FILTERED_PARTITIONS})"
+    );
+    assert!(
+        recall >= floor,
+        "filtered cascade recall {recall:.4} below floor {floor} — the default-ON \
+         flip is blocked until this holds"
+    );
+}
+
+/// The filtered leg of the ratchet — see the module comment above. Pins BOTH
+/// gates ON (the flip configuration) plus the same write geometry as the
+/// baseline arm; removes them at the end so the unfiltered arms are unaffected
+/// under nextest's process-per-test isolation and tolerate plain `cargo test`.
+#[tokio::test]
+async fn sift_pax_filtered_cascade_recall_ratchet() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_F32_TIER", "1");
+        std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "0");
+        // The cascade gate is default-ON since the 2026-08-31 flip — this leg
+        // runs the shipped configuration; only footer stats (still default-OFF)
+        // is pinned so the write side carries the shred field map.
+        std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
+    }
+    run_sift_filtered_cascade_ratchet().await;
+    unsafe {
+        std::env::remove_var("PROXIMADB_PAX_FOOTER_STATS");
+    }
+}

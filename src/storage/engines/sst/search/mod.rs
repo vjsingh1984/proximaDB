@@ -395,9 +395,11 @@ impl SstEngine {
         snapshot_lsn: u64,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use proximadb_block_format::RankMetric;
-        // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
-        // metrics stay on the generic scan (unvalidated recall / score polarity);
-        // the caller gate only routes Euclidean + Cosine here.
+        // Map the query metric to a cascade rank metric. Euclidean + Cosine
+        // carry the SIFT-ratchet recall validation; DotProduct is also routed
+        // (`should_try_pax_cascade`) and mapped, but its filtered-recall
+        // validation is the TD-FPRUNE-1 filtered-ratchet follow-up — exotic
+        // metrics stay on the generic scan.
         let Some(rank_metric) = (match distance_metric {
             DistanceMetric::Euclidean => Some(RankMetric::L2),
             DistanceMetric::Cosine => Some(RankMetric::Cosine),
@@ -498,9 +500,36 @@ impl SstEngine {
                     } else {
                         hits
                     };
+                    // TD-FPRUNE-1 top-k rehydration: the exact path this cascade
+                    // replaces returns full record metadata (props); the cascade
+                    // ranks from codes and knows only id+score+vector. Fetch the
+                    // k winners' records (position-selective, bounded by the hit
+                    // set) so the filtered response keeps the same shape as the
+                    // exact path. Best-effort: a rehydrate failure degrades to
+                    // metadata-less hits (the pre-flip cascade behavior), never a
+                    // query failure.
+                    let positions: Vec<u32> = hits.iter().map(|h| h.position).collect();
+                    let rehydrated =
+                        crate::storage::engines::sst::segment_format::read_records_by_positions(
+                            fs.as_ref(),
+                            sstable_path,
+                            &positions,
+                            &[],
+                            &[],
+                            None,
+                        )
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(
+                                "cascade top-k rehydration failed for {sstable_path} \
+                                 (hits return without metadata): {e}"
+                            );
+                            vec![None; positions.len()]
+                        });
                     let records = hits
                         .into_iter()
-                        .map(|h| {
+                        .zip(rehydrated)
+                        .map(|(h, rec)| {
                             let sim = OptimizedSearchRecord::standardized_distance_to_similarity(
                                 h.distance,
                                 &distance_metric,
@@ -512,6 +541,13 @@ impl SstEngine {
                             r.similarity = Some(sim);
                             if let Some(v) = h.vector {
                                 r = r.add_vector(v);
+                            }
+                            if let Some(full) = rec {
+                                r.metadata =
+                                    proximadb_records::conversions::proxima_tree_to_value_map(
+                                        &full.props,
+                                    );
+                                r.vector_id = Some(full.oid.clone());
                             }
                             r
                         })

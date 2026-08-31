@@ -1,7 +1,7 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-FPRUNE-1: filter-aware PAX cascade — phased arc (ADR-089)
-:status: P2 implemented end-to-end (this branch, default-OFF) — corridor-benchmark evidence gate open
+:status: P2 implemented end-to-end; FILTERED_CASCADE flipped default-ON (2026-08-31, adversarially-reviewed evidence); FOOTER_STATS default-OFF pending its own evidence — corridor-benchmark gate open
 :dim: D3/D5 (compute-per-modality, object storage)
 :pillar: PERF
 
@@ -152,13 +152,25 @@ filter as the correctness backstop. This TD tracks the phases.
          mixed-read-safe). C1 evidence: integrated filtered-stack GET/byte
          breakdown = **4.2× byte cut**; C2 evidence: unfiltered recall
          neutral **Δ=0.000** vs global layout.
-  ** **Gate policy on landing (this branch):** `PROXIMADB_PAX_FILTERED_CASCADE`
-     and `PROXIMADB_PAX_FOOTER_STATS` land **default-OFF**, honoring the
-     2026-08-20 ENV_GATE_REGISTRY promotion criterion ("default-ON once the
-     ANN-recall ratchets pass with the cascade enabled" — external consumer
-     #1690 is measuring this gap). Flip ON in a follow-up once the SIFT PAX
-     recall ratchet runs green with both gates enabled. The original branch's
-     A3 default-ON flip was deliberately NOT carried over.
+  ** **Gate policy:** `PROXIMADB_PAX_FILTERED_CASCADE` landed default-OFF
+     (2026-08-30, honoring the 2026-08-20 promotion criterion) and was
+     **FLIPPED default-ON 2026-08-31** in the follow-up flip PR — after an
+     adversarial review established that the original criterion was
+     *vacuously dischargeable* (the SIFT ratchet is unfiltered; the gate is
+     only consulted under a filter) and that the cascade returned id+score
+     with NO metadata while the exact path it replaces returns full props.
+     The flip PR therefore carries: (1) top-k metadata REHYDRATION
+     (`read_records_by_positions` — position-selective, bounded by the hit
+     set) so filtered responses keep the exact path's shape; (2) a NEW
+     filtered SIFT ratchet leg through the REAL dispatch — the first test
+     anywhere to exercise the gated `search/mod.rs` arm — measuring filtered
+     recall@10 = **0.996** vs filtered brute-force GT (floor 0.90, 100
+     queries, N=10k, 8 partitions) with predicate satisfaction and metadata
+     rehydration asserted per hit. `PROXIMADB_PAX_FOOTER_STATS` stays
+     default-OFF (adversarial verdict: no promotion criterion of its own,
+     read-inert while the cascade was off, unmeasured footer byte cost paid
+     by every collection) until the cascade records io_trace evidence that
+     the D-block fetch dominates and a footer byte-delta measurement lands.
   ** **Attribution wired (this branch):** `record_pax_footer_prune(total,
      pruned)` lands in the query-scoped `IoTraceSnapshot`
      (`pax_footer_total_blocks`/`pax_footer_pruned_blocks`), mirroring the
