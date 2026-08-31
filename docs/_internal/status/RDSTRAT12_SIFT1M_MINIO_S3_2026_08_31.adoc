@@ -52,10 +52,12 @@ the three same-bed pairs carry the correctness proof. Within the mixed pair reca
    footer/index/OID/metadata GETs remain sequential. Decomposition: A0(150 ms) 5373 ms vs
    A1(150 ms) 3686 ms saves ~1687 ms ≈ 11 GET-RTTs of the ~20 sequential-GET share, i.e. ~half the
    cascade is still unwaved.
-2. **RTT-coupled transfer.** Toxiproxy's latency toxic also degrades bulk TCP throughput
-   (window-limited), so the ~54-67 MB/query transfer term grows with RTT in BOTH arms, crushing
-   the ratio's denominator. A real WAN (bandwidth-delay product decoupled) would not pay this
-   exact term.
+2. **RTT-coupled transfer (inferred).** A1's non-wave share rises with RTT (≈1.22 s at real RTT
+   → ≈3.37 s at 150 ms on the same geometry), a growth pattern consistent with toxiproxy's
+   latency toxic degrading bulk TCP throughput (window-limited) — the ~54-67 MB/query transfer
+   term grows with RTT in BOTH arms, crushing the ratio's denominator. A real WAN
+   (bandwidth-delay product decoupled) would not pay this exact term; the campaign cannot
+   separate this term from unwaved-GET RTTs with aggregate percentiles alone.
 3. **Compute floor is unchanged** (370k-545k probed rows/query single-threaded rank), so the
    saturation regime the az ladder found is still the binding asymptote here.
 

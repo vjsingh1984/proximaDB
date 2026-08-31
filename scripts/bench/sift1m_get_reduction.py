@@ -666,6 +666,13 @@ def parse_pax(path: Path, root: Path) -> dict:
     if a0_length > 0:
         if a0_length < 48:
             raise RuntimeError(f"{path}: invalid A0 length {a0_length}")
+        if a0_offset + a0_length > size:
+            raise RuntimeError(
+                f"{path}: A0 extents [{a0_offset}+{a0_length}] exceed the "
+                f"segment ({size} B) — offsets 56..72 are body bytes on the "
+                "pre-collapse 56-byte-header v1 layout (legacy layouts "
+                "unsupported; harness beds are always freshly written)"
+            )
         with path.open("rb") as segment:
             segment.seek(a0_offset)
             a0 = segment.read(a0_length)
@@ -729,6 +736,18 @@ def materialize_footer_geometry(fetch_range, inventory: dict) -> dict:
         # two-level marker).
         a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
         if a0_length >= 48:
+            if a0_offset + a0_length > size:
+                # Offsets 56..72 hold segment BODY bytes on the pre-collapse
+                # 56-byte-header v1 layout (SEG_HEADER_PREFIX_LEN was 56 at
+                # 47bef62e); a junk u64 there means a legacy/misread header.
+                # Fresh-prefix beds are always written by the current binary,
+                # so reaching this is a provenance bug — fail loudly.
+                raise RuntimeError(
+                    f"{name}: A0 extents [{a0_offset}+{a0_length}] exceed the "
+                    f"object ({size} B) — offsets 56..72 are body bytes, i.e. a "
+                    "pre-collapse 56-byte-header v1 segment (legacy layouts "
+                    "unsupported; harness beds are always freshly written)"
+                )
             a0 = fetch_range(name, a0_offset, a0_offset + a0_length - 1)
             if len(a0) == a0_length:
                 coarse = parse_a0_geometry(a0)
@@ -1125,8 +1144,15 @@ def layout_candidate_is_ready(
         return True
     segments = geometry.get("segments", [])
     if segments and all("layout_version" in segment for segment in segments):
+        # A settled segment must ALSO carry a coarse A0 directory: the
+        # required-layout-version=1 default retired the L0-filename gate, and
+        # an untrained flush artifact is a v1 segment with a valid row count —
+        # only the missing coarse directory distinguishes it from a trained
+        # one. Untrained segments are transient (training compaction replaces
+        # them), so not-ready keeps the settle loop polling.
         return all(
             segment["layout_version"] == required_layout_version
+            and segment.get("coarse_cells")
             for segment in segments
         )
     if not azure_inventory or required_layout_version <= 1:
@@ -3137,6 +3163,16 @@ def main() -> int:
             raise RuntimeError(
                 "settled segment layout mismatch: "
                 f"required v{args.require_layout_version}, got {wrong_layouts}"
+            )
+        untrained = [
+            segment["path"]
+            for segment in geometry["segments"]
+            if not segment.get("coarse_cells")
+        ]
+        if untrained:
+            raise RuntimeError(
+                "settled segment(s) lack a coarse A0 directory "
+                f"(untrained flush artifact?): {untrained}"
             )
         if args.ivf_k is not None:
             wrong_cells = [

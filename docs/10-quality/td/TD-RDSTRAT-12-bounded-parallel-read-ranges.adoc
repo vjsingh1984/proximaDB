@@ -229,13 +229,16 @@ three byte-identical same-bed pairs the waved arm fired observably (2.1-2.2 roun
 8) at EXACT GET parity, identical recall, and identical result-identity hashes — the wave
 mechanism is backend-neutral and identity-preserving on an S3-shaped backend. Ratios: 1.17x
 (5.5 ms) / 1.64x (50 ms; mixed-bed pair, see artifact) / 1.22x (100 ms) / 1.46x (150 ms) — the
->=2x acceptance did NOT reproduce on this bed. Two measured causes: (a) the TD-PAXRG-1
+>=2x acceptance did NOT reproduce on this bed. Two causes: (a) MEASURED — the TD-PAXRG-1
 single-layout collapse left ~half the per-query GET cascade (~11 of ~22 GETs: footer/index/OID/
-metadata) outside the waved regions — the az ladder's v3 bed had a survivor-dominated
-14.4-GET cascade the wave covered almost entirely; (b) toxiproxy's latency toxic couples RTT
-into bulk transfer, growing both arms' transfer term with RTT. Consequence: extend the wave to
-the unwaved cascade GETs of the v1 layout — the follow-up lever alongside parallelizing
-rank_probed_rows. Incidental harness fix (same PR): the settle gate still required the retired
+metadata) outside the waved regions (the az ladder's v3 bed had a survivor-dominated 14.4-GET
+cascade the wave covered almost entirely; A0(150ms)-A1(150ms) saves ~11 GET-RTTs of the ~20
+sequential-GET share); (b) INFERRED from the aggregate growth — A1's non-wave share rises with
+RTT (≈1.22 s at real RTT → ≈3.37 s at 150 ms, same geometry), consistent with toxiproxy's
+latency toxic coupling RTT into bulk transfer (window-limited throughput); a real WAN would not
+pay this exact term. Consequence: extend the wave to the unwaved cascade GETs of the v1 layout
+— the follow-up lever alongside parallelizing rank_probed_rows. Incidental harness fix (same
+PR): the settle gate still required the retired
 v3 layout marker (`header[4]==3`, `--require-layout-version 3`) and deadlocked silently on
 every post-collapse bed; A0 presence is now detected via `a0_len > 0` and the required layout
 defaults to 1.
