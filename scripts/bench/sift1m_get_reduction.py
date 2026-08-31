@@ -1184,6 +1184,12 @@ def wait_for_materialization(
     prior = None
     last_report = 0.0
     last_parse_error = None
+    # TD-RDSTRAT-13 campaign finding: geometry can settle on the training-
+    # compaction chain's INTERMEDIATE level (2×L2) and the chain then publishes
+    # a higher level (L3) AFTER the stable window, leaving overlapping segments
+    # that double-serve rows at query time. A stable window is only trustworthy
+    # when the compaction counter is quiet for its whole duration.
+    compactions_at_window_start = None
     while time.monotonic() < deadline:
         now = time.monotonic()
         try:
@@ -1210,12 +1216,24 @@ def wait_for_materialization(
             if azure_geometry is not None
             else stable_signature(geometry)
         )
+        metrics_text = scrape_text(server)
         wal_bytes = labelled_metric(
-            scrape_text(server),
+            metrics_text,
             "proximadb_wal_size_bytes",
             "collection",
             collection_id,
         )
+        # Unlabeled aggregate counter (sst::metrics) — plain token parse, the
+        # labelled helper only matches `name{...}` lines.
+        compactions_total = None
+        for raw_line in metrics_text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("proximadb_compactions_total"):
+                try:
+                    compactions_total = float(line.split()[1])
+                except (ValueError, IndexError):
+                    compactions_total = None
+                break
         observed_rows = geometry.get("row_count")
         row_status = (
             f"{observed_rows:,}/{expected_rows:,}"
@@ -1247,6 +1265,19 @@ def wait_for_materialization(
         )
         if complete and signature == prior:
             stable_since = stable_since or now
+            if compactions_at_window_start is None:
+                compactions_at_window_start = compactions_total
+            if compactions_total != compactions_at_window_start:
+                # A compaction ran during the window: the settled geometry is
+                # an intermediate artifact of an in-flight chain. Restart the
+                # window on the post-compaction geometry.
+                print(
+                    f"settle: compaction advanced ({compactions_at_window_start} -> "
+                    f"{compactions_total}); restarting stable window",
+                    flush=True,
+                )
+                stable_since = now
+                compactions_at_window_start = compactions_total
             if now - stable_since >= stable_seconds:
                 if azure_geometry is not None:
                     geometry = azure_geometry.materialize(geometry)
@@ -1268,6 +1299,7 @@ def wait_for_materialization(
                 return geometry
         else:
             stable_since = now if complete else None
+            compactions_at_window_start = None
         prior = signature
         time.sleep(3)
     try:
