@@ -109,7 +109,7 @@ mod tests {
         let files = engine.discover_sstable_files(&storage_url).await?;
         let seg = files
             .iter()
-            .find(|f| f.ends_with(".pax"))
+            .find(|f| f.url.ends_with(".pax"))
             .cloned()
             .expect("flush should have produced a .pax segment");
 

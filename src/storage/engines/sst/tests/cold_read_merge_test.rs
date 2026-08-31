@@ -133,11 +133,11 @@ mod tests {
         let files = engine.discover_sstable_files(&storage_url).await?;
         let seg = files
             .iter()
-            .find(|f| f.ends_with(".pax"))
+            .find(|f| f.url.ends_with(".pax"))
             .expect("flush should have produced a .pax segment")
             .clone();
         assert!(
-            files.iter().filter(|f| f.ends_with(".pax")).count() == 1,
+            files.iter().filter(|f| f.url.ends_with(".pax")).count() == 1,
             "expected exactly one .pax segment for a deterministic position map, got {files:?}"
         );
 

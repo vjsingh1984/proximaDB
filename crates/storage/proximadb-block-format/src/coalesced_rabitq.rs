@@ -518,10 +518,7 @@ pub struct ProbedRun {
 /// morsels, greedily balanced by byte length (byte length is exactly
 /// rows × stride for every run, so byte-balancing IS row-balancing; a run is
 /// never split). Pure — unit-tested for coverage/cap invariants.
-pub fn plan_rank_morsels(
-    runs: &[ProbedRun],
-    degree: usize,
-) -> Vec<std::ops::Range<usize>> {
+pub fn plan_rank_morsels(runs: &[ProbedRun], degree: usize) -> Vec<std::ops::Range<usize>> {
     if runs.is_empty() || degree == 0 {
         return Vec::new();
     }
@@ -594,19 +591,26 @@ pub fn rank_run_group_top(
                 .row_start
                 .checked_add(local_row)
                 .ok_or_else(|| anyhow::anyhow!("coarse-probe global row overflow"))?;
-            if let Some(allow) = allow && !allow.contains(global_row) {
+            if let Some(allow) = allow
+                && !allow.contains(global_row)
+            {
                 continue;
             }
             let dist_to_centroid = f32::from_le_bytes(packed[0..4].try_into()?);
             let inv_factor = f32::from_le_bytes(packed[4..8].try_into()?);
             let bits = &packed[8..];
-            let score = match prepared.metric {
-                RankMetric::L2 => prepared.lut.l2_rank_score_parts(dist_to_centroid, inv_factor, bits),
-                RankMetric::Cosine | RankMetric::DotProduct => {
-                    prepared.lut.ip_rank_score_parts(dist_to_centroid, inv_factor, bits)
+            let score =
+                match prepared.metric {
+                    RankMetric::L2 => {
+                        prepared
+                            .lut
+                            .l2_rank_score_parts(dist_to_centroid, inv_factor, bits)
+                    }
+                    RankMetric::Cosine | RankMetric::DotProduct => prepared
+                        .lut
+                        .ip_rank_score_parts(dist_to_centroid, inv_factor, bits),
                 }
-            }
-            .ok_or_else(|| anyhow::anyhow!("coarse-probe packed bit width mismatch"))?;
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe packed bit width mismatch"))?;
             scored.push((global_row, score));
         }
     }
@@ -994,8 +998,10 @@ mod tests {
     /// rank (each run shares the region's `Arc<[u8]>`-equivalent buffer with
     /// its own byte window). The caller derives borrowed `(row, slice)` runs
     /// from the returned region for the sequential oracle.
-    fn probed_runs_fixture(dim: usize, n: usize) -> (CoalescedRaBitQHeader, Vec<u8>, Vec<ProbedRun>)
-    {
+    fn probed_runs_fixture(
+        dim: usize,
+        n: usize,
+    ) -> (CoalescedRaBitQHeader, Vec<u8>, Vec<ProbedRun>) {
         let corpus: Vec<Vec<f32>> = (0..n).map(|i| synth_vec(i as u64, dim)).collect();
         let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
         let (region, _) = encode_region(&vectors, dim as u32, RABITQ_SEED_BASE ^ 20).unwrap();
@@ -1033,9 +1039,7 @@ mod tests {
     ) -> Vec<usize> {
         let mut merged: Vec<(usize, f32)> = Vec::new();
         for group in groups {
-            merged.extend(
-                rank_run_group_top(prepared, &runs[group.clone()], allow, pool).unwrap(),
-            );
+            merged.extend(rank_run_group_top(prepared, &runs[group.clone()], allow, pool).unwrap());
         }
         let keep = pool.min(merged.len());
         if keep < merged.len() {
@@ -1073,21 +1077,18 @@ mod tests {
         for metric in [RankMetric::L2, RankMetric::Cosine, RankMetric::DotProduct] {
             for allow in [None, Some(&odd)] {
                 for pool in [10usize, 100, 4096] {
-                    let sequential = rank_probed_rows_allowed(
-                        &header, &borrowed, &query, metric, pool, allow,
-                    )
-                    .unwrap();
+                    let sequential =
+                        rank_probed_rows_allowed(&header, &borrowed, &query, metric, pool, allow)
+                            .unwrap();
                     let prepared = PreparedProbeRank::build(&header, &query, metric).unwrap();
                     for degree in [1usize, 2, 3, 7, 16, 64] {
                         let groups = plan_rank_morsels(&runs, degree);
-                        assert!(
-                            groups.len() <= degree,
-                            "planner exceeds degree {degree}"
-                        );
+                        assert!(groups.len() <= degree, "planner exceeds degree {degree}");
                         let morsel =
                             merge_group_tops(&prepared, &runs, &groups, allow, pool.max(1));
                         assert_eq!(
-                            morsel, sequential,
+                            morsel,
+                            sequential,
                             "degree={degree} metric={metric:?} pool={pool} allow={}",
                             allow.is_some()
                         );

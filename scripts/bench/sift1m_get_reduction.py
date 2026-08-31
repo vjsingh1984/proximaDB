@@ -78,6 +78,9 @@ METRICS = (
     "proximadb_ivf_whole_region_fallback_total",
     "proximadb_read_ranges_fetch_rounds_total",
     "proximadb_read_ranges_max_inflight",
+    "proximadb_pax_metadata_ops_agg_total",
+    "proximadb_ivf_probe_rank_us_agg_total",
+    "proximadb_ivf_probe_rank_calls_agg_total",
 )
 
 
@@ -1574,6 +1577,12 @@ def run_query_sweep(
         before, after, "proximadb_read_ranges_fetch_rounds_total"
     )
     rr_max_inflight = after.get("proximadb_read_ranges_max_inflight", 0.0)
+    # TD-RDSTRAT-13: per-query metadata ops (HEAD — C3 removes it) and the
+    # coarse-probe rank compute term (mean us = total/calls — C2 parallelizes it).
+    metadata_ops = metric_delta(before, after, "proximadb_pax_metadata_ops_agg_total")
+    rank_us_total = metric_delta(before, after, "proximadb_ivf_probe_rank_us_agg_total")
+    rank_calls = metric_delta(before, after, "proximadb_ivf_probe_rank_calls_agg_total")
+    rank_us_mean = rank_us_total / rank_calls if rank_calls else 0.0
     survivor_total = survivor_hits + survivor_misses
     invariant_total = invariant_hits + invariant_misses
     result = {
@@ -1642,6 +1651,11 @@ def run_query_sweep(
             "fetch_rounds": ivf_fetch_rounds,
             "fetch_rounds_per_query": ivf_fetch_rounds / query_count,
             "whole_region_fallbacks": ivf_whole_region_fallbacks,
+        },
+        "rank_and_head": {
+            "metadata_ops_per_query": metadata_ops / query_count,
+            "probe_rank_us_mean": rank_us_mean,
+            "probe_rank_calls": rank_calls,
         },
         "read_ranges_wave": {
             # TD-RDSTRAT-12 §2: observable proof the bounded-concurrent wave
@@ -1829,6 +1843,7 @@ class OwnedServer:
         adaptive_read_strategy: bool = False,
         read_ranges_inflight: int = 0,
         read_ranges_wave_split_mb: int = 0,
+        rank_degree: int = 0,
     ):
         self.binary = binary
         self.config = config
@@ -1849,6 +1864,7 @@ class OwnedServer:
         self.adaptive_read_strategy = adaptive_read_strategy
         self.read_ranges_inflight = read_ranges_inflight
         self.read_ranges_wave_split_mb = read_ranges_wave_split_mb
+        self.rank_degree = rank_degree
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -1882,6 +1898,7 @@ class OwnedServer:
             # an invoking shell's exports would silently merge arms.
             "PROXIMADB_READ_RANGES_INFLIGHT",
             "PROXIMADB_READ_RANGES_WAVE_SPLIT_MB",
+            "PROXIMADB_SEARCH_MORSEL_DEGREE",
             # S3 endpoint identity comes from --s3-endpoint/--s3-region only;
             # ambient AWS_* (SDK convention files, endpoint-url variants,
             # session tokens) and PROXIMADB_S3_* overrides would silently
@@ -1930,6 +1947,8 @@ class OwnedServer:
             environment["PROXIMADB_READ_RANGES_WAVE_SPLIT_MB"] = str(
                 self.read_ranges_wave_split_mb
             )
+        if self.rank_degree > 0:
+            environment["PROXIMADB_SEARCH_MORSEL_DEGREE"] = str(self.rank_degree)
         if self.adaptive_read_strategy:
             environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] = "1"
         else:
@@ -2583,6 +2602,12 @@ def main() -> int:
         default=0,
         help="Arm PROXIMADB_READ_RANGES_WAVE_SPLIT_MB (opt-in Region-B mega-GET wave split); 0 keeps the single-GET default",
     )
+    parser.add_argument(
+        "--rank-degree",
+        type=int,
+        default=0,
+        help="Set PROXIMADB_SEARCH_MORSEL_DEGREE (coarse-probe rank workers, TD-RDSTRAT-13); 0 keeps the server default (adaptive)",
+    )
     parser.add_argument("--stable-secs", type=int, default=30)
     parser.add_argument("--max-segments", type=int, default=2)
     parser.add_argument(
@@ -3105,6 +3130,7 @@ def main() -> int:
             azure_emulator=args.azurite,
             s3_endpoint=args.s3_endpoint,
             s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
@@ -3248,6 +3274,7 @@ def main() -> int:
             azure_emulator=args.azurite,
             s3_endpoint=args.s3_endpoint,
             s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
@@ -3289,6 +3316,7 @@ def main() -> int:
             azure_emulator=args.azurite,
             s3_endpoint=args.s3_endpoint,
             s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
