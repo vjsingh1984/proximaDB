@@ -191,6 +191,31 @@ pending reproduction and root-cause analysis. Both gates stay opt-in
 Evidence: `rdstrat12_sift1m_r4_wave_cascade` (ledger) +
 `docs/_internal/status/RDSTRAT12_SIFT1M_R4_WAVE_CASCADE_2026_08_30.adoc`.
 
+==== RTT LADDER (2026-08-31): the >=2x crossover MEASURED — 2.78x @100 ms, 2.81x @150 ms, saturating at the compute floor
+
+With the TD-BENCH-2 footer-only materialize fix (5.2 s vs whole-segment
+timeouts) and a deterministic settle config (explicit flushes every 250k
+rows -- eliminating the stranded-final-L0 lottery), the ladder ran clean
+GET-parity pairs at 50/100/150 ms injected RTT:
+
+[cols="5,2,2,2,2,2", options="header"]
+|===
+| RTT | A0 seq p50 | A1 waved p50 | ratio | GETs/q | identity
+| 50 ms | 1547.7 ms | 962.1 ms | 1.61x | 14.40=14.40 | same
+| 100 ms | 5027.5 ms | 1808.8 ms | **2.78x** | 14.36=14.36 | same
+| 150 ms | 5074.8 ms | 1803.6 ms | **2.81x** | 14.36=14.36 | same
+|===
+
+>=2x acceptance: **MET at RTT >= ~100 ms** — real-object-store latencies —
+with identical recall (0.9835) and identical result-identity hashes per
+level. The 150 ms saturation at ~2.8x confirms the compute-bound asymptote
+(~0.9 s single-threaded rank_probed_rows at 517k rows): the next compounding
+lever is parallelizing the probed rank. Both gates stay opt-in; the evidence
+now supports arming INFLIGHT for high-RTT object-store deployments.
+
+Evidence: `rdstrat12_sift1m_rtt_ladder_crossover` (ledger) +
+`docs/_internal/status/RDSTRAT12_SIFT1M_RTT_LADDER_2026_08_31.adoc`.
+
 === 4. Update ENV_GATE_REGISTRY
 
 ✅ **DONE** — row exists at `docs/12-design/ENV_GATE_REGISTRY.adoc:107`
