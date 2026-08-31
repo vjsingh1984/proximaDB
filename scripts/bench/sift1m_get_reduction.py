@@ -662,8 +662,8 @@ def parse_pax(path: Path, root: Path) -> dict:
     if header[:4] != PAX_HEADER_MAGIC:
         raise RuntimeError(f"{path}: legacy PAX layout cannot prove row count")
     coarse = {}
-    if header[4] == 3:
-        a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+    a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+    if a0_length > 0:
         if a0_length < 48:
             raise RuntimeError(f"{path}: invalid A0 length {a0_length}")
         with path.open("rb") as segment:
@@ -723,12 +723,15 @@ def materialize_footer_geometry(fetch_range, inventory: dict) -> dict:
         if footer_prefix[0] != 1:
             raise RuntimeError(f"{name}: unsupported footer version {footer_prefix[0]}")
         coarse = {}
-        if header[4] == 3:
-            a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
-            if a0_length >= 48:
-                a0 = fetch_range(name, a0_offset, a0_offset + a0_length - 1)
-                if len(a0) == a0_length:
-                    coarse = parse_a0_geometry(a0)
+        # A0 presence is authoritative from the header's a0 extents (same
+        # offsets in every layout version; the post-collapse v1 writer emits
+        # the coarse directory in v1 segments — header[4]==3 is the retired
+        # two-level marker).
+        a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+        if a0_length >= 48:
+            a0 = fetch_range(name, a0_offset, a0_offset + a0_length - 1)
+            if len(a0) == a0_length:
+                coarse = parse_a0_geometry(a0)
         segments.append(
             {
                 "path": name,
@@ -2556,7 +2559,15 @@ def main() -> int:
     )
     parser.add_argument("--stable-secs", type=int, default=30)
     parser.add_argument("--max-segments", type=int, default=2)
-    parser.add_argument("--require-layout-version", type=int, default=3)
+    parser.add_argument(
+        "--require-layout-version",
+        type=int,
+        default=1,
+        help=(
+            "expected on-disk segment layout version asserted against settled "
+            "footers; the current writer emits 1 (post-collapse single layout)"
+        ),
+    )
     parser.add_argument("--post-write-max-gets", type=float, default=5.0)
     parser.add_argument("--local-warm-max-gets", type=float, default=10.0)
     parser.add_argument("--object-cold-max-gets", type=float, default=20.0)
