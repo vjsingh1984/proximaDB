@@ -182,6 +182,24 @@ pub struct IoTrace {
     /// general multi-range reads (not just IVF coarse probe).
     read_ranges_fetch_rounds: AtomicU64,
     read_ranges_max_inflight: AtomicU64,
+    /// TD-RDSTRAT-13 C1: per-tier physical-GET attribution for the SST PAX
+    /// cascade. Index = the SST `CacheTier` declaration order (fixed contract):
+    /// 0=InvariantIndex(IdxA), 1=SearchControl(Ctl), 2=InvariantMeta(Meta),
+    /// 3=ProbeIndex(ProbeA), 4=SurvivorPayload(Surv), 5=ResultPayload(OID).
+    /// Always-on (like the `ivf_*` fields); recorded 1:1 with physical ranged
+    /// GETs at the read sites, so `Σ tier_get_ops == range_gets` for a query
+    /// whose GETs all come from the PAX cascade. Makes the "unwaved metadata
+    /// GETs" the S3 campaign decomposed observable per query.
+    tier_get_ops: [AtomicU64; 6],
+    tier_get_bytes: [AtomicU64; 6],
+    /// Object-storage metadata ops (`fs.metadata` HEAD) on the search path
+    /// (TD-RDSTRAT-13 C3 removes the per-segment HEAD; this counter is how the
+    /// removal is proven — `metadata_ops == 0` on the known-size path).
+    metadata_ops: AtomicU64,
+    /// Coarse-probe rank wall microseconds including any morsel join
+    /// (TD-RDSTRAT-13 C2) — the user-visible Compute term of the
+    /// waves-not-sums model `T ≈ Σ rounds×RTT + bytes/BW + Compute`.
+    ivf_probe_rank_us: AtomicU64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): how often the probe scan's
     /// `wait_complete()` rendezvous resolved with the filter arrived (pruning
     /// enabled) vs timed out (filterless, conservative), plus the wall ms spent
@@ -706,6 +724,31 @@ impl IoTrace {
             .fetch_max(max_inflight, Ordering::Relaxed);
     }
 
+    /// Record one physical ranged GET attributed to PAX cascade tier
+    /// `tier_idx` (contract: the SST `CacheTier` declaration order, 0..6 —
+    /// see the field docs). Out-of-range indices are dropped: a tier added on
+    /// the SST side without widening this array must fail the drift test, not
+    /// silently fold into another tier.
+    pub fn record_tier_get(&self, tier_idx: usize, bytes: u64) {
+        if tier_idx < 6 {
+            self.tier_get_ops[tier_idx].fetch_add(1, Ordering::Relaxed);
+            self.tier_get_bytes[tier_idx].fetch_add(bytes, Ordering::Relaxed);
+        }
+    }
+
+    /// Record one object-storage metadata op (HEAD / `fs.metadata`) on the
+    /// search path (TD-RDSTRAT-13 C3).
+    pub fn record_metadata_op(&self) {
+        self.metadata_ops.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record the coarse-probe rank wall duration in microseconds, including
+    /// any morsel join (TD-RDSTRAT-13 C2). Additive across segments so a
+    /// multi-segment query's compute term sums like its I/O terms do.
+    pub fn record_ivf_probe_rank_us(&self, us: u64) {
+        self.ivf_probe_rank_us.fetch_add(us, Ordering::Relaxed);
+    }
+
     /// Record a runtime-filter wait outcome (ADR-056 AQE-S11): `arrived` = the
     /// filter completed within the wait budget (pruning enabled); otherwise it
     /// timed out (splits read filterless, conservative). `waited_ms` = the wall
@@ -910,6 +953,10 @@ impl IoTrace {
             pax_footer_pruned_blocks: self.pax_footer_pruned_blocks.load(Ordering::Relaxed),
             read_ranges_fetch_rounds: self.read_ranges_fetch_rounds.load(Ordering::Relaxed),
             read_ranges_max_inflight: self.read_ranges_max_inflight.load(Ordering::Relaxed),
+            tier_get_ops: std::array::from_fn(|i| self.tier_get_ops[i].load(Ordering::Relaxed)),
+            tier_get_bytes: std::array::from_fn(|i| self.tier_get_bytes[i].load(Ordering::Relaxed)),
+            metadata_ops: self.metadata_ops.load(Ordering::Relaxed),
+            ivf_probe_rank_us: self.ivf_probe_rank_us.load(Ordering::Relaxed),
             runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
             runtime_filter_timed_out: self.runtime_filter_timed_out.load(Ordering::Relaxed),
             runtime_filter_wait_ms: self.runtime_filter_wait_ms.load(Ordering::Relaxed),
@@ -1030,6 +1077,18 @@ pub struct IoTraceSnapshot {
     /// general multi-range reads (not just IVF coarse probe).
     #[serde(default)]
     pub read_ranges_fetch_rounds: u64,
+    /// TD-RDSTRAT-13 C1: per-tier physical-GET attribution (index contract on
+    /// [`IoTrace::tier_get_ops`]).
+    #[serde(default)]
+    pub tier_get_ops: [u64; 6],
+    #[serde(default)]
+    pub tier_get_bytes: [u64; 6],
+    /// Object-storage metadata ops (HEAD) on the search path (C3).
+    #[serde(default)]
+    pub metadata_ops: u64,
+    /// Coarse-probe rank wall microseconds incl. morsel join (C2).
+    #[serde(default)]
+    pub ivf_probe_rank_us: u64,
     #[serde(default)]
     pub read_ranges_max_inflight: u64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): arrived vs timed-out +
@@ -1343,6 +1402,25 @@ pub fn record_pax_footer_prune(total: u64, pruned: u64) {
 /// (TD-RDSTRAT-12). No-ops outside a query scope. See [`IoTrace::record_read_ranges`].
 pub fn record_read_ranges(fetch_rounds: u64, max_inflight: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_read_ranges(fetch_rounds, max_inflight));
+}
+
+/// Record one physical ranged GET attributed to PAX cascade tier `tier_idx`
+/// (TD-RDSTRAT-13 C1; index contract on [`IoTrace::record_tier_get`]).
+/// No-ops outside a query scope.
+pub fn record_tier_get(tier_idx: usize, bytes: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_tier_get(tier_idx, bytes));
+}
+
+/// Record one object-storage metadata op (HEAD) on the search path
+/// (TD-RDSTRAT-13 C3). No-ops outside a query scope.
+pub fn record_metadata_op() {
+    let _ = IO_TRACE.try_with(|t| t.record_metadata_op());
+}
+
+/// Record the coarse-probe rank wall duration in microseconds for the active
+/// query (TD-RDSTRAT-13 C2). No-ops outside a query scope.
+pub fn record_ivf_probe_rank_us(us: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_ivf_probe_rank_us(us));
 }
 
 /// Drain general bounded-concurrent `read_ranges` metrics from the storage layer

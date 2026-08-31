@@ -2691,6 +2691,19 @@ fn record_get(tier: CacheTier, len: u64) {
     }
 }
 
+/// TD-RDSTRAT-13 C1: always-on per-tier physical-GET attribution — the
+/// per-query io_trace counters plus the aggregate Prometheus surface — plus
+/// the env-gated diagnostic `record_get` push when `trace_on`. One call per
+/// physical ranged GET keeps the 1:1 recording invariant the wave code
+/// documents (batch-time recording for waved ranges).
+fn record_get_physical(tier: CacheTier, len: u64, trace_on: bool) {
+    crate::observability::io_trace::record_tier_get(tier as usize, len);
+    crate::storage::engines::sst::metrics::record_tier_get(tier as usize, len);
+    if trace_on {
+        record_get(tier, len);
+    }
+}
+
 /// Drain the recorded per-GET (tier, size) pairs (empty when trace is off).
 pub fn drain_get_trace() -> Vec<(CacheTier, u64)> {
     GET_TRACE
@@ -2966,9 +2979,7 @@ async fn coarse_probe_survivors(
             .read_range(path, header.a0_off, header.a0_len)
             .await
             .map_err(|e| anyhow::anyhow!("coarse-probe A0 {path}: {e}"))?;
-        if trace_on {
-            record_get(CacheTier::SearchControl, header.a0_len);
-        }
+        record_get_physical(CacheTier::SearchControl, header.a0_len, trace_on);
         Arc::from(bytes)
     };
     let Ok(dir) = CoarseDirectory::parse(&a0_bytes) else {
@@ -3055,9 +3066,7 @@ async fn coarse_probe_survivors(
                 .read_range(path, header.rabitq_off, hdr_len)
                 .await
                 .map_err(|e| anyhow::anyhow!("coarse-probe region header {path}: {e}"))?;
-            if trace_on {
-                record_get(CacheTier::SearchControl, hdr_len);
-            }
+            record_get_physical(CacheTier::SearchControl, hdr_len, trace_on);
             Arc::from(bytes)
         };
     let Ok(rq_header) = proximadb_block_format::CoalescedRaBitQHeader::parse(&hdr_bytes) else {
@@ -3191,9 +3200,7 @@ async fn coarse_probe_survivors(
         };
         for ((range, buf), slot) in cold_ranges.iter().zip(batched).zip(cold_bytes.iter_mut()) {
             crate::observability::io_trace::record_pax_region_bytes(buf.len() as u64, 0);
-            if trace_on {
-                record_get(CacheTier::ProbeIndex, range.end - range.start);
-            }
+            record_get_physical(CacheTier::ProbeIndex, range.end - range.start, trace_on);
             *slot = Some(buf);
         }
         // TD-RDSTRAT-12 §2: fold this wave's FS single-slot metrics into the
@@ -3211,8 +3218,10 @@ async fn coarse_probe_survivors(
     // either way, and the cache wins.
     for (fetch, slot) in fetches.iter().zip(slots.iter()) {
         let len = fetch.end - fetch.start;
-        let bytes: Vec<u8> = match slot {
-            Slot::Ready(b) => b.clone(),
+        // TD-RDSTRAT-13 C2: fetch buffers are shared `Arc<[u8]>` so the probed
+        // runs can move into morsel workers without copying region bytes.
+        let bytes: std::sync::Arc<[u8]> = match slot {
+            Slot::Ready(b) => std::sync::Arc::from(b.clone()),
             Slot::SurvivorCached => {
                 // peek_memory_exact said resident, but an LRU race could have
                 // evicted before we reach the consume call; fail safe to a real
@@ -3225,28 +3234,28 @@ async fn coarse_probe_survivors(
                         ));
                     }
                 };
-                sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
-                    let b = fs
-                        .read_range(path, fetch.start, len)
-                        .await
-                        .map_err(std::io::Error::other)?;
-                    crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
-                    if trace_on {
-                        record_get(CacheTier::ProbeIndex, len);
-                    }
-                    Ok(b)
-                })
-                .await
-                .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?
-                .to_vec()
+                std::sync::Arc::from(
+                    sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
+                        let b = fs
+                            .read_range(path, fetch.start, len)
+                            .await
+                            .map_err(std::io::Error::other)?;
+                        crate::observability::io_trace::record_pax_region_bytes(b.len() as u64, 0);
+                        record_get_physical(CacheTier::ProbeIndex, len, trace_on);
+                        Ok(b)
+                    })
+                    .await
+                    .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?
+                    .to_vec(),
+                )
             }
             Slot::Cold(i) => {
                 let mut buf = cold_bytes[*i].take().ok_or_else(|| {
                     anyhow::anyhow!("coarse-probe Region A {path}: cold fetch {i} missing")
                 })?;
                 match survivor_cache {
-                    Some(sc) => sc
-                        .get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
+                    Some(sc) => std::sync::Arc::from(
+                        sc.get_or_fetch(CacheKind::Other, path, fetch.start, len, || async {
                             Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
                                 std::mem::take(&mut buf),
                             )
@@ -3254,13 +3263,14 @@ async fn coarse_probe_survivors(
                         .await
                         .map_err(|err| anyhow::anyhow!("coarse-probe Region A {path}: {err}"))?
                         .to_vec(),
-                    None => buf,
+                    ),
+                    None => std::sync::Arc::from(buf),
                 }
             }
         };
         fetched.push((fetch.clone(), bytes));
     }
-    let mut runs: Vec<(usize, &[u8])> = Vec::with_capacity(selected.len());
+    let mut runs: Vec<proximadb_block_format::ProbedRun> = Vec::with_capacity(selected.len());
     for (fetch, bytes) in &fetched {
         for cell in &fetch.selected {
             let rel = usize::try_from(cell.start.saturating_sub(fetch.start))
@@ -3270,24 +3280,35 @@ async fn coarse_probe_survivors(
             let end = rel
                 .checked_add(len)
                 .ok_or_else(|| anyhow::anyhow!("coarse-probe slice end overflow"))?;
-            let slice = bytes
-                .get(rel..end)
-                .ok_or_else(|| anyhow::anyhow!("coarse-probe selected slice outside fetch"))?;
-            runs.push((cell.row_start, slice));
+            if bytes.get(rel..end).is_none() {
+                return Err(anyhow::anyhow!("coarse-probe selected slice outside fetch"));
+            }
+            runs.push(proximadb_block_format::ProbedRun {
+                row_start: cell.row_start,
+                bytes: bytes.clone(),
+                byte_start: rel,
+                byte_len: len,
+            });
         }
     }
     let pool = pax_rabitq_pool_for_top_k(k, probed_rows as usize);
     // TD-FPRUNE-1 M3: rank the probed cells' codes RESTRICTED to allowed rows
     // (`row_allow`) so the survivor pool fills with predicate-matching candidates;
     // `None` is the unfiltered whole-cell rank (unchanged).
-    let survivors = proximadb_block_format::rank_probed_rows_allowed(
-        &rq_header,
-        &runs,
+    // TD-RDSTRAT-13 C2: the rank runs morsel-parallel under the documented
+    // PROXIMADB_SEARCH_MORSEL_DEGREE adaptive gate; degree ≤ 1 and small
+    // regions take the untouched sequential path (byte-identical survivors).
+    let survivors = rank_probed_rows_morsels(
+        std::sync::Arc::new(rq_header),
+        runs,
         query,
         metric,
         pool.max(k),
-        row_allow,
-    )?;
+        row_allow.map(|allow| {
+            std::sync::Arc::new(allow.clone())
+        }),
+    )
+    .await?;
 
     Ok(Some(CoarseProbeResult {
         survivors,
@@ -3345,6 +3366,139 @@ async fn rank_region_morsels(
     merged.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     merged.truncate(pool);
     merged.into_iter().map(|(i, _)| i).collect()
+}
+
+/// TD-RDSTRAT-13 C2: morsel-parallel COARSE-PROBE rank — the probe path's
+/// counterpart to [`rank_region_morsels`]. At 370k-545k probed rows the
+/// single-threaded rank is the dominant cold-query compute term (~0.9-1.2 s,
+/// S3/MinIO campaign #1795); chunking it across `morsel_degree()` workers
+/// moves the Compute term of `T ≈ Σ rounds×RTT + bytes/BW + Compute` without
+/// touching GETs or bytes (billed-read parity, TD-RDSTRAT-13).
+///
+/// Determinism: each morsel keeps its local top-`pool` under the SEQUENTIAL
+/// (score, ordinal) total order and the parent re-applies the identical
+/// finalizer to their union — byte-identical survivors to
+/// `rank_probed_rows_allowed` for ANY degree (the coalesced_rabitq exactness
+/// argument applies because every chunk uses the same total order). Degree ≤ 1
+/// and small regions route to the UNTOUCHED sequential function, so degree-1
+/// byte-identity is structural, not tested-into-existence.
+///
+/// Failure policy (deliberately stricter than [`rank_region_morsels`], whose
+/// partial-pool degrade is fine for an approximate fallback): a probe worker
+/// panic degrades to a FULL sequential re-rank — a partial survivor pool would
+/// silently change recall.
+async fn rank_probed_rows_morsels(
+    header: std::sync::Arc<proximadb_block_format::CoalescedRaBitQHeader>,
+    runs: Vec<proximadb_block_format::ProbedRun>,
+    query: &[f32],
+    metric: RankMetric,
+    pool: usize,
+    allow: Option<std::sync::Arc<proximadb_block_format::row_allow::RowAllow>>,
+) -> Result<Vec<usize>> {
+    let started = std::time::Instant::now();
+    let result = rank_probed_rows_morsels_inner(&header, runs, query, metric, pool, allow).await;
+    let elapsed_us = started.elapsed().as_micros() as u64;
+    crate::observability::io_trace::record_ivf_probe_rank_us(elapsed_us);
+    crate::storage::engines::sst::metrics::record_ivf_probe_rank_us(elapsed_us);
+    result
+}
+
+async fn rank_probed_rows_morsels_inner(
+    header: &std::sync::Arc<proximadb_block_format::CoalescedRaBitQHeader>,
+    runs: Vec<proximadb_block_format::ProbedRun>,
+    query: &[f32],
+    metric: RankMetric,
+    pool: usize,
+    allow: Option<std::sync::Arc<proximadb_block_format::row_allow::RowAllow>>,
+) -> Result<Vec<usize>> {
+    // Mirror the sequential validation so the parallel path fails identically.
+    if header.dim == 0 {
+        anyhow::bail!("coarse-probe rank: region dim is 0");
+    }
+    if query.len() != header.dim as usize {
+        anyhow::bail!(
+            "coarse-probe query dimension {} does not match region dimension {}",
+            query.len(),
+            header.dim
+        );
+    }
+    let total_rows: usize = runs
+        .iter()
+        .try_fold(0usize, |total, run| {
+            total
+                .checked_add(run.byte_len / proximadb_block_format::code_stride(header.dim))
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe row count overflow"))
+        })?;
+    if total_rows == 0 || pool == 0 {
+        return Ok(Vec::new());
+    }
+    let degree = crate::storage::engines::sst::search::morsel_degree();
+    if degree <= 1 || total_rows < MORSEL_MIN_ROWS {
+        let borrowed: Vec<(usize, &[u8])> = runs
+            .iter()
+            .map(|r| {
+                (
+                    r.row_start,
+                    r.bytes
+                        .get(r.byte_start..r.byte_start + r.byte_len)
+                        .unwrap_or(&[]),
+                )
+            })
+            .collect();
+        return proximadb_block_format::rank_probed_rows_allowed(
+            header, &borrowed, query, metric, pool,
+            allow.as_deref(),
+        );
+    }
+    let prepared = proximadb_block_format::PreparedProbeRank::build(header, query, metric)?;
+    let groups = proximadb_block_format::plan_rank_morsels(&runs, degree);
+    let mut tasks = Vec::with_capacity(groups.len());
+    for group in groups {
+        let prepared = prepared.clone();
+        let runs = runs[group.clone()].to_vec();
+        let allow = allow.clone();
+        tasks.push(tokio::task::spawn_blocking(move || {
+            proximadb_block_format::rank_run_group_top(&prepared, &runs, allow.as_deref(), pool)
+        }));
+    }
+    let mut merged: Vec<(usize, f32)> = Vec::new();
+    for task in tasks {
+        match task.await {
+            Ok(Ok(part)) => merged.extend(part),
+            // A worker returned a real scoring error — the sequential rank
+            // over the same runs would hit the identical error, so propagating
+            // is the deterministic outcome.
+            Ok(Err(e)) => return Err(e),
+            // Worker panic: the parallel result would be a partial pool that
+            // silently changes survivors — degrade to the FULL sequential
+            // oracle instead (exact, deterministic, rare).
+            Err(join_err) => {
+                tracing::warn!("coarse-probe morsel worker failed; sequential fallback: {join_err}");
+                let borrowed: Vec<(usize, &[u8])> = runs
+                    .iter()
+                    .map(|r| {
+                        (
+                            r.row_start,
+                            r.bytes
+                                .get(r.byte_start..r.byte_start + r.byte_len)
+                                .unwrap_or(&[]),
+                        )
+                    })
+                    .collect();
+                return proximadb_block_format::rank_probed_rows_allowed(
+                    header, &borrowed, query, metric, pool,
+                    allow.as_deref(),
+                );
+            }
+        }
+    }
+    let keep = pool.min(merged.len());
+    if keep < merged.len() {
+        merged.select_nth_unstable_by(keep, proximadb_block_format::probed_score_compare);
+        merged.truncate(keep);
+    }
+    merged.sort_unstable_by(proximadb_block_format::probed_score_compare);
+    Ok(merged.into_iter().map(|(row, _)| row).collect())
 }
 
 pub async fn rabitq_search_segment_coalesced(
@@ -3426,6 +3580,11 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             .await
             .map_err(|e| anyhow::anyhow!("coalesced scan stat {path}: {e}"))?
             .size;
+        // TD-RDSTRAT-13 C1/C3: the HEAD is a billed metadata op the buyer pays;
+        // make it observable (C3 removes it when the listing already carries
+        // the object size).
+        crate::observability::io_trace::record_metadata_op();
+        crate::storage::engines::sst::metrics::record_metadata_op();
         if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
             return Ok(None);
         }
@@ -3443,9 +3602,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             .read_range(path, 0, read_len)
             .await
             .map_err(|e| anyhow::anyhow!("coalesced scan header {path}: {e}"))?;
-        if trace_on {
-            record_get(CacheTier::SearchControl, bytes.len() as u64);
-        }
+        record_get_physical(CacheTier::SearchControl, bytes.len() as u64, trace_on);
         bytes
     };
     // A v3 (two-level) segment parses here too and falls through to the same
@@ -3526,9 +3683,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                 crate::observability::io_trace::record_pax_region_bytes(bytes.len() as u64, 0);
                 // Trace the whole-region cost so the coarse probe's Region-A saving is
                 // observable (co-design: trace before you tune). Diagnostic-only.
-                if trace_on {
-                    record_get(CacheTier::InvariantIndex, header.rabitq_len);
-                }
+                record_get_physical(CacheTier::InvariantIndex, header.rabitq_len, trace_on);
                 Arc::from(bytes)
             };
         let region = RaBitQRegion::from_bytes(&region_bytes)?;
@@ -3563,9 +3718,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             .read_range(path, header.footer_off, header.footer_len)
             .await
             .map_err(|e| anyhow::anyhow!("coalesced scan footer {path}: {e}"))?;
-        if trace_on {
-            record_get(CacheTier::InvariantMeta, bytes.len() as u64);
-        }
+        record_get_physical(CacheTier::InvariantMeta, bytes.len() as u64, trace_on);
         bytes
     };
     let footer = SegmentFooterIndex::parse(&footer_bytes)?;
@@ -3705,9 +3858,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             for ((range, buf), slot) in split_ranges.iter().zip(batched).zip(chunk_bytes.iter_mut())
             {
                 crate::observability::io_trace::record_pax_region_bytes(0, buf.len() as u64);
-                if trace_on {
-                    record_get(CacheTier::SurvivorPayload, range.end - range.start);
-                }
+                record_get_physical(CacheTier::SurvivorPayload, range.end - range.start, trace_on);
                 *slot = Some(buf);
             }
             crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
@@ -3776,9 +3927,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                             .await
                             .map_err(std::io::Error::other)?;
                         crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
-                        if trace_on {
-                            record_get(CacheTier::SurvivorPayload, header.sq8_len);
-                        }
+                        record_get_physical(CacheTier::SurvivorPayload, header.sq8_len, trace_on);
                         Ok(b)
                     },
                 )
@@ -3790,9 +3939,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                     .await
                     .map_err(|e| anyhow::anyhow!("coalesced scan Region B fetch {path}: {e}"))?;
                 crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
-                if trace_on {
-                    record_get(CacheTier::SurvivorPayload, header.sq8_len);
-                }
+                record_get_physical(CacheTier::SurvivorPayload, header.sq8_len, trace_on);
                 Arc::from(b)
             };
             let region = coalesced_sq8::Sq8Region::from_bytes(&region_arc)?;
@@ -3876,9 +4023,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             };
             for ((range, buf), slot) in cold_ranges.iter().zip(batched).zip(cold_bytes.iter_mut()) {
                 crate::observability::io_trace::record_pax_region_bytes(0, buf.len() as u64);
-                if trace_on {
-                    record_get(CacheTier::SurvivorPayload, range.end - range.start);
-                }
+                record_get_physical(CacheTier::SurvivorPayload, range.end - range.start, trace_on);
                 *slot = Some(buf);
             }
             crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
@@ -3937,9 +4082,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                                     0,
                                     b.len() as u64,
                                 );
-                                if trace_on {
-                                    record_get(CacheTier::SurvivorPayload, range_len);
-                                }
+                                record_get_physical(CacheTier::SurvivorPayload, range_len, trace_on);
                                 Ok(b)
                             },
                         )
@@ -3959,9 +4102,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                             anyhow::anyhow!("coalesced scan SQ8 survivor fetch {path}: {e}")
                         })?;
                         crate::observability::io_trace::record_pax_region_bytes(0, b.len() as u64);
-                        if trace_on {
-                            record_get(CacheTier::SurvivorPayload, range_len);
-                        }
+                        record_get_physical(CacheTier::SurvivorPayload, range_len, trace_on);
                         Arc::from(b)
                     }
                 }
@@ -4061,9 +4202,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
                 sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
                     let b = fs.read_range(path, start, range_len).await?;
-                    if trace_on {
-                        record_get(CacheTier::ResultPayload, range_len);
-                    }
+                    record_get_physical(CacheTier::ResultPayload, range_len, trace_on);
                     Ok(b)
                 })
                 .await
@@ -4073,9 +4212,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                     .read_range(path, start, range_len)
                     .await
                     .map_err(|e| anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}"))?;
-                if trace_on {
-                    record_get(CacheTier::ResultPayload, range_len);
-                }
+                record_get_physical(CacheTier::ResultPayload, range_len, trace_on);
                 Arc::from(b)
             };
             if buf.len() as u64 != range_len {
@@ -4190,9 +4327,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                 .zip(batched)
                 .zip(oid_cold_bytes.iter_mut())
             {
-                if trace_on {
-                    record_get(CacheTier::ResultPayload, range.end - range.start);
-                }
+                record_get_physical(CacheTier::ResultPayload, range.end - range.start, trace_on);
                 *slot = Some(buf);
             }
             crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
@@ -4224,9 +4359,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                         // baseline loader — records fire iff it truly runs.
                         sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
                             let b = fs.read_range(path, start, range_len).await?;
-                            if trace_on {
-                                record_get(CacheTier::ResultPayload, range_len);
-                            }
+                            record_get_physical(CacheTier::ResultPayload, range_len, trace_on);
                             Ok(b)
                         })
                         .await
@@ -4241,9 +4374,7 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                             .read_range(path, start, range_len)
                             .await
                             .map_err(|e| anyhow::anyhow!("coalesced scan OID fetch {path}: {e}"))?;
-                        if trace_on {
-                            record_get(CacheTier::ResultPayload, range_len);
-                        }
+                        record_get_physical(CacheTier::ResultPayload, range_len, trace_on);
                         Arc::from(b)
                     }
                 }
@@ -4344,6 +4475,35 @@ mod tests {
         assert_eq!(coalesced_header_prefetch_floor(), SEG_HEADER_PREFIX_LEN);
         assert_eq!(coalesced_header_prefetch_floor(), 88);
         assert!(coalesced_header_prefetch_floor() > 72, "floor grew past v3");
+    }
+
+    /// TD-RDSTRAT-13 C1: `record_get_physical` passes `tier as usize` into the
+    /// io_trace/SST per-tier arrays, whose index order is a documented
+    /// cross-crate contract (0=IdxA, 1=Ctl, 2=Meta, 3=ProbeA, 4=Surv, 5=OID).
+    /// Reordering the enum would silently fold one tier's GETs into another's
+    /// counters — pin it.
+    #[test]
+    fn cache_tier_discriminant_matches_tier_counter_contract() {
+        assert_eq!(CacheTier::InvariantIndex as usize, 0);
+        assert_eq!(CacheTier::SearchControl as usize, 1);
+        assert_eq!(CacheTier::InvariantMeta as usize, 2);
+        assert_eq!(CacheTier::ProbeIndex as usize, 3);
+        assert_eq!(CacheTier::SurvivorPayload as usize, 4);
+        assert_eq!(CacheTier::ResultPayload as usize, 5);
+        let labels = crate::storage::engines::sst::metrics::TIER_LABELS;
+        for (tier, label) in [
+            CacheTier::InvariantIndex,
+            CacheTier::SearchControl,
+            CacheTier::InvariantMeta,
+            CacheTier::ProbeIndex,
+            CacheTier::SurvivorPayload,
+            CacheTier::ResultPayload,
+        ]
+        .into_iter()
+        .zip(labels)
+        {
+            assert_eq!(tier.label(), label);
+        }
     }
 
     /// TD-PAXRG-1 Phase C: a v4 segment with the hoisted exact tier (Region C)

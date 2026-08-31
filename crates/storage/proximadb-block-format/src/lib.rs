@@ -88,8 +88,9 @@ pub mod writer;
 // ---- Top-level re-exports ----
 
 pub use coalesced_rabitq::{
-    CoalescedRaBitQHeader, RABITQ_SEED_BASE, REGION_FIXED_HEADER_LEN, RaBitQRegion, code_stride,
-    encode_region, rank_probed_rows, rank_probed_rows_allowed, region_header_len, region_len,
+    CoalescedRaBitQHeader, PreparedProbeRank, ProbedRun, RABITQ_SEED_BASE, REGION_FIXED_HEADER_LEN,
+    RaBitQRegion, code_stride, encode_region, plan_rank_morsels, probed_score_compare,
+    rank_probed_rows, rank_probed_rows_allowed, rank_run_group_top, region_header_len, region_len,
 };
 pub use coalesced_sq8::{
     CoalescedSq8Header, REGION_SQ8_FIXED_HEADER_LEN, Sq8Region, codes_offset as sq8_codes_offset,
