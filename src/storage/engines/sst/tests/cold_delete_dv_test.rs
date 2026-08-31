@@ -110,7 +110,7 @@ mod tests {
         let seg = files
             .iter()
             .find(|f| f.url.ends_with(".pax"))
-            .cloned()
+            .map(|f| f.url.clone())
             .expect("flush should have produced a .pax segment");
 
         let dv = engine

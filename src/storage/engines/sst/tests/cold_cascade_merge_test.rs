@@ -131,7 +131,7 @@ mod tests {
         let seg = files
             .iter()
             .find(|f| f.url.ends_with(".pax"))
-            .cloned()
+            .map(|f| f.url.clone())
             .expect("the written .pax should be discoverable");
 
         // Map oid → on-disk row position (read_segment_records reconstructs PAX

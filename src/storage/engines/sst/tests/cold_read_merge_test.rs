@@ -134,11 +134,16 @@ mod tests {
         let seg = files
             .iter()
             .find(|f| f.url.ends_with(".pax"))
-            .expect("flush should have produced a .pax segment")
-            .clone();
+            .map(|f| f.url.clone())
+            .expect("flush should have produced a .pax segment");
         assert!(
             files.iter().filter(|f| f.url.ends_with(".pax")).count() == 1,
-            "expected exactly one .pax segment for a deterministic position map, got {files:?}"
+            "expected exactly one .pax segment for a deterministic position map, got {}",
+            files
+                .iter()
+                .map(|f| f.url.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
 
         // Baseline: with no deletes, the scan returns all three records.
