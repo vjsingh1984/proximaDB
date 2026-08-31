@@ -957,17 +957,40 @@ impl UnifiedAuthService {
             }
         }
 
+        let key_user_id = api_key_info.user_id.clone();
         UnifiedUserContext {
             user_id: api_key_info.user_id,
             tenant_id: api_key_info.tenant_id,
             // TD-TENANT-1 follow-up (a): configured roles ride alongside the
             // default (nothing checking `api_user` regresses); `gateway`/
             // `operator` here are what `is_gateway_principal` reads.
+            //
+            // ADVERSARIAL REVIEW (2026-08-31): pass-through of ARBITRARY role
+            // strings was an escalation — `SecurityPredicate::RoleBased`
+            // (security/rls/service.rs) grants Unrestricted row access when
+            // roles contain an allowed value, so a config-supplied business
+            // role would silently satisfy RLS policies (impossible before:
+            // API-key roles were hardcoded to api_user). Sanitize at this
+            // seam: ONLY the exact gateway/operator delegation markers pass;
+            // every other configured role is DROPPED with a warn. The
+            // delegation-only invariant now holds by construction.
             roles: {
+                const DELEGATION_ROLES: [&str; 2] = [
+                    proximadb_tenant::GATEWAY_ROLE,
+                    proximadb_tenant::OPERATOR_ROLE,
+                ];
                 let mut roles = vec!["api_user".to_string()];
                 for r in &api_key_info.roles {
-                    if !roles.iter().any(|existing| existing == r) {
-                        roles.push(r.clone());
+                    if DELEGATION_ROLES.contains(&r.as_str()) {
+                        if !roles.iter().any(|existing| existing == r) {
+                            roles.push(r.clone());
+                        }
+                    } else {
+                        tracing::warn!(
+                            key_user = %key_user_id,
+                            dropped_role = %r,
+                            "API-key role ignored: only the gateway/operator                              delegation markers are honored (RLS RoleBased                              predicates match role strings — arbitrary                              pass-through would be an escalation)"
+                        );
                     }
                 }
                 roles
@@ -1226,6 +1249,26 @@ mod tests {
     fn apikey_typo_role_grants_nothing() {
         let ctx = convert(key("typo", vec!["gateways", "Gateway", ""]));
         assert!(!ctx.is_gateway_principal());
+    }
+
+    /// ADVERSARIAL REVIEW (2026-08-31) regression: a config-supplied BUSINESS
+    /// role must NOT reach the user context — `SecurityPredicate::RoleBased`
+    /// grants Unrestricted row access on role-string match, so arbitrary
+    /// pass-through would silently satisfy RLS policies. Only the delegation
+    /// markers survive the conversion.
+    #[test]
+    fn apikey_business_roles_are_dropped_not_passed_through() {
+        let ctx = convert(key("biz", vec!["analyst", "admin", "collection_user"]));
+        assert!(!ctx.is_gateway_principal());
+        assert_eq!(
+            ctx.roles,
+            vec!["api_user".to_string()],
+            "only delegation markers may pass; business roles are an RLS escalation"
+        );
+        // And the delegation marker still passes alongside a business role.
+        let ctx = convert(key("mix", vec!["analyst", "gateway"]));
+        assert!(ctx.is_gateway_principal());
+        assert!(!ctx.roles.contains(&"analyst".to_string()));
     }
 
     /// The default (no roles) keeps today's behavior exactly.
