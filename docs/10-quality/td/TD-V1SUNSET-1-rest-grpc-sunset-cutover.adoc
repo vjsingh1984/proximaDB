@@ -8,7 +8,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **RESOLVED 2026-08-29 — see the final reconciliation section.** (Earlier: partially invalidated, see Reconciliation 2026-07-09.) Step 1 (REST flip) ✅ landed (#814, `9c9b0466`). Step 2 (relocate deprecation-header util) ✅ landed. Step 4 (gRPC v1 api-crate delete) ✅ *already complete* on `develop` (found pre-deleted). **Step 3 (hard-delete api-crate `rest/v1/`) is INVALIDATED** — that dir holds LIVE `/api/v2` port-backed routers, not deprecated v1 adapters; it must NOT be deleted (a rename is TD-104). Step 5 (remove `v1_sunset` middleware) remains gated on sunset-window verification.
+| Status | **RESOLVED 2026-08-29 — see the final reconciliation section.** (Earlier: partially invalidated, see Reconciliation 2026-07-09.) Step 1 (REST flip) landed (#814). Step 2 (relocate deprecation-header util) landed. Step 4 (gRPC v1 api-crate delete) already complete on `develop`. **Step 3 INVALIDATED** — that dir holds LIVE `/api/v2` port-backed routers; it must NOT be deleted (a rename is TD-104). **Step 5 (remove `v1_sunset` middleware) EXECUTED (#1773)** — evidence-closed early; see Resolution.
 | Severity | Medium — outward-facing break (REST flip `410`s all `/api/v1/*`); recovery is a one-line revert.
 | Component | Network: REST v1 sunset (`src/network/middleware/v1_sunset.rs`) + the deprecated v1 surfaces in `crates/platform/proximadb-api/src/{rest,grpc}/v1/`.
 | Tracked-by | link:../../12-design/V1_RETIREMENT_ROADMAP_2026_07_08.adoc[V1_RETIREMENT_ROADMAP] (strategy, Tier 1); link:../../12-design/adr/ADR-049-v1-to-v2-migration-to-native-model.adoc[ADR-049] (M0-c REST sunset gate); the v1-proto ratchet (`scripts/check_v1_proto_usage.py`).

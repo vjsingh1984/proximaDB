@@ -367,6 +367,9 @@ require_authentication = false
 default_session_timeout_minutes = 60
 
 [security.authentication.api_keys]
+# TD-TENANT-1 follow-up (a): an entry may carry roles = ["gateway"] to make
+# the key a gateway principal — enabling GatewayOnly tenant delegation.
+# Delegation ONLY: it grants no data-plane permission.
 "dev-key" = { user_id = "devuser", permissions = ["*"], ip_restrictions = [] }
 
 [security.authentication.jwt]
