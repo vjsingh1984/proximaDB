@@ -71,6 +71,15 @@ pub struct ApiKeyInfo {
     pub user_id: String,
     pub tenant_id: Option<String>,
     pub permissions: Vec<String>,
+    /// TD-TENANT-1 follow-up (a): optional role claims for this key. The
+    /// `gateway`/`operator` roles make the credential a gateway principal
+    /// (`is_gateway_principal`), enabling `GatewayOnly` tenant delegation for
+    /// API-key gateways — previously structurally impossible (roles were
+    /// hardcoded to `api_user`). Delegation-ONLY: a role here grants NO
+    /// `UnifiedPermission` (authz stays permission-driven), and only the
+    /// exact strings `gateway`/`operator` match — a typo grants nothing.
+    #[serde(default)]
+    pub roles: Vec<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
     pub rate_limit_per_minute: Option<u32>,
@@ -948,10 +957,44 @@ impl UnifiedAuthService {
             }
         }
 
+        let key_user_id = api_key_info.user_id.clone();
         UnifiedUserContext {
             user_id: api_key_info.user_id,
             tenant_id: api_key_info.tenant_id,
-            roles: vec!["api_user".to_string()], // Default role for API key users
+            // TD-TENANT-1 follow-up (a): configured roles ride alongside the
+            // default (nothing checking `api_user` regresses); `gateway`/
+            // `operator` here are what `is_gateway_principal` reads.
+            //
+            // ADVERSARIAL REVIEW (2026-08-31): pass-through of ARBITRARY role
+            // strings was an escalation — `SecurityPredicate::RoleBased`
+            // (security/rls/service.rs) grants Unrestricted row access when
+            // roles contain an allowed value, so a config-supplied business
+            // role would silently satisfy RLS policies (impossible before:
+            // API-key roles were hardcoded to api_user). Sanitize at this
+            // seam: ONLY the exact gateway/operator delegation markers pass;
+            // every other configured role is DROPPED with a warn. The
+            // delegation-only invariant now holds by construction.
+            roles: {
+                const DELEGATION_ROLES: [&str; 2] = [
+                    proximadb_tenant::GATEWAY_ROLE,
+                    proximadb_tenant::OPERATOR_ROLE,
+                ];
+                let mut roles = vec!["api_user".to_string()];
+                for r in &api_key_info.roles {
+                    if DELEGATION_ROLES.contains(&r.as_str()) {
+                        if !roles.iter().any(|existing| existing == r) {
+                            roles.push(r.clone());
+                        }
+                    } else {
+                        tracing::warn!(
+                            key_user = %key_user_id,
+                            dropped_role = %r,
+                            "API-key role ignored: only the gateway/operator                              delegation markers are honored (RLS RoleBased                              predicates match role strings — arbitrary                              pass-through would be an escalation)"
+                        );
+                    }
+                }
+                roles
+            },
             effective_permissions: permissions,
             auth_method: UnifiedAuthMethod::ApiKey,
             session_id: format!("apikey_{}", uuid::Uuid::new_v4()),
@@ -1152,6 +1195,167 @@ fn create_auth_audit_event(
 
 #[cfg(test)]
 mod tests {
+    use super::ApiKeyInfo;
+
+    fn key(user: &str, roles: Vec<&str>) -> ApiKeyInfo {
+        ApiKeyInfo {
+            user_id: user.to_string(),
+            tenant_id: Some("tenant-a".to_string()),
+            permissions: vec![],
+            roles: roles.into_iter().map(String::from).collect(),
+            created_at: None,
+            expires_at: None,
+            rate_limit_per_minute: None,
+            ip_restrictions: vec![],
+        }
+    }
+
+    fn convert(info: ApiKeyInfo) -> crate::security::rbac_service::UnifiedUserContext {
+        // The conversion is pure given a config; reach it through a minimal
+        // service rather than replicating its logic here. mTLS disabled so
+        // ::new never touches the filesystem.
+        let cfg = super::AuthenticationConfig {
+            mtls: super::MtlsConfig::default(),
+            ..serde_json::from_str(
+                r#"{"enabled":false,"methods":["api_key"],"require_authentication":false,
+                    "default_session_timeout_minutes":30,"api_keys":{},
+                    "jwt":{"enabled":false,"secret":"x","issuer":"t","audience":"t",
+                            "access_token_expiration_minutes":1,
+                            "refresh_token_expiration_days":1,"algorithm":"HS256"},
+                    "sso":{"enabled":false,"providers":[],"token_cache_ttl_minutes":1,
+                            "aws_iam":null,"azure_ad":null}}"#,
+            )
+            .expect("minimal auth config")
+        };
+        let svc = super::UnifiedAuthService::new(cfg).expect("service");
+        svc.convert_api_key_to_unified(info)
+    }
+
+    /// TD-TENANT-1 follow-up (a): a configured `gateway` role makes the API
+    /// key a gateway principal — previously structurally impossible (roles
+    /// were hardcoded to `api_user`).
+    #[test]
+    fn apikey_gateway_role_makes_a_gateway_principal() {
+        let ctx = convert(key("gw", vec!["gateway"]));
+        assert!(
+            ctx.is_gateway_principal(),
+            "gateway role must stamp the principal"
+        );
+    }
+
+    /// Fail-closed: a typo grants nothing — only the exact `gateway`/
+    /// `operator` strings match.
+    #[test]
+    fn apikey_typo_role_grants_nothing() {
+        let ctx = convert(key("typo", vec!["gateways", "Gateway", ""]));
+        assert!(!ctx.is_gateway_principal());
+    }
+
+    /// ADVERSARIAL REVIEW (2026-08-31) regression: a config-supplied BUSINESS
+    /// role must NOT reach the user context — `SecurityPredicate::RoleBased`
+    /// grants Unrestricted row access on role-string match, so arbitrary
+    /// pass-through would silently satisfy RLS policies. Only the delegation
+    /// markers survive the conversion.
+    #[test]
+    fn apikey_business_roles_are_dropped_not_passed_through() {
+        let ctx = convert(key("biz", vec!["analyst", "admin", "collection_user"]));
+        assert!(!ctx.is_gateway_principal());
+        assert_eq!(
+            ctx.roles,
+            vec!["api_user".to_string()],
+            "only delegation markers may pass; business roles are an RLS escalation"
+        );
+        // And the delegation marker still passes alongside a business role.
+        let ctx = convert(key("mix", vec!["analyst", "gateway"]));
+        assert!(ctx.is_gateway_principal());
+        assert!(!ctx.roles.contains(&"analyst".to_string()));
+    }
+
+    /// The default (no roles) keeps today's behavior exactly.
+    #[test]
+    fn apikey_default_roles_unchanged() {
+        let ctx = convert(key("plain", vec![]));
+        assert!(!ctx.is_gateway_principal());
+        assert_eq!(ctx.roles, vec!["api_user".to_string()]);
+    }
+
+    /// Defense in depth: `gateway` unlocks ONLY delegation under GatewayOnly
+    /// — it implies NO data-plane permission. Authz stays permission-driven.
+    #[test]
+    fn apikey_gateway_role_grants_no_data_plane_permission() {
+        let ctx = convert(key("gw", vec!["gateway"]));
+        assert!(
+            ctx.effective_permissions.is_empty(),
+            "gateway role must not imply any UnifiedPermission"
+        );
+    }
+
+    /// Config compatibility: TOML without `roles` parses (serde default).
+    #[test]
+    fn apikey_toml_without_roles_parses() {
+        let toml = r#"
+user_id = "u1"
+tenant_id = "t1"
+permissions = ["read"]
+ip_restrictions = []
+"#;
+        let info: ApiKeyInfo = toml::from_str(toml).expect("legacy TOML must parse");
+        assert!(info.roles.is_empty());
+    }
+
+    /// The end-to-end contract: an API-key principal stamped `gateway` by
+    /// CONFIG is accepted by the ONE shared trust primitive for GatewayOnly
+    /// delegation — and one without roles is refused. This is the property
+    /// TD-TENANT-1 follow-up (a) exists for; tested at the primitive seam the
+    /// surfaces actually call.
+    #[test]
+    fn apikey_gateway_principal_is_accepted_for_gatewayonly_delegation() {
+        use proximadb_tenant::{
+            AuthenticatedTenantBinding, HeaderTrustPolicy, ResolvedTenantAssertion,
+            resolve_tenant_assertion,
+        };
+        let bind =
+            |ctx: &crate::security::rbac_service::UnifiedUserContext| AuthenticatedTenantBinding {
+                tenant_id: ctx.tenant_id.clone().expect("key bound to tenant-a"),
+                is_gateway_principal: ctx.is_gateway_principal(),
+            };
+
+        let gw = convert(key("gw", vec!["gateway"]));
+        let binding = bind(&gw);
+        match resolve_tenant_assertion(
+            Some("tenant-b"),
+            Some(&binding),
+            HeaderTrustPolicy::GatewayOnly,
+        ) {
+            Ok(ResolvedTenantAssertion::Asserted(t)) => assert_eq!(t, "tenant-b"),
+            other => panic!("gateway-role API key must delegate, got {other:?}"),
+        }
+
+        let plain = convert(key("plain", vec![]));
+        let binding = bind(&plain);
+        assert!(
+            resolve_tenant_assertion(
+                Some("tenant-b"),
+                Some(&binding),
+                HeaderTrustPolicy::GatewayOnly
+            )
+            .is_err(),
+            "role-less API key must NOT delegate under GatewayOnly"
+        );
+    }
+
+    #[test]
+    fn apikey_toml_with_roles_round_trips() {
+        let toml = r#"
+user_id = "u1"
+permissions = []
+roles = ["gateway"]
+ip_restrictions = []
+"#;
+        let info: ApiKeyInfo = toml::from_str(toml).expect("roles TOML must parse");
+        assert_eq!(info.roles, vec!["gateway".to_string()]);
+    }
+
     use super::*;
 
     fn api_key_test_config(api_keys: HashMap<String, ApiKeyInfo>) -> AuthenticationConfig {
@@ -1227,6 +1431,7 @@ mod tests {
                 user_id: "mallory".to_string(),
                 tenant_id: Some("tenant-x".to_string()),
                 permissions: vec!["*".to_string()],
+                roles: vec![],
                 created_at: None,
                 expires_at: None,
                 rate_limit_per_minute: None,
@@ -1378,6 +1583,7 @@ mod tests {
             user_id: user_id.to_string(),
             tenant_id: None,
             permissions: permissions.into_iter().map(String::from).collect(),
+            roles: vec![],
             created_at: None,
             expires_at: None,
             rate_limit_per_minute: None,

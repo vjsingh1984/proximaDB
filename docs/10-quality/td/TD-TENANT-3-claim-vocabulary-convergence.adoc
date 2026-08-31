@@ -3,7 +3,7 @@
 = TD-TENANT-3: one claim vocabulary across all four ingress surfaces
 :icons: font
 
-**Status:** S1–S3 shipped with this TD. S4 open.
+**Status:** S1–S3 shipped. S4 item 2 closed (TD-TENANT-4). S4 item 1: alias honoring REMOVED (#1773); names + detection delete at the next release boundary.
 **Origin:** review question raised while landing ADR-0053 W8 (the
 `X-Tenant-Tier` trust gate): "why are the headers different in gRPC vs REST —
 should they not be standardized?" Pressure-testing that question found the

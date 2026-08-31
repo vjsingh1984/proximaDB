@@ -1321,6 +1321,7 @@ mod tests {
                 user_id: "user1".to_string(),
                 tenant_id: None,
                 permissions: vec!["read".to_string()],
+                roles: vec![],
                 created_at: None,
                 expires_at: None,
                 rate_limit_per_minute: None,

@@ -83,6 +83,7 @@ fn transport_security_config() -> SecurityConfig {
                 user_id: user_id.to_string(),
                 tenant_id: Some(TENANT.to_string()),
                 permissions: vec!["*".to_string()],
+                roles: vec![],
                 created_at: None,
                 expires_at: None,
                 rate_limit_per_minute: None,
