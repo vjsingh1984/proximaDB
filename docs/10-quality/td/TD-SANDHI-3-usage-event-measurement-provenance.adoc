@@ -1,0 +1,77 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-SANDHI-3: Populate usage-event measurement provenance at emit sites
+
+[cols="1,3",options="header"]
+|===
+| Field | Value
+| Status | **Shipped (this PR).** Both emit paths stamp `duration_ms` / `usage_completeness` / `usage_basis`; `time_to_first_token_ms` is intentionally left omitted (see Change §3).
+| Priority | **P2** — meter hygiene, not a live defect. Completes the fields the sandhi-core 0.1.5 schema sync (TD-SANDHI-2) made parseable but never populated. Tracked as Lane P / item P1 in `anvai-labs/sandhi` `docs/upstream/integration-handoff.md` (2026-08-31).
+| Component | `crates/horizontal/proximadb-usage-event/src/usage_event.rs` (emit seam), `src/ai/llm_integration/providers/{anthropic,openai,azure_openai,cohere,ollama,vllm,huggingface}.rs` (7 emit sites), `src/services/embedding_drainer.rs` (embedding emit site).
+| Governs | link:../../12-design/adr/ADR-067-consume-ai-usage-gateway-egress-metering.adoc[ADR-067].
+| Relates to | link:TD-SANDHI-1-gateway-egress-metering-wiring.adoc[TD-SANDHI-1] (embedding emit), link:TD-SANDHI-2-generation-llm-consolidation.adoc[TD-SANDHI-2] (generation emit + 0.1.5 schema sync), sandhi-core `ParsedUsage::apply` (the authoritative fill-if-empty mapping this mirrors).
+|===
+
+== Context
+
+The 0.1.5 schema sync added measurement-provenance fields to the local `usage-event.v1` mirror —
+`duration_ms`, `time_to_first_token_ms`, `usage_completeness`, `usage_basis` (plus
+`attempts` / `outcome` / `upstream_request_id`). Round-trip tests parse them against the
+authoritative `sandhi_core::UsageEvent`, but **no emit site populated any of them**: every event
+serialized without the keys, so downstream consumers saw only schema defaults. That is actively
+wrong for `usage_completeness`, whose default is `Unavailable` — every event ProximaDB emits
+carries a complete accounting for its logical call. And with no `duration_ms`, latency-minded
+consumers had to infer timing from log timestamps.
+
+The emit seam itself "didn't measure latency": the generation providers *do* measure
+`response_time_ms` at the adapter boundary, and the embedding drainer brackets its batch provider
+call — neither flowed into the event.
+
+== Change
+
+. **Generation path** (`emit_generation_usage` / `build_generation_event`): a new `duration_ms`
+  parameter — the provider adapter's measured `response_time_ms`, already in scope at all 7
+  provider emit sites — and two provenance stamps that mirror sandhi-core `ParsedUsage::apply`'s
+  fill-if-empty semantics: `usage_completeness = Final` (a body whose usage *parsed* is a complete
+  provider-measured accounting; bodies that fail to parse emit no event at all, so `Partial` /
+  `Unavailable` never apply here) and `usage_basis = ProviderReported`.
+. **Embedding path**: a `with_measurement(usage_basis, duration_ms)` fluent setter (naming mirrors
+  sandhi-core's `with_latency`). The drainer measures the batch `embed_sync_with_route` wall clock
+  — the batch *is* the logical call, so every per-payload event carries it — and stamps the basis
+  by whether the provider reported usage: `ProviderReported` for measured input tokens,
+  `Estimated` for the count×512 heuristic (local BGE / usage-less BYO contracts). `Final` in both
+  cases: the call is complete; estimated-ness is exactly what the basis discriminator expresses.
+. **`time_to_first_token_ms` stays omitted, by design.** The schema scopes it to streams
+  ("milliseconds from request start to the first delivered item"); ProximaDB's LLM integration is
+  non-streaming only (`stream: false` in every provider request). Fabricating TTFT ≈ duration on
+  non-streaming calls would poison the field. Revisit when a streaming provider path lands
+  (InferFlux I3's server-side `duration_ms`/TTFT-in-usage is a separate, future parser surface —
+  provider-reported timing, not adapter measurement).
+. **Seam hygiene**: `UsageBasis` / `UsageCompleteness` are re-exported from
+  `proximadb_usage_event::usage_event` so emit sites stamp provenance through the stable crate
+  path (SOLID 17a), not the `sandhi_core` internal path.
+
+**Non-goal:** `attempts` / `outcome` / `upstream_request_id` stay omitted. The handoff item names
+the four fields above; the omitted-key defaults already decode to the correct values for every
+current emit site (success-path only, one attempt, no upstream id surfaced by these DTOs), so
+populating them adds bytes without adding information.
+
+**A note on `Estimated`:** sandhi-core 0.1.6's variant doc scopes `Estimated` to "a stream ends
+before the family had reported that category — never on a completed call" — that is *sandhi's own
+gateway* semantics. The field's primary definition (and this mirror's doc) is broader: whether the
+number was provider-measured or derived. Stamping `Estimated` on a *completed* BYO/local-heuristic
+embedding call is the honest signal — the alternative would falsely claim the provider measured
+the count×512 heuristic.
+
+**Inert-by-default preserved:** an event that sets none of the optional fields still serializes
+byte-identically to the pre-sync shape (the `pre_sync_shape_serializes_byte_identically` test
+keeps proving it); the new keys appear only on paths that now carry real measurement.
+
+== Verification
+
+* `proximadb-usage-event` unit tests: generation events assert `duration_ms` /
+  `usage_completeness=final` / `usage_basis=provider_reported` and the omitted
+  `time_to_first_token_ms`; a new embedding test stamps both bases and round-trips through the
+  authoritative `sandhi_core::UsageEvent`.
+* `cargo check --all-targets`, `cargo fmt --check`, `cargo clippy --lib --bins -- -D warnings`,
+  `make work-commit-check` in this PR.

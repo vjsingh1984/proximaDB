@@ -175,6 +175,7 @@ impl LLMClient for VLLMClient {
             _context.tenant_id.as_deref(),
             &response_body,
             "query",
+            response_time_ms,
         );
         Ok(LLMResponse {
             content,

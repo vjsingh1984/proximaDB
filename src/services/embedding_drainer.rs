@@ -395,6 +395,9 @@ impl EmbeddingDrainer {
             payload_ranges.push(start..batch_records.len());
         }
 
+        // TD-SANDHI-3: the batch provider call is the logical call for usage-event purposes —
+        // its wall clock is every payload event's `duration_ms`.
+        let embed_started = std::time::Instant::now();
         let result = self
             .embed_service
             .embed_sync_with_route(
@@ -406,6 +409,7 @@ impl EmbeddingDrainer {
             )
             .await
             .map_err(|e| anyhow::anyhow!("drainer embed failed: {e}"))?;
+        let embed_duration_ms = embed_started.elapsed().as_millis() as u64;
         let batch_records_total = batch_record_count(&payload_ranges);
         if result.vectors.len() != batch_records_total {
             anyhow::bail!(
@@ -442,7 +446,7 @@ impl EmbeddingDrainer {
             let real_input_tokens = batch_usage.map(|usage| {
                 split_input_tokens(usage.input_tokens, payload_records, total_records)
             });
-            record_embedding_consumption(payload, &route, real_input_tokens);
+            record_embedding_consumption(payload, &route, real_input_tokens, embed_duration_ms);
             let target_precision = self.resolve_target_precision(payload).await;
             let embedded = payload
                 .records
@@ -506,14 +510,17 @@ fn split_input_tokens(batch_input_tokens: u64, payload_records: u64, total_recor
 ///
 /// `real_input_tokens` carries the provider's **measured** input-token count for this payload
 /// (external providers that report `usage`); when `None` the count*512 heuristic is used (local
-/// BGE, or BYO whose contract has no usage). For external routes, also emits the neutral
-/// usage event at the egress boundary (default-inert unless `PROXIMADB_EMIT_USAGE_EVENTS`).
+/// BGE, or BYO whose contract has no usage). `duration_ms` is the batch provider call's wall
+/// clock (TD-SANDHI-3). For external routes, also emits the neutral usage event at the egress
+/// boundary (default-inert unless `PROXIMADB_EMIT_USAGE_EVENTS`).
 fn record_embedding_consumption(
     payload: &EmbedIngestPayload,
     route: &EmbedRoute,
     real_input_tokens: Option<u64>,
+    duration_ms: u64,
 ) {
     let embedding_count = payload.records.len() as u64;
+    let provider_reported = real_input_tokens.is_some();
     let input_tokens = real_input_tokens.unwrap_or_else(|| embedding_count.saturating_mul(512));
     // Output tokens stay a compute proxy (count × dimension) — embeddings emit no completion
     // tokens, so no provider reports them; this is ProximaDB's own KEU storage unit.
@@ -536,8 +543,15 @@ fn record_embedding_consumption(
         output_tokens,
     );
     // ADR-067 Fix 2: emit the shared neutral usage event at the external-provider boundary.
-    // Local BGE is self-hosted (no external egress) → no event.
+    // Local BGE is self-hosted (no external egress) → no event. TD-SANDHI-3 stamps measurement
+    // provenance: provider-reported when the provider returned a usage figure, estimated for the
+    // count×512 heuristic.
     if external {
+        let basis = if provider_reported {
+            crate::metrics::usage_event::UsageBasis::ProviderReported
+        } else {
+            crate::metrics::usage_event::UsageBasis::Estimated
+        };
         crate::metrics::usage_event::UsageEvent::external_embedding(
             provider,
             model.as_str(),
@@ -545,6 +559,7 @@ fn record_embedding_consumption(
             input_tokens,
             "embed_batch",
         )
+        .with_measurement(basis, duration_ms)
         .emit();
     }
 }

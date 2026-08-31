@@ -276,6 +276,7 @@ impl LLMClient for AnthropicClient {
             context.tenant_id.as_deref(),
             &response_body,
             "query",
+            response_time_ms,
         );
 
         Ok(llm_response)

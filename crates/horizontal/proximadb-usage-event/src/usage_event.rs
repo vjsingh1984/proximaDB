@@ -17,6 +17,13 @@
 //! wire schema locally (embedding path, TD-SANDHI-1), and the generation path additionally adopts
 //! `sandhi-core`'s single-sourced, fixture-proven usage *parsers* (TD-SANDHI-2 / ADR-0047 D10a) —
 //! rather than hand-rolling a per-provider extractor.
+//!
+//! Measurement provenance (TD-SANDHI-3): both emit paths stamp `duration_ms` (adapter-boundary
+//! wall clock, measured by the caller), `usage_completeness` (`Final` — every emitted event
+//! carries a complete accounting for its logical call; parse-failure bodies emit nothing), and
+//! `usage_basis` (`ProviderReported` vs `Estimated` — the embedding heuristic count×512 path is
+//! the one estimated basis). `time_to_first_token_ms` stays omitted: ProximaDB's LLM integration
+//! is non-streaming only, and the field is streams-only by schema.
 
 use serde::Serialize;
 use std::sync::OnceLock;
@@ -33,6 +40,11 @@ pub const BACKEND_EXTERNAL: &str = "external";
 /// Self-hosted backend (local inference — Ollama / vLLM). Tokens are display-only there; the
 /// cost basis is GPU-hours (AnvaiOps ADR-0020 D4), which ProximaDB does not measure here.
 pub const BACKEND_SELF_HOSTED: &str = "self_hosted";
+
+// Re-exported so emit-site callers stamp provenance through the crate seam (SOLID: stable crate
+// path, not the `sandhi_core` internal path).
+pub use sandhi_core::UsageBasis;
+pub use sandhi_core::UsageCompleteness;
 
 fn emission_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -236,6 +248,23 @@ impl UsageEvent {
         }
     }
 
+    /// Stamp measurement provenance onto an embedding event (TD-SANDHI-3): the adapter-boundary
+    /// wall clock of the logical call, and whether its counts were `ProviderReported` (the
+    /// provider returned a real usage figure) or `Estimated` (ProximaDB's own heuristic —
+    /// record-count × 512 — because the provider reports no usage). Completeness is `Final`:
+    /// a stamped event accounts for a completed call, never a partial one.
+    #[must_use]
+    pub fn with_measurement(
+        mut self,
+        usage_basis: sandhi_core::UsageBasis,
+        duration_ms: u64,
+    ) -> Self {
+        self.usage_basis = Some(usage_basis);
+        self.usage_completeness = Some(sandhi_core::UsageCompleteness::Final);
+        self.duration_ms = Some(duration_ms);
+        self
+    }
+
     /// Emit the event through `tracing` — **best-effort, off the hot path, default-inert**. No-op
     /// unless `PROXIMADB_EMIT_USAGE_EVENTS` is truthy. Never fails the caller.
     pub fn emit(&self) {
@@ -260,6 +289,7 @@ fn build_generation_event(
     tenant_id: Option<&str>,
     raw_response_body: &str,
     route: &str,
+    duration_ms: u64,
 ) -> Option<UsageEvent> {
     let value: serde_json::Value = serde_json::from_str(raw_response_body).ok()?;
     use sandhi_core::usage::{
@@ -293,24 +323,40 @@ fn build_generation_event(
     // o-series). Present ⇒ carried; otherwise omitted (not zero), same as sandhi's own
     // `ParsedUsage` → event mapping, so non-reasoning events keep the pre-sync shape.
     event.reasoning_tokens = (usage.reasoning_tokens > 0).then_some(usage.reasoning_tokens);
+    // Measurement provenance (TD-SANDHI-3), mirroring sandhi-core `ParsedUsage::apply`'s
+    // fill-if-empty semantics: a body whose usage parsed is a complete, provider-measured
+    // accounting for the call (bodies that don't parse emit no event at all, so `Partial`/
+    // `Unavailable` never apply here), and the duration is the provider adapter's wall clock.
+    event.usage_completeness = Some(sandhi_core::UsageCompleteness::Final);
+    event.usage_basis = Some(sandhi_core::UsageBasis::ProviderReported);
+    event.duration_ms = Some(duration_ms);
     Some(event)
 }
 
 /// Emit the neutral usage event for one **generation-LLM** call. `provider` is the neutral slug
 /// (`anthropic` / `openai` / `azure_openai` / `cohere` / `ollama` / `vllm` / `huggingface`).
-/// **Best-effort + default-inert**: no parse work and no emit unless `PROXIMADB_EMIT_USAGE_EVENTS`
-/// is set; never raises into the caller (the provider hot path).
+/// `duration_ms` is the adapter-boundary wall clock of the call (the provider's measured
+/// `response_time_ms`). **Best-effort + default-inert**: no parse work and no emit unless
+/// `PROXIMADB_EMIT_USAGE_EVENTS` is set; never raises into the caller (the provider hot path).
 pub fn emit_generation_usage(
     provider: &str,
     model: &str,
     tenant_id: Option<&str>,
     raw_response_body: &str,
     route: &str,
+    duration_ms: u64,
 ) {
     if !emission_enabled() {
         return;
     }
-    if let Some(ev) = build_generation_event(provider, model, tenant_id, raw_response_body, route) {
+    if let Some(ev) = build_generation_event(
+        provider,
+        model,
+        tenant_id,
+        raw_response_body,
+        route,
+        duration_ms,
+    ) {
         ev.emit();
     }
 }
@@ -361,6 +407,7 @@ mod tests {
             Some("tenant-x"),
             &body,
             "query",
+            4321,
         )
         .unwrap();
         let v = serde_json::to_value(&ev).unwrap();
@@ -372,6 +419,12 @@ mod tests {
         assert_eq!(v["cache_read_tokens"], 40);
         assert_eq!(v["group_id"], "tenant-x");
         assert!(v["request_id"].as_str().unwrap().starts_with("keu-gen-"));
+        // TD-SANDHI-3: a parsed body is a complete, provider-measured accounting.
+        assert_eq!(v["usage_completeness"], "final");
+        assert_eq!(v["usage_basis"], "provider_reported");
+        assert_eq!(v["duration_ms"], 4321);
+        // Streams-only field stays omitted on the non-streaming integration.
+        assert!(v.get("time_to_first_token_ms").is_none());
     }
 
     #[test]
@@ -379,10 +432,11 @@ mod tests {
         let body = serde_json::json!({ "usage": { "prompt_tokens": 50, "completion_tokens": 10 } })
             .to_string();
         // OpenAI-compat family (default arm) → external.
-        let ext = build_generation_event("azure_openai", "gpt-4o", None, &body, "query").unwrap();
+        let ext =
+            build_generation_event("azure_openai", "gpt-4o", None, &body, "query", 10).unwrap();
         assert_eq!(serde_json::to_value(&ext).unwrap()["backend"], "external");
         // vLLM parses via the same OpenAI shape but classifies as self_hosted.
-        let sh = build_generation_event("vllm", "llama", None, &body, "query").unwrap();
+        let sh = build_generation_event("vllm", "llama", None, &body, "query", 10).unwrap();
         let v = serde_json::to_value(&sh).unwrap();
         assert_eq!(v["backend"], "self_hosted");
         assert_eq!(v["tokens_in"], 50);
@@ -392,9 +446,9 @@ mod tests {
     #[test]
     fn generation_event_none_on_missing_usage_or_bad_json() {
         assert!(
-            build_generation_event("openai", "m", None, r#"{"choices":[]}"#, "query").is_none()
+            build_generation_event("openai", "m", None, r#"{"choices":[]}"#, "query", 5).is_none()
         );
-        assert!(build_generation_event("openai", "m", None, "not json", "query").is_none());
+        assert!(build_generation_event("openai", "m", None, "not json", "query", 5).is_none());
     }
 
     /// The pre-0.1.5-sync wire shape: an event that sets none of the new optional fields must
@@ -509,6 +563,53 @@ mod tests {
         assert_eq!(wire.outcome.as_deref(), Some("success"));
     }
 
+    /// TD-SANDHI-3: the embedding path stamps measurement provenance — provider-reported vs the
+    /// heuristic (estimated) count — plus the adapter-boundary wall clock, and both spellings
+    /// round-trip through the authoritative sandhi-core event type.
+    #[test]
+    fn embedding_measurement_stamps_basis_completeness_duration() {
+        let reported = UsageEvent::external_embedding(
+            "azure_openai",
+            "text-embedding-3-small",
+            Some("t"),
+            1000,
+            "embed_batch",
+        )
+        .with_measurement(sandhi_core::UsageBasis::ProviderReported, 4321);
+        let v = serde_json::to_value(&reported).unwrap();
+        assert_eq!(v["usage_basis"], "provider_reported");
+        assert_eq!(v["usage_completeness"], "final");
+        assert_eq!(v["duration_ms"], 4321);
+        let wire: sandhi_core::UsageEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(wire.usage_basis, sandhi_core::UsageBasis::ProviderReported);
+        assert_eq!(
+            wire.usage_completeness,
+            sandhi_core::UsageCompleteness::Final
+        );
+        assert_eq!(wire.duration_ms, Some(4321));
+
+        // The heuristic path (provider reports no usage → count×512) is the estimated basis.
+        let estimated = UsageEvent::external_embedding(
+            "byo",
+            "https://byo.example/v1",
+            Some("t"),
+            512,
+            "embed_batch",
+        )
+        .with_measurement(sandhi_core::UsageBasis::Estimated, 7);
+        let v2 = serde_json::to_value(&estimated).unwrap();
+        assert_eq!(v2["usage_basis"], "estimated");
+        assert_eq!(v2["usage_completeness"], "final");
+        assert_eq!(v2["duration_ms"], 7);
+        let wire2: sandhi_core::UsageEvent = serde_json::from_value(v2).unwrap();
+        assert_eq!(
+            wire2.usage_completeness,
+            sandhi_core::UsageCompleteness::Final
+        );
+        assert_eq!(wire2.usage_basis, sandhi_core::UsageBasis::Estimated);
+        assert_eq!(wire2.duration_ms, Some(7));
+    }
+
     /// sandhi-core 0.1.5 parsers surface `reasoning_tokens` (OpenAI o-series); the generation
     /// path threads it through — present when reported, **absent** (not zero) otherwise, so
     /// non-reasoning events keep the old shape.
@@ -521,13 +622,13 @@ mod tests {
             }
         })
         .to_string();
-        let ev = build_generation_event("openai", "o4-mini", None, &body, "query").unwrap();
+        let ev = build_generation_event("openai", "o4-mini", None, &body, "query", 9).unwrap();
         assert_eq!(ev.reasoning_tokens, Some(12));
         assert_eq!(serde_json::to_value(&ev).unwrap()["reasoning_tokens"], 12);
 
         let plain = serde_json::json!({ "usage": { "prompt_tokens": 5, "completion_tokens": 2 } })
             .to_string();
-        let ev2 = build_generation_event("openai", "gpt-4o", None, &plain, "query").unwrap();
+        let ev2 = build_generation_event("openai", "gpt-4o", None, &plain, "query", 9).unwrap();
         assert!(ev2.reasoning_tokens.is_none());
         assert!(
             serde_json::to_value(&ev2)
@@ -548,7 +649,7 @@ mod tests {
             }
         })
         .to_string();
-        let ev = build_generation_event("openai", "m", None, &body, "query").unwrap();
+        let ev = build_generation_event("openai", "m", None, &body, "query", 3).unwrap();
         assert_eq!(ev.tokens_in, 0);
         assert_eq!(ev.cache_read_tokens, 50);
         assert_eq!(ev.tokens_out, 1);
