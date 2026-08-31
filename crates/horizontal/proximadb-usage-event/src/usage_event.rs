@@ -19,11 +19,19 @@
 //! rather than hand-rolling a per-provider extractor.
 //!
 //! Measurement provenance (TD-SANDHI-3): both emit paths stamp `duration_ms` (adapter-boundary
-//! wall clock, measured by the caller), `usage_completeness` (`Final` — every emitted event
-//! carries a complete accounting for its logical call; parse-failure bodies emit nothing), and
-//! `usage_basis` (`ProviderReported` vs `Estimated` — the embedding heuristic count×512 path is
-//! the one estimated basis). `time_to_first_token_ms` stays omitted: ProximaDB's LLM integration
-//! is non-streaming only, and the field is streams-only by schema.
+//! wall clock — which per the schema **excludes host-side queueing** — measured by the caller),
+//! `usage_completeness` (`Final` — every emitted event carries a complete accounting for its
+//! logical call), `usage_basis` (`ProviderReported` vs `Estimated` — the embedding heuristic
+//! count×512 path is the one estimated basis), and `outcome` (`success` — emit sites are
+//! success-path only, and an omitted `outcome` decodes to no default, unlike the other
+//! measurement fields). On the **generation** path, bodies that fail to parse or parse to
+//! all-zero usage emit nothing (a parsed zero is no measurement); on the **embedding** path an
+//! absent/zero provider usage falls back to the heuristic with an `Estimated` basis, and a
+//! measured batch clamps each record-carrying payload's share to a minimum of 1 token
+//! (`measured_share` in the drainer) — never certifying a zero, which on the wire would be
+//! indistinguishable from the gateway-bug zeros dropped above.
+//! `time_to_first_token_ms` stays omitted: ProximaDB's LLM integration is non-streaming only,
+//! and the field is streams-only by schema.
 
 use serde::Serialize;
 use std::sync::OnceLock;
@@ -145,7 +153,8 @@ pub struct UsageEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_seconds: Option<f64>,
 
-    /// Wall-clock duration of the logical call in milliseconds, measured at the adapter boundary.
+    /// Wall-clock duration of the logical call in milliseconds, measured at the adapter boundary
+    /// (includes retries; excludes host-side queueing — sandhi-core `usage-event.v1`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     /// Streams only: milliseconds from request start to the first delivered item.
@@ -249,19 +258,33 @@ impl UsageEvent {
     }
 
     /// Stamp measurement provenance onto an embedding event (TD-SANDHI-3): the adapter-boundary
-    /// wall clock of the logical call, and whether its counts were `ProviderReported` (the
-    /// provider returned a real usage figure) or `Estimated` (ProximaDB's own heuristic —
-    /// record-count × 512 — because the provider reports no usage). Completeness is `Final`:
-    /// a stamped event accounts for a completed call, never a partial one.
+    /// wall clock of the logical call (which per the schema contract **excludes host-side
+    /// queueing** — measure around the provider call, not the queue submit), and whether its
+    /// counts were `ProviderReported` (the provider returned a real usage figure) or `Estimated`
+    /// (ProximaDB's own heuristic — record-count × 512 — because the provider reports no usable
+    /// usage). Completeness is `Final` (a stamped event accounts for a completed call, never a
+    /// partial one), and the outcome is `success` — callers invoke this only on the success path,
+    /// and the reference producer always stamps an outcome (an omitted `outcome` decodes to no
+    /// default, so a `outcome == "success"` filter would drop the event).
+    ///
+    /// `duration_ms` is `Option`: a multi-tenant batch emits one event per payload but the
+    /// batch's wall clock belongs to exactly one designated carrier event (N events × full
+    /// duration would inflate any `SUM(duration_ms)` rollup N×); `None` omits the key while
+    /// still stamping basis/completeness/outcome.
+    ///
+    /// Named `with_provenance`, NOT `with_measurement`: sandhi-core's own
+    /// `UsageEvent::with_measurement(completeness, attempts, outcome, upstream_request_id)` sets
+    /// different fields — the near-collision on this mirrored type invited exactly that mixup.
     #[must_use]
-    pub fn with_measurement(
+    pub fn with_provenance(
         mut self,
         usage_basis: sandhi_core::UsageBasis,
-        duration_ms: u64,
+        duration_ms: Option<u64>,
     ) -> Self {
         self.usage_basis = Some(usage_basis);
         self.usage_completeness = Some(sandhi_core::UsageCompleteness::Final);
-        self.duration_ms = Some(duration_ms);
+        self.duration_ms = duration_ms;
+        self.outcome = Some("success".to_string());
         self
     }
 
@@ -280,9 +303,11 @@ impl UsageEvent {
 
 /// Build (without emitting) the neutral usage event for one generation-LLM call, **adopting the
 /// fixture-proven `sandhi-core` usage parser** for `provider` (single-sourced metering trust —
-/// AnvaiOps ADR-0047 D10a / Sandhi ADR-0003). Returns `None` if the body doesn't parse or carries
-/// no usage. Split out from [`emit_generation_usage`] so the parser-dispatch + backend mapping is
-/// unit-testable without the env-gated emit.
+/// AnvaiOps ADR-0047 D10a / Sandhi ADR-0003). Returns `None` if the body doesn't parse, carries
+/// no usage, or parses to all-zero usage (no billable signal — fabricating a zero-token event
+/// would be "a silent, wrong measurement", per sandhi-core's own Cohere hardening). Split out
+/// from [`emit_generation_usage`] so the parser-dispatch + backend mapping is unit-testable
+/// without the env-gated emit.
 fn build_generation_event(
     provider: &str,
     model: &str,
@@ -304,6 +329,21 @@ fn build_generation_event(
         "ollama" => parse_ollama_usage(&value),
         _ => parse_openai_usage(&value),
     }?;
+    // All-zero usage is no measurement (TD-SANDHI-3 adversarial review): empty objects
+    // (`{"usage":{}}`), `null`, string-typed numbers, and explicit zeros (Ollama reports
+    // `prompt_eval_count: 0` on cached prompts) all land here. sandhi-core guards this in its
+    // Cohere parser; we guard at the dispatch so every arm gets it. Strictly stricter than
+    // sandhi's own producers (which stamp `Final` zeros) — dropping the event only loses a
+    // zero-token billing signal, while certifying it as final+provider-reported would poison the
+    // very trust filter `usage_completeness` exists to enable.
+    if usage.tokens_in == 0
+        && usage.tokens_out == 0
+        && usage.cache_creation_tokens == 0
+        && usage.cache_read_tokens == 0
+        && usage.reasoning_tokens == 0
+    {
+        return None;
+    }
     let backend = match provider {
         "ollama" | "vllm" => BACKEND_SELF_HOSTED,
         _ => BACKEND_EXTERNAL,
@@ -324,12 +364,15 @@ fn build_generation_event(
     // `ParsedUsage` → event mapping, so non-reasoning events keep the pre-sync shape.
     event.reasoning_tokens = (usage.reasoning_tokens > 0).then_some(usage.reasoning_tokens);
     // Measurement provenance (TD-SANDHI-3), mirroring sandhi-core `ParsedUsage::apply`'s
-    // fill-if-empty semantics: a body whose usage parsed is a complete, provider-measured
-    // accounting for the call (bodies that don't parse emit no event at all, so `Partial`/
-    // `Unavailable` never apply here), and the duration is the provider adapter's wall clock.
+    // fill-if-empty semantics: a body whose usage parsed to a nonzero count is a complete,
+    // provider-measured accounting for the call (all-zero/failed parses emit no event at all, so
+    // `Partial`/`Unavailable` never apply here), the duration is the provider adapter's wall
+    // clock, and the outcome is stamped because emit sites are success-path only — the reference
+    // producer always sets one, and an omitted `outcome` decodes to no default.
     event.usage_completeness = Some(sandhi_core::UsageCompleteness::Final);
     event.usage_basis = Some(sandhi_core::UsageBasis::ProviderReported);
     event.duration_ms = Some(duration_ms);
+    event.outcome = Some("success".to_string());
     Some(event)
 }
 
@@ -423,6 +466,7 @@ mod tests {
         assert_eq!(v["usage_completeness"], "final");
         assert_eq!(v["usage_basis"], "provider_reported");
         assert_eq!(v["duration_ms"], 4321);
+        assert_eq!(v["outcome"], "success");
         // Streams-only field stays omitted on the non-streaming integration.
         assert!(v.get("time_to_first_token_ms").is_none());
     }
@@ -449,6 +493,83 @@ mod tests {
             build_generation_event("openai", "m", None, r#"{"choices":[]}"#, "query", 5).is_none()
         );
         assert!(build_generation_event("openai", "m", None, "not json", "query", 5).is_none());
+    }
+
+    /// TD-SANDHI-3 adversarial-review guard: usage that parses to all zeros is no measurement —
+    /// empty objects, `null`, wrong-typed values, and explicit zeros must all emit nothing
+    /// rather than a `final`+`provider_reported` zero-token event (sandhi-core's own Cohere
+    /// hardening, applied at our dispatch so every provider arm gets it).
+    #[test]
+    fn generation_event_drops_all_zero_usage() {
+        let zero_bodies = [
+            r#"{"usage":{}}"#,
+            r#"{"usage":null}"#,
+            r#"{"usage":"x"}"#,
+            r#"{"usage":[]}"#,
+            r#"{"usage":{"prompt_tokens":"50","completion_tokens":"10"}}"#,
+            r#"{"usage":{"prompt_tokens":50.7}}"#,
+            r#"{"usage":{"prompt_tokens":-5,"completion_tokens":0}}"#,
+            r#"{"usage":{"prompt_cache_hit_tokens":0}}"#,
+        ];
+        for body in zero_bodies {
+            assert!(
+                build_generation_event("openai", "m", None, body, "query", 5).is_none(),
+                "body should emit no event: {body}"
+            );
+            assert!(
+                build_generation_event("anthropic", "m", None, body, "query", 5).is_none(),
+                "body should emit no event: {body}"
+            );
+        }
+        // Ollama reports `prompt_eval_count: 0` on cached prompts — zeros drop, real counts emit.
+        assert!(
+            build_generation_event(
+                "ollama",
+                "m",
+                None,
+                r#"{"prompt_eval_count":0}"#,
+                "query",
+                5
+            )
+            .is_none()
+        );
+        let cached = build_generation_event(
+            "ollama",
+            "m",
+            None,
+            r#"{"prompt_eval_count":0,"eval_count":9}"#,
+            "query",
+            5,
+        )
+        .unwrap();
+        assert_eq!(cached.tokens_out, 9);
+
+        // A cache-only measurement is still a measurement: fresh input 0 + cache_read 40 emits.
+        let cache_only = serde_json::json!({
+            "usage": { "prompt_tokens": 40, "prompt_tokens_details": { "cached_tokens": 40 } }
+        })
+        .to_string();
+        let ev = build_generation_event("openai", "m", None, &cache_only, "query", 5).unwrap();
+        assert_eq!(ev.tokens_in, 0);
+        assert_eq!(ev.cache_read_tokens, 40);
+
+        // DeepSeek top-level cache arm, hit > prompt (saturating): a real cache read emits.
+        let deepseek = serde_json::json!({
+            "usage": { "prompt_tokens": 10, "prompt_cache_hit_tokens": 50 }
+        })
+        .to_string();
+        let ev = build_generation_event("openai", "m", None, &deepseek, "query", 5).unwrap();
+        assert_eq!(ev.tokens_in, 0);
+        assert_eq!(ev.cache_read_tokens, 50);
+
+        // Reasoning-only counts as signal too (billable unfolds reasoning when it exceeds
+        // completion) — the guard must not drop it.
+        let reasoning_only =
+            serde_json::json!({ "usage": { "completion_tokens_details": { "reasoning_tokens": 50 } } })
+                .to_string();
+        let ev =
+            build_generation_event("openai", "o4-mini", None, &reasoning_only, "query", 5).unwrap();
+        assert_eq!(ev.reasoning_tokens, Some(50));
     }
 
     /// The pre-0.1.5-sync wire shape: an event that sets none of the new optional fields must
@@ -564,8 +685,8 @@ mod tests {
     }
 
     /// TD-SANDHI-3: the embedding path stamps measurement provenance — provider-reported vs the
-    /// heuristic (estimated) count — plus the adapter-boundary wall clock, and both spellings
-    /// round-trip through the authoritative sandhi-core event type.
+    /// heuristic (estimated) count — plus the adapter-boundary wall clock and the terminal
+    /// outcome, and all spellings round-trip through the authoritative sandhi-core event type.
     #[test]
     fn embedding_measurement_stamps_basis_completeness_duration() {
         let reported = UsageEvent::external_embedding(
@@ -575,11 +696,12 @@ mod tests {
             1000,
             "embed_batch",
         )
-        .with_measurement(sandhi_core::UsageBasis::ProviderReported, 4321);
+        .with_provenance(sandhi_core::UsageBasis::ProviderReported, Some(4321));
         let v = serde_json::to_value(&reported).unwrap();
         assert_eq!(v["usage_basis"], "provider_reported");
         assert_eq!(v["usage_completeness"], "final");
         assert_eq!(v["duration_ms"], 4321);
+        assert_eq!(v["outcome"], "success");
         let wire: sandhi_core::UsageEvent = serde_json::from_value(v).unwrap();
         assert_eq!(wire.usage_basis, sandhi_core::UsageBasis::ProviderReported);
         assert_eq!(
@@ -587,6 +709,7 @@ mod tests {
             sandhi_core::UsageCompleteness::Final
         );
         assert_eq!(wire.duration_ms, Some(4321));
+        assert_eq!(wire.outcome.as_deref(), Some("success"));
 
         // The heuristic path (provider reports no usage → count×512) is the estimated basis.
         let estimated = UsageEvent::external_embedding(
@@ -596,18 +719,34 @@ mod tests {
             512,
             "embed_batch",
         )
-        .with_measurement(sandhi_core::UsageBasis::Estimated, 7);
+        .with_provenance(sandhi_core::UsageBasis::Estimated, Some(7));
         let v2 = serde_json::to_value(&estimated).unwrap();
         assert_eq!(v2["usage_basis"], "estimated");
         assert_eq!(v2["usage_completeness"], "final");
         assert_eq!(v2["duration_ms"], 7);
+        assert_eq!(v2["outcome"], "success");
         let wire2: sandhi_core::UsageEvent = serde_json::from_value(v2).unwrap();
+        assert_eq!(wire2.usage_basis, sandhi_core::UsageBasis::Estimated);
         assert_eq!(
             wire2.usage_completeness,
             sandhi_core::UsageCompleteness::Final
         );
-        assert_eq!(wire2.usage_basis, sandhi_core::UsageBasis::Estimated);
-        assert_eq!(wire2.duration_ms, Some(7));
+        assert_eq!(wire2.outcome.as_deref(), Some("success"));
+
+        // A non-carrier batch-mate: duration omitted, provenance still stamped.
+        let mate = UsageEvent::external_embedding(
+            "byo",
+            "https://byo.example/v1",
+            Some("t"),
+            512,
+            "embed_batch",
+        )
+        .with_provenance(sandhi_core::UsageBasis::Estimated, None);
+        let v3 = serde_json::to_value(&mate).unwrap();
+        assert!(v3.get("duration_ms").is_none());
+        assert_eq!(v3["usage_basis"], "estimated");
+        assert_eq!(v3["usage_completeness"], "final");
+        assert_eq!(v3["outcome"], "success");
     }
 
     /// sandhi-core 0.1.5 parsers surface `reasoning_tokens` (OpenAI o-series); the generation
