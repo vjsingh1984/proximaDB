@@ -220,6 +220,29 @@ Evidence: `rdstrat12_sift1m_rtt_ladder_crossover` (ledger) +
 
 ✅ **DONE** — row exists at `docs/12-design/ENV_GATE_REGISTRY.adoc:107`
 (semantic / unset-default / opt-in tier, owner TD-RDSTRAT-12).
+
+=== 5. S3/MinIO campaign — wave is backend-neutral; >=2x did not reproduce on the v1 layout
+
+✅ **MEASURED (2026-08-31)** — 8-arm campaign (A0/A1 × real-LAN ~5.5 ms + 50/100/150 ms
+Toxiproxy RTT) against MinIO on a remote LAN host, same protocol as the Azurite ladder. On the
+three byte-identical same-bed pairs the waved arm fired observably (2.1-2.2 rounds/query, width
+8) at EXACT GET parity, identical recall, and identical result-identity hashes — the wave
+mechanism is backend-neutral and identity-preserving on an S3-shaped backend. Ratios: 1.17x
+(5.5 ms) / 1.64x (50 ms; mixed-bed pair, see artifact) / 1.22x (100 ms) / 1.46x (150 ms) — the
+>=2x acceptance did NOT reproduce on this bed. Two measured causes: (a) the TD-PAXRG-1
+single-layout collapse left ~half the per-query GET cascade (~11 of ~22 GETs: footer/index/OID/
+metadata) outside the waved regions — the az ladder's v3 bed had a survivor-dominated
+14.4-GET cascade the wave covered almost entirely; (b) toxiproxy's latency toxic couples RTT
+into bulk transfer, growing both arms' transfer term with RTT. Consequence: extend the wave to
+the unwaved cascade GETs of the v1 layout — the follow-up lever alongside parallelizing
+rank_probed_rows. Incidental harness fix (same PR): the settle gate still required the retired
+v3 layout marker (`header[4]==3`, `--require-layout-version 3`) and deadlocked silently on
+every post-collapse bed; A0 presence is now detected via `a0_len > 0` and the required layout
+defaults to 1.
+
+Evidence: `rdstrat12_sift1m_minio_s3_wave_pairs` (ledger) +
+`docs/_internal/status/RDSTRAT12_SIFT1M_MINIO_S3_2026_08_31.adoc`.
+
 == Implementation notes
 
 * The core `read_ranges_buffered` contract is correct and unit-tested — do NOT change its behavior
