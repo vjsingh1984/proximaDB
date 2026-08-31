@@ -937,19 +937,28 @@ pub(crate) fn pax_field_to_col(field: &str) -> Option<i32> {
     }
 }
 
-/// ADR-089 / TD-FPRUNE-1 P1: default-OFF gate for the filter-aware cascade.
-/// `PROXIMADB_PAX_FILTERED_CASCADE=1|on|true|yes` routes filtered PAX queries
-/// through the metadata pre-stage + row-restricted cascade instead of the
-/// whole-object exact scan. Mixed-read-safe: OFF preserves today's behavior.
+/// ADR-089 / TD-FPRUNE-1: the filter-aware cascade gate. **FLIPPED
+/// default-ON 2026-08-31** — evidence (the promotion criterion the
+/// ENV_GATE_REGISTRY row records, discharged NON-vacuously through the real
+/// `search_vectors_unified` dispatch): the NEW filtered SIFT ratchet leg
+/// `sift_pax_filtered_cascade_recall_ratchet` measures filtered recall@10 =
+/// **0.996** vs filtered brute-force ground truth (floor 0.90) over 100
+/// queries at N=10k / 8 partitions, with every hit satisfying the predicate
+/// AND carrying rehydrated metadata (the top-k rehydration keeps the exact
+/// path's response shape). The unfiltered SIFT ratchet holds 0.989 with the
+/// P2 write layout active. Fail-safe on every axis (non-coalesced → exact
+/// fallback; stage-F error → exact fallback; empty allow-set → empty result);
+/// `PROXIMADB_PAX_FILTERED_CASCADE=0|off|false|no` is the emergency
+/// kill-switch back to the whole-object exact scan.
 pub(crate) fn pax_filtered_cascade_enabled() -> bool {
-    matches!(
+    !matches!(
         std::env::var("PROXIMADB_PAX_FILTERED_CASCADE")
             .ok()
             .as_deref()
             .map(str::trim)
             .map(str::to_ascii_lowercase)
             .as_deref(),
-        Some("1" | "on" | "true" | "yes")
+        Some("0" | "off" | "false" | "no")
     )
 }
 
@@ -1163,6 +1172,149 @@ pub(crate) async fn pax_filtered_row_allow(
         stats.blocks_pruned_footer as u64,
     );
     Ok(Some((allow, stats)))
+}
+
+/// TD-FPRUNE-1 cascade top-k rehydration: fetch FULL records — props included —
+/// for specific global row positions. The cascade path ranks from codes and
+/// returns id+score (+reconstructed vector); the exact path it replaces returns
+/// complete metadata. This closes that gap for the top-k winners only: positions
+/// map to blocks via the footer's cumulative row table and ONLY the blocks
+/// holding requested positions are fetched (coalesced, IOP-aligned), so the cost
+/// is bounded by the hit set (k), not the segment. Result is index-aligned with
+/// `positions`; `None` = position out of range or row not found (never an error).
+pub(crate) async fn read_records_by_positions(
+    fs: &dyn proximadb_storage_filesystem_types::FileSystem,
+    path: &str,
+    positions: &[u32],
+    embedding_model_ids: &[String],
+    user_column_keys: &[String],
+    tenant_ctx: Option<&str>,
+) -> Result<Vec<Option<proximadb_records::ProximaRecord>>> {
+    use proximadb_block_format::{PaxBlockReader, record::FlatRow};
+    use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
+
+    let mut out: Vec<Option<proximadb_records::ProximaRecord>> = vec![None; positions.len()];
+    if positions.is_empty() {
+        return Ok(out);
+    }
+
+    // 1-2. Header prefix + footer → block table (mirrors stage F; a
+    // non-coalesced segment is an error here — the cascade only runs on
+    // coalesced segments).
+    let size = fs
+        .metadata(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("rehydrate stat {path}: {e}"))?
+        .size;
+    if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
+        anyhow::bail!("rehydrate {path}: not a coalesced segment");
+    }
+    let read_len = (coalesced_header_prefetch_floor() as u64).min(size);
+    let header_bytes = fs
+        .read_range(path, 0, read_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("rehydrate header {path}: {e}"))?;
+    let header = SegmentHeaderPrefix::parse(&header_bytes)
+        .map_err(|e| anyhow::anyhow!("rehydrate header parse {path}: {e}"))?;
+    let footer_bytes = fs
+        .read_range(path, header.footer_off, header.footer_len)
+        .await
+        .map_err(|e| anyhow::anyhow!("rehydrate footer {path}: {e}"))?;
+    let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+    let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
+    let mut acc = 0u64;
+    for b in &footer.blocks {
+        block_start.push(acc);
+        acc += b.row_count as u64;
+    }
+
+    // 3. Map positions → (block, local row). Sorted block set dedups fetches.
+    let mut wanted: Vec<(usize, u32, usize)> = Vec::with_capacity(positions.len()); // (block, local, out_idx)
+    for (out_idx, &pos) in positions.iter().enumerate() {
+        let pos = pos as u64;
+        let block = match block_start.binary_search(&pos) {
+            Ok(b) => b,
+            Err(0) => continue, // before the first block — out of range
+            Err(insert) => insert - 1,
+        };
+        let local = pos - block_start[block];
+        let row_count = footer.blocks[block].row_count as u64;
+        if local >= row_count {
+            continue;
+        }
+        wanted.push((block, local as u32, out_idx));
+    }
+    if wanted.is_empty() {
+        return Ok(out);
+    }
+    wanted.sort_unstable();
+    let mut blocks: Vec<usize> = wanted.iter().map(|w| w.0).collect();
+    blocks.dedup();
+
+    // 4. Coalesced fetch of just those blocks (same policy plumbing as stage F).
+    let iop_target =
+        proximadb_storage_common::iops_budget::IopsBudget::for_path(path).target_block_bytes();
+    let defaults =
+        crate::storage::engines::sst::readers::sst_query_engine::ObjectRangeCoalescePolicy {
+            max_gap_bytes: (iop_target / 4).max(64 * 1024),
+            max_range_bytes: iop_target,
+        };
+    let policy = resolve_adaptive_range_policy(
+        path,
+        "region_d_filter",
+        "PROXIMADB_PAX_COALESCE_GAP",
+        "PROXIMADB_PAX_COALESCE_RANGE",
+        defaults,
+        |candidate| {
+            estimate_coalesced_byte_ranges(
+                blocks.iter().filter_map(|&index| {
+                    footer
+                        .blocks
+                        .get(index)
+                        .map(|block| (block.offset, block.offset + block.size as u64))
+                }),
+                candidate,
+            )
+        },
+    );
+    let fetches = plan_coalesced_block_ranges(&footer, &blocks, &policy);
+
+    // 5. Decode the requested rows.
+    for fetch in &fetches {
+        let buf = fs
+            .read_range(path, fetch.start, fetch.end - fetch.start)
+            .await
+            .map_err(|e| anyhow::anyhow!("rehydrate blocks {path}: {e}"))?;
+        for &bi in &fetch.blocks {
+            let Some(b) = footer.blocks.get(bi) else {
+                continue;
+            };
+            let Some(rel) = b.offset.checked_sub(fetch.start).map(|r| r as usize) else {
+                continue;
+            };
+            let end = rel + b.size as usize;
+            let Some(block_bytes) = buf.get(rel..end) else {
+                continue;
+            };
+            let reader = PaxBlockReader::open(block_bytes)
+                .map_err(|e| anyhow::anyhow!("rehydrate block open {path}: {e}"))?;
+            let rows = FlatRow::from_block_reader(&reader)
+                .map_err(|e| anyhow::anyhow!("rehydrate rows {path}: {e}"))?;
+            // Rows for THIS block from `wanted` (sorted ⇒ contiguous slice).
+            let local_base = block_start[bi] as u32;
+            for &(_wb, wlocal, out_idx) in wanted.iter().filter(|w| w.0 == bi) {
+                let _ = local_base;
+                if let Some(flat) = rows.get(wlocal as usize) {
+                    out[out_idx] = Some(flat.clone().into_record(
+                        embedding_model_ids,
+                        user_column_keys,
+                        tenant_ctx,
+                    )?);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Whether the coalesced-RaBitQ layout is engaged for new RaBitQ writes
@@ -6478,9 +6630,14 @@ mod tests {
 
     /// ADR-089 P1: the filter-aware cascade is DEFAULT-OFF (mixed-read-safe).
     #[test]
-    fn filtered_cascade_gate_defaults_off() {
-        // The suite never sets the gate env, so the default must hold here.
-        assert!(!pax_filtered_cascade_enabled());
+    fn filtered_cascade_gate_defaults_on() {
+        // FLIPPED default-ON 2026-08-31 (see the gate's doc comment). Pinned
+        // explicitly so this assertion cannot race another test's env pinning
+        // under plain `cargo test`'s shared process.
+        unsafe {
+            std::env::remove_var("PROXIMADB_PAX_FILTERED_CASCADE");
+        }
+        assert!(pax_filtered_cascade_enabled());
     }
 
     /// ADR-089 / TD-FPRUNE-1 P1 EVIDENCE HARNESS (engine-level A/B on a real
@@ -8185,11 +8342,10 @@ mod tests {
             unsafe {
                 std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
                 std::env::set_var("PROXIMADB_IVF_K", "64");
-                // The arc's A3 default-ON flip is NOT carried (the gates land
-                // default-OFF, honoring the 2026-08-20 ENV_GATE_REGISTRY
-                // promotion criterion) — pin what this measurement depends on,
-                // per-arm like PARTITION_LAYOUT below. Removed with the rest at
-                // the end of the arm.
+                // Pin what this measurement depends on explicitly (the
+                // cascade gate is default-ON since the 2026-08-31 flip; footer
+                // stats remains default-OFF) — removed with the rest at the end
+                // of the arm.
                 std::env::set_var("PROXIMADB_PAX_FILTERED_CASCADE", "1");
                 std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
                 // Explicit "1"/"0" (layout is now default-on, C2): "0" pins the OFF
