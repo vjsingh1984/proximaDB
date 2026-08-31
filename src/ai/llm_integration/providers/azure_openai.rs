@@ -200,6 +200,7 @@ impl LLMClient for AzureOpenAIClient {
             _context.tenant_id.as_deref(),
             &response_body,
             "query",
+            response_time_ms,
         );
         Ok(LLMResponse {
             content: choice.message.content,

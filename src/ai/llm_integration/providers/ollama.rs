@@ -148,6 +148,7 @@ impl LLMClient for OllamaClient {
             _context.tenant_id.as_deref(),
             &response_body,
             "query",
+            response_time_ms,
         );
         Ok(LLMResponse {
             content: ollama_response.response,
