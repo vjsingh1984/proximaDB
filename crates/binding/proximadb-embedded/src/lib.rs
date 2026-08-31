@@ -776,6 +776,18 @@ pub struct EmbeddedGraphStats {
 /// // Call close() to persist RL policy before dropping
 /// db.close();
 /// ```
+/// TD-DSEFF-2: `true` when a non-SST-declared collection's data directory
+/// holds files and every one of them carries the legacy SST extension —
+/// the residue of the pre-#1743 flush-routing bug (`FlushExecutionCoordinator::
+/// engine_for` unconditionally used a caller-supplied SST fallback, so every
+/// embedded collection flushed as SST regardless of its declared engine).
+/// Pure and unit-testable: callers already gate this on the declared engine
+/// being non-SST before listing the directory, so this only needs the
+/// resulting file names.
+fn engine_data_mismatch(file_names: &[String]) -> bool {
+    !file_names.is_empty() && file_names.iter().all(|name| name.ends_with(".sst"))
+}
+
 pub struct EmbeddedProximaDB {
     /// Configuration
     config: EmbeddedConfig,
@@ -1007,6 +1019,56 @@ impl EmbeddedProximaDB {
             }
         });
         tracing::debug!("EMBEDDED: Checkpoint manager initialized");
+
+        // TD-DSEFF-2: pre-#1743, `FlushExecutionCoordinator::engine_for`
+        // unconditionally used a caller-supplied SST fallback, so every
+        // embedded collection's flushes were routed through SST regardless
+        // of its declared engine. Post-fix, new flushes correctly write the
+        // declared engine's own format — but a pre-existing deployment's
+        // non-SST-declared collection may have OLD SST-formatted data that
+        // its declared engine's extension-filtered reader will never see.
+        // One-shot, best-effort, log-only diagnostic on open: never blocks
+        // startup or fails construction.
+        runtime.block_on(async {
+            let Ok(collections) = collection_port.list_collections(None).await else {
+                return;
+            };
+            for collection in collections {
+                let Ok(plan) =
+                    proximadb::storage::flush_materializer::flush_plan_from_collection_meta(
+                        &collection,
+                    )
+                else {
+                    continue;
+                };
+                if plan.engine_type == proximadb::proto::proximadb_v1::StorageEngine::Sst as i32 {
+                    continue;
+                }
+                let data_dir = format!("{}/{}/data", plan.base_location, plan.collection_object_id);
+                let Ok(fs) = shared_services.filesystem_factory.get_filesystem(&data_dir) else {
+                    continue;
+                };
+                let Ok(entries) = fs.list(&data_dir).await else {
+                    continue; // no flushes yet — nothing to migrate
+                };
+                let file_names: Vec<String> = entries
+                    .into_iter()
+                    .filter(|e| !e.metadata.is_directory)
+                    .map(|e| e.name)
+                    .collect();
+                if engine_data_mismatch(&file_names) {
+                    let declared =
+                        proximadb::proto::proximadb_v1::StorageEngine::try_from(plan.engine_type);
+                    tracing::warn!(
+                        "⚠️ EMBEDDED: collection '{}' declares engine {:?} but its data directory \
+                         contains only .sst-formatted files (pre-#1743 flush) — this data is \
+                         invisible to the declared engine's reader; re-ingest to migrate",
+                        plan.collection_name,
+                        declared,
+                    );
+                }
+            }
+        });
 
         Ok(Self {
             config,

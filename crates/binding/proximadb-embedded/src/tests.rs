@@ -1496,4 +1496,124 @@ mod tests {
             "error must name the missing collection: {err}"
         );
     }
+
+    // ========================================================================
+    // TD-DSEFF-2: embedded migration-risk disclosure.
+    //
+    // Pre-#1743, every embedded collection's flushes were routed through SST
+    // regardless of declared engine. `engine_data_mismatch` is the pure
+    // decision logic behind the one-shot, log-only warning `EmbeddedProximaDB
+    // ::new` emits for a non-SST-declared collection whose data directory
+    // holds only legacy `.sst` files.
+    // ========================================================================
+
+    #[test]
+    fn engine_data_mismatch_detects_sst_only_directory() {
+        let files = vec!["part-0.sst".to_string(), "part-1.sst".to_string()];
+        assert!(
+            engine_data_mismatch(&files),
+            "a non-empty directory containing ONLY .sst files must be flagged"
+        );
+    }
+
+    #[test]
+    fn engine_data_mismatch_ignores_empty_directory() {
+        // No flushes yet — nothing to migrate, not a mismatch.
+        assert!(!engine_data_mismatch(&[]));
+    }
+
+    #[test]
+    fn engine_data_mismatch_ignores_directory_with_declared_engine_files() {
+        // The declared (non-SST) engine's own files are present — no mismatch,
+        // regardless of whether some .sst leftovers also exist.
+        let files = vec!["part-0.helix".to_string()];
+        assert!(!engine_data_mismatch(&files));
+
+        let mixed = vec!["part-0.sst".to_string(), "part-1.helix".to_string()];
+        assert!(
+            !engine_data_mismatch(&mixed),
+            "even one non-.sst file means the declared engine has real data — not a mismatch"
+        );
+    }
+
+    /// End-to-end: a genuinely mismatched collection (declared HELIX, data
+    /// directory containing only a planted `.sst` file — simulating
+    /// pre-#1743 residue) must not prevent a fresh `EmbeddedProximaDB::new`
+    /// from opening the same directory. This exercises the real scan path
+    /// (catalog lookup, engine-type resolution, directory listing) against
+    /// live data, not just the pure `engine_data_mismatch` decision — the
+    /// crate has no tracing-capture test convention to assert on the
+    /// warning's text itself (see TD-DSEFF-2), so this asserts the
+    /// best-effort diagnostic never blocks startup.
+    #[test]
+    fn reopen_does_not_fail_on_mismatched_pre_fix_collection_data() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+
+        {
+            let db = EmbeddedProximaDB::new(config.clone()).expect("first open");
+            db.create_collection("mismatch_col", 4, Some("helix"))
+                .expect("create helix collection");
+            db.insert(
+                "mismatch_col",
+                vec!["v1".to_string()],
+                vec![vec![0.1, 0.2, 0.3, 0.4]],
+                None,
+            )
+            .expect("insert");
+            db.flush().expect("flush writes the real .helix file(s)");
+
+            // Find the real on-disk data directory the flush just wrote to
+            // (walk the tempdir rather than re-deriving the path formula —
+            // this test should stay correct even if that formula changes),
+            // then replace its contents with a planted .sst file to
+            // simulate the pre-#1743 flush-routing bug's residue.
+            let mut data_dir = None;
+            for entry in walkdir_files(temp_dir.path()) {
+                if entry.extension().and_then(|e| e.to_str()) == Some("helix") {
+                    data_dir = entry.parent().map(|p| p.to_path_buf());
+                    break;
+                }
+            }
+            let data_dir = data_dir.expect("flush must have written at least one .helix file");
+            for entry in std::fs::read_dir(&data_dir).unwrap() {
+                let entry = entry.unwrap();
+                if entry.path().extension().and_then(|e| e.to_str()) == Some("helix") {
+                    std::fs::remove_file(entry.path()).unwrap();
+                }
+            }
+            std::fs::write(data_dir.join("legacy.sst"), b"pre-#1743 residue").unwrap();
+
+            db.close();
+        }
+
+        // Reopening must succeed — the migration-risk scan is best-effort
+        // and log-only, never a hard failure.
+        let reopened = EmbeddedProximaDB::new(config);
+        assert!(
+            reopened.is_ok(),
+            "reopening a directory with mismatched pre-fix data must not fail: {:?}",
+            reopened.err()
+        );
+    }
+
+    /// Recursively list every file (not directory) under `root`.
+    fn walkdir_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
 }

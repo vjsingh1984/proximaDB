@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — item 1 fixed 2026-08-29 (see below); items 2-6 open, triaged
+| Status | Items 1-3 FIXED (2026-08-29/30); items 4-6 open, deliberately not scheduled (see per-item rationale)
 | Severity | Mixed — see per-item severity
 | Component | `crates/control/proximadb-catalog/src/cache.rs`, `src/storage/engines/nova/engine.rs`, `crates/binding/proximadb-embedded/src/lib.rs`, `src/storage/memtable/implementations/skiplist.rs`, `src/network/grpc/v2/record_service.rs`, `src/storage/engines/raptor/`, `src/index/axis/management/manager.rs`, `src/storage/flush_materializer.rs`
 | Pillar | CORRECTNESS / SIMPLIFY
@@ -30,54 +30,73 @@ section. High confidence, high severity (defeated the cache's own capacity
 bound under realistic multi-family traffic). Fixed same day by splitting the
 ring per map family; regression test added.
 
-== 2. NOVA `vector_by_id` lacks MVCC version resolution and tombstone filtering
+== 2. NOVA `vector_by_id` lacks MVCC version resolution and tombstone filtering — FIXED
 
-`src/storage/engines/nova/engine.rs` (~lines 1611-1653): #1743 replaced a
+`src/storage/engines/nova/engine.rs` (`vector_by_id`): #1743 replaced a
 hardcoded `Ok(None)` stub (which silently made every upsert re-insert as a
-duplicate) with a real point-read. The replacement resolves by
-first-match-in-file-listing-order rather than latest-version, and does not
-filter tombstoned/expired records at the engine layer — unlike VIPER's
-pre-existing equivalent, which has both. Confidence: high on the mechanism
-(read directly against the code); medium on production impact — the primary
-GET path has a service-layer dead-record filter
-(link:../../../CLAUDE.md[CLAUDE.md] invariant 16a) that partially mitigates,
-but any caller reading through NOVA's `vector_by_id` directly bypasses it.
+duplicate) with a real point-read that resolved by
+first-match-in-file-listing-order and did not filter tombstoned/expired
+records at all.
 
-Candidate fix: mirror VIPER's version-resolution and `is_dead()` check at the
-NOVA read site (reuse `ProximaRecord::is_dead`, per invariant 16a — do not
-hand-roll a second predicate). Left open rather than fixed inline: this is a
-MVCC-correctness change to a live engine's read path, warranting its own
-round-trip test (upsert-then-read returns latest version; tombstone-then-read
-returns none) rather than a same-day patch bundled with an unrelated cache
-fix.
+Fixed by rewriting `vector_by_id` to scan the raw Arrow columns per file/row
+(mirroring the `(version, timestamp)` best-match comparator VIPER's own
+point-read and the shared compaction dedup
+(`columnar_compaction.rs::deduplicate_arrow_batches`) already use), resolving
+the MVCC winner across *all* candidate rows in *all* files before any
+liveness check — a tombstone is itself a newer version and must be able to
+shadow an older live one (CLAUDE.md invariant 16d). The winning row converts
+to `ProximaRecord` via the existing `From<VectorRecord> for ProximaRecord`
+(`conversions.rs`), which already correctly derives `valid_to_ns` (ns) from
+the on-disk millisecond `expires_at` column, preserving the `Some(0)`
+tombstone sentinel; the canonical `ProximaRecord::is_dead(now_ns)` then gates
+the return.
 
-== 3. Embedded migration risk from the #1743 routing fix is undocumented
+Two byproduct findings surfaced while implementing this, both about
+already-merged VIPER code (not fixed — VIPER isn't in this TD's scope):
 
-`crates/binding/proximadb-embedded/src/lib.rs` (~lines 2360-2363) previously
-passed an unconditional SST fallback into
-`FlushExecutionCoordinator::engine_for`, so every embedded collection —
-regardless of its declared engine — flushed as SST (the bug #1743 fixed).
-After the fix, new flushes correctly write the declared engine's format into
-the same directory, but any OLD SST-formatted data from a pre-existing
-non-SST-declared embedded collection becomes permanently invisible to that
-engine's extension-filtered readers, with no detection or migration path.
-This is a mixed-read-safety gap against
-link:../../../CLAUDE.md[CLAUDE.md] directive 8 (format transitions must be
-detectable, never flag-day). Confidence: high on the mechanism, medium on
-real-world impact — VIPER's own point-read was independently proven broken
-for its own writer's output until the same PR (see ADR-093), so a pre-
-existing non-SST *embedded* deployment that actually depended on working
-reads is unlikely to have existed; HELIX/NOVA embedded usage prior to #1743
-is unquantified.
+* VIPER's point-read compares the millisecond `expires_at` column against
+  `chrono::Utc::now().timestamp_micros()` — a 1000x unit mismatch that makes
+  any record with a real future expiry read as already-expired.
+* VIPER's point-read also skips liveness mid-scan (`continue` on an
+  expired/tombstoned row) *before* MVCC resolution, so a stale live version
+  can win over a newer tombstone instead of being shadowed by it — the fix
+  here deliberately resolves MVCC first, then checks liveness once on the
+  winner, to avoid reproducing this.
+* NOVA's `FIELD_VERSION` Parquet column is `UInt32` (`schema_builder.rs`),
+  while VIPER's own factory schema (`viper/factory.rs`) declares the same
+  logical column `Int8` — a third VIPER-side type/unit inconsistency in this
+  code family, also not fixed here.
 
-Candidate fix: a one-time startup scan (embedded open path) that, when a
-collection's declared engine is non-SST, checks whether its data directory
-contains only SST-extension files and — if so — logs a warning naming the
-mismatch and pointing at re-ingest as the remediation. Docs-only alternative:
-add a migration-risk note to the embedded README/CHANGELOG for the release
-that ships #1743's fix, so upgraders are warned even without runtime
-detection. Left open: needs a product decision on which mitigation tier is
-warranted, not a unilateral code change.
+Tests: `tests/integration/nova_engine_test.rs` —
+`test_nova_vector_by_id_returns_latest_version_across_flushes`,
+`test_nova_vector_by_id_hides_tombstoned_record`,
+`test_nova_vector_by_id_filters_ttl_expired_and_returns_live`.
+
+== 3. Embedded migration risk from the #1743 routing fix is undocumented — FIXED
+
+`crates/binding/proximadb-embedded/src/lib.rs` (`EmbeddedProximaDB::new`)
+previously had no detection for the case where a pre-existing embedded
+deployment's non-SST-declared collection has old SST-formatted data
+(residue of the bug #1743 fixed) that its declared engine's
+extension-filtered reader can never see — a mixed-read-safety gap against
+CLAUDE.md directive 8 (format transitions must be detectable, never
+flag-day).
+
+Fixed with a one-shot, best-effort, log-only scan at the end of
+`EmbeddedProximaDB::new`: for every collection whose declared engine isn't
+SST, list its data directory and — if non-empty and every file carries the
+legacy `.sst` extension — emit a `tracing::warn!` naming the collection, its
+declared engine, and re-ingest as the remediation. The decision logic is
+factored into a pure `engine_data_mismatch(&[String]) -> bool` helper for
+direct unit testing; never blocks or fails startup (all internal errors are
+swallowed, matching the no-`.unwrap()`/`.expect()`/`panic!()` mandate).
+
+Tests: `crates/binding/proximadb-embedded/src/tests.rs` —
+`engine_data_mismatch_detects_sst_only_directory`,
+`engine_data_mismatch_ignores_empty_directory`,
+`engine_data_mismatch_ignores_directory_with_declared_engine_files`,
+`reopen_does_not_fail_on_mismatched_pre_fix_collection_data` (end-to-end:
+plants real pre-fix-shaped residue via the filesystem, reopens against it).
 
 == 4. raptor `select_nth_unstable_by` — nondeterministic tie-break vs. old stable sort
 
