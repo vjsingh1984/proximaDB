@@ -662,10 +662,17 @@ def parse_pax(path: Path, root: Path) -> dict:
     if header[:4] != PAX_HEADER_MAGIC:
         raise RuntimeError(f"{path}: legacy PAX layout cannot prove row count")
     coarse = {}
-    if header[4] == 3:
-        a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+    a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+    if a0_length > 0:
         if a0_length < 48:
             raise RuntimeError(f"{path}: invalid A0 length {a0_length}")
+        if a0_offset + a0_length > size:
+            raise RuntimeError(
+                f"{path}: A0 extents [{a0_offset}+{a0_length}] exceed the "
+                f"segment ({size} B) — offsets 56..72 are body bytes on the "
+                "pre-collapse 56-byte-header v1 layout (legacy layouts "
+                "unsupported; harness beds are always freshly written)"
+            )
         with path.open("rb") as segment:
             segment.seek(a0_offset)
             a0 = segment.read(a0_length)
@@ -686,6 +693,75 @@ def pax_geometry(root: Path) -> dict:
     segments = [
         parse_pax(path, root) for path in sorted(root.rglob("*.pax")) if path.is_file()
     ]
+    return {
+        "segment_count": len(segments),
+        "row_count": sum(item["rows"] for item in segments),
+        "bytes": sum(item["bytes"] for item in segments),
+        "segments": segments,
+    }
+
+
+def materialize_footer_geometry(fetch_range, inventory: dict) -> dict:
+    """TD-BENCH-2 fix: footer-only remote geometry, shared by the Azure and
+    S3 readers. Proving a segment's row count needs the 72-byte header, the
+    16-byte tail (footer length + PAX magic), the 9-byte footer prefix (row
+    count), and optionally the small A0 directory — KBs of ranged reads per
+    segment instead of whole-segment downloads (~267 MB), so settle cannot
+    lose a materialize-vs-deadline race at high RTT. ``fetch_range(name,
+    start, end)`` is the backend's inclusive byte-range primitive.
+    """
+    segments = []
+    for blob in inventory["segments"]:
+        name = blob["path"]
+        size = int(blob["bytes"])
+        if size < 25:
+            raise RuntimeError(f"{name}: too short for a coalesced PAX segment")
+        header = fetch_range(name, 0, 71)
+        if header[:4] != PAX_HEADER_MAGIC:
+            raise RuntimeError(f"{name}: legacy PAX layout cannot prove row count")
+        tail = fetch_range(name, size - 16, size - 1)
+        if tail[8:] != PAX_MAGIC:
+            raise RuntimeError(f"{name}: missing coalesced PAX tail")
+        footer_len = struct.unpack_from("<Q", tail, 0)[0]
+        if footer_len < 9 or footer_len + 16 > size:
+            raise RuntimeError(f"{name}: invalid footer length {footer_len}")
+        footer_start = size - (16 + footer_len)
+        footer_prefix = fetch_range(name, footer_start, footer_start + 8)
+        if footer_prefix[0] != 1:
+            raise RuntimeError(f"{name}: unsupported footer version {footer_prefix[0]}")
+        coarse = {}
+        # A0 presence is authoritative from the header's a0 extents (same
+        # offsets in every layout version; the post-collapse v1 writer emits
+        # the coarse directory in v1 segments — header[4]==3 is the retired
+        # two-level marker).
+        a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+        if a0_length >= 48:
+            if a0_offset + a0_length > size:
+                # Offsets 56..72 hold segment BODY bytes on the pre-collapse
+                # 56-byte-header v1 layout (SEG_HEADER_PREFIX_LEN was 56 at
+                # 47bef62e); a junk u64 there means a legacy/misread header.
+                # Fresh-prefix beds are always written by the current binary,
+                # so reaching this is a provenance bug — fail loudly.
+                raise RuntimeError(
+                    f"{name}: A0 extents [{a0_offset}+{a0_length}] exceed the "
+                    f"object ({size} B) — offsets 56..72 are body bytes, i.e. a "
+                    "pre-collapse 56-byte-header v1 segment (legacy layouts "
+                    "unsupported; harness beds are always freshly written)"
+                )
+            a0 = fetch_range(name, a0_offset, a0_offset + a0_length - 1)
+            if len(a0) == a0_length:
+                coarse = parse_a0_geometry(a0)
+        segments.append(
+            {
+                "path": name,
+                "bytes": size,
+                "rows": struct.unpack_from("<Q", footer_prefix, 1)[0],
+                "layout_version": header[4],
+                "mtime_ns": 0,
+                "blob_etag": str(blob.get("etag", "")),
+                **coarse,
+            }
+        )
     return {
         "segment_count": len(segments),
         "row_count": sum(item["rows"] for item in segments),
@@ -715,6 +791,33 @@ class AzureCliPaxGeometry:
         self.container = parsed.netloc
         self.prefix = parsed.path.strip("/")
         self.snapshot_root = snapshot_root
+
+    _AZ_TIMEOUT_SECS = 300
+
+    @staticmethod
+    def _run_bounded(command: list[str], timeout: int) -> str:
+        """TD-RDSTRAT-12 §3 defensive: az CLI calls are bounded — a hung
+        subprocess (telemetry/DNS/proxy stall) previously froze the settle
+        loop forever with no error and no progress. Timeouts surface as
+        RuntimeError, which the settle loop already treats as transient."""
+        try:
+            completed = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"az CLI timed out after {timeout}s: {command[2:4]}"
+            ) from error
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(
+                f"az CLI failed ({error.returncode}): "
+                f"{(error.stderr or '')[:400]}"
+            ) from error
+        return completed.stdout
 
     @staticmethod
     def _authentication_args() -> list[str]:
@@ -747,13 +850,7 @@ class AzureCliPaxGeometry:
         if self.prefix:
             command.extend(["--prefix", self.prefix])
         command.extend(self._authentication_args())
-        completed = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        payload = json.loads(completed.stdout)
+        payload = json.loads(self._run_bounded(command, self._AZ_TIMEOUT_SECS))
         if not isinstance(payload, list):
             raise RuntimeError("Azure CLI blob inventory was not a JSON list")
         # Azure's server-side prefix match is lexical, not path-segment aware:
@@ -823,49 +920,192 @@ class AzureCliPaxGeometry:
             for item in inventory["segments"]
         )
 
-    def materialize(self, inventory: dict) -> dict:
+    def _download_range(self, blob_name: str, start: int, end: int) -> bytes:
+        """TD-BENCH-2 fix: inclusive byte-range fetch (KBs) instead of
+        whole-segment downloads (~267 MB) — removes the
+        materialize-vs-deadline race that silently discarded high-RTT arms."""
+        target = self.snapshot_root / "range-scratch.bin"
         self.snapshot_root.mkdir(parents=True, exist_ok=True)
-        segments = []
-        for blob in inventory["segments"]:
-            target = self._snapshot_target(blob["path"])
-            target.parent.mkdir(parents=True, exist_ok=True)
-            command = [
-                    "az",
-                    "storage",
-                    "blob",
-                    "download",
-                    "--container-name",
-                    self.container,
-                    "--name",
-                    blob["path"],
-                    "--file",
-                    str(target),
-                    "--overwrite",
-                    "true",
-                    "--no-progress",
-                    "--output",
-                    "none",
-                ]
-            command.extend(self._authentication_args())
+        command = [
+            "az", "storage", "blob", "download",
+            "--container-name", self.container,
+            "--name", blob_name,
+            "--file", str(target),
+            "--overwrite", "true",
+            "--start-range", str(start),
+            "--end-range", str(end),
+            "--no-progress", "--output", "none",
+        ]
+        command.extend(self._authentication_args())
+        try:
             subprocess.run(
-                command,
-                check=True,
+                command, check=True, capture_output=True,
+                text=True, timeout=300,
             )
-            if target.stat().st_size != blob["bytes"]:
-                raise RuntimeError(
-                    f"Azure snapshot size mismatch for {blob['path']}: "
-                    f"{target.stat().st_size} != {blob['bytes']}"
-                )
-            parsed = parse_pax(target, self.snapshot_root)
-            parsed["path"] = blob["path"]
-            parsed["blob_etag"] = blob["etag"]
-            segments.append(parsed)
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"az ranged download timed out after 300s: {blob_name}[{start},{end}]"
+            ) from error
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(
+                f"az ranged download failed ({error.returncode}) for "
+                f"{blob_name}[{start},{end}]: {(error.stderr or '')[:400]}"
+            ) from error
+        return target.read_bytes()
+
+    def materialize(self, inventory: dict) -> dict:
+        return materialize_footer_geometry(self._download_range, inventory)
+
+
+class S3PaxGeometry:
+    """Read final PAX geometry from an S3-shaped endpoint (e.g. MinIO) via
+    boto3, without touching server metrics.
+
+    Same out-of-process contract as ``AzureCliPaxGeometry``: inventory and
+    footer reads here cannot inflate or warm the measured ProximaDB process's
+    cache counters. boto3 calls carry explicit connect/read timeouts so a hung
+    endpoint fails the settle loop loudly instead of freezing it (the
+    TD-BENCH-2 defensive posture, ported from the az CLI runner).
+    """
+
+    _CONNECT_TIMEOUT_SECS = 10
+    _READ_TIMEOUT_SECS = 120
+
+    def __init__(
+        self,
+        storage_url: str,
+        snapshot_root: Path,
+        endpoint_url: str,
+        region: str = "us-east-1",
+    ):
+        parsed = urlparse(storage_url)
+        if parsed.scheme != "s3":
+            raise RuntimeError(
+                f"S3 geometry requires canonical s3:// storage, got {storage_url}"
+            )
+        if not parsed.netloc:
+            raise RuntimeError(f"S3 storage URL has no bucket: {storage_url}")
+        if not endpoint_url:
+            raise RuntimeError("S3 geometry requires an explicit endpoint URL")
+        self.bucket = parsed.netloc
+        self.prefix = parsed.path.strip("/")
+        self.endpoint_url = endpoint_url
+        self.region = region
+        self.snapshot_root = snapshot_root
+        try:
+            import boto3
+            import botocore.config
+        except ImportError as error:
+            raise RuntimeError(
+                "S3 geometry requires boto3; run the harness with the "
+                "repository Python environment"
+            ) from error
+        access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        if not access_key or not secret_key:
+            raise RuntimeError(
+                "S3 geometry requires AWS_ACCESS_KEY_ID and "
+                "AWS_SECRET_ACCESS_KEY in the environment"
+            )
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            region_name=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=botocore.config.Config(
+                s3={"addressing_style": "path"},
+                connect_timeout=self._CONNECT_TIMEOUT_SECS,
+                read_timeout=self._READ_TIMEOUT_SECS,
+                retries={"max_attempts": 2},
+            ),
+        )
+
+    def _list_objects(self) -> list[dict]:
+        """Paginated key inventory under the configured prefix."""
+        objects: list[dict] = []
+        paginator = self._client.get_paginator("list_objects_v2")
+        try:
+            pages = (
+                paginator.paginate(Bucket=self.bucket, Prefix=self.prefix)
+                if self.prefix
+                else paginator.paginate(Bucket=self.bucket)
+            )
+            for page in pages:
+                for item in page.get("Contents", []):
+                    objects.append(
+                        {
+                            "name": str(item["Key"]),
+                            "size": int(item["Size"]),
+                            "etag": str(item.get("ETag", "")).strip('"'),
+                        }
+                    )
+        except Exception as error:
+            raise RuntimeError(f"S3 list_objects_v2 failed: {error}") from error
+        # S3's server-side prefix match is lexical, not path-segment aware:
+        # prefix "run-1" also returns "run-10/...". Enforce the canonical
+        # object-prefix boundary locally so geometry, empty-prefix checks,
+        # and evidence snapshots cannot mix sibling benchmark beds (same
+        # defense as the Azure reader).
+        if self.prefix:
+            descendant_prefix = f"{self.prefix}/"
+            objects = [
+                item
+                for item in objects
+                if item["name"] == self.prefix
+                or item["name"].startswith(descendant_prefix)
+            ]
+        return objects
+
+    def require_empty_prefix(self) -> None:
+        objects = self._list_objects()
+        if objects:
+            names = [item["name"] for item in objects[:5]]
+            raise RuntimeError(
+                f"S3 benchmark prefix is not empty: s3://{self.bucket}/{self.prefix}, "
+                f"first_objects={names}"
+            )
+
+    def inventory(self) -> dict:
+        segments = [
+            {
+                "path": item["name"],
+                "bytes": item["size"],
+                "etag": item["etag"],
+            }
+            for item in self._list_objects()
+            if item["name"].endswith(".pax")
+        ]
+        segments.sort(key=lambda item: item["path"])
         return {
             "segment_count": len(segments),
-            "row_count": sum(item["rows"] for item in segments),
             "bytes": sum(item["bytes"] for item in segments),
             "segments": segments,
         }
+
+    @staticmethod
+    def stable_signature(inventory: dict) -> tuple:
+        return tuple(
+            (item["path"], item["bytes"], item["etag"])
+            for item in inventory["segments"]
+        )
+
+    def _download_range(self, key: str, start: int, end: int) -> bytes:
+        """TD-BENCH-2 ranged fetch: inclusive byte range, KBs per read."""
+        try:
+            self.snapshot_root.mkdir(parents=True, exist_ok=True)
+            response = self._client.get_object(
+                Bucket=self.bucket, Key=key, Range=f"bytes={start}-{end}"
+            )
+            with response["Body"] as stream:
+                return stream.read()
+        except Exception as error:
+            raise RuntimeError(
+                f"S3 ranged read failed for {key}[{start},{end}]: {error}"
+            ) from error
+
+    def materialize(self, inventory: dict) -> dict:
+        return materialize_footer_geometry(self._download_range, inventory)
 
 
 def stable_signature(geometry: dict) -> tuple:
@@ -904,8 +1144,15 @@ def layout_candidate_is_ready(
         return True
     segments = geometry.get("segments", [])
     if segments and all("layout_version" in segment for segment in segments):
+        # A settled segment must ALSO carry a coarse A0 directory: the
+        # required-layout-version=1 default retired the L0-filename gate, and
+        # an untrained flush artifact is a v1 segment with a valid row count —
+        # only the missing coarse directory distinguishes it from a trained
+        # one. Untrained segments are transient (training compaction replaces
+        # them), so not-ready keeps the settle loop polling.
         return all(
             segment["layout_version"] == required_layout_version
+            and segment.get("coarse_cells")
             for segment in segments
         )
     if not azure_inventory or required_layout_version <= 1:
@@ -926,7 +1173,7 @@ def wait_for_materialization(
     max_segments: int,
     timeout_seconds: int,
     stable_seconds: int,
-    azure_geometry: AzureCliPaxGeometry | None = None,
+    azure_geometry: AzureCliPaxGeometry | S3PaxGeometry | None = None,
     required_layout_version: int | None = None,
 ) -> dict:
     deadline = time.monotonic() + timeout_seconds
@@ -1575,6 +1822,8 @@ class OwnedServer:
         nprobe: int | None = None,
         training_compaction_min_mb: int | None = None,
         azure_emulator: bool = False,
+        s3_endpoint: str | None = None,
+        s3_region: str = "us-east-1",
         coalesce_gap_bytes: int = AZURE_COALESCE_GAP_BYTES,
         coalesce_range_bytes: int = AZURE_COALESCE_RANGE_BYTES,
         adaptive_read_strategy: bool = False,
@@ -1591,6 +1840,8 @@ class OwnedServer:
         self.nprobe = nprobe
         self.training_compaction_min_mb = training_compaction_min_mb
         self.azure_emulator = azure_emulator
+        self.s3_endpoint = s3_endpoint
+        self.s3_region = s3_region
         if coalesce_gap_bytes < 0 or coalesce_range_bytes <= 0:
             raise RuntimeError("coalescing gap must be non-negative and range positive")
         self.coalesce_gap_bytes = coalesce_gap_bytes
@@ -1631,8 +1882,46 @@ class OwnedServer:
             # an invoking shell's exports would silently merge arms.
             "PROXIMADB_READ_RANGES_INFLIGHT",
             "PROXIMADB_READ_RANGES_WAVE_SPLIT_MB",
+            # S3 endpoint identity comes from --s3-endpoint/--s3-region only;
+            # ambient AWS_* (SDK convention files, endpoint-url variants,
+            # session tokens) and PROXIMADB_S3_* overrides would silently
+            # re-point or re-auth the backend.
+            "PROXIMADB_S3_ENDPOINT",
+            "PROXIMADB_S3_REGION",
+            "PROXIMADB_S3_FORCE_PATH_STYLE",
+            "AWS_ENDPOINT",
+            "AWS_ENDPOINT_URL",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_ALLOW_HTTP",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
         ):
             environment.pop(inherited_gate, None)
+        if self.s3_endpoint is not None:
+            # The server's AwsS3FileSystem reads PROXIMADB_S3_ENDPOINT /
+            # PROXIMADB_S3_FORCE_PATH_STYLE (mod.rs aws_s3_config_from_env);
+            # MinIO requires path-style (no bucket DNS under the endpoint
+            # host). AWS_ENDPOINT/creds additionally cover the object_store
+            # parse_url_opts path, and plain HTTP needs the explicit allow
+            # flag there.
+            environment.update(
+                {
+                    "PROXIMADB_S3_ENDPOINT": self.s3_endpoint,
+                    "PROXIMADB_S3_FORCE_PATH_STYLE": "1",
+                    "AWS_ENDPOINT": self.s3_endpoint,
+                    "AWS_REGION": self.s3_region,
+                    "AWS_ACCESS_KEY_ID": os.environ["AWS_ACCESS_KEY_ID"],
+                    "AWS_SECRET_ACCESS_KEY": os.environ["AWS_SECRET_ACCESS_KEY"],
+                    **(
+                        {"AWS_ALLOW_HTTP": "true"}
+                        if self.s3_endpoint.startswith("http://")
+                        else {}
+                    ),
+                }
+            )
         if self.read_ranges_inflight > 0:
             environment["PROXIMADB_READ_RANGES_INFLIGHT"] = str(
                 self.read_ranges_inflight
@@ -2296,7 +2585,15 @@ def main() -> int:
     )
     parser.add_argument("--stable-secs", type=int, default=30)
     parser.add_argument("--max-segments", type=int, default=2)
-    parser.add_argument("--require-layout-version", type=int, default=3)
+    parser.add_argument(
+        "--require-layout-version",
+        type=int,
+        default=1,
+        help=(
+            "expected on-disk segment layout version asserted against settled "
+            "footers; the current writer emits 1 (post-collapse single layout)"
+        ),
+    )
     parser.add_argument("--post-write-max-gets", type=float, default=5.0)
     parser.add_argument("--local-warm-max-gets", type=float, default=10.0)
     parser.add_argument("--object-cold-max-gets", type=float, default=20.0)
@@ -2317,6 +2614,18 @@ def main() -> int:
             "--storage-url az://... and AZURE_STORAGE_CONNECTION_STRING for "
             "out-of-process geometry snapshots"
         ),
+    )
+    parser.add_argument(
+        "--s3-endpoint",
+        help=(
+            "S3-shaped endpoint URL for --storage-url s3://... (e.g. "
+            "http://minio-host:9000); forwarded to the server as AWS_ENDPOINT"
+        ),
+    )
+    parser.add_argument(
+        "--s3-region",
+        default="us-east-1",
+        help="S3 region sentinel forwarded to the server as AWS_REGION (default us-east-1)",
     )
     parser.add_argument(
         "--local-warm-max-p50-ms",
@@ -2423,6 +2732,19 @@ def main() -> int:
     if args.azurite and not os.environ.get("AZURE_STORAGE_CONNECTION_STRING"):
         raise RuntimeError(
             "--azurite requires AZURE_STORAGE_CONNECTION_STRING for geometry"
+        )
+    if (
+        urlparse(args.storage_url or "").scheme == "s3"
+    ) and args.s3_endpoint is None:
+        raise RuntimeError(
+            "--storage-url s3://... requires --s3-endpoint (e.g. http://minio-host:9000)"
+        )
+    if args.s3_endpoint is not None and not (
+        os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")
+    ):
+        raise RuntimeError(
+            "S3 storage requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
+            "in the harness environment; they are forwarded to the server"
         )
 
     binary = args.binary.resolve()
@@ -2561,21 +2883,27 @@ def main() -> int:
     )
     storage_url = args.storage_url or f"file://{root / 'data' / 'sst'}"
     storage_scheme = urlparse(storage_url).scheme
-    if storage_scheme not in {"file", "adls", "az", "azure"}:
+    if storage_scheme not in {"file", "adls", "az", "azure", "s3"}:
         raise RuntimeError(
             f"unsupported benchmark storage URL scheme: {storage_scheme}"
         )
-    azure_geometry = (
-        AzureCliPaxGeometry(storage_url, root / "azure-pax-snapshot")
-        if storage_scheme in {"adls", "az", "azure"}
-        else None
-    )
-    if azure_geometry is not None:
-        azure_geometry.require_empty_prefix()
-    if args.explicit_flush_every_rows is not None and azure_geometry is None:
+    # Remote geometry reader, duck-typed across backends: inventory /
+    # require_empty_prefix / stable_signature / materialize. Azure uses the
+    # az CLI; S3-shaped endpoints use boto3. Both read out-of-process and
+    # cannot touch the measured server's counters.
+    remote_geometry = None
+    if storage_scheme in {"adls", "az", "azure"}:
+        remote_geometry = AzureCliPaxGeometry(storage_url, root / "azure-pax-snapshot")
+    elif storage_scheme == "s3":
+        remote_geometry = S3PaxGeometry(
+            storage_url, root / "s3-pax-snapshot", args.s3_endpoint, args.s3_region
+        )
+    if remote_geometry is not None:
+        remote_geometry.require_empty_prefix()
+    if args.explicit_flush_every_rows is not None and remote_geometry is None:
         raise RuntimeError(
-            "--explicit-flush-every-rows requires Azure/Azurite storage so "
-            "each durable PAX epoch can be proven by blob identity"
+            "--explicit-flush-every-rows requires Azure/S3 remote storage so "
+            "each durable PAX epoch can be proven by object identity"
         )
     config = root / "benchmark.toml"
     write_config(
@@ -2600,7 +2928,11 @@ def main() -> int:
     backend_profile = (
         "azure_blob_azurite"
         if args.azurite
-        else ("azure_blob" if azure_geometry is not None else "local_file")
+        else (
+            "s3_endpoint"
+            if storage_scheme == "s3"
+            else ("azure_blob" if remote_geometry is not None else "local_file")
+        )
     )
     filesystem_note = (
         "Azure backend and HTTP request-path evidence against Azurite. "
@@ -2612,10 +2944,20 @@ def main() -> int:
         else (
             "GET count is physical-I/O-seam evidence. Latency is local "
             "filesystem evidence, not Azure WAN evidence."
-            if azure_geometry is None
+            if remote_geometry is None
             else (
-                "Azure backend evidence. Out-of-process Azure CLI inventory/"
-                "footer reads are excluded from the measured server counters."
+                "S3-shaped backend (e.g. MinIO) over HTTP; GET counters are "
+                "emitted by the measured ProximaDB process. Out-of-process "
+                "boto3 inventory/footer reads are excluded from those "
+                "counters but may warm the endpoint's host page cache; "
+                "latency is endpoint-network evidence, not production-cloud "
+                "evidence."
+                if storage_scheme == "s3"
+                else (
+                    "Azure backend evidence. Out-of-process Azure CLI "
+                    "inventory/footer reads are excluded from the measured "
+                    "server counters."
+                )
             )
         )
     )
@@ -2664,9 +3006,14 @@ def main() -> int:
             "segment_backend": backend_profile,
             "storage_url": storage_url,
             "azurite": args.azurite,
+            "s3_endpoint": args.s3_endpoint,
             "geometry_evidence": (
-                "azure_cli_inventory_and_footer_snapshot"
-                if azure_geometry is not None
+                (
+                    "s3_boto3_inventory_and_footer_snapshot"
+                    if storage_scheme == "s3"
+                    else "azure_cli_inventory_and_footer_snapshot"
+                )
+                if remote_geometry is not None
                 else "local_pax_footer"
             ),
             "local_disk_path": str(local_disk),
@@ -2756,6 +3103,8 @@ def main() -> int:
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            s3_endpoint=args.s3_endpoint,
+            s3_region=args.s3_region,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
@@ -2784,7 +3133,7 @@ def main() -> int:
             args.port,
             args.ingest_transport,
             args.explicit_flush_every_rows,
-            azure_geometry,
+            remote_geometry,
         )
         result["collection_id"] = collection_id
         result["ingest"] = {
@@ -2802,7 +3151,7 @@ def main() -> int:
             args.max_segments,
             args.settle_timeout_secs,
             args.stable_secs,
-            azure_geometry,
+            remote_geometry,
             required_layout_version=args.require_layout_version,
         )
         wrong_layouts = [
@@ -2814,6 +3163,16 @@ def main() -> int:
             raise RuntimeError(
                 "settled segment layout mismatch: "
                 f"required v{args.require_layout_version}, got {wrong_layouts}"
+            )
+        untrained = [
+            segment["path"]
+            for segment in geometry["segments"]
+            if not segment.get("coarse_cells")
+        ]
+        if untrained:
+            raise RuntimeError(
+                "settled segment(s) lack a coarse A0 directory "
+                f"(untrained flush artifact?): {untrained}"
             )
         if args.ivf_k is not None:
             wrong_cells = [
@@ -2887,6 +3246,8 @@ def main() -> int:
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            s3_endpoint=args.s3_endpoint,
+            s3_region=args.s3_region,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
@@ -2926,6 +3287,8 @@ def main() -> int:
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            s3_endpoint=args.s3_endpoint,
+            s3_region=args.s3_region,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
