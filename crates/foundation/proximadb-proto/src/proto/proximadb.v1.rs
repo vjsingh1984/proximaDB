@@ -13807,7 +13807,12 @@ pub enum CatalogType {
     /// Apache Polaris (Iceberg REST)
     Polaris = 4,
     // RETIRED TD-CAT-8 (2026-08-20): value 5 was CATALOG_TYPE_HIVE (never
-    // worked; was a mock) — reserved in catalog.proto; decoding value 5 fails.
+    // worked; was a mock) — reserved in catalog.proto. NOTE: binary proto
+    // decode of value 5 does NOT error (the field is a raw i32 with no
+    // generated getter; unknown values pass through) — rejection happens at
+    // the JSON/serde boundary, where the deleted "Hive" oneof variant is an
+    // unknown-variant hard error. See TD-PROTO-2 for the mirror-drift guard
+    // discussion.
     /// Generic Iceberg REST Catalog
     IcebergRest = 6,
     /// Iceberg JDBC Catalog
