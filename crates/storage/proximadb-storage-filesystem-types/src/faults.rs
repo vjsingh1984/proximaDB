@@ -16,9 +16,11 @@
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
+use crate::{
+    DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata, FsResult,
+    RangeCoalescePolicy,
+};
 use async_trait::async_trait;
-use crate::{DirEntry, FileOptions, FilesystemError, FilesystemFile, FsFileMetadata, FsResult,
-            FileSystem, RangeCoalescePolicy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FaultMode {
@@ -30,13 +32,13 @@ enum FaultMode {
 
 fn fault_mode() -> Option<FaultMode> {
     static MODE: OnceLock<Option<FaultMode>> = OnceLock::new();
-    *MODE.get_or_init(|| {
-        match std::env::var("PROXIMADB_TEST_FS_DELETE_FAIL_FIRST") {
+    *MODE.get_or_init(
+        || match std::env::var("PROXIMADB_TEST_FS_DELETE_FAIL_FIRST") {
             Ok(v) if v.trim() == "1" => Some(FaultMode::FirstOnly),
             Ok(v) if v.trim().eq_ignore_ascii_case("always") => Some(FaultMode::Always),
             _ => None,
-        }
-    })
+        },
+    )
 }
 
 fn already_failed() -> &'static Mutex<HashSet<String>> {
