@@ -67,6 +67,14 @@ impl FaultInjectingFileSystem {
     }
 
     fn delete_fault(&self, path: &str) -> Option<FilesystemError> {
+        // Scope to compaction-retirement deletes: the atomic flush publish
+        // (staging→final move) also deletes a `.pax` under the `__flush`
+        // staging area, and faulting that fails the flush at commit instead of
+        // the compaction at retirement. Metadata/WAL rotations are excluded by
+        // the `.pax` filter.
+        if !path.ends_with(".pax") || path.contains("__flush") {
+            return None;
+        }
         match fault_mode()? {
             FaultMode::Always => Some(FilesystemError::Network(format!(
                 "fault-injected delete failure (always): {path}"

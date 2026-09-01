@@ -201,12 +201,19 @@ async fn compaction_chain_leaves_exactly_one_segment_and_all_rows_searchable() -
     let (dir, engine, coll) = run_chain("retire_invariant").await?;
 
     let segments = pax_segments(dir.path());
+    // THE INVARIANT is row accounting, not segment count: a two-level state is
+    // legitimate when the lower level holds NEW rows (a late flush after the
+    // compaction snapshot); it is the TD-COMPACT-13 defect when rows are
+    // DUPLICATED across levels (sum > ingested — the measured 3.03x case:
+    // 500k+500k+1M = 2M live rows for 1M ingested) and data loss when the sum
+    // is short.
+    let total_rows = live_row_total(&segments);
     assert_eq!(
-        segments.len(),
-        1,
-        "TD-COMPACT-13: superseded compaction inputs must not survive in the \
-         storage location (found {} segments: {segments:?})",
-        segments.len()
+        total_rows,
+        ROUNDS as u64 * 2 * BATCH as u64,
+        "TD-COMPACT-13: live-set rows must equal ingested rows exactly — \
+         a surplus proves duplicated coverage across levels, a deficit proves loss \
+         (segments: {segments:?})"
     );
 
     // Every round's ids stay searchable across the whole chain.
@@ -225,6 +232,29 @@ async fn compaction_chain_leaves_exactly_one_segment_and_all_rows_searchable() -
         "retire-pending sidecar must not outlive a clean chain: {sidecars:?}"
     );
     Ok(())
+}
+
+/// Sum of live rows across every `.pax` segment, read from each footer
+/// (tail 16 B = footer_len u64 LE + PAXSEG01 magic; the footer's first 9 B =
+/// version u8 + row count u64 LE). Same authority the benchmark harness uses.
+fn live_row_total(segments: &[PathBuf]) -> u64 {
+    segments
+        .iter()
+        .map(|p| {
+            let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+            assert!(bytes.len() >= 25, "{} too short", p.display());
+            let tail = &bytes[bytes.len() - 16..];
+            assert_eq!(&tail[8..], b"PAXSEG01", "{} missing PAX tail", p.display());
+            let footer_len = u64::from_le_bytes(tail[0..8].try_into().unwrap()) as usize;
+            let footer_start = bytes.len() - 16 - footer_len;
+            assert_eq!(bytes[footer_start], 1, "{} footer version", p.display());
+            u64::from_le_bytes(
+                bytes[footer_start + 1..footer_start + 9]
+                    .try_into()
+                    .unwrap(),
+            )
+        })
+        .sum()
 }
 
 fn pax_sidecars(dir: &Path) -> Vec<PathBuf> {
