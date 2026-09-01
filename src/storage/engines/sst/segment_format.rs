@@ -1224,6 +1224,9 @@ pub(crate) async fn read_records_by_positions(
     use proximadb_block_format::{PaxBlockReader, record::FlatRow};
     use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
 
+    // TD-RDSTRAT-13 PR-B: attribute the whole rehydration pass (metadata +
+    // header/footer + block fetches + decode) — the second Region-D read.
+    let rehydrate_started = std::time::Instant::now();
     let mut out: Vec<Option<proximadb_records::ProximaRecord>> = vec![None; positions.len()];
     if positions.is_empty() {
         return Ok(out);
@@ -1345,6 +1348,12 @@ pub(crate) async fn read_records_by_positions(
             }
         }
     }
+    crate::observability::io_trace::record_rehydrate_us(
+        rehydrate_started.elapsed().as_micros() as u64
+    );
+    crate::storage::engines::sst::metrics::record_rehydrate_us(
+        rehydrate_started.elapsed().as_micros() as u64,
+    );
     Ok(out)
 }
 
@@ -3969,6 +3978,9 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     //    dense — no bystander props/fp32). The dequant key (min + scale) is
     //    mirrored in the footer (already read), so there is NO separate 24 B
     //    Region-B-header GET — reconstruct the params + codes_base from the footer.
+    // TD-RDSTRAT-13 PR-B: this section (fetch + rerank) is one of the four
+    // attributed tail segments; the wall is recorded at the `scored` boundary.
+    let region_b_started = std::time::Instant::now();
     let dim = footer.embed_dim as usize;
     let sq8_params = coalesced_sq8::params_from_min_scale(footer.sq8_min, footer.sq8_scale);
     let query_norm_squared = if metric == RankMetric::Cosine {
@@ -4340,7 +4352,18 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         }
     }
     if scored.is_empty() {
+        crate::observability::io_trace::record_region_b_rerank_us(
+            region_b_started.elapsed().as_micros() as u64,
+        );
+        crate::storage::engines::sst::metrics::record_region_b_rerank_us(
+            region_b_started.elapsed().as_micros() as u64,
+        );
         return Ok(Some(Vec::new()));
+    }
+    {
+        let us = region_b_started.elapsed().as_micros() as u64;
+        crate::observability::io_trace::record_region_b_rerank_us(us);
+        crate::storage::engines::sst::metrics::record_region_b_rerank_us(us);
     }
     // Global top-k survivor rows (nearest-first; lower score = nearer).
     scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -4349,6 +4372,8 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     // 5. ADR-065 Region D: fetch ONLY the top-k OIDs from the row blocks (≤k
     //    coalesced GETs — vs PR2's M-survivor block fetches). Map top-k rows →
     //    blocks via cumulative row counts.
+    // TD-RDSTRAT-13 PR-B: fetch+decode wall attributed here (both arms).
+    let region_d_started = std::time::Instant::now();
     let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
     let mut acc = 0u64;
     for b in &footer.blocks {
@@ -4647,6 +4672,14 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                 }
             }
         }
+    }
+
+    // TD-RDSTRAT-13 PR-B: Region-D fetch+decode wall recorded at the boundary
+    // where all top-k OIDs are resolved.
+    {
+        let us = region_d_started.elapsed().as_micros() as u64;
+        crate::observability::io_trace::record_region_d_fetch_decode_us(us);
+        crate::storage::engines::sst::metrics::record_region_d_fetch_decode_us(us);
     }
 
     // 6. Build the top-k hits in nearest-first order (from `scored`); step 7

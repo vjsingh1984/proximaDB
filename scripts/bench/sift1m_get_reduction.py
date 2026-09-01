@@ -81,6 +81,10 @@ METRICS = (
     "proximadb_pax_metadata_ops_agg_total",
     "proximadb_ivf_probe_rank_us_agg_total",
     "proximadb_ivf_probe_rank_calls_agg_total",
+    "proximadb_region_b_rerank_us_agg_total",
+    "proximadb_region_d_fetch_decode_us_agg_total",
+    "proximadb_rehydrate_us_agg_total",
+    "proximadb_cascade_total_us_agg_total",
 )
 
 
@@ -1635,6 +1639,16 @@ def run_query_sweep(
     rank_us_total = metric_delta(before, after, "proximadb_ivf_probe_rank_us_agg_total")
     rank_calls = metric_delta(before, after, "proximadb_ivf_probe_rank_calls_agg_total")
     rank_us_mean = rank_us_total / rank_calls if rank_calls else 0.0
+    # TD-RDSTRAT-13 PR-B tail attribution (per-phase wall deltas).
+    tail_attribution = {
+        name: metric_delta(before, after, name)
+        for name in (
+            "proximadb_region_b_rerank_us_agg_total",
+            "proximadb_region_d_fetch_decode_us_agg_total",
+            "proximadb_rehydrate_us_agg_total",
+            "proximadb_cascade_total_us_agg_total",
+        )
+    }
     survivor_total = survivor_hits + survivor_misses
     invariant_total = invariant_hits + invariant_misses
     result = {
@@ -1708,6 +1722,7 @@ def run_query_sweep(
             "metadata_ops_per_query": metadata_ops / query_count,
             "probe_rank_us_mean": rank_us_mean,
             "probe_rank_calls": rank_calls,
+            "tail_attribution_us": tail_attribution,
         },
         "read_ranges_wave": {
             # TD-RDSTRAT-12 §2: observable proof the bounded-concurrent wave
