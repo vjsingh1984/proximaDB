@@ -1224,3 +1224,35 @@ hardware = "Local macOS arm64 (Apple Silicon, 64GB) client; MinIO (quay.io/minio
 date = "2026-08-31"
 version = "Rust tree of develop @ 431f995e2 (post-collapse single-layout v1 regime), run HEAD b679f08d1 (scripts/docs-only commits between, per the harness's binary-source-revision guard); binary sha256 7d59b1bd2c23379f6cec3c6c63ba7ec0c2b0d34a5055797e098f359043f6e474 built --features aws; harness with S3PaxGeometry + TD-BENCH-2 fixes + post-collapse layout acceptance"
 notes = "Bed geometry is bistable across arms (L3 x1 30-cells vs L1+L2 splits; byte-identical WITHIN the real/rtt100/rtt150 pairs, mixed for rtt50 — that pair's GET mismatch and identity divergence are bed artifacts, recall still matched). Harness GET ceilings (local-warm 10 / object-cold 20) trip on this bed's ~22-26 GET/q — expected, arms exit 1, result.json authoritative (az-ladder precedent). Incidental develop-bug fix carried in the same PR: the settle gate deadlocked on every post-collapse bed because the harness still required the retired v3 layout marker; A0 presence is now a0_len>0 and required layout defaults to 1 (validated against a live bed: rows=1000000, coarse cells 7+22 parsed). Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "rdstrat13_minio_s3_mechanisms"
+claim = "TD-RDSTRAT-13 S3/MinIO campaign (base 338440997 vs full C1-C4, 9 arms, {real ~5.5/50/100/150}ms RTT): all four shipped mechanisms verified at strict billed-read parity — bytes delta +0.00% and result-identity hashes IDENTICAL in every same-bed pair; C3's HEAD elimination measured directly (metadata_ops/q = 0.00 on the full binary); C4's wave fires on every full arm (2.08-4.83 rounds/query, width 8) with the footer riding it; C2's morsel rank is oracle-proven byte-identical and MEASURES 33.7 ms mean at 882k probed rows (parallel) vs 42.9 ms at 370k (sequential). The direct rank measurement CORRECTS the az ladder's inferred '~0.9 s compute' premise (rdstrat12_sift1m_rtt_ladder_crossover): the rank was never the dominant cold term at this geometry — the residual was byte transfer. Acceptance (<=870 ms @100 ms) NOT MET on this bed: it is transfer-dominated (~98% of p50: 125.5 MB/query at ~14 MB/s effective through the window-limited 100 ms proxy) with the L3/L2 overlap doubling bytes (see rdstrat13_l3l2_retirement_race)."
+metric = "object_cold p50 per arm pair + GET parity + bytes delta + result-identity equality + metadata_ops/q + rank_us + wave rounds/width"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-13-object-cold-probe-rank-morsels-and-round-collapse.adoc",
+]
+bench_source = "scripts/bench/sift1m_get_reduction.py"
+bench_command = "Per RTT (toxiproxy L+L over 192.168.1.65:9000; direct IP for real-net): b0 = sift1m_get_reduction.py --rows 1000000 --top-k 100 --queries 100 --post-write-max-gets 5000 --max-p50-ms 60000 --settle-timeout-secs 3600 --max-segments 2 --explicit-flush-every-rows 250000 --flush-vector-threshold 250000 --s3-endpoint <ep> --storage-url s3://proximadb-rdstrat12-minio/r13-<arm>-<tag> --read-ranges-inflight 8 ; b4 adds nothing (full binary); b4d1 adds --rank-degree 1; PROXIMADB_WAL_LOCAL_DIR per arm; base binary = develop@338440997 --features aws, full = PR head --features aws"
+artifact = "docs/_internal/status/RDSTRAT13_SIFT1M_LADDER_2026_08_31.adoc"
+hardware = "Local macOS arm64 (Apple Silicon, 64GB) client; MinIO (container minio-test) on dataserver2 (192.168.1.65:9000, IP endpoint — the hostname costs a 5 s DNS timeout on this Mac); toxiproxy 2.12.0 for injected-RTT levels; load 6.6-7.9 during arms (mid-run spikes observed)"
+date = "2026-08-31"
+version = "base: develop @ 338440997; full: PR perf/rdstrat13-coldpath @ 73494cbbc (C1-C4 + settle-gate hardening); both --profile release-server --features aws"
+notes = "Bed caveat measured and disclosed: every bed this campaign settled on the 2xL2 intermediate and most then grew an L3 WITHOUT retiring the L2s (see rdstrat13_l3l2_retirement_race), so object_cold ran on overlapping levels with ~2x rows — both arms identically (pairs internally fair; bytes/identity parity held). The degree-1 control's clean L3-only live set is the true-clean-bed reference: 2977 ms @100 ms RTT. Box load 6.6-7.9 adds run-to-run noise (rtt150 pair crossed 1.0). Indicative dev-machine run, not an SLA."
+
+[[claims]]
+id = "rdstrat13_l3l2_retirement_race"
+claim = "MEASURED product defect (highest-value cold-query lever found by the TD-RDSTRAT-13 campaign): the training-compaction chain's L3 publication/L2 retirement is racy. Two arms of the SAME binary on beds that settled byte-identically (2xL2, 245,647,274 B) served DIFFERENT live sets at query time: clean L3-only (11 cells, 370,182 rows, 58.5 MB, 21.95 GETs/q -> object_cold p50 2977 ms @100 ms RTT) vs L2+L2+L3 overlap (27 cells = 8+8+11, 882,178 rows, 125.5 MB, 50.57 GETs/q -> 9029 ms). The overlap doubles rows, bytes and GETs (re-ranking the same rows through overlapping levels; recall/result-identity stay correct via MVCC dedup at emit). The race alone is a 3.03x p50 and 2.1x bytes swing at identical code — bigger than every lever TD-RDSTRAT-13 shipped, and the direct blocker for honest absolute cold-latency numbers (the settle gate cannot see it: the overlap appears after a compaction-quiet stable window, and persists — the superseded L2s are never retired). Fix: compaction input retirement (delete/retire superseded levels on publication, manifest-driven), then re-measure the acceptance on a clean bed."
+metric = "query-time live-set cells/rows/bytes/GETs + object_cold p50 at identical code"
+status = "measured"
+asserted_in = [
+  "docs/10-quality/td/TD-RDSTRAT-13-object-cold-probe-rank-morsels-and-round-collapse.adoc",
+]
+bench_source = "scripts/bench/sift1m_get_reduction.py"
+bench_command = "Same campaign as rdstrat13_minio_s3_mechanisms; contrast b4_rtt100 (overlap live set) vs b4d1_rtt100 (clean live set), both MinIO r13-* prefixes, settled geometry verified byte-identical via result.json settled_geometry + direct MinIO inventory"
+artifact = "docs/_internal/status/RDSTRAT13_SIFT1M_LADDER_2026_08_31.adoc"
+hardware = "Same bed as rdstrat13_minio_s3_mechanisms"
+date = "2026-08-31"
+version = "Both arms PR perf/rdstrat13-coldpath binaries; the race reproduces on the base binary's beds too (b0_rtt100/b0_rtt150/b0_rtt50 all carried the overlap)"
+notes = "Follow-up TD to file: compaction input retirement (superseded-level deletion/retirement on publication). The settle gate's new compaction-quiescence check (same PR) cannot catch this — the overlap appears after a quiet window and persists indefinitely. Clean-bed acceptance re-run (~1 h, single b0/b4 pair) once the retirement fix lands."

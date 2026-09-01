@@ -78,6 +78,9 @@ METRICS = (
     "proximadb_ivf_whole_region_fallback_total",
     "proximadb_read_ranges_fetch_rounds_total",
     "proximadb_read_ranges_max_inflight",
+    "proximadb_pax_metadata_ops_agg_total",
+    "proximadb_ivf_probe_rank_us_agg_total",
+    "proximadb_ivf_probe_rank_calls_agg_total",
 )
 
 
@@ -1108,6 +1111,26 @@ class S3PaxGeometry:
         return materialize_footer_geometry(self._download_range, inventory)
 
 
+class LocalPaxGeometry:
+    """file:// adapter for the explicit-flush epoch proof: the same
+    inventory / stable_signature contract as the remote readers, backed by
+    the local PAX footer parser. Out-of-process by construction (reads the
+    settle root, not server metrics)."""
+
+    def __init__(self, sst_root: Path):
+        self.sst_root = sst_root
+
+    def require_empty_prefix(self) -> None:
+        pass  # the fresh-root check is require_empty_directory(root)
+
+    def inventory(self) -> dict:
+        return pax_geometry(self.sst_root)
+
+    @staticmethod
+    def stable_signature(inventory: dict) -> tuple:
+        return stable_signature(inventory)
+
+
 def stable_signature(geometry: dict) -> tuple:
     return tuple(
         (item["path"], item["bytes"], item["rows"], item["mtime_ns"])
@@ -1181,6 +1204,12 @@ def wait_for_materialization(
     prior = None
     last_report = 0.0
     last_parse_error = None
+    # TD-RDSTRAT-13 campaign finding: geometry can settle on the training-
+    # compaction chain's INTERMEDIATE level (2×L2) and the chain then publishes
+    # a higher level (L3) AFTER the stable window, leaving overlapping segments
+    # that double-serve rows at query time. A stable window is only trustworthy
+    # when the compaction counter is quiet for its whole duration.
+    compactions_at_window_start = None
     while time.monotonic() < deadline:
         now = time.monotonic()
         try:
@@ -1207,12 +1236,24 @@ def wait_for_materialization(
             if azure_geometry is not None
             else stable_signature(geometry)
         )
+        metrics_text = scrape_text(server)
         wal_bytes = labelled_metric(
-            scrape_text(server),
+            metrics_text,
             "proximadb_wal_size_bytes",
             "collection",
             collection_id,
         )
+        # Unlabeled aggregate counter (sst::metrics) — plain token parse, the
+        # labelled helper only matches `name{...}` lines.
+        compactions_total = None
+        for raw_line in metrics_text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("proximadb_compactions_total"):
+                try:
+                    compactions_total = float(line.split()[1])
+                except (ValueError, IndexError):
+                    compactions_total = None
+                break
         observed_rows = geometry.get("row_count")
         row_status = (
             f"{observed_rows:,}/{expected_rows:,}"
@@ -1244,6 +1285,19 @@ def wait_for_materialization(
         )
         if complete and signature == prior:
             stable_since = stable_since or now
+            if compactions_at_window_start is None:
+                compactions_at_window_start = compactions_total
+            if compactions_total != compactions_at_window_start:
+                # A compaction ran during the window: the settled geometry is
+                # an intermediate artifact of an in-flight chain. Restart the
+                # window on the post-compaction geometry.
+                print(
+                    f"settle: compaction advanced ({compactions_at_window_start} -> "
+                    f"{compactions_total}); restarting stable window",
+                    flush=True,
+                )
+                stable_since = now
+                compactions_at_window_start = compactions_total
             if now - stable_since >= stable_seconds:
                 if azure_geometry is not None:
                     geometry = azure_geometry.materialize(geometry)
@@ -1265,6 +1319,7 @@ def wait_for_materialization(
                 return geometry
         else:
             stable_since = now if complete else None
+            compactions_at_window_start = None
         prior = signature
         time.sleep(3)
     try:
@@ -1574,6 +1629,12 @@ def run_query_sweep(
         before, after, "proximadb_read_ranges_fetch_rounds_total"
     )
     rr_max_inflight = after.get("proximadb_read_ranges_max_inflight", 0.0)
+    # TD-RDSTRAT-13: per-query metadata ops (HEAD — C3 removes it) and the
+    # coarse-probe rank compute term (mean us = total/calls — C2 parallelizes it).
+    metadata_ops = metric_delta(before, after, "proximadb_pax_metadata_ops_agg_total")
+    rank_us_total = metric_delta(before, after, "proximadb_ivf_probe_rank_us_agg_total")
+    rank_calls = metric_delta(before, after, "proximadb_ivf_probe_rank_calls_agg_total")
+    rank_us_mean = rank_us_total / rank_calls if rank_calls else 0.0
     survivor_total = survivor_hits + survivor_misses
     invariant_total = invariant_hits + invariant_misses
     result = {
@@ -1642,6 +1703,11 @@ def run_query_sweep(
             "fetch_rounds": ivf_fetch_rounds,
             "fetch_rounds_per_query": ivf_fetch_rounds / query_count,
             "whole_region_fallbacks": ivf_whole_region_fallbacks,
+        },
+        "rank_and_head": {
+            "metadata_ops_per_query": metadata_ops / query_count,
+            "probe_rank_us_mean": rank_us_mean,
+            "probe_rank_calls": rank_calls,
         },
         "read_ranges_wave": {
             # TD-RDSTRAT-12 §2: observable proof the bounded-concurrent wave
@@ -1829,6 +1895,7 @@ class OwnedServer:
         adaptive_read_strategy: bool = False,
         read_ranges_inflight: int = 0,
         read_ranges_wave_split_mb: int = 0,
+        rank_degree: int = 0,
     ):
         self.binary = binary
         self.config = config
@@ -1849,6 +1916,7 @@ class OwnedServer:
         self.adaptive_read_strategy = adaptive_read_strategy
         self.read_ranges_inflight = read_ranges_inflight
         self.read_ranges_wave_split_mb = read_ranges_wave_split_mb
+        self.rank_degree = rank_degree
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -1882,6 +1950,7 @@ class OwnedServer:
             # an invoking shell's exports would silently merge arms.
             "PROXIMADB_READ_RANGES_INFLIGHT",
             "PROXIMADB_READ_RANGES_WAVE_SPLIT_MB",
+            "PROXIMADB_SEARCH_MORSEL_DEGREE",
             # S3 endpoint identity comes from --s3-endpoint/--s3-region only;
             # ambient AWS_* (SDK convention files, endpoint-url variants,
             # session tokens) and PROXIMADB_S3_* overrides would silently
@@ -1930,6 +1999,8 @@ class OwnedServer:
             environment["PROXIMADB_READ_RANGES_WAVE_SPLIT_MB"] = str(
                 self.read_ranges_wave_split_mb
             )
+        if self.rank_degree > 0:
+            environment["PROXIMADB_SEARCH_MORSEL_DEGREE"] = str(self.rank_degree)
         if self.adaptive_read_strategy:
             environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] = "1"
         else:
@@ -2583,6 +2654,12 @@ def main() -> int:
         default=0,
         help="Arm PROXIMADB_READ_RANGES_WAVE_SPLIT_MB (opt-in Region-B mega-GET wave split); 0 keeps the single-GET default",
     )
+    parser.add_argument(
+        "--rank-degree",
+        type=int,
+        default=0,
+        help="Set PROXIMADB_SEARCH_MORSEL_DEGREE (coarse-probe rank workers, TD-RDSTRAT-13); 0 keeps the server default (adaptive)",
+    )
     parser.add_argument("--stable-secs", type=int, default=30)
     parser.add_argument("--max-segments", type=int, default=2)
     parser.add_argument(
@@ -2900,11 +2977,20 @@ def main() -> int:
         )
     if remote_geometry is not None:
         remote_geometry.require_empty_prefix()
-    if args.explicit_flush_every_rows is not None and remote_geometry is None:
-        raise RuntimeError(
-            "--explicit-flush-every-rows requires Azure/S3 remote storage so "
-            "each durable PAX epoch can be proven by object identity"
-        )
+    # Epoch proof for --explicit-flush-every-rows: remote readers use object
+    # identity; a local (file://) bed proves the same epochs from the PAX
+    # footers via the LocalPaxGeometry adapter (same inventory/signature
+    # contract), so the deterministic settle protocol is not remote-only.
+    epoch_geometry = remote_geometry
+    if args.explicit_flush_every_rows is not None and epoch_geometry is None:
+        if storage_url.startswith("file://"):
+            epoch_geometry = LocalPaxGeometry(root / "data" / "sst")
+        else:
+            raise RuntimeError(
+                "--explicit-flush-every-rows requires Azure/S3 remote storage "
+                "or a local file:// bed so each durable PAX epoch can be "
+                "proven by object identity"
+            )
     config = root / "benchmark.toml"
     write_config(
         config,
@@ -3105,6 +3191,7 @@ def main() -> int:
             azure_emulator=args.azurite,
             s3_endpoint=args.s3_endpoint,
             s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
@@ -3133,7 +3220,7 @@ def main() -> int:
             args.port,
             args.ingest_transport,
             args.explicit_flush_every_rows,
-            remote_geometry,
+            epoch_geometry,
         )
         result["collection_id"] = collection_id
         result["ingest"] = {
@@ -3248,6 +3335,7 @@ def main() -> int:
             azure_emulator=args.azurite,
             s3_endpoint=args.s3_endpoint,
             s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
@@ -3289,6 +3377,7 @@ def main() -> int:
             azure_emulator=args.azurite,
             s3_endpoint=args.s3_endpoint,
             s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )

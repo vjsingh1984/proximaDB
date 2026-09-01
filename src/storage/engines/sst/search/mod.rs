@@ -35,6 +35,16 @@ pub mod optimizer;
 use anyhow::Result;
 use futures::future::join_all;
 
+/// TD-RDSTRAT-13 C3: a discovered segment plus the size the listing already
+/// reported. `size_bytes` lets the read path skip the per-segment HEAD (one
+/// billed metadata op per segment per query); `None` means the backend did
+/// not report a size and the reader must stat.
+#[derive(Clone)]
+pub(crate) struct DiscoveredSstFile {
+    pub url: String,
+    pub size_bytes: Option<u64>,
+}
+
 /// TD-SEARCH-2 S2: process-wide in-flight cold-scan counter — the input to
 /// the adaptive morsel degree. Incremented per `fallback_to_direct_search`
 /// (the segment-scan path; memtable/index serves don't burn scan CPU).
@@ -292,7 +302,7 @@ impl SstEngine {
         };
         let mut total = 0usize;
         for file_path in &files {
-            if let Ok(Some(entry_count)) = self.legacy_sst_entry_count(file_path).await {
+            if let Ok(Some(entry_count)) = self.legacy_sst_entry_count(&file_path.url).await {
                 total = total.saturating_add(entry_count);
             }
         }
@@ -393,6 +403,7 @@ impl SstEngine {
         collection_id: &str,
         collection_root: &str,
         snapshot_lsn: u64,
+        known_size: Option<u64>,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use proximadb_block_format::RankMetric;
         // Map the query metric to a cascade rank metric. Euclidean + Cosine
@@ -473,6 +484,7 @@ impl SstEngine {
                     self.segment_invariants_cache.as_deref(),
                     self.survivor_cache.as_deref(),
                     row_allow.as_ref(),
+                    known_size,
                 )
                 .await?;
                 if let Some(hits) = coalesced_hits {
@@ -760,7 +772,12 @@ impl SstEngine {
         if registered > 0 {
             let covered = match self.discover_sstable_files(storage_url).await {
                 Ok(files) if !files.is_empty() => {
-                    match self.durable_vector_count_for_rebuild(&files).await {
+                    match self
+                        .durable_vector_count_for_rebuild(
+                            &files.iter().map(|f| f.url.clone()).collect::<Vec<_>>(),
+                        )
+                        .await
+                    {
                         Some(durable) => registered as u64 >= durable,
                         None => false, // unknown → rebuild
                     }
@@ -796,7 +813,9 @@ impl SstEngine {
         // `all()` check and rebuilds normally (exact AXIS). See
         // `pax_segment_is_coarse_rabitq_without_f32_tier`.
         if self
-            .all_segments_coarse_rabitq_pax_without_f32_tier(&files)
+            .all_segments_coarse_rabitq_pax_without_f32_tier(
+                &files.iter().map(|f| f.url.clone()).collect::<Vec<_>>(),
+            )
             .await
         {
             tracing::info!(
@@ -831,7 +850,11 @@ impl SstEngine {
 
         let count = records.len();
         match axis
-            .handle_flushed_vectors(collection_id, records, files.clone())
+            .handle_flushed_vectors(
+                collection_id,
+                records,
+                files.iter().map(|f| f.url.clone()).collect::<Vec<_>>(),
+            )
             .await
         {
             Ok(()) => {
@@ -1317,7 +1340,7 @@ impl SstEngine {
             search_mode
         );
         for (i, file) in sstable_files.iter().enumerate() {
-            tracing::trace!(index = i, file = %file, "Discovered SSTable file");
+            tracing::trace!(index = i, file = %file.url, "Discovered SSTable file");
         }
 
         debug!(
@@ -1355,8 +1378,9 @@ impl SstEngine {
             );
 
             // Build per-file futures (borrow &self — no 'static needed).
-            let file_futures = sstable_files.iter().map(|sstable_path| {
-                let sstable_path = sstable_path.as_str();
+            let file_futures = sstable_files.iter().map(|discovered| {
+                let sstable_path = discovered.url.as_str();
+                let known_size = discovered.size_bytes;
                 let filter_owned = filter_expression.cloned();
                 async move {
                     let result: Result<Vec<OptimizedSearchRecord>, String> = async {
@@ -1377,6 +1401,7 @@ impl SstEngine {
                                         collection_id,
                                         storage_url,
                                         snapshot_lsn,
+                                        known_size,
                                     )
                                     .await
                                 {
@@ -1456,7 +1481,9 @@ impl SstEngine {
             }
         } else {
             // Sequential fallback (single file or flag explicitly off)
-            for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
+            for (file_idx, discovered) in sstable_files.iter().enumerate() {
+                let sstable_path = discovered.url.as_str();
+                let known_size = discovered.size_bytes;
                 trace!(
                     "SST: Searching file [{}/{}]: {} (force_exact={})",
                     file_idx + 1,
@@ -1482,6 +1509,7 @@ impl SstEngine {
                                 collection_id,
                                 storage_url,
                                 snapshot_lsn,
+                                known_size,
                             )
                             .await
                         {
@@ -1781,6 +1809,7 @@ impl SstEngine {
         use_pipeline: bool,
         use_parallel_morsels: bool,
         use_vectorized: bool,
+        known_size: Option<u64>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         // TD-DELVEC-1 WI-4: capture the scan's snapshot LSN once per single-file
         // scan (the parallel/arc path's per-file entry) for merge-on-read filtering
@@ -1807,6 +1836,7 @@ impl SstEngine {
                         collection_id,
                         storage_url,
                         snapshot_lsn,
+                        known_size,
                     )
                     .await
                 {
@@ -2019,7 +2049,11 @@ impl SstEngine {
                 String,
                 tokio::task::JoinHandle<Result<Vec<OptimizedSearchRecord>>>,
             )> = Vec::with_capacity(sstable_files.len());
-            for path in sstable_files {
+            for discovered in sstable_files {
+                let DiscoveredSstFile {
+                    url: path,
+                    size_bytes: known_size,
+                } = discovered;
                 // Gate concurrency: await a permit before spawning (bound at degree).
                 let permit = std::sync::Arc::clone(&sem).acquire_owned().await?;
                 let engine = std::sync::Arc::clone(&self);
@@ -2049,6 +2083,7 @@ impl SstEngine {
                             use_pipeline,
                             use_parallel_morsels,
                             use_vectorized,
+                            known_size,
                         );
                         if let Some(trace) = trace {
                             crate::observability::io_trace::scope_with_handle(trace, scan).await
@@ -2077,10 +2112,10 @@ impl SstEngine {
             }
         } else {
             // degree == 1 / single file: sequential, no spawn overhead.
-            for path in &sstable_files {
+            for discovered in &sstable_files {
                 match self
                     .scan_single_file(
-                        path,
+                        &discovered.url,
                         &collection,
                         &query_arc[..],
                         filter_owned.as_ref(),
@@ -2092,13 +2127,16 @@ impl SstEngine {
                         use_pipeline,
                         use_parallel_morsels,
                         use_vectorized,
+                        discovered.size_bytes,
                     )
                     .await
                 {
                     Ok(recs) => all_candidates.extend(recs),
-                    Err(e) => {
-                        Self::handle_per_file_scan_failure(path, &e, prune_config.force_exact)?
-                    }
+                    Err(e) => Self::handle_per_file_scan_failure(
+                        &discovered.url,
+                        &e,
+                        prune_config.force_exact,
+                    )?,
                 }
             }
         }
@@ -2237,7 +2275,7 @@ impl SstEngine {
         distance_metric: proximadb_distance_kernel::DistanceMetric,
         search_mode: &crate::core::search::SearchMode,
         prune_config: &crate::core::search::BlockPruneConfig, // [AGENT_FIX] New parameter
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<DiscoveredSstFile>> {
         use crate::core::search::SearchMode;
 
         // First get all files
@@ -2305,7 +2343,7 @@ impl SstEngine {
         let mut file_distances: Vec<(String, f32)> = Vec::new();
 
         for file_path in &all_files {
-            match self.load_sst_header_centroid(file_path).await {
+            match self.load_sst_header_centroid(&file_path.url).await {
                 Ok(Some((centroid, _max_distance_to_centroid))) => {
                     if centroid.len() == query_vector.len() {
                         // Compute distance from query to file centroid
@@ -2314,23 +2352,23 @@ impl SstEngine {
                             &centroid,
                             distance_metric,
                         );
-                        file_distances.push((file_path.clone(), distance));
+                        file_distances.push((file_path.url.clone(), distance));
                     } else {
                         // Dimension mismatch - include file anyway
-                        file_distances.push((file_path.clone(), 0.0));
+                        file_distances.push((file_path.url.clone(), 0.0));
                     }
                 }
                 Ok(None) => {
                     // No centroid - include file anyway (for backwards compatibility)
-                    file_distances.push((file_path.clone(), 0.0));
+                    file_distances.push((file_path.url.clone(), 0.0));
                 }
                 Err(e) => {
                     tracing::warn!(
                         "Failed to load centroid from {}: {}, including anyway",
-                        file_path,
+                        file_path.url,
                         e
                     );
-                    file_distances.push((file_path.clone(), 0.0));
+                    file_distances.push((file_path.url.clone(), 0.0));
                 }
             }
         }
@@ -2338,11 +2376,16 @@ impl SstEngine {
         // Sort by distance (ascending - closest first for similarity search)
         file_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Return top nprobe files
-        let selected_files: Vec<String> = file_distances
-            .into_iter()
+        // Return top nprobe files (carrying the list-time sizes through).
+        let selected_urls: std::collections::HashSet<&str> = file_distances
+            .iter()
             .take(nprobe)
-            .map(|(path, _)| path)
+            .map(|(path, _)| path.as_str())
+            .collect();
+        let selected_files: Vec<DiscoveredSstFile> = all_files
+            .iter()
+            .filter(|f| selected_urls.contains(f.url.as_str()))
+            .cloned()
             .collect();
 
         if selected_files.len() < all_files.len() {
@@ -2460,7 +2503,10 @@ impl SstEngine {
     ///
     /// `pub(crate)` so the flush path can reuse it for the L0 compaction
     /// trigger (TD-114) without duplicating segment discovery.
-    pub(crate) async fn discover_sstable_files(&self, storage_url: &str) -> Result<Vec<String>> {
+    pub(crate) async fn discover_sstable_files(
+        &self,
+        storage_url: &str,
+    ) -> Result<Vec<DiscoveredSstFile>> {
         tracing::debug!(
             "[SST] discover_sstable_files called with storage_url: {}",
             storage_url
@@ -2508,7 +2554,14 @@ impl SstEngine {
                     || entry.name.ends_with(".arrow")
                     || entry.name.ends_with(".pax"))
             {
-                files.push(entry.url);
+                // TD-RDSTRAT-13 C3: carry the list-time object size so the
+                // search path can skip the per-segment HEAD. `0` means the
+                // backend did not report a size — record `None` and let the
+                // reader fall back to a real stat; never guess.
+                files.push(DiscoveredSstFile {
+                    size_bytes: (entry.metadata.size > 0).then_some(entry.metadata.size),
+                    url: entry.url,
+                });
                 tracing::debug!("[SST] Found data file: {}", entry.name);
             }
         }

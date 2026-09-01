@@ -14,7 +14,7 @@
 //! per-collection demand — keeping cardinality intentional, not eager.
 
 use lazy_static::lazy_static;
-use prometheus::{IntCounter, register_int_counter};
+use prometheus::{IntCounter, IntCounterVec, register_int_counter, register_int_counter_vec};
 
 fn counter(name: &str, help: &str) -> IntCounter {
     register_int_counter!(name, help).unwrap_or_else(|_| {
@@ -50,7 +50,44 @@ lazy_static! {
         "proximadb_ivf_whole_region_fallback_total",
         "Segments where the armed TD-RDSTRAT-8 coarse probe missed and the read fell back to the whole Region-A scan",
     );
+    pub static ref PAX_TIER_GET_OPS: IntCounterVec = register_int_counter_vec!(
+        "proximadb_pax_tier_get_ops_agg_total",
+        "Physical ranged GETs per PAX cascade tier (TD-RDSTRAT-13 C1; tier labels = CacheTier::label)",
+        &["tier"]
+    )
+    .unwrap_or_else(|_| IntCounterVec::new(
+        prometheus::Opts::new("proximadb_pax_tier_get_ops_agg_total_fallback", "fallback"),
+        &["tier"]
+    )
+    .unwrap_or_else(|_| unreachable!("valid counter-vec metric descriptor")));
+    pub static ref PAX_TIER_GET_BYTES: IntCounterVec = register_int_counter_vec!(
+        "proximadb_pax_tier_get_bytes_agg_total",
+        "Physical ranged-GET bytes per PAX cascade tier (TD-RDSTRAT-13 C1)",
+        &["tier"]
+    )
+    .unwrap_or_else(|_| IntCounterVec::new(
+        prometheus::Opts::new("proximadb_pax_tier_get_bytes_agg_total_fallback", "fallback"),
+        &["tier"]
+    )
+    .unwrap_or_else(|_| unreachable!("valid counter-vec metric descriptor")));
+    pub static ref PAX_METADATA_OPS: IntCounter = counter(
+        "proximadb_pax_metadata_ops_agg_total",
+        "Object-storage HEAD/metadata ops on the SST search path (TD-RDSTRAT-13 C3 removes the per-segment HEAD)",
+    );
+    pub static ref IVF_PROBE_RANK_US: IntCounter = counter(
+        "proximadb_ivf_probe_rank_us_agg_total",
+        "Cumulative coarse-probe rank wall microseconds incl. morsel join (TD-RDSTRAT-13 C2 compute term)",
+    );
+    pub static ref IVF_PROBE_RANK_CALLS: IntCounter = counter(
+        "proximadb_ivf_probe_rank_calls_agg_total",
+        "Coarse-probe rank invocations (divide IVF_PROBE_RANK_US by this for the mean compute term)",
+    );
 }
+
+/// Tier label for the per-tier aggregate counters. Must stay in sync with the
+/// SST `CacheTier` declaration order (the io_trace `tier_get_ops` index
+/// contract): IdxA, Ctl, Meta, ProbeA, Surv, OID.
+pub const TIER_LABELS: [&str; 6] = ["IdxA", "Ctl", "Meta", "ProbeA", "Surv", "OID"];
 
 /// Record a coarse-probe outcome to the aggregate operator surface. Mirrors the
 /// durable per-query record in `io_trace::record_ivf_coarse_probe` (which lands
@@ -69,4 +106,29 @@ pub fn record_ivf_coarse_probe(
     if whole_region_fallback {
         IVF_WHOLE_REGION_FALLBACK.inc();
     }
+}
+
+/// Record one physical ranged GET to its PAX cascade tier (TD-RDSTRAT-13 C1).
+/// `tier_idx` indexes [`TIER_LABELS`]; out-of-range is dropped (drift must
+/// fail tests, not fold tiers).
+pub fn record_tier_get(tier_idx: usize, bytes: u64) {
+    if tier_idx < TIER_LABELS.len() {
+        PAX_TIER_GET_OPS
+            .with_label_values(&[TIER_LABELS[tier_idx]])
+            .inc();
+        PAX_TIER_GET_BYTES
+            .with_label_values(&[TIER_LABELS[tier_idx]])
+            .inc_by(bytes);
+    }
+}
+
+/// Record one object-storage metadata op (HEAD) on the search path (C3).
+pub fn record_metadata_op() {
+    PAX_METADATA_OPS.inc();
+}
+
+/// Record one coarse-probe rank wall duration in microseconds (C2).
+pub fn record_ivf_probe_rank_us(us: u64) {
+    IVF_PROBE_RANK_US.inc_by(us);
+    IVF_PROBE_RANK_CALLS.inc();
 }

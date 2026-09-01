@@ -266,3 +266,15 @@ Current implementation:
 * `PROXIMADB_READ_RANGES_INFLIGHT` ❌
 * `fetch_rounds` / `max_inflight` ❌
 * SIFT1M evidence ❌
+
+== Record correction (2026-08-31, TD-RDSTRAT-13 campaign)
+
+The ladder's compute attribution ("saturating at the compute-bound asymptote", "~0.9 s
+single-threaded rank+decode" as the dominant residual) was **inferred from latency subtraction**
+and is contradicted by the direct measurement the TD-RDSTRAT-13 C1 counters provide:
+`ivf_probe_rank_us` measures the rank at **34–43 ms** (370k–882k probed rows, sequential and
+morsel-parallel). The ladder's waved-arm residual was byte transfer through the toxiproxy path,
+not compute. The ladder's GET-parity, result-identity and ratio measurements stand; the compute
+attribution does not. See `docs/_internal/status/RDSTRAT13_SIFT1M_LADDER_2026_08_31.adoc`
+(ledger `rdstrat13_minio_s3_mechanisms` notes) and TD-COMPACT-13 for the retirement-race finding
+that further confounds absolute comparisons across beds.

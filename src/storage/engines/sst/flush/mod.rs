@@ -342,7 +342,8 @@ impl SstEngine {
         let l0_count = files
             .iter()
             .filter(|path| {
-                path.rsplit('/')
+                path.url
+                    .rsplit('/')
                     .next()
                     .is_some_and(|name| name.starts_with("L0_"))
             })
@@ -1091,12 +1092,12 @@ impl SstEngine {
             .unwrap_or(32)
             .saturating_mul(1024 * 1024);
         for path in &files {
-            if !path.ends_with(".pax") {
+            if !path.url.ends_with(".pax") {
                 continue;
             }
-            if let Ok(true) = self.segment_is_untrained(path, min_bytes).await {
+            if let Ok(true) = self.segment_is_untrained(&path.url, min_bytes).await {
                 tracing::info!(
-                    segment = %path,
+                    segment = %path.url,
                     "TD-COMPACT-5: untrained L0 segment above size floor — arming training compaction"
                 );
                 return Ok(Some(1));
