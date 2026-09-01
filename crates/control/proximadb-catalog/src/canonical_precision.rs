@@ -35,7 +35,6 @@
 //! later if catalog reads become a hot-path concern.
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use anyhow::Result;
 use proximadb_records::EmbeddingScalarType;
@@ -87,6 +86,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     use crate::cache::CatalogCache;
     use crate::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
