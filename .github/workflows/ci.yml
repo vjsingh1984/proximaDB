@@ -1495,7 +1495,7 @@ jobs:
         if: always()
         run: sccache --show-stats || true
 
-  # TD-CI-1: Benches + Examples compile check on every PR
+  # TD-CI-4: Benches + Examples compile check on every PR
   # Validates that 50 bench files + 31 example files compile correctly.
   # Runs on test_tier (every PR) to catch rot early.
   # Memory-safe: measured at 283 MB peak (well under 7 GB runner limit).
