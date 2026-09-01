@@ -1245,7 +1245,7 @@ notes = "Bed caveat measured and disclosed: every bed this campaign settled on t
 id = "rdstrat13_l3l2_retirement_race"
 claim = "MEASURED product defect (highest-value cold-query lever found by the TD-RDSTRAT-13 campaign): the training-compaction chain's L3 publication/L2 retirement is racy. Two arms of the SAME binary on beds that settled byte-identically (2xL2, 245,647,274 B) served DIFFERENT live sets at query time: clean L3-only (11 cells, 370,182 rows, 58.5 MB, 21.95 GETs/q -> object_cold p50 2977 ms @100 ms RTT) vs L2+L2+L3 overlap (27 cells = 8+8+11, 882,178 rows, 125.5 MB, 50.57 GETs/q -> 9029 ms). The overlap doubles rows, bytes and GETs (re-ranking the same rows through overlapping levels; recall/result-identity stay correct via MVCC dedup at emit). The race alone is a 3.03x p50 and 2.1x bytes swing at identical code — bigger than every lever TD-RDSTRAT-13 shipped, and the direct blocker for honest absolute cold-latency numbers (the settle gate cannot see it: the overlap appears after a compaction-quiet stable window, and persists — the superseded L2s are never retired). Fix: compaction input retirement (delete/retire superseded levels on publication, manifest-driven), then re-measure the acceptance on a clean bed."
 metric = "query-time live-set cells/rows/bytes/GETs + object_cold p50 at identical code"
-status = "fixed"
+status = "measured"
 asserted_in = [
   "docs/10-quality/td/TD-RDSTRAT-13-object-cold-probe-rank-morsels-and-round-collapse.adoc",
 ]
@@ -1255,4 +1255,4 @@ artifact = "docs/_internal/status/RDSTRAT13_SIFT1M_LADDER_2026_08_31.adoc"
 hardware = "Same bed as rdstrat13_minio_s3_mechanisms"
 date = "2026-08-31"
 version = "Both arms PR perf/rdstrat13-coldpath binaries; the race reproduces on the base binary's beds too (b0_rtt100/b0_rtt150/b0_rtt50 all carried the overlap)"
-notes = "Follow-up TD to file: compaction input retirement (superseded-level deletion/retirement on publication). The settle gate's new compaction-quiescence check (same PR) cannot catch this — the overlap appears after a quiet window and persists indefinitely. Clean-bed acceptance re-run (~1 h, single b0/b4 pair) once the retirement fix lands."
+notes = "Follow-up TD to file: compaction input retirement (superseded-level deletion/retirement on publication). The settle gate's new compaction-quiescence check (same PR) cannot catch this — the overlap appears after a quiet window and persists indefinitely. Clean-bed acceptance re-run (~1 h, single b0/b4 pair) once the retirement fix lands. FIX (2026-09-01): bounded-retry retirement + durable retire-pending.json obligation ledger + reconciler + discovery filter landed (TD-COMPACT-13 Fixed); reproduction tests sst_compaction_retirement_fault_test RED(17 surviving segments)->GREEN(row-accounting converged)."
