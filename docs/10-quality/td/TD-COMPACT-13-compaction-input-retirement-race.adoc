@@ -1,6 +1,6 @@
 = TD-COMPACT-13: Compaction input retirement race — superseded levels stay live and serving (3.03x p50, 2.1x bytes)
 
-:status: Open
+:status: Fixed (PR perf/fix-td-compact-13 — bounded-retry retirement + obligation ledger + reconciler + discovery filter; TDD: deterministic RED→GREEN)
 :owner: storage
 :created: 2026-08-31
 :discovered_by: TD-RDSTRAT-13 S3/MinIO + disk campaigns (evidence:
@@ -56,6 +56,27 @@ same window — the race window is the remote-publication/input-deletion path.
 * plus a test: after compaction quiesces, the live set contains no level whose rows are fully
   covered by a higher level (`settle`-gate equivalent as a unit test), and
 * the harness settle gate may then drop its workaround once the engine guarantees it.
+
+== Shipped fix (this branch)
+
+* `retire_inputs_with_retry` (compaction.rs): 3-attempt bounded retry per input, shared by both
+  executors and the reconciler; on residual failure the {output, inputs} obligation is recorded
+  durably (`retire-pending.json` sidecar + process-global pending set + gauge) and the task
+  SUCCEEDS — the output is published and correct; failing had only killed the follow-up chain.
+* Reconciler: worker idle branch polls every 30s (`tokio::select`); drains recorded obligations
+  (delete + cache purge + DV removal) across restarts; `proximadb_pax_pending_retirements`
+  gauge makes rot observable.
+* Read-path guard: `discover_sstable_files` filters pending-retirement paths — orphaned beds
+  self-heal at zero extra GETs.
+* Silent variant fixed: compactor_impl deletes now route by input scheme (NotFound-idempotent).
+* Partial merge fail-closed: an unreadable input aborts the compaction BEFORE publication.
+* TDD: `sst_compaction_retirement_test` (permanent row-accounting invariant — live footer rows
+  == ingested rows; segment COUNT is not the invariant, two-level states with new rows are
+  legitimate) + `sst_compaction_retirement_fault_test` (delete-fault RED→GREEN: 17 surviving
+  segments → converges; read-fault T1c fail-closed) + ledger round-trip units.
+* Follow-ups (documented, out of scope): `L0_recovery_{id}` naming vs `is_tiered_filename`;
+  publication moves are themselves delete-sensitive (a transient staging-delete failure fails
+  publication — fail-safe today, retry-worthy later).
 
 == Deployment guidance measured alongside (ADR-073 companion data)
 

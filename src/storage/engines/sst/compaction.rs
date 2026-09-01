@@ -2228,11 +2228,17 @@ impl Compaction {
                     all_records.extend(records);
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to read records from {} using unified reader: {}",
-                        input_path, e
-                    );
-                    continue;
+                    // TD-COMPACT-13: FAIL CLOSED. A partial merge that publishes
+                    // and then retires ALL inputs would delete the only copy of
+                    // the unread rows. Failing leaves every input intact (and,
+                    // post- ledger, loud). Poison-input lockout is accepted as
+                    // strictly better than silent loss (TD-COMPACT-13
+                    // follow-up).
+                    return Err(crate::core::StorageError::SstEngine(format!(
+                        "input unreadable; refusing to publish a partial merge of {}                          (failed input: {}): {e}",
+                        task.output_file.display(),
+                        input_path
+                    )));
                 }
             }
         }

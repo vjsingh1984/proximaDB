@@ -253,3 +253,58 @@ async fn transient_delete_failure_still_leaves_exactly_one_segment() -> Result<(
     }
     Ok(())
 }
+
+/// TD-COMPACT-13 T1c: a partial merge must FAIL CLOSED — an unreadable input
+/// aborts the compaction BEFORE publication, leaving every input intact and
+/// searchable (publish-then-retire-all after a partial read would delete the
+/// only copy of the unread rows).
+#[tokio::test]
+async fn unreadable_input_fails_compaction_without_publishing_or_retiring() -> Result<()> {
+    unsafe {
+        std::env::set_var("PROXIMADB_TEST_FS_DELETE_FAIL_FIRST", "1");
+        // Every L0_* segment read fails (the flush-produced inputs).
+        std::env::set_var("PROXIMADB_TEST_FS_READ_FAIL_SUBSTR", "L0_");
+    }
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+    unsafe {
+        std::env::remove_var("PROXIMADB_L0_COMPACTION_ENABLED");
+        std::env::remove_var("PROXIMADB_STORAGE_PROFILE");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_IVF_K", "4");
+        std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
+    }
+    let engine = SstEngine::new().await?;
+    let dir = tempfile::tempdir()?;
+    let coll = collection(
+        "retire_readfault",
+        dir.path().to_str().expect("utf8 tempdir"),
+    );
+
+    // Two flushes cross the L0 threshold and arm the inline compaction, whose
+    // input reads now fail.
+    flush_batch(&engine, &coll, 0..BATCH).await?;
+    flush_batch(&engine, &coll, BATCH..2 * BATCH).await?;
+    quiesce(&engine).await;
+
+    // FAIL CLOSED: no new output published, no input retired — the two L0
+    // inputs remain the complete live set.
+    let segments = pax_segments(dir.path());
+    assert_eq!(
+        segments.len(),
+        2,
+        "a partial merge must not publish (inputs intact, nothing new): {segments:?}"
+    );
+    // The intact inputs' content is verified directly from disk (the read
+    // fault is process-wide by design, so the engine search is not usable
+    // here; serve-path correctness under faults is covered by T1b).
+    assert_eq!(
+        live_row_total(&segments),
+        (2 * BATCH) as u64,
+        "both intact inputs must still hold every ingested row"
+    );
+
+    Ok(())
+}

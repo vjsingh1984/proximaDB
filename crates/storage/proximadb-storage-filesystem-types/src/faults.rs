@@ -41,6 +41,35 @@ fn fault_mode() -> Option<FaultMode> {
     )
 }
 
+/// TD-COMPACT-13 T1c: fail `read`/`read_range`/`read_ranges` whose path
+/// contains this substring (proves the partial-merge fail-closed behavior).
+/// Shared mutable gate: `clear_read_fault_for_tests` disarms mid-process (the
+/// env is cached at first use, so removal alone has no effect).
+fn read_fault_gate() -> &'static Mutex<Option<Option<String>>> {
+    static SUB: OnceLock<Mutex<Option<Option<String>>>> = OnceLock::new();
+    SUB.get_or_init(|| Mutex::new(None))
+}
+
+fn read_fault_substr() -> Option<String> {
+    let mut guard = read_fault_gate().lock().ok()?;
+    if guard.is_none() {
+        *guard = Some(
+            std::env::var("PROXIMADB_TEST_FS_READ_FAIL_SUBSTR")
+                .ok()
+                .filter(|s| !s.is_empty()),
+        );
+    }
+    guard.clone().flatten()
+}
+
+/// Clear the read-fault substring (test disarm — the gate is cached at first
+/// use, so env removal alone has no effect mid-process).
+pub fn clear_read_fault_for_tests() {
+    if let Ok(mut guard) = read_fault_gate().lock() {
+        *guard = None;
+    }
+}
+
 fn already_failed() -> &'static Mutex<HashSet<String>> {
     static FAILED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     FAILED.get_or_init(|| Mutex::new(HashSet::new()))
@@ -50,8 +79,7 @@ fn already_failed() -> &'static Mutex<HashSet<String>> {
 /// in its own process, so this is only needed for in-process multi-phase
 /// tests).
 pub fn reset_for_tests() {
-    if let Some(failed) = already_failed().lock().ok() {
-        let mut failed = failed;
+    if let Ok(mut failed) = already_failed().lock() {
         failed.clear();
     }
 }
@@ -64,6 +92,14 @@ pub struct FaultInjectingFileSystem {
 impl FaultInjectingFileSystem {
     pub fn new(inner: std::sync::Arc<dyn FileSystem>) -> Self {
         Self { inner }
+    }
+
+    fn read_fault(&self, path: &str) -> Option<FilesystemError> {
+        read_fault_substr()
+            .filter(|sub| path.contains(sub.as_str()))
+            .map(|sub| {
+                FilesystemError::Network(format!("fault-injected read failure ({sub}): {path}"))
+            })
     }
 
     fn delete_fault(&self, path: &str) -> Option<FilesystemError> {
@@ -109,9 +145,15 @@ impl FileSystem for FaultInjectingFileSystem {
     }
 
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
+        if let Some(error) = self.read_fault(path) {
+            return Err(error);
+        }
         self.inner.read(path).await
     }
     async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        if let Some(error) = self.read_fault(path) {
+            return Err(error);
+        }
         self.inner.read_range(path, offset, length).await
     }
     async fn read_ranges(
@@ -119,6 +161,9 @@ impl FileSystem for FaultInjectingFileSystem {
         path: &str,
         ranges: Vec<std::ops::Range<u64>>,
     ) -> FsResult<Vec<Vec<u8>>> {
+        if let Some(error) = self.read_fault(path) {
+            return Err(error);
+        }
         self.inner.read_ranges(path, ranges).await
     }
     async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {

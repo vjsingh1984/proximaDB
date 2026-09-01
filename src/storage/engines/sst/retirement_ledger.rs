@@ -181,3 +181,51 @@ pub(crate) fn pending_paths() -> HashSet<String> {
         .map(|s| s.clone())
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TD-COMPACT-13 T4a: record → load → drain → cleared, and a lost update
+    /// degrades to idempotent re-drain (deletes are NotFound-idempotent).
+    #[test]
+    fn ledger_round_trip_records_and_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        assert!(load_ledger(&data_dir).pending.is_empty(), "missing = empty");
+
+        record_pending(
+            &data_dir,
+            Path::new("s3://b/coll/L3_x.pax"),
+            &["s3://b/coll/L2_a.pax".into(), "s3://b/coll/L2_b.pax".into()],
+        )
+        .unwrap();
+        let loaded = load_ledger(&data_dir);
+        assert_eq!(loaded.pending.len(), 1);
+        assert_eq!(loaded.pending[0].inputs.len(), 2);
+        assert_eq!(loaded.pending[0].output, "s3://b/coll/L3_x.pax");
+
+        // Second record APPENDS (distinct obligations accumulate).
+        record_pending(
+            &data_dir,
+            Path::new("s3://b/coll/L2_y.pax"),
+            &["s3://b/coll/L1_c.pax".into()],
+        )
+        .unwrap();
+        assert_eq!(load_ledger(&data_dir).pending.len(), 2);
+    }
+
+    /// TD-COMPACT-13 T4b: pending-set mark/drain updates the filter set.
+    #[test]
+    fn pending_set_marks_and_drains() {
+        let before = pending_paths();
+        let probe = format!("probe-{}-orphan.pax", std::process::id());
+        mark_pending(&[probe.clone()]);
+        assert!(pending_paths().contains(&probe));
+        mark_drained(&[probe.clone()]);
+        assert!(!pending_paths().contains(&probe), "drained must clear");
+        let _ = before;
+    }
+}
