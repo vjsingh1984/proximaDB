@@ -568,6 +568,16 @@ impl FilesystemFactory {
         // Per-query IoTrace accounting is an independent production invariant
         // recorded by each physical leaf backend, so routing evidence cannot
         // silently disappear when this diagnostic gate is OFF.
+        // TD-COMPACT-13 TDD: the env-gated delete-fault wrapper sits INSIDE the
+        // counting wrapper so retirement tests observe the fault while the
+        // counters keep counting the inner backend. Unset = byte-identical.
+        let fs: Arc<dyn FileSystem> = if std::env::var_os("PROXIMADB_TEST_FS_DELETE_FAIL_FIRST")
+            .is_some()
+        {
+            Arc::new(proximadb_storage_filesystem_types::faults::FaultInjectingFileSystem::new(fs))
+        } else {
+            fs
+        };
         if std::env::var_os("PROXIMADB_COUNT_FS_IO").is_some() {
             Ok(Arc::new(
                 proximadb_storage_filesystem_types::counting::CountingFileSystem::new(

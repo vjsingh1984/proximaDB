@@ -21,6 +21,7 @@
 
 use super::block_format::BlockFormat;
 use super::compactor_impl::{SstCompactor, ZeroCopyCompactionStats};
+use super::retirement_ledger;
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::core::{SstConfig, String}; // OPTIMIZED: VectorRecord imported above
 use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Added VectorRecord import
@@ -1259,6 +1260,10 @@ impl Compaction {
                     }
                 };
                 drop(resource_reservation);
+                // TD-COMPACT-13: debounced reconciliation sweep (runs on both
+                // success and failure paths so a failed retirement is re-driven
+                // instead of rotting).
+                compaction.sweep_pending_retirements_if_due().await;
                 crate::metrics::operational_metrics::COMPACTION_MEMORY_RESERVED_BYTES
                     .set(i64::try_from(reserved_compaction_memory_bytes()).unwrap_or(i64::MAX));
                 crate::metrics::operational_metrics::COMPACTION_SCRATCH_RESERVED_BYTES
@@ -1347,7 +1352,18 @@ impl Compaction {
                 )
                 .await;
             } else {
-                notified.await;
+                // TD-COMPACT-13: while idle, keep the reconciler draining —
+                // obligations recorded by earlier tasks (or a previous boot's
+                // sidecar) must converge even when no new compaction ever
+                // arrives. The sweep is debounced (30s) and bounded; the
+                // notified arm wakes immediately on a real task.
+                let sweep_tick = tokio::time::sleep(std::time::Duration::from_secs(30));
+                tokio::select! {
+                    _ = notified => {}
+                    _ = sweep_tick => {
+                        compaction.sweep_pending_retirements_if_due().await;
+                    }
+                }
             }
         }
 
@@ -1425,36 +1441,145 @@ impl Compaction {
     /// after MVCC proves the replacement is empty). Cache and deletion-vector
     /// invalidation share the same boundary so no path can leave dead segment
     /// state resident merely because it used the spill executor.
-    async fn retire_task_inputs(&self, task: &SstCompactionTask) -> Result<()> {
+    /// TD-COMPACT-13: ONE delete attempt per input (warm-cache purge + DV
+    /// removal on success). Returns the inputs that failed this attempt.
+    async fn delete_inputs_attempt(&self, inputs: &[PathBuf]) -> Vec<PathBuf> {
         let warm_caches = crate::storage::engines::sst::core::get_warm_tier_caches();
         #[cfg(feature = "cold-deletion-vectors")]
         let dv_store =
             crate::storage::engines::sst::deletion_vector_store::DeletionVectorStore::new(
                 self.filesystem_factory.clone(),
             );
-        let mut retirement_errors = Vec::new();
-        for input_file in &task.input_files {
+        let mut failed = Vec::new();
+        for input_file in inputs {
             let input_path = input_file.to_string_lossy();
-            if let Err(error) = retire_compaction_input(&self.filesystem_factory, &input_path).await
-            {
-                retirement_errors.push(format!("{}: {error}", input_file.display()));
-                continue;
-            }
-            purge_retired_segment_cache_entries(&input_path, warm_caches.as_ref()).await;
-            #[cfg(feature = "cold-deletion-vectors")]
-            if let Err(error) = dv_store.remove(&input_path).await {
-                retirement_errors.push(format!("{}.dv: {error}", input_file.display()));
+            match retire_compaction_input(&self.filesystem_factory, &input_path).await {
+                Err(error) => {
+                    warn!(file = %input_path, %error, "input retirement attempt failed");
+                    failed.push(input_file.clone());
+                }
+                Ok(()) => {
+                    purge_retired_segment_cache_entries(&input_path, warm_caches.as_ref()).await;
+                    #[cfg(feature = "cold-deletion-vectors")]
+                    if let Err(error) = dv_store.remove(&input_path).await {
+                        warn!("compaction DV retire: failed to remove {input_path}.dv: {error:?}");
+                    }
+                }
             }
         }
-        if retirement_errors.is_empty() {
-            Ok(())
-        } else {
-            Err(crate::core::StorageError::SstEngine(format!(
-                "compaction failed to retire {} input(s): {}",
-                retirement_errors.len(),
-                retirement_errors.join("; ")
-            )))
+        failed
+    }
+
+    /// TD-COMPACT-13: bounded-retry retirement. Residual failures are recorded
+    /// as a durable obligation (sidecar + pending set + gauge) so the
+    /// reconciler can drain them across restarts; the superseded paths are
+    /// filtered from query discovery immediately. Returns the still-failed
+    /// inputs (empty on full success); `Err` only when the obligation itself
+    /// cannot be recorded.
+    async fn retire_inputs_with_retry(
+        &self,
+        output: &Path,
+        inputs: &[PathBuf],
+    ) -> Result<Vec<PathBuf>> {
+        let mut failed = self.delete_inputs_attempt(inputs).await;
+        for attempt in 1..3u32 {
+            if failed.is_empty() {
+                break;
+            }
+            crate::metrics::operational_metrics::PAX_RETIREMENT_RETRIES_TOTAL
+                .inc_by(failed.len() as u64);
+            tokio::time::sleep(std::time::Duration::from_millis(if attempt == 1 {
+                100
+            } else {
+                300
+            }))
+            .await;
+            failed = self.delete_inputs_attempt(&failed).await;
         }
+        if failed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let collection_dir = output.parent().unwrap_or(Path::new(""));
+        retirement_ledger::register_collection_dir(collection_dir);
+        let failed_urls: Vec<String> = failed
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        if let Err(error) =
+            retirement_ledger::record_pending(collection_dir, output, &failed_urls).await
+        {
+            error!(
+                output = %output.display(),
+                %error,
+                "retirement obligation UNRECORDABLE — failing the compaction loudly"
+            );
+            return Err(error.into());
+        }
+        error!(
+            output = %output.display(),
+            pending = failed.len(),
+            "compaction inputs pending retirement — obligation recorded; superseded \
+             files are filtered from query discovery until the reconciler drains them"
+        );
+        Ok(failed)
+    }
+
+    /// TD-COMPACT-13 reconciler sweep (debounced 30s): drain recorded
+    /// obligations for every known collection dir.
+    async fn sweep_pending_retirements_if_due(&self) {
+        if !retirement_ledger::sweep_due() {
+            return;
+        }
+        for dir in retirement_ledger::known_collection_dirs() {
+            let _ = self.drain_pending_for_dir(Path::new(&dir)).await;
+        }
+    }
+
+    /// Drain one collection dir's recorded obligations (reconciler pass).
+    async fn drain_pending_for_dir(&self, collection_data_dir: &Path) -> Result<()> {
+        // Hold the ledger lock across this whole load-modify-save sequence.
+        let _ledger_guard = retirement_ledger::ledger_lock().await;
+        let mut ledger = retirement_ledger::load_ledger(collection_data_dir);
+        if ledger.pending.is_empty() {
+            return Ok(());
+        }
+        for entry in &mut ledger.pending {
+            let inputs: Vec<PathBuf> = entry.inputs.iter().map(PathBuf::from).collect();
+            let failed = self.delete_inputs_attempt(&inputs).await;
+            entry.attempts += 1;
+            if failed.is_empty() {
+                retirement_ledger::mark_drained(&entry.inputs);
+            }
+            entry.inputs = failed
+                .into_iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+        }
+        ledger.pending.retain(|entry| !entry.inputs.is_empty());
+        retirement_ledger::save_after_drain(collection_data_dir, &ledger).map_err(|error| {
+            crate::core::StorageError::SstEngine(format!(
+                "save retire-pending ledger for {}: {error:#}",
+                collection_data_dir.display()
+            ))
+        })
+    }
+
+    async fn retire_task_inputs(&self, task: &SstCompactionTask) -> Result<()> {
+        // TD-COMPACT-13: shared bounded-retry path; residual failures are
+        // recorded as durable obligations and the task succeeds (the output is
+        // published and correct — failing here only killed the follow-up chain
+        // that re-drives retirement, the exact unrecoverable-defect mechanism).
+        let failed = self
+            .retire_inputs_with_retry(&task.output_file, &task.input_files)
+            .await?;
+        if !failed.is_empty() {
+            warn!(
+                output = %task.output_file.display(),
+                pending = failed.len(),
+                "local-spill inputs pending retirement (obligation recorded)"
+            );
+        }
+        Ok(())
     }
 
     /// Execute the bounded construction selected by dual-resource admission.
@@ -2106,11 +2231,17 @@ impl Compaction {
                     all_records.extend(records);
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to read records from {} using unified reader: {}",
-                        input_path, e
-                    );
-                    continue;
+                    // TD-COMPACT-13: FAIL CLOSED. A partial merge that publishes
+                    // and then retires ALL inputs would delete the only copy of
+                    // the unread rows. Failing leaves every input intact (and,
+                    // post- ledger, loud). Poison-input lockout is accepted as
+                    // strictly better than silent loss (TD-COMPACT-13
+                    // follow-up).
+                    return Err(crate::core::StorageError::SstEngine(format!(
+                        "input unreadable; refusing to publish a partial merge of {}                          (failed input: {}): {e}",
+                        task.output_file.display(),
+                        input_path
+                    )));
                 }
             }
         }
@@ -2632,45 +2763,21 @@ impl Compaction {
         // input file — correctness is structural (UUID-unique outputs, old
         // paths never queried again), but without eviction the dead entries
         // squat in the invariants/survivor budgets until recency ages them out.
-        let mut retirement_errors = Vec::new();
-        for input_file in &task.input_files {
-            let input_path = input_file.to_string_lossy();
-            if let Err(error) = retire_compaction_input(&self.filesystem_factory, &input_path).await
-            {
-                warn!(
-                    "Failed to remove input file {}: {}",
-                    input_file.display(),
-                    error
-                );
-                retirement_errors.push(format!("{}: {error}", input_file.display()));
-                continue;
-            }
-
-            let purged =
-                purge_retired_segment_cache_entries(&input_path, warm_caches.as_ref()).await;
-            if purged > 0 {
-                debug!(
-                    file = %input_path,
-                    purged,
-                    "evicted survivor-cache ranges for compacted-away file"
-                );
-            }
-
-            // TD-DELVEC-1 WI-6: retire the input segment's deletion vector — it
-            // referenced this now-compacted-away input. Best-effort (a missing
-            // `.dv` is already success).
-            #[cfg(feature = "cold-deletion-vectors")]
-            if let Err(e) = dv_store.remove(&input_path).await {
-                warn!("compaction DV retire: failed to remove {input_path}.dv: {e:?}");
-            }
-        }
-        if !retirement_errors.is_empty() {
-            return Err(crate::core::StorageError::SstEngine(format!(
-                "compaction published {} but failed to retire {} input(s): {}",
-                task.output_file.display(),
-                retirement_errors.len(),
-                retirement_errors.join("; ")
-            )));
+        // TD-COMPACT-13: shared bounded-retry retirement; residual failures are
+        // recorded as durable obligations (sidecar + pending set + gauge) and
+        // the task SUCCEEDS — the output is published and correct, and failing
+        // here only killed the follow-up chain that re-drives retirement (the
+        // exact mechanism that made the campaign defect unrecoverable).
+        let retirement_pending = self
+            .retire_inputs_with_retry(&task.output_file, &task.input_files)
+            .await?;
+        if !retirement_pending.is_empty() {
+            warn!(
+                output = %task.output_file.display(),
+                pending = retirement_pending.len(),
+                "unified-compaction inputs pending retirement (obligation recorded; \
+                 discovery filters them until drained)"
+            );
         }
 
         // DETAILED COMPACTION PERFORMANCE ANALYSIS

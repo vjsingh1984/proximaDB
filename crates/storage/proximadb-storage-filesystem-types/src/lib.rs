@@ -13,6 +13,7 @@ use std::io::Error as IoError;
 
 /// TD-096 S2 / S1.5: GET-count instrumentation on the filesystem seam.
 pub mod counting;
+pub mod faults;
 
 /// Turning logical byte needs into physical requests (ADR-034 P7).
 pub mod read_ranges_plan;
