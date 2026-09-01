@@ -653,6 +653,7 @@ mod tests {
                     azure_ad: None,
                 },
                 mtls: MtlsConfig::default(),
+                oidc: None,
                 audit_fail_closed: false,
             },
             rbac: RBACConfig::default(),

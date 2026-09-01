@@ -43,6 +43,12 @@ pub struct AuthenticationConfig {
     /// deployments that must never serve unaudited traffic opt in here.
     #[serde(default)]
     pub audit_fail_closed: bool,
+    /// Generic OIDC provider (TD-SSO-1): bearer-token validation against an
+    /// external IdP's JWKS, with role-claim sanitization at the seam. Absent
+    /// ⇒ inert; RS*/ES* bearer tokens then fail closed (no local asymmetric
+    /// verifier exists).
+    #[serde(default)]
+    pub oidc: Option<crate::network::auth::oidc::OidcProviderConfig>,
 }
 
 /// Count of audit writes that failed on the authentication path. Exposed so an
@@ -172,6 +178,9 @@ pub struct UnifiedAuthService {
 
     /// JWT service for token authentication
     jwt_service: Option<Arc<JwtService>>,
+    /// Generic OIDC bearer verifier (TD-SSO-1). Present only when
+    /// `[security.authentication.oidc]` is configured AND enabled.
+    oidc_verifier: Option<Arc<crate::network::auth::oidc::OidcTokenVerifier>>,
 
     /// API key store
     api_keys: Arc<DashMap<String, ApiKeyInfo>>,
@@ -223,6 +232,7 @@ impl UnifiedAuthService {
         let mut service = Self {
             enterprise_auth: None,
             jwt_service: None,
+            oidc_verifier: None,
             api_keys: Arc::new(DashMap::new()),
             principal_registry: None,
             rate_limiter: None,
@@ -244,6 +254,30 @@ impl UnifiedAuthService {
             };
             let jwt_service = JwtService::new(network_jwt_config)?;
             service.jwt_service = Some(Arc::new(jwt_service));
+        }
+
+        // TD-SSO-1: build the OIDC verifier when configured. Construction
+        // never contacts the IdP (lazy JWKS) — boot-order robustness.
+        if let Some(oidc_cfg) = config.oidc.as_ref()
+            && oidc_cfg.enabled
+        {
+            let verifier = crate::network::auth::oidc::OidcTokenVerifier::new(oidc_cfg.clone())
+                .map_err(|e| anyhow!("invalid [security.authentication.oidc]: {e}"))?;
+            // F8: the OIDC branch is reachable only via the `jwt` method —
+            // warn loudly when the operator enabled the provider but not the
+            // method, or every bearer token will read "JWT authentication
+            // disabled".
+            if !config.methods.contains(&AuthenticationMethod::JWT) {
+                warn!(
+                    "[security.authentication.oidc] is enabled but methods lacks                      \"jwt\" — OIDC bearer tokens will be rejected until it is added"
+                );
+            }
+            info!(
+                issuer = %oidc_cfg.issuer_url,
+                "OIDC bearer validation enabled (TD-SSO-1; roles sanitize at the seam; \
+                 delegation roles default OFF pending allow_delegation_roles)"
+            );
+            service.oidc_verifier = Some(Arc::new(verifier));
         }
 
         // Load API keys
@@ -399,6 +433,49 @@ impl UnifiedAuthService {
             });
         }
 
+        // TD-SSO-1 dispatch: the UNAUTHENTICATED header `alg` only ROUTES —
+        // it selects a verifier that either cryptographically validates or
+        // rejects; it never authorizes. RS*/ES* goes to the OIDC verifier
+        // when configured (the local service is HMAC-only); HS* stays local.
+        let is_asymmetric = jsonwebtoken::decode_header(token)
+            .map(|header| {
+                matches!(
+                    header.alg,
+                    jsonwebtoken::Algorithm::RS256
+                        | jsonwebtoken::Algorithm::RS384
+                        | jsonwebtoken::Algorithm::RS512
+                        | jsonwebtoken::Algorithm::ES256
+                        | jsonwebtoken::Algorithm::ES384
+                )
+            })
+            .unwrap_or(false);
+
+        if is_asymmetric && let Some(verifier) = &self.oidc_verifier {
+            return match verifier.verify(token).await {
+                Ok(claims) => {
+                    let user_context =
+                        self.convert_oidc_claims_to_unified(claims, verifier.config());
+                    Ok(AuthenticationResult {
+                        user_context,
+                        auth_method: UnifiedAuthMethod::JWT,
+                        success: true,
+                        error_message: None,
+                        requires_mfa: false,
+                    })
+                }
+                Err(e) => {
+                    warn!("OIDC bearer validation failed: {}", e);
+                    Ok(AuthenticationResult {
+                        user_context: UnifiedUserContext::anonymous(),
+                        auth_method: UnifiedAuthMethod::JWT,
+                        success: false,
+                        error_message: Some(e.to_string()),
+                        requires_mfa: false,
+                    })
+                }
+            };
+        }
+
         match &self.jwt_service {
             Some(jwt_service) => match jwt_service.verify_token(token).await {
                 Ok(claims) => {
@@ -425,6 +502,39 @@ impl UnifiedAuthService {
             None => Err(anyhow!(
                 "JWT authentication enabled but JWT service not configured"
             )),
+        }
+    }
+
+    /// TD-SSO-1: verified OIDC claims → UnifiedUserContext. Roles cross ONLY
+    /// through `sanitize_idp_roles` (the #1791 invariant, uniform); the
+    /// optional tenant claim maps to tenant_id; ZERO permissions are derived
+    /// from IdP claims (RBAC stays permission-driven).
+    fn convert_oidc_claims_to_unified(
+        &self,
+        claims: crate::network::auth::oidc::OidcClaims,
+        cfg: &crate::network::auth::oidc::OidcProviderConfig,
+    ) -> UnifiedUserContext {
+        let raw_roles = crate::network::auth::oidc::roles_raw_to_strings(&claims.roles_raw);
+        let roles = crate::network::auth::oidc::sanitize_idp_roles(&raw_roles, cfg);
+        let tenant_id = crate::network::auth::oidc::tenant_raw_to_option(&claims.tenant_raw);
+        // F3 (adversarial review): the IdP's issuer-scoped `sub` must NOT be
+        // the raw local join key — get_effective_permissions looks up
+        // user_role_assignments[user_id], so a colliding sub (email-as-sub
+        // providers; a local principal named "admin") would INHERIT that
+        // principal's locally granted permissions. Namespace it: local role
+        // assignments targeting OIDC users must use the `oidc:{sub}` form.
+        let oidc_user_id = format!("oidc:{}", claims.sub);
+        let oidc_session = format!("oidc_{}", claims.sub);
+        UnifiedUserContext {
+            user_id: oidc_user_id,
+            tenant_id,
+            roles,
+            effective_permissions: HashSet::new(),
+            auth_method: UnifiedAuthMethod::JWT,
+            session_id: oidc_session,
+            expires_at: DateTime::from_timestamp(claims.exp, 0),
+            created_at: DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(Utc::now),
+            metadata: HashMap::new(),
         }
     }
 
@@ -881,10 +991,23 @@ impl UnifiedAuthService {
             metadata.insert("metering_required".to_string(), value.to_string());
         }
 
+        // TD-SSO-1 uniform seam: when an OIDC provider is configured, LOCAL
+        // tokens sanitize through the SAME allowlist as IdP tokens (the
+        // #1791 invariant holds on every bearer path). With no OIDC config,
+        // local behavior is unchanged — the local mint requires the engine's
+        // own secret, and existing capability tokens carry role-like strings
+        // (e.g. `data_plane`) that an empty default allowlist would strip.
+        let roles = match self.oidc_verifier.as_ref() {
+            Some(verifier) => {
+                crate::network::auth::oidc::sanitize_idp_roles(&claims.roles, verifier.config())
+            }
+            None => claims.roles,
+        };
+
         UnifiedUserContext {
             user_id: claims.sub,
             tenant_id: claims.tenant_id,
-            roles: claims.roles,
+            roles,
             effective_permissions: HashSet::new(), // Will be populated by RBAC manager
             auth_method: UnifiedAuthMethod::JWT,
             session_id: claims.jti,
@@ -1197,6 +1320,99 @@ fn create_auth_audit_event(
 mod tests {
     use super::ApiKeyInfo;
 
+    /// F5 (adversarial review): the seam invariant pinned WHERE IT LIVES.
+    /// The reviewer's sabotage — deleting the `sanitize_idp_roles` call in
+    /// `convert_oidc_claims_to_unified` — passed every oidc.rs test, because
+    /// they pin the helper, not the production conversion. This test drives
+    /// the real `authenticate` dispatch with a real RS256 token against a
+    /// mock JWKS and asserts the resulting UnifiedUserContext.
+    #[tokio::test]
+    async fn oidc_seam_is_enforced_at_the_production_conversion() {
+        use crate::network::auth::oidc::test_fixtures as fx;
+
+        let server = httpmock::MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET).path("/jwks");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(fx::TEST_JWKS_JSON);
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET)
+                    .path("/.well-known/openid-configuration");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(
+                        serde_json::json!({
+                            "issuer": "https://idp.example.test",
+                            "jwks_uri": format!("{}/jwks", server.base_url())
+                        })
+                        .to_string(),
+                    );
+            })
+            .await;
+
+        // OIDC issuer must be https — point the config at the loopback http
+        // mock by supplying jwks_url explicitly (issuer stays the https
+        // claim value; only the FETCH goes to the loopback).
+        let cfg = super::AuthenticationConfig {
+            enabled: true,
+            methods: vec![super::AuthenticationMethod::JWT],
+            require_authentication: false,
+            default_session_timeout_minutes: 30,
+            api_keys: HashMap::new(),
+            jwt: super::JwtConfig {
+                enabled: false,
+                secret: "x".to_string(),
+                access_token_expiration_minutes: 1,
+                refresh_token_expiration_days: 1,
+                issuer: "local".to_string(),
+                audience: "local".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: super::SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 1,
+                aws_iam: None,
+                azure_ad: None,
+            },
+            mtls: super::MtlsConfig::default(),
+            audit_fail_closed: false,
+            oidc: Some(crate::network::auth::oidc::OidcProviderConfig {
+                jwks_url: Some(format!("{}/jwks", server.base_url())),
+                role_allowlist: vec!["analyst".to_string()],
+                ..fx::verifier(&[], false)
+            }),
+        };
+        let service = super::UnifiedAuthService::new(cfg).expect("service");
+
+        let now = chrono::Utc::now().timestamp();
+        let token = fx::sign_rs256(&fx::std_claims(now));
+        let result = service
+            .authenticate(crate::security::AuthenticationData::JWTToken(token))
+            .await
+            .expect("authenticate dispatch");
+
+        assert!(result.success, "err: {:?}", result.error_message);
+        let ctx = &result.user_context;
+        // THE invariant, at the production seam: IdP groups ["gateway",
+        // "analyst"] — analyst allowlisted, gateway delegation OFF by
+        // default (F2) — only ["analyst"] crosses.
+        assert_eq!(
+            ctx.roles,
+            vec!["analyst".to_string()],
+            "seam must sanitize at the production conversion (F5)"
+        );
+        // F3: identity is namespaced, not the raw sub.
+        assert!(ctx.user_id.starts_with("oidc:"), "got {}", ctx.user_id);
+        // Claim 4: no permissions derived.
+        assert!(ctx.effective_permissions.is_empty());
+    }
+
     fn key(user: &str, roles: Vec<&str>) -> ApiKeyInfo {
         ApiKeyInfo {
             user_id: user.to_string(),
@@ -1216,6 +1432,7 @@ mod tests {
         // ::new never touches the filesystem.
         let cfg = super::AuthenticationConfig {
             mtls: super::MtlsConfig::default(),
+            oidc: None,
             ..serde_json::from_str(
                 r#"{"enabled":false,"methods":["api_key"],"require_authentication":false,
                     "default_session_timeout_minutes":30,"api_keys":{},
@@ -1382,6 +1599,7 @@ ip_restrictions = []
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         }
     }
@@ -1484,6 +1702,7 @@ ip_restrictions = []
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         };
 
@@ -1524,6 +1743,7 @@ ip_restrictions = []
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         };
 
@@ -1574,6 +1794,7 @@ ip_restrictions = []
                 azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         }
     }
@@ -1752,6 +1973,7 @@ ip_restrictions = []
                 cn_role_mapping,
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| {
@@ -1800,6 +2022,7 @@ ip_restrictions = []
                 cn_role_mapping,
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
@@ -1849,6 +2072,7 @@ ip_restrictions = []
                 cn_role_mapping,
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
@@ -1895,6 +2119,7 @@ ip_restrictions = []
                 cn_role_mapping: HashMap::new(),
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let result = UnifiedAuthService::new(config);
@@ -1934,6 +2159,7 @@ ip_restrictions = []
                 cn_role_mapping: HashMap::new(),
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());

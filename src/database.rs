@@ -1803,6 +1803,7 @@ mod security_initialization_tests {
                     cn_role_mapping: HashMap::new(),
                 },
                 audit_fail_closed: false,
+                oidc: None,
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),

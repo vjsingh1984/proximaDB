@@ -1,0 +1,144 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-SSO-1: generic OIDC provider — bearer validation + the uniform role seam
+:icons: font
+
+**Status:** Shipped with this TD (2026-09-01).
+**Origin:** the SSO infrastructure decision (self-hosted Kanidm + OIDC across
+ProximaDB / Sandhi / InferFlux) made the engine-side gap concrete:
+`SSOConfig` spoke only AWS-IAM/Azure-AD shapes, `JwtService` was HMAC-only,
+and `convert_jwt_claims_to_unified` passed `claims.roles` through
+**unsanitized** — the same escalation class PR #1791's adversarial review
+closed for API keys (`SecurityPredicate::RoleBased` grants Unrestricted row
+access on role-string match).
+
+== Decision
+
+**ProximaDB is an OIDC resource server, not a relying party with browser
+flows.** Clients obtain tokens from the IdP themselves (client-credentials
+for services; PKCE via their tooling for humans) and present them on the
+existing bearer surfaces (REST `Authorization`, gRPC metadata). No redirect
+flows, no RP session layer in the engine — that is the 90% need for a
+database, and it keeps the engine free of session state.
+
+**The role seam is uniform by construction.** `sanitize_idp_roles`
+(`src/network/auth/oidc.rs`) is the single filter every role claim crosses:
+
+* `gateway`/`operator` pass only when `allow_delegation_roles` (default
+  true — symmetric with the #1791 API-key seam);
+* any other string passes only when the operator listed it in
+  `role_allowlist` (default **empty** = fail-closed);
+* everything else is dropped with a once-per-role audit warn.
+
+Applied at the OIDC conversion AND retrofitted into the local-JWT conversion
+— **but only when an OIDC provider is configured**. With no `[security.
+authentication.oidc]` section, local behavior is unchanged: local capability
+tokens legitimately carry role-like strings (`data_plane`), and minting
+requires the engine's own secret. The invariant is opt-in-complete: the
+moment an operator turns on OIDC, EVERY bearer path (local and IdP)
+sanitizes against the same allowlist.
+
+== Confusion defense (pinned by tests)
+
+* Routing between local (HS*) and OIDC (RS*/ES*) verifiers uses the
+  UNAUTHENTICATED JWT header `alg` — safe because it only *selects* a
+  verifier that cryptographically validates or rejects; it never authorizes.
+* Algorithm pinning: the OIDC path accepts only the configured set (default
+  `RS256`); HMAC-family entries are rejected at CONFIG load. The classic
+  cross-algorithm attack (an HS256 token signed with the public JWKS bytes)
+  is structurally rejected — tested.
+* `alg: none` rejected; `iss`/`aud` pinned (plus an explicit aud check as
+  defense in depth against library regressions); 60s exp leeway.
+
+== JWKS lifecycle
+
+Construction never contacts the IdP (boot-order robustness — the IdP may
+start after the engine). Keys are fetched lazily, cached 1h, force-refreshed
+on an unknown `kid` (rotation). An unreachable IdP fails the REQUEST closed
+with a clear error, never the boot. `jwks_url` explicit, or discovered from
+`{issuer}/.well-known/openid-configuration`.
+
+== Claims mapping
+
+`sub` → user_id; `groups` (configurable `roles_claim`; Kanidm's claim) →
+sanitized roles; optional `tenant_claim` → tenant_id (absent ⇒ the existing
+header-trust ladder governs). **Zero `UnifiedPermission` is ever derived
+from IdP claims** — permissions stay config/RBAC-driven; the RLS
+`RoleBased` surface is reachable only through the allowlist, by design.
+
+== Non-goals (recorded, not silently dropped)
+
+* Browser redirect/PKCE flows and RP session management.
+* pgwire bearer auth (no bearer channel on that surface today; belongs with
+  the pgwire-SCRAM future TD).
+* aws_iam/azure_ad enterprise variants (unchanged) and mTLS (unchanged).
+* SSO/mTLS role stamping beyond this bearer path (TD-TENANT-1's note now
+  points here for the OIDC half).
+
+== Tests
+
+Truth table + config-time HMAC rejection + claim flattening (pure); the
+httpmock adversarial suite with an embedded RSA keypair: happy path,
+wrong-iss/aud, expiry, HS256-confusion, `alg:none`, unknown-kid refresh →
+fail-closed, unreachable-IdP (boots, fails request closed).
+
+== Adversarial review (fresh agent, 2026-09-01) — verdict FINDINGS, all addressed
+
+The inaugural run of the process rule below on THIS TD returned FINDINGS
+(F1–F11). Dispositions:
+
+* **F5 (the critical one):** the seam invariant was pinned only at the
+  HELPER — the reviewer's sabotage (delete the `sanitize_idp_roles` call in
+  `convert_oidc_claims_to_unified`) passed all 11 module tests. The same
+  blind-test class as #1766/#1787, in fresh code. FIXED:
+  `oidc_seam_is_enforced_at_the_production_conversion` drives the real
+  `authenticate` dispatch end-to-end (mock JWKS + discovery, real RS256
+  token) and asserts the conversion output.
+* **F2:** `allow_delegation_roles` default flipped to FALSE for the IdP path
+  — the reviewer's trust-transfer argument was right: IdP groups come from
+  an external directory where `gateway`/`operator` are ordinary names;
+  importing them by default silently grants cross-tenant delegation. The
+  API-key seam keeps default-true (operator-typed config). Design pivot.
+* **F3:** `user_id` is now `oidc:{sub}` — the issuer-scoped sub no longer
+  joins against LOCAL role assignments (a colliding sub inherited that
+  principal's permissions; the #1268/ADR-077 two-identity-systems class).
+* **F1:** JWKS refresh storm closed — single-flight fetch gate + 5s
+  forced-refresh throttle (garbage-kid floods degrade to per-request
+  errors, not outbound fetch amplification).
+* **F4:** documented (config + here): enabling OIDC should pair with
+  `default_deny = true` — with the permissive default, any token holder
+  for the audience is an authorized data-plane principal.
+* **F6:** tampered-signature negative control added (valid header/kid/
+  claims, flipped signature bytes — fails only if signature verification
+  regresses).
+* **F7:** ES* rejected at config load (RSA-only verifier, honestly).
+* **F8:** construction warns when oidc is enabled but `methods` lacks
+  `jwt`; config example notes it.
+* **F9:** dropped-role warn map capped (256).
+* **F10:** issuer/jwks URLs must be https (loopback exempt for tests).
+* **F11:** noted as inherited (is_session_expired has no caller today).
+
+Also verified sound by the reviewer: no panics on malformed input; the
+attacker-controlled `kid` never reaches clients (generic auth error); all
+bearer surfaces funnel through the one dispatch; duplicate-claim tokens
+behave consistently; the tenant claim rides the TD-TENANT-1 ladder.
+
+== Process rule established by this TD
+
+**Fresh-agent adversarial review is the first reviewer of record for every PR**
+(user directive 2026-09-01, effective here — this TD is the first PR reviewed
+under it). A zero-author-context agent audits the diff: enumerates every
+consumer of each touched invariant, verifies claimed invariants carry
+negative-controlled tests, hunts silent-failure shapes and trust-boundary
+crossings. Findings are fixed + regression-pinned or refuted with evidence;
+the verdict is attached to the PR so human approval is sign-off on evidence,
+not line-reading. Origin: the #1791 RLS escalation that author-review missed.
+
+== References
+
+* PR #1791 — the API-key seam sanitization + the RLS escalation that
+  established the invariant (adversarial review finding).
+* `docs/10-quality/td/TD-TENANT-1-header-trust-policy.adoc` — SSO/mTLS
+  follow-up annotated: the OIDC bearer half is this TD.
+* Kanidm — the reference IdP this was designed against (`groups` claim,
+  native LDAP held in reserve).
