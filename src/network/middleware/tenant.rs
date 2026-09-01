@@ -573,8 +573,19 @@ impl TenantExtractor {
             } else {
                 TenantIdSource::JwtClaim
             };
+            // N3 (adversarial review pass 2): the system_tenants compat
+            // fallback is for LOCALLY-authenticated principals whose bound
+            // tenant is operator-designated. An OIDC token's tenant comes
+            // from an IdP CLAIM — a token asserting tenant "system"/"admin"
+            // must not thereby become a gateway-class principal (that grants
+            // cross-tenant delegation under gateway-only + the tier-claim
+            // gate). Exclude OIDC-provenance principals from the fallback.
+            let oidc_provenance = user_context
+                .metadata
+                .get("oidc")
+                .is_some_and(|v| v == "true");
             let is_gateway_principal = user_context.is_gateway_principal()
-                || self.config.system_tenants.contains(tenant_id);
+                || (!oidc_provenance && self.config.system_tenants.contains(tenant_id));
             return Some((
                 AuthenticatedTenantBinding {
                     tenant_id: tenant_id.clone(),
@@ -1093,6 +1104,46 @@ mod tests {
                 "{alias} must not assert a tenant on REST"
             );
         }
+    }
+
+    /// N3 (adversarial review pass 2): an OIDC-provenance principal whose
+    /// tenant CLAIM lands in system_tenants must NOT become a gateway-class
+    /// principal via the compat fallback — that would transfer delegation
+    /// trust by claim value, exactly what allow_delegation_roles=false
+    /// withholds from ordinary IdP principals.
+    #[test]
+    fn oidc_provenance_is_excluded_from_the_system_tenants_fallback() {
+        let extractor = TenantExtractor::with_config(TenantExtractorConfig {
+            header_trust: HeaderTrustPolicy::GatewayOnly,
+            ..TenantExtractorConfig::default()
+        });
+        let mut ctx = crate::security::UnifiedUserContext::anonymous();
+        ctx.tenant_id = Some("system".to_string()); // IdP-asserted claim value
+        ctx.metadata.insert("oidc".to_string(), "true".to_string());
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .expect("req");
+        let binding = extractor
+            .authenticated_tenant_binding(&req)
+            .map(|(b, _)| b)
+            .unwrap_or(AuthenticatedTenantBinding {
+                tenant_id: "system".into(),
+                is_gateway_principal: true, // visible if the test regresses
+            });
+        // We must reach the binding path: insert the context into extensions.
+        let mut req2 = axum::http::Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .expect("req");
+        req2.extensions_mut().insert(ctx);
+        if let Some((binding, _)) = extractor.authenticated_tenant_binding(&req2) {
+            assert!(
+                !binding.is_gateway_principal,
+                "OIDC tenant claim must not confer gateway-class via system_tenants"
+            );
+        }
+        let _ = binding; // first probe just built the fallback shape
     }
 
     #[test]

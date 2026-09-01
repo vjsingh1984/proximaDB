@@ -372,6 +372,30 @@ default_session_timeout_minutes = 60
 # Delegation ONLY: it grants no data-plane permission.
 "dev-key" = { user_id = "devuser", permissions = ["*"], ip_restrictions = [] }
 
+# Generic OIDC provider (TD-SSO-1): bearer tokens from an external IdP
+# (Kanidm/Keycloak/any OIDC), validated against its JWKS. Roles sanitize at
+# the seam: ONLY gateway/operator (delegation) plus the explicit
+# role_allowlist cross into the engine — anything else the IdP asserts is
+# dropped (RLS RoleBased matches role strings; empty allowlist = fail-closed).
+# [security.authentication.oidc]
+# enabled = true
+# NOTE: requires methods = [..., "jwt"] above — the OIDC path rides the jwt
+# method; without it every bearer token reads "JWT authentication disabled".
+# Pair with [security.rbac] default_deny = true: with the permissive default,
+# any principal that can obtain a token for `audience` from the IdP is an
+# authorized data-plane principal (adversarial-review finding F4).
+# issuer_url = "https://kanidm.example.com/oauth2/openid/proximadb"
+# audience = "proximadb"
+# roles_claim = "groups"          # Kanidm's claim; "roles" is the fallback
+# tenant_claim = "tenant"         # optional claim -> tenant_id
+# role_allowlist = []             # deliberate business-role opt-in
+# allow_delegation_roles = false  # gateway/operator groups at the IdP grant
+#                                 # cross-tenant delegation only when you opt
+#                                 # in — an external directory's ordinary
+#                                 # "gateway"/"operator" groups must not
+#                                 # silently import that trust (F2)
+# allowed_algorithms = ["RS256"]  # HMAC/ES entries are rejected at load
+
 [security.authentication.jwt]
 enabled = false
 secret = "dev-secret-change-me"

@@ -22,6 +22,7 @@
 pub mod config;
 pub mod jwt;
 pub mod middleware;
+pub mod oidc;
 pub mod providers;
 pub mod rbac;
 

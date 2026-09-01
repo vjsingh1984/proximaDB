@@ -103,8 +103,11 @@ silently running `open`. Unset ⇒ config value; default-safe, no flag-day.
   (Unrestricted row access on role-string match) — the conversion now
   passes ONLY the two delegation markers and drops every other configured
   role with a warn; pinned by
-  `apikey_business_roles_are_dropped_not_passed_through`. **SSO/mTLS: still
-  open** (same shape, unclaimed; apply the same seam-sanitization lesson).
+  `apikey_business_roles_are_dropped_not_passed_through`. **SSO/mTLS: half
+  closed** — generic OIDC bearer (with the same seam sanitization for IdP
+  role claims) is TD-SSO-1 (2026-09-01); the aws/azure enterprise SSO
+  variants and mTLS role stamping remain open, and TD-SSO-1 carries the
+  seam pattern for them.
 * pgwire authenticated bindings — **re-scoped 2026-08-30 as its own future
   TD**, not a follow-up patch: it requires SCRAM/password wire-protocol
   authentication (a protocol-level work item). Until then, strict policies
