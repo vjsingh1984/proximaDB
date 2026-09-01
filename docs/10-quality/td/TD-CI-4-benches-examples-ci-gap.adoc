@@ -84,7 +84,7 @@ rust-compile-benches-examples:
 
 **Rationale:**
 * ✅ **Catches rot early** on every PR (test_tier)
-* ✅ **Low memory footprint** — measured at 283 MB peak (well under 7 GB limit)
+* ✅ **Low memory footprint** — the sibling `rust-compile-benches` job already compiles benches serially on the same runner class; this job is the same shape (`CARGO_BUILD_JOBS=1` + sccache)
 * ✅ **Fast with sccache** — cached builds will be quick
 * ✅ **Runs on test_tier** — same tier as other compile checks
 
@@ -92,36 +92,36 @@ rust-compile-benches-examples:
 * Option B (medium-tier-only) would allow rot to land on develop
 * Option C (split jobs) adds complexity without benefit — memory is not a constraint
 
-== Evidence (Memory Measurement — 2026-08-23)
+== Evidence (memory) — corrected 2026-09-01
 
-Ran on macOS (equivalent workload to CI runner):
-[source,bash]
-----
-$ /usr/bin/time -l cargo check --workspace --benches --examples
-         282609600  peak memory footprint
-----
-
-* **Peak memory: ~283 MB (0.27 GB)**
-* **GitHub Actions runner limits:**
-  * Standard: 7 GB available
-  * Large: ~28 GB available
-* **Conclusion:** Memory is **NOT a constraint** — 0.27 GB << 7 GB
+An earlier draft cited "283 MB peak" from `/usr/bin/time -l cargo check …` on
+macOS. That measurement is INVALID as evidence: `/usr/bin/time -l` reports the
+cargo parent process's max RSS, not the `rustc`/sccache-server children that
+actually consume the memory — it measured the coordinator, not the workload.
+The load-bearing evidence instead: the existing `rust-compile-benches` job
+(the benches half of this same check, serial compilation + sccache) already
+runs green on the standard 7 GB runner, and this job adds only the
+auto-discovered example targets to that shape. An adversarial review
+(2026-09-01, PR Verification Regime) caught the bad measurement; also fixed
+in that pass: the job is now wired into the `ci-success` aggregator's `needs`
+list (a new job absent from the aggregator cannot gate a merge), and
+`examples/**` was added to the `compile` path filter (examples-only diffs
+previously skipped every Rust job).
 
 == Exit Criteria
 
-1. ✅ **Measure peak memory** — 283 MB peak, well within limits
-2. **Decision:** **Option A is feasible** — add lightweight PR-time job
-3. **Next:** Implement PR-time CI job for benches+examples
+1. ✅ **Decision:** Option A — PR-time job, same shape as the benches sibling
+2. ✅ **Implement** — job wired into `ci-success` + `examples/**` path filter
 
 == Status
 
-**READY TO IMPLEMENT** — measurement complete, Option A recommended
+**IMPLEMENTED** — job live in this PR; wired into the `ci-success` aggregator and the `compile` path filter (adversarial-review fixes 2026-09-01)
 
 == Next Steps
 
-1. ✅ Measure peak RSS — 283 MB, well within limits
-2. ✅ Choose solution — Option A (PR-time job)
-3. **Implement** — Add `rust-compile-benches-examples` job to `.github/workflows/ci.yml`
+1. ✅ Choose solution — Option A (PR-time job)
+2. ✅ Implement — `rust-compile-benches-examples` job in `.github/workflows/ci.yml`
+3. ✅ Adversarial review pass — aggregator wiring, path filter, evidence correction
 
 == Related
 

@@ -180,6 +180,7 @@ jobs:
               - 'apps/**'
               - 'tests/**'
               - 'benches/**'
+              - 'examples/**'
               - 'build.rs'
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -1496,9 +1497,10 @@ jobs:
         run: sccache --show-stats || true
 
   # TD-CI-4: Benches + Examples compile check on every PR
-  # Validates that 50 bench files + 31 example files compile correctly.
-  # Runs on test_tier (every PR) to catch rot early.
-  # Memory-safe: measured at 283 MB peak (well under 7 GB runner limit).
+  # Validates that every workspace bench + example target compiles
+  # (auto-discovered + declared). Runs on test_tier (every PR) to catch rot
+  # early. Memory: `cargo check` with CARGO_BUILD_JOBS=1, same shape as the
+  # rust-compile-benches sibling that already runs green on this runner class.
   rust-compile-benches-examples:
     name: Rust Compile (benches + examples)
     runs-on: ubuntu-latest
@@ -2862,6 +2864,7 @@ jobs:
       - v1-proto-usage-no-regression
       - rust-compile
       - rust-compile-benches
+      - rust-compile-benches-examples
       - rust-clippy
       - feature-matrix
       - rust-security

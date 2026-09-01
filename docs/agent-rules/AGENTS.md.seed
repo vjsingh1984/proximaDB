@@ -26,6 +26,8 @@ Required flow:
 5. Run verification from the task worktree. Avoid sharing the root `target/` with unrelated long-running cargo jobs when possible; prefer the helper's `CARGO_INCREMENTAL=0`/`sccache` setup.
 6. After the PR merges, remove the worktree with `scripts/worktree.sh rm <type/topic>`. Periodically reclaim landed worktrees with `scripts/worktree.sh clean --dry-run` then `scripts/worktree.sh clean`; use `scripts/worktree.sh gc` for incremental-cache bloat in kept worktrees.
 
+When continuing "next steps", first identify the active worktree/branch, confirm it is based on current `origin/develop`, and continue there. If no appropriate worktree exists, create one before editing.
+
 ## PR Verification Regime (before any merge)
 
 Stale PRs drift: green CI on an old base is evidence about that commit, not about the PR's behavior on current `develop`. Before requesting or granting merge for a PR open past the rebase-daily window or touching cross-cutting seams (proto, port traits, feature gates, workflow outputs):
@@ -36,7 +38,6 @@ Stale PRs drift: green CI on an old base is evidence about that commit, not abou
 
 A PR whose content is already on develop (zero remaining delta) is closed with a pointer, not force-pushed. `--admin` past the required-review gate only with explicit human authorization for that PR. Full directive: `CLAUDE.md` mandate 20.
 
-When continuing "next steps", first identify the active worktree/branch, confirm it is based on current `origin/develop`, and continue there. If no appropriate worktree exists, create one before editing.
 
 ## 🚨 Active Development Trajectory (2026-06-04 Pivot) 🚨
 
