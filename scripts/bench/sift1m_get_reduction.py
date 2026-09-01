@@ -1111,6 +1111,26 @@ class S3PaxGeometry:
         return materialize_footer_geometry(self._download_range, inventory)
 
 
+class LocalPaxGeometry:
+    """file:// adapter for the explicit-flush epoch proof: the same
+    inventory / stable_signature contract as the remote readers, backed by
+    the local PAX footer parser. Out-of-process by construction (reads the
+    settle root, not server metrics)."""
+
+    def __init__(self, sst_root: Path):
+        self.sst_root = sst_root
+
+    def require_empty_prefix(self) -> None:
+        pass  # the fresh-root check is require_empty_directory(root)
+
+    def inventory(self) -> dict:
+        return pax_geometry(self.sst_root)
+
+    @staticmethod
+    def stable_signature(inventory: dict) -> tuple:
+        return stable_signature(inventory)
+
+
 def stable_signature(geometry: dict) -> tuple:
     return tuple(
         (item["path"], item["bytes"], item["rows"], item["mtime_ns"])
@@ -2957,11 +2977,20 @@ def main() -> int:
         )
     if remote_geometry is not None:
         remote_geometry.require_empty_prefix()
-    if args.explicit_flush_every_rows is not None and remote_geometry is None:
-        raise RuntimeError(
-            "--explicit-flush-every-rows requires Azure/S3 remote storage so "
-            "each durable PAX epoch can be proven by object identity"
-        )
+    # Epoch proof for --explicit-flush-every-rows: remote readers use object
+    # identity; a local (file://) bed proves the same epochs from the PAX
+    # footers via the LocalPaxGeometry adapter (same inventory/signature
+    # contract), so the deterministic settle protocol is not remote-only.
+    epoch_geometry = remote_geometry
+    if args.explicit_flush_every_rows is not None and epoch_geometry is None:
+        if storage_url.startswith("file://"):
+            epoch_geometry = LocalPaxGeometry(root / "data" / "sst")
+        else:
+            raise RuntimeError(
+                "--explicit-flush-every-rows requires Azure/S3 remote storage "
+                "or a local file:// bed so each durable PAX epoch can be "
+                "proven by object identity"
+            )
     config = root / "benchmark.toml"
     write_config(
         config,
@@ -3191,7 +3220,7 @@ def main() -> int:
             args.port,
             args.ingest_transport,
             args.explicit_flush_every_rows,
-            remote_geometry,
+            epoch_geometry,
         )
         result["collection_id"] = collection_id
         result["ingest"] = {
