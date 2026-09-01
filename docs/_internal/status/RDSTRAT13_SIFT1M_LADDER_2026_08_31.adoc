@@ -84,3 +84,35 @@ IDENTICAL in every same-geometry pair).
 
 Raw evidence: `/Users/vijaysingh/proximadb-bench-data/rdstrat13/runs/` (9 result.json + logs),
 `analyze_rdstrat13.py`, `run_rdstrat13_campaign.sh`.
+
+== Disk isolation (dataserver2, 32-core Xeon / 125 GB, file:// storage) — 2026-08-31
+
+To remove the transfer wall entirely, the same protocol ran disk-backed on dataserver2 (Linux
+builds; binaries from the same commits; `LocalPaxGeometry` extended the deterministic-settle
+epoch proof to file://). All three arms landed on the IDENTICAL clean single-segment bed
+(11 cells, 370,182 probed rows, 58.5 MB, 21.95 GETs/q — no overlap lottery):
+
+|===
+|Arm |p50 |rank_us (measured) |meta/q |GETs |bytes |recall |identity
+|b0 base |357.3 ms |— (no counter) |— |21.95 |58.5 MB |.9835 |d0d73237…
+|b4 full (adaptive rank) |355.7 ms |47.7 ms |0.00 |21.95 |58.5 MB |.9835 |d0d73237…
+|b4 degree-1 control |346.1 ms |51.7 ms |0.00 |21.95 |58.5 MB |.9835 |d0d73237…
+|===
+
+Readings:
+
+1. **Perfect parity on disk**: identical geometry, GETs, bytes, recall and result-identity
+   hashes across base / full / control. The PR is p50-neutral where its levers have nothing to
+   bite (local RTT ≈ 0) — exactly the shipped contract.
+2. **C3 verified on disk**: `metadata_ops/q = 0.00` (HEAD eliminated on the file:// path too).
+3. **C2's rank measured apples-to-apples on the same bed**: parallel 47.7 ms vs sequential
+   51.7 ms at 370k rows (the E5-2680's older cores; the adaptive gate capped morsels at the run
+   count, 11-way on 32 cores). Rank is a tens-of-ms term — re-confirming the az-ladder
+   correction.
+4. **The remaining ~300 ms of the 356 ms disk p50 is the not-yet-instrumented tail** (SQ8
+   rerank + Region-D decode + result serialization + ~22 local GETs at ~1 ms). With compute and
+   IO both measured small, that tail is the next instrumentation/optimization target for the
+   cold persona — now precisely bounded by the C1 counters.
+
+Raw evidence: `dataserver2:/home/vsingh/rdstrat13/runs/{b0,b4,b4d1}_disk/` (result.json + logs),
+mirrored to `/Users/vijaysingh/proximadb-bench-data/rdstrat13/disk-runs3/`.
