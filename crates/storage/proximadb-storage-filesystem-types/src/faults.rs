@@ -72,7 +72,7 @@ impl FaultInjectingFileSystem {
         // staging area, and faulting that fails the flush at commit instead of
         // the compaction at retirement. Metadata/WAL rotations are excluded by
         // the `.pax` filter.
-        if !path.ends_with(".pax") || path.contains("__flush") {
+        if !path.ends_with(".pax") || path.contains("__flush") || path.contains("__compact") {
             return None;
         }
         match fault_mode()? {

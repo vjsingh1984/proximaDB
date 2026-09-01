@@ -2542,6 +2542,14 @@ impl SstEngine {
             }
         };
 
+        // TD-COMPACT-13: the data dir is a reconciler-sweep target (its
+        // retire-pending obligations drain on the worker), and any input whose
+        // delete failed is filtered from the live set here — superseded
+        // segments stop serving the moment the obligation is recorded.
+        crate::storage::engines::sst::retirement_ledger::register_collection_dir(
+            &std::path::PathBuf::from(data_url),
+        );
+        let pending = crate::storage::engines::sst::retirement_ledger::pending_paths();
         for entry in entries {
             tracing::trace!(
                 "[SST] Examining entry: name={}, url={}, is_dir={}",
@@ -2549,6 +2557,13 @@ impl SstEngine {
                 entry.url,
                 entry.metadata.is_directory
             );
+            if !entry.metadata.is_directory && pending.contains(&entry.url) {
+                tracing::debug!(
+                    url = %entry.url,
+                    "TD-COMPACT-13: filtering pending-retirement segment from discovery"
+                );
+                continue;
+            }
             if !entry.metadata.is_directory
                 && (entry.name.ends_with(".sst")
                     || entry.name.ends_with(".arrow")

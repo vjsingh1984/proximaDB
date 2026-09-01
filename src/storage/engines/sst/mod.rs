@@ -237,6 +237,7 @@ pub mod indexed_reader;
 pub mod multi_stage_filter;
 pub mod object_economy_directory;
 pub mod readers;
+pub mod retirement_ledger;
 pub use proximadb_sst_engine::row_filter; // extracted TD-DECOMP-82
 pub mod streaming_compaction;
 pub mod unified_metadata_serializer {

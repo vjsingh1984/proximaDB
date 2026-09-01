@@ -128,6 +128,28 @@ fn pax_segments(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Sum of live rows across every `.pax` segment via the footer (tail 16 B =
+/// footer_len u64 LE + PAXSEG01; footer prefix 9 B = version u8 + rows u64).
+fn live_row_total(segments: &[PathBuf]) -> u64 {
+    segments
+        .iter()
+        .map(|p| {
+            let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+            assert!(bytes.len() >= 25, "{} too short", p.display());
+            let tail = &bytes[bytes.len() - 16..];
+            assert_eq!(&tail[8..], b"PAXSEG01", "{} missing PAX tail", p.display());
+            let footer_len = u64::from_le_bytes(tail[0..8].try_into().unwrap()) as usize;
+            let footer_start = bytes.len() - 16 - footer_len;
+            assert_eq!(bytes[footer_start], 1, "{} footer version", p.display());
+            u64::from_le_bytes(
+                bytes[footer_start + 1..footer_start + 9]
+                    .try_into()
+                    .unwrap(),
+            )
+        })
+        .sum()
+}
+
 async fn search_ids(engine: &SstEngine, coll: &Collection, query: Vec<f32>) -> Vec<String> {
     let ctx = StorageQueryContext {
         search_params: Arc::new(SearchParams {
@@ -196,15 +218,28 @@ async fn transient_delete_failure_still_leaves_exactly_one_segment() -> Result<(
     }
     quiesce(&engine).await;
 
-    // THE INVARIANT: one segment — the faulted first deletes must have been
-    // retried (and, post-fix, reconciled), not left serving forever.
-    let segments = pax_segments(dir.path());
+    // THE INVARIANT is ROW ACCOUNTING (the T1a lesson: a two-level state with
+    // new rows is legitimate; DUPLICATION is the defect): the faulted deletes
+    // must be retried/reconciled so the live set converges to exactly the
+    // ingested rows — a surplus proves duplicated coverage (the measured
+    // 3.03x/2.1x defect), a deficit proves loss. The fix's guarantee is
+    // eventual (recorded obligation + debounced reconciler), so poll bounded.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    let total_live_rows = loop {
+        let segments = pax_segments(dir.path());
+        let total = live_row_total(&segments);
+        if total == (ROUNDS * 2 * BATCH) as u64 || std::time::Instant::now() > deadline {
+            break total;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    };
     assert_eq!(
-        segments.len(),
-        1,
-        "TD-COMPACT-13 RED: a transient delete failure must be retried so the \
-         quiesced chain leaves exactly one segment (found {})",
-        segments.len()
+        total_live_rows,
+        (ROUNDS * 2 * BATCH) as u64,
+        "TD-COMPACT-13 RED: transient delete failures must be retried/reconciled \
+         so live rows == ingested rows within 90s (live total {total_live_rows} vs \
+         ingested {}) — a surplus is the duplicated-coverage defect",
+        ROUNDS * 2 * BATCH
     );
 
     // Correctness is never in question (MVCC dedup) — assert it anyway so the
