@@ -58,8 +58,8 @@ impl CanonicalPrecisionResolver {
     /// Wire a resolver to a catalog backend and its shared cache.
     ///
     /// The `cache` should be the same `CatalogCache` instance the
-    /// backend's `Catalog` impl writes to (the typical pattern: both
-    /// `OltpCatalog::new` and this resolver receive the same
+    /// backend's `Catalog` impl writes to (the typical pattern: the
+    /// catalog backend and this resolver receive the same
     /// `Arc<CatalogCache>` from the platform bootstrap).
     pub fn new(catalog: Arc<dyn Catalog>, cache: Arc<CatalogCache>) -> Self {
         Self { catalog, cache }
@@ -91,7 +91,7 @@ mod tests {
     use crate::cache::CatalogCache;
     use crate::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
 
-    /// TD-CAT-7.4: Minimal in-memory test catalog.
+    /// TD-CAT-10: Minimal in-memory test catalog.
     ///
     /// Replaces OltpCatalog which is gated behind `oltp-catalog` and unusable
     /// in both configurations. This catalog stores everything in-memory HashMaps
@@ -180,7 +180,7 @@ mod tests {
             let tables = self.tables.read().await;
             Ok(tables
                 .keys()
-                .filter(|id| &id.namespace == namespace)
+                .filter(|id| id.namespace == *namespace)
                 .cloned()
                 .collect())
         }
@@ -358,10 +358,9 @@ mod tests {
             "first resolve must populate the cache so subsequent reads stay hot"
         );
 
-        // Drop the catalog backend; if the resolver hit the cache the second
-        // call should still succeed even with a broken backend. We model this
-        // by clearing the SQLite-backed table out from under it, then
-        // checking that the resolver still answers correctly.
+        // If the resolver populated the cache on the first miss, the second
+        // call answers from the cache without another backend round-trip
+        // (modeled by the in-memory test double holding the same data).
         let result = resolver.resolve(&id).await.unwrap();
         assert_eq!(result, EmbeddingScalarType::Fp16);
     }

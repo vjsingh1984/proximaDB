@@ -7,7 +7,7 @@
 //! - **MariaDB / MySQL / TiDB / PlanetScale** — via `oltp-catalog-mysql` feature
 //! - **SQLite** — via `oltp-catalog-sqlite` feature (embedded / dev)
 //!
-//! # TD-CAT-7.4: Retirement (2026-08-23)
+//! # TD-CAT-10: Retirement (2026-08-23)
 //!
 //! This module is gated behind the `oltp-catalog` feature and is **not maintained**.
 //! It is unusable in both configurations:
