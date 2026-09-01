@@ -525,6 +525,12 @@ impl UnifiedAuthService {
         // assignments targeting OIDC users must use the `oidc:{sub}` form.
         let oidc_user_id = format!("oidc:{}", claims.sub);
         let oidc_session = format!("oidc_{}", claims.sub);
+        let mut metadata = HashMap::new();
+        // N3 (adversarial review pass 2): mark the principal's provenance so
+        // the tenant middleware can exclude IdP-asserted tenant claims from
+        // the system_tenants compat fallback (a token whose `tenant` claim
+        // lands in system_tenants must not become a gateway-class principal).
+        metadata.insert("oidc".to_string(), "true".to_string());
         UnifiedUserContext {
             user_id: oidc_user_id,
             tenant_id,
@@ -534,7 +540,7 @@ impl UnifiedAuthService {
             session_id: oidc_session,
             expires_at: DateTime::from_timestamp(claims.exp, 0),
             created_at: DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(Utc::now),
-            metadata: HashMap::new(),
+            metadata,
         }
     }
 
@@ -1320,6 +1326,65 @@ fn create_auth_audit_event(
 mod tests {
     use super::ApiKeyInfo;
 
+    /// N5 (adversarial review pass 2): the LOCAL-JWT retrofit arm is pinned
+    /// too — the same blind-test class as F5, one function below it. With an
+    /// OIDC verifier present, a locally-minted token's roles cross the SAME
+    /// seam; deleting the `Some(verifier) => sanitize…` arm reverts to
+    /// pass-through and THIS test fails.
+    #[test]
+    fn local_jwt_roles_sanitize_when_oidc_is_configured() {
+        use crate::network::auth::oidc::test_fixtures as fx;
+        let cfg = super::AuthenticationConfig {
+            oidc: Some(fx::verifier(&["analyst"], false)),
+            ..serde_json::from_str(
+                r#"{"enabled":false,"methods":["jwt"],"require_authentication":false,
+                    "default_session_timeout_minutes":30,"api_keys":{},
+                    "jwt":{"enabled":false,"secret":"x","issuer":"t","audience":"t",
+                            "access_token_expiration_minutes":1,
+                            "refresh_token_expiration_days":1,"algorithm":"HS256"},
+                    "sso":{"enabled":false,"providers":[],"token_cache_ttl_minutes":1,
+                            "aws_iam":null,"azure_ad":null}}"#,
+            )
+            .expect("minimal auth config")
+        };
+        let service = super::UnifiedAuthService::new(cfg).expect("service");
+        let claims = crate::network::auth::Claims {
+            sub: "local-user".into(),
+            iat: 1,
+            exp: 2,
+            nbf: 1,
+            iss: "local".into(),
+            aud: "local".into(),
+            jti: "j".into(),
+            typ: crate::network::auth::jwt::TokenType::Access,
+            tenant_id: None,
+            roles: vec![
+                "gateway".to_string(),
+                "analyst".to_string(),
+                "admin".to_string(),
+            ],
+            scopes: vec![],
+            capability_type: None,
+            collection: None,
+            operation: None,
+            protocol: None,
+            mode: None,
+            max_records: None,
+            max_bytes: None,
+            tier: None,
+            route_visibility: None,
+            metering_required: None,
+        };
+        let ctx = service.convert_jwt_claims_to_unified(claims);
+        // Delegation is OFF in this fixture's oidc config (F2 default), and
+        // only the allowlisted business role crosses.
+        assert_eq!(
+            ctx.roles,
+            vec!["analyst".to_string()],
+            "local tokens must hit the same seam when OIDC is configured (N5)"
+        );
+    }
+
     /// F5 (adversarial review): the seam invariant pinned WHERE IT LIVES.
     /// The reviewer's sabotage — deleting the `sanitize_idp_roles` call in
     /// `convert_oidc_claims_to_unified` — passed every oidc.rs test, because
@@ -1409,6 +1474,10 @@ mod tests {
         );
         // F3: identity is namespaced, not the raw sub.
         assert!(ctx.user_id.starts_with("oidc:"), "got {}", ctx.user_id);
+        // Tenant claim mapped at the production seam (reviewer E-gap).
+        assert_eq!(ctx.tenant_id.as_deref(), Some("tenant-9"));
+        // N3: OIDC provenance is marked for the middleware's fallback gate.
+        assert_eq!(ctx.metadata.get("oidc").map(String::as_str), Some("true"));
         // Claim 4: no permissions derived.
         assert!(ctx.effective_permissions.is_empty());
     }

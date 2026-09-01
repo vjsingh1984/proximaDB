@@ -94,7 +94,7 @@ The inaugural run of the process rule below on THIS TD returned FINDINGS
   `oidc_seam_is_enforced_at_the_production_conversion` drives the real
   `authenticate` dispatch end-to-end (mock JWKS + discovery, real RS256
   token) and asserts the conversion output.
-* **F2:** `allow_delegation_roles` default flipped to FALSE for the IdP path
+* **F2:** `allow_delegation_roles` default flipped to FALSE for the IdP path (the code; docs corrected in the second pass)
   — the reviewer's trust-transfer argument was right: IdP groups come from
   an external directory where `gateway`/`operator` are ordinary names;
   importing them by default silently grants cross-tenant delegation. The
@@ -116,6 +116,46 @@ The inaugural run of the process rule below on THIS TD returned FINDINGS
   `jwt`; config example notes it.
 * **F9:** dropped-role warn map capped (256).
 * **F10:** issuer/jwks URLs must be https (loopback exempt for tests).
+
+== Adversarial review, SECOND pass (2026-09-01) — verdict FINDINGS, addressed
+
+The delta review verified every F-fix (all confirmed: F5's sabotage-reasoning,
+F6 scoping, F2's code default — but its DOCS were half-updated) and found
+five new items:
+
+* **N1 (MEDIUM):** F1's single-flight serialized but did not COALESCE — the
+  TTL-expiry and failing-fetch paths still performed one outbound request
+  per attacker request. FIXED: cache recheck inside the gate + the 5s
+  debounce applied to BOTH paths (stale-but-present serving is fail-closed:
+  it only rejects unknown kids for ≤5s, never accepts extra).
+* **N2 (MEDIUM):** the DISCOVERED `jwks_uri` (IdP-controlled) bypassed the
+  https pin, and reqwest's default redirect policy followed scheme
+  downgrades — SSRF from the DB network position, or a MITM-substituted key
+  set = forged tokens. FIXED: same https/loopback pin applied to the
+  discovered URI; `redirect::Policy::none()`.
+* **N3 (MEDIUM):** a NEW trust transfer the F2 flip missed — an OIDC token
+  whose `tenant` claim lands in `system_tenants` became a gateway-class
+  principal via the REST compat fallback (cross-tenant delegation + the
+  tier-claim gate, by claim VALUE). FIXED: OIDC provenance is marked in
+  context metadata and excluded from the fallback; pinned by test. gRPC/
+  Flight never had the fallback (the inconsistency was the tell).
+* **N4 (LOW):** module doc + this TD still said delegation "default true"
+  after the F2 code flip. FIXED (this section's F2 entry now reads false;
+  module doc corrected).
+* **N5 (LOW):** the local-JWT retrofit arm was unpinned — the F5 lesson one
+  function below the fix. FIXED:
+  `local_jwt_roles_sanitize_when_oidc_is_configured`. Also documented: with
+  OIDC on + defaults, locally-minted `gateway`/`operator` markers are
+  stripped (fail-closed breaking change for gateway topologies — operators
+  re-enable via allow_delegation_roles).
+* **N6/N7/N8 (INFO):** revocation propagates at ≤1h TTL / ≤5s rotation
+  (documented here); the `oidc:` prefix is convention not enforcement
+  (operator-error-only today); the committed test `.pem` is verified-throwaway
+  (modulus matches the in-repo JWKS) but the force-add neutralizes the
+  gitignore signal for that path — future edits there get no ignore-side
+  warning (secret-scanning still applies).
+* Reviewer E-gap also closed: the F5 test now asserts the tenant mapping at
+  the production seam.
 * **F11:** noted as inherited (is_session_expired has no caller today).
 
 Also verified sound by the reviewer: no panics on malformed input; the

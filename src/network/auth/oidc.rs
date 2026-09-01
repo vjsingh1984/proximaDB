@@ -21,7 +21,8 @@
 //! the invariant now holds by construction on every credential path:
 //!
 //! * `gateway`/`operator` pass only when `allow_delegation_roles` is set
-//!   (default true — symmetric with the API-key seam);
+//!   (default FALSE — IdP groups come from an external directory; see
+//!   `default_allow_delegation_roles`);
 //! * any other string passes only when the operator listed it in
 //!   `role_allowlist` (default **empty** — fail-closed);
 //! * everything else is dropped with a once-per-role warning.
@@ -287,8 +288,11 @@ impl OidcTokenVerifier {
                 )));
             }
         }
+        // N2: no redirect following — a redirect chain (including scheme
+        // downgrade) from a pinned-https URL must not re-aim the fetch.
         let client = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| OidcError::Rejected(format!("http client: {e}")))?;
         Ok(Self {
@@ -325,16 +329,41 @@ impl OidcTokenVerifier {
             .json()
             .await
             .map_err(|e| OidcError::JwksUnavailable(format!("discovery body: {e}")))?;
-        doc.get("jwks_uri")
+        let uri = doc
+            .get("jwks_uri")
             .and_then(|v| v.as_str())
-            .map(str::to_owned)
-            .ok_or_else(|| OidcError::JwksUnavailable("discovery lacks jwks_uri".into()))
+            .ok_or_else(|| OidcError::JwksUnavailable("discovery lacks jwks_uri".into()))?;
+        // N2: the discovery document is IdP-controlled — apply the SAME https
+        // pin (loopback-exempt) to the URI it names, so a hostile or
+        // misconfigured discovery response cannot aim the JWKS fetch at
+        // cleartext/internal endpoints (SSRF from the DB's network position,
+        // or a MITM-substituted key set = forged tokens).
+        let parsed = reqwest::Url::parse(uri)
+            .map_err(|e| OidcError::JwksUnavailable(format!("bad jwks_uri: {e}")))?;
+        let is_loopback = parsed
+            .host_str()
+            .is_some_and(|h| h.starts_with("127.") || h == "localhost" || h == "[::1]");
+        if parsed.scheme() != "https" && !(parsed.scheme() == "http" && is_loopback) {
+            return Err(OidcError::JwksUnavailable(format!(
+                "discovery jwks_uri must be https (http allowed only for loopback): {uri}"
+            )));
+        }
+        Ok(uri.to_string())
     }
 
     async fn fetch_jwks(&self) -> Result<Arc<JwkSet>, OidcError> {
-        // Single-flight: hold the gate across the fetch so concurrent
-        // callers share one outbound request.
+        // Single-flight (N1): hold the gate across the fetch AND recheck the
+        // cache after acquiring it — the winner performs one outbound
+        // request; everyone queued behind the gate serves the fresh result.
+        // Without the recheck, a TTL-expiry or failing-fetch burst performs
+        // one fetch PER request (serialized), which is the F1 storm via the
+        // non-forced path.
         let _gate = self.fetch_gate.lock().await;
+        if let Some(cached) = self.jwks.read().await.as_ref()
+            && cached.fetched_at.elapsed() < JWKS_TTL
+        {
+            return Ok(Arc::clone(&cached.set));
+        }
         let url = self.jwks_url().await?;
         let set: JwkSet = self
             .client
@@ -360,6 +389,30 @@ impl OidcTokenVerifier {
             && cached.fetched_at.elapsed() < JWKS_TTL
         {
             return Ok(Arc::clone(&cached.set));
+        }
+        // N1: debounce BOTH paths — a TTL-expiry burst must also collapse to
+        // one fetch per window, and a FAILING fetch (IdP 429/5xx under
+        // exactly this pressure) must not let every request retry outbound.
+        // The std guard is dropped BEFORE the await (a guard held across an
+        // await makes the future !Send and infects every middleware).
+        if !force_refresh {
+            let throttled = match self.last_forced_refresh.lock() {
+                Ok(mut last) => {
+                    if last.is_some_and(|t| t.elapsed() < FORCED_REFRESH_MIN_INTERVAL) {
+                        true
+                    } else {
+                        *last = Some(Instant::now());
+                        false
+                    }
+                }
+                Err(_) => false,
+            };
+            if throttled && let Some(cached) = self.jwks.read().await.as_ref() {
+                // Stale-but-present is fail-closed for rotation (rejects
+                // unknown kids); serving it within the 5s window bounds
+                // outbound load without accepting anything extra.
+                return Ok(Arc::clone(&cached.set));
+            }
         }
         if force_refresh {
             // F1 throttle: at most one forced refresh per window. A burst of
@@ -562,7 +615,8 @@ mod tests {
     #[test]
     fn sanitize_truth_table() {
         let fail_closed = cfg(&[]);
-        // Delegation markers pass by default; business roles do NOT.
+        // cfg() explicitly enables delegation (as an opted-in operator would);
+        // business roles not in the allowlist never pass.
         let out = sanitize_idp_roles(
             &["gateway".into(), "analyst".into(), "gateways".into()],
             &fail_closed,
