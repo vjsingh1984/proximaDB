@@ -115,6 +115,45 @@ cold query — through the real search wrapper on a real written segment.
 Bytes are NEVER traded: both competitors bill on bytes-queried, and TD-RDSTRAT-8's GET-economy
 invariant is preserved (the wave changes only *when* GETs are issued, not how many).
 
+== Campaign verdict (2026-08-31, 9 arms complete)
+
+**Mechanisms verified; acceptance NOT MET on the campaign bed; the measured next lever is a
+product defect bigger than everything this TD shipped.** Full numbers:
+`docs/_internal/status/RDSTRAT13_SIFT1M_LADDER_2026_08_31.adoc` (ledger:
+`rdstrat13_minio_s3_mechanisms`, `rdstrat13_l3l2_retirement_race`).
+
+* **Verified at strict parity** (bytes delta +0.00%, result-identity IDENTICAL, GET/q equal
+  within every pair): C3's HEAD elimination (`metadata_ops/q = 0.00` on the full binary — the
+  direct end-to-end proof), C4's footer-in-wave (rounds 2.08–4.83, width 8), C2's parallel rank
+  (byte-identical survivors; measured 33.7 ms mean at 882k rows vs 42.9 ms sequential at 370k).
+* **Premise corrected on file**: the az ladder's "~0.9 s single-threaded rank" was inferred from
+  latency subtraction; the direct measurement contradicts it. The rank was never the dominant
+  cold term at this geometry — the residual was byte transfer. Phase A ships as correct,
+  deterministic infrastructure, not as the ~1 s lever the premise claimed.
+* **Acceptance blocked by two measured terms**: (a) the campaign bed is transfer-dominated
+  (~98% of p50: 125.5 MB/query at ~14 MB/s effective through the window-limited 100 ms proxy;
+  b0 p50 moved only +5% when RTT rose 50→150 ms); (b) the **L3/L2 retirement race** (below)
+  doubled rows/bytes/GETs on most beds.
+* **The L3/L2 retirement race (measured 3.03x p50, 2.1x bytes at identical code)**: two arms on
+  byte-identical settled beds served different live sets at query time — clean L3-only
+  (2977 ms @100 ms, 58.5 MB, 21.95 GETs) vs L2+L2+L3 overlap (9029 ms, 125.5 MB, 50.57 GETs).
+  Superseded L2s stay live and serving after the L3 publishes; recall/identity stay correct
+  (MVCC dedup at emit) but compute/bytes/GETs are paid twice. The settle gate's new
+  compaction-quiescence check cannot catch it (the overlap appears after a quiet window and
+  persists).
+
+=== Follow-ups (in priority order, all measured)
+
+1. **File + fix compaction input retirement** (the L3/L2 race): the highest-value cold-query
+   lever measured this campaign — 3.03x p50, 2.1x bytes at identical code. Then re-run the
+   single b0/b4 @100 ms pair on a clean bed (~1 h) for the honest 870 ms verdict; the clean-arm
+   reference (2977 ms on a dev box) is already within 3.4x of turbopuffer's published 874 ms.
+2. **Transfer efficiency** is the cold-query frontier on high-RTT paths (bytes/query and
+   effective throughput — the overlap fix is itself 2.1x bytes).
+3. **Correct the az-ladder ledger record** (`rdstrat12_sift1m_rtt_ladder_crossover`): its
+   compute-attribution narrative was inferred and is contradicted by direct measurement; the
+   GET-parity/identity facts stand.
+
 == Measurement protocol (acceptance evidence — campaign pending in this PR)
 
 Bed: the proven SIFT1M harness (`scripts/bench/sift1m_get_reduction.py --s3-endpoint`, MinIO on
