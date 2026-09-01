@@ -1505,15 +1505,16 @@ impl Compaction {
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
-        retirement_ledger::record_pending(collection_dir, output, &failed_urls).inspect_err(
-            |error| {
-                error!(
-                    output = %output.display(),
-                    %error,
-                    "retirement obligation UNRECORDABLE — failing the compaction loudly"
-                )
-            },
-        )?;
+        if let Err(error) =
+            retirement_ledger::record_pending(collection_dir, output, &failed_urls).await
+        {
+            error!(
+                output = %output.display(),
+                %error,
+                "retirement obligation UNRECORDABLE — failing the compaction loudly"
+            );
+            return Err(error.into());
+        }
         error!(
             output = %output.display(),
             pending = failed.len(),
@@ -1536,6 +1537,8 @@ impl Compaction {
 
     /// Drain one collection dir's recorded obligations (reconciler pass).
     async fn drain_pending_for_dir(&self, collection_data_dir: &Path) -> Result<()> {
+        // Hold the ledger lock across this whole load-modify-save sequence.
+        let _ledger_guard = retirement_ledger::ledger_lock().await;
         let mut ledger = retirement_ledger::load_ledger(collection_data_dir);
         if ledger.pending.is_empty() {
             return Ok(());

@@ -108,11 +108,12 @@ fn now_iso() -> String {
 /// Record failed input deletes as a durable obligation. Inputs are added to
 /// the pending set before the sidecar write so the read-path filter engages
 /// even if the write subsequently fails (the caller then fails loudly).
-pub(crate) fn record_pending(
+pub(crate) async fn record_pending(
     collection_data_dir: &Path,
     output: &Path,
     failed_inputs: &[String],
 ) -> Result<()> {
+    let _ledger_guard = ledger_lock().await;
     mark_pending(failed_inputs);
     crate::metrics::operational_metrics::PAX_RETIREMENT_RECORD_TOTAL.inc();
     let mut ledger = load_ledger(collection_data_dir);
@@ -139,12 +140,32 @@ pub(crate) fn load_ledger(collection_data_dir: &Path) -> LedgerFile {
 }
 
 fn write_ledger(collection_data_dir: &Path, ledger: &LedgerFile) -> Result<()> {
+    // Hold the ledger lock across load-modify-write sequences: two workers
+    // (one executing a retirement, one sweeping) could otherwise lose updates.
+    // Cross-PROCESS races degrade to an idempotent re-drain (deletes are
+    // NotFound-idempotent), never to loss.
+    let _guard = ledger_lock();
     let mut ledger = ledger.clone();
     ledger.updated_at = now_iso();
     let data = serde_json::to_vec_pretty(&ledger).context("serialize retire-pending ledger")?;
-    std::fs::write(sidecar_path(collection_data_dir), &data)
-        .with_context(|| format!("write {}", sidecar_path(collection_data_dir).display()))?;
+    // Atomic replace: a crash mid-write must not truncate the obligation
+    // record (a truncated ledger would silently drop pending retirements).
+    let final_path = sidecar_path(collection_data_dir);
+    let tmp_path = final_path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, &data).with_context(|| format!("write {}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, &final_path)
+        .with_context(|| format!("rename {}", final_path.display()))?;
     Ok(())
+}
+
+/// Process-wide mutual exclusion for ledger read-modify-write sequences.
+/// Async mutex: the drain holds it across `.await`ing delete attempts (the
+/// guard is Send, so the worker futures stay Send).
+pub(crate) async fn ledger_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
 }
 
 /// Persist the ledger after a drain pass and update the gauge.
@@ -188,8 +209,8 @@ mod tests {
 
     /// TD-COMPACT-13 T4a: record → load → drain → cleared, and a lost update
     /// degrades to idempotent re-drain (deletes are NotFound-idempotent).
-    #[test]
-    fn ledger_round_trip_records_and_clears() {
+    #[tokio::test]
+    async fn ledger_round_trip_records_and_clears() {
         let dir = tempfile::tempdir().unwrap();
         let data_dir = dir.path().join("data");
         std::fs::create_dir_all(&data_dir).unwrap();
@@ -201,6 +222,7 @@ mod tests {
             Path::new("s3://b/coll/L3_x.pax"),
             &["s3://b/coll/L2_a.pax".into(), "s3://b/coll/L2_b.pax".into()],
         )
+        .await
         .unwrap();
         let loaded = load_ledger(&data_dir);
         assert_eq!(loaded.pending.len(), 1);
@@ -213,6 +235,7 @@ mod tests {
             Path::new("s3://b/coll/L2_y.pax"),
             &["s3://b/coll/L1_c.pax".into()],
         )
+        .await
         .unwrap();
         assert_eq!(load_ledger(&data_dir).pending.len(), 2);
     }
