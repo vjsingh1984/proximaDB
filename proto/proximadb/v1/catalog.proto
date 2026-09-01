@@ -35,7 +35,7 @@ enum CatalogType {
   CATALOG_TYPE_GLUE = 2;        // AWS Glue Data Catalog
   CATALOG_TYPE_UNITY = 3;       // Databricks Unity Catalog
   CATALOG_TYPE_POLARIS = 4;     // Apache Polaris (Iceberg REST)
-  // RETIRED TD-CAT-8 (2026-08-20): CATALOG_TYPE_HIVE = 5 (never worked; was a mock)
+  reserved 5; // RETIRED TD-CAT-8 (2026-08-20): CATALOG_TYPE_HIVE (never worked; was a mock)
   CATALOG_TYPE_ICEBERG_REST = 6;// Generic Iceberg REST Catalog
   CATALOG_TYPE_ICEBERG_JDBC = 7;// Iceberg JDBC Catalog
   CATALOG_TYPE_ICEBERG_HADOOP = 8; // Iceberg Hadoop Catalog

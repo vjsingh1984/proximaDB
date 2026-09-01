@@ -12881,7 +12881,7 @@ pub struct CatalogConfig {
     #[prost(map = "string, string", tag = "23")]
     pub properties:
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
-    #[prost(oneof = "catalog_config::Config", tags = "10, 11, 12, 13, 14, 15, 16")]
+    #[prost(oneof = "catalog_config::Config", tags = "10, 11, 12, 13, 15, 16")]
     pub config: ::core::option::Option<catalog_config::Config>,
 }
 /// Nested message and enum types in `CatalogConfig`.
@@ -12896,8 +12896,7 @@ pub mod catalog_config {
         Unity(super::UnityCatalogConfig),
         #[prost(message, tag = "13")]
         Polaris(super::PolarisCatalogConfig),
-        #[prost(message, tag = "14")]
-        Hive(super::HiveCatalogConfig),
+        // RETIRED TD-CAT-8: tag 14 (Hive) — reserved in catalog.proto; never a working adapter.
         #[prost(message, tag = "15")]
         Iceberg(super::IcebergCatalogConfig),
         #[prost(message, tag = "16")]
@@ -12980,25 +12979,9 @@ pub struct PolarisCatalogConfig {
     #[prost(string, tag = "5")]
     pub scope: ::prost::alloc::string::String,
 }
-/// Apache Hive Metastore
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
-pub struct HiveCatalogConfig {
-    /// thrift://host:9083
-    #[prost(string, tag = "1")]
-    pub thrift_uri: ::prost::alloc::string::String,
-    /// Kerberos principal (optional)
-    #[prost(string, tag = "2")]
-    pub kerberos_principal: ::prost::alloc::string::String,
-    /// Keytab file path
-    #[prost(string, tag = "3")]
-    pub kerberos_keytab: ::prost::alloc::string::String,
-    /// Default database
-    #[prost(string, tag = "4")]
-    pub database: ::prost::alloc::string::String,
-    /// Enable TLS
-    #[prost(bool, tag = "5")]
-    pub use_ssl: bool,
-}
+// RETIRED TD-CAT-8 (2026-08-20): HiveCatalogConfig (proto field 14, reserved) —
+// the Hive metastore adapter was a mock that never connected to a metastore;
+// the Rust implementation was deleted under TD-CAT-8 and the proto arm retired.
 /// Generic Iceberg Catalog (REST, JDBC, Hadoop)
 #[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct IcebergCatalogConfig {
@@ -13823,8 +13806,8 @@ pub enum CatalogType {
     Unity = 3,
     /// Apache Polaris (Iceberg REST)
     Polaris = 4,
-    /// Apache Hive Metastore
-    Hive = 5,
+    // RETIRED TD-CAT-8 (2026-08-20): value 5 was CATALOG_TYPE_HIVE (never
+    // worked; was a mock) — reserved in catalog.proto; decoding value 5 fails.
     /// Generic Iceberg REST Catalog
     IcebergRest = 6,
     /// Iceberg JDBC Catalog
@@ -13846,7 +13829,6 @@ impl CatalogType {
             Self::Glue => "CATALOG_TYPE_GLUE",
             Self::Unity => "CATALOG_TYPE_UNITY",
             Self::Polaris => "CATALOG_TYPE_POLARIS",
-            Self::Hive => "CATALOG_TYPE_HIVE",
             Self::IcebergRest => "CATALOG_TYPE_ICEBERG_REST",
             Self::IcebergJdbc => "CATALOG_TYPE_ICEBERG_JDBC",
             Self::IcebergHadoop => "CATALOG_TYPE_ICEBERG_HADOOP",
@@ -13861,7 +13843,6 @@ impl CatalogType {
             "CATALOG_TYPE_GLUE" => Some(Self::Glue),
             "CATALOG_TYPE_UNITY" => Some(Self::Unity),
             "CATALOG_TYPE_POLARIS" => Some(Self::Polaris),
-            "CATALOG_TYPE_HIVE" => Some(Self::Hive),
             "CATALOG_TYPE_ICEBERG_REST" => Some(Self::IcebergRest),
             "CATALOG_TYPE_ICEBERG_JDBC" => Some(Self::IcebergJdbc),
             "CATALOG_TYPE_ICEBERG_HADOOP" => Some(Self::IcebergHadoop),
