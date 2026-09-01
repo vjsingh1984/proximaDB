@@ -1,16 +1,8 @@
-//! TD-COMPACT-13 fails-first reproduction: a TRANSIENT delete failure must
-//! not leave superseded compaction inputs serving forever.
-//!
-//! `PROXIMADB_TEST_FS_DELETE_FAIL_FIRST=1` makes the first delete of each
-//! unique path fail once with a transient network error — exactly the class
-//! of failure the S3/MinIO campaign hit through a high-RTT proxy. On the
-//! current code the executor treats that as terminal (no retry), the worker
-//! kills the follow-up chain, and the inputs serve forever: the assertions
-//! below FAIL (red). After the fix (in-executor retry + recorded obligation +
-//! reconciler) the same flow converges to the clean live set (green).
-//!
-//! Own test binary: the fault env must not leak into
-//! `sst_compaction_retirement_test.rs` under plain cargo test.
+//! TD-COMPACT-13 T1c: a partial merge must FAIL CLOSED — an unreadable input
+//! aborts the compaction BEFORE publication, leaving every input intact (a
+//! publish-then-retire-all after a partial read would delete the only copy of
+//! the unread rows). Own binary: the read-fault env arms cleanly at process
+//! start (no gate sharing with the delete-fault arm).
 
 use anyhow::Result;
 use proximadb::compute::distance_computation::DistanceMetric;
@@ -26,7 +18,6 @@ use std::sync::Arc;
 
 const DIM: usize = 8;
 const BATCH: usize = 64;
-const ROUNDS: usize = 5;
 const TOP_K: usize = 10;
 
 fn vector_for(row: usize) -> Vec<f32> {
@@ -128,28 +119,6 @@ fn pax_segments(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Sum of live rows across every `.pax` segment via the footer (tail 16 B =
-/// footer_len u64 LE + PAXSEG01; footer prefix 9 B = version u8 + rows u64).
-fn live_row_total(segments: &[PathBuf]) -> u64 {
-    segments
-        .iter()
-        .map(|p| {
-            let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
-            assert!(bytes.len() >= 25, "{} too short", p.display());
-            let tail = &bytes[bytes.len() - 16..];
-            assert_eq!(&tail[8..], b"PAXSEG01", "{} missing PAX tail", p.display());
-            let footer_len = u64::from_le_bytes(tail[0..8].try_into().unwrap()) as usize;
-            let footer_start = bytes.len() - 16 - footer_len;
-            assert_eq!(bytes[footer_start], 1, "{} footer version", p.display());
-            u64::from_le_bytes(
-                bytes[footer_start + 1..footer_start + 9]
-                    .try_into()
-                    .unwrap(),
-            )
-        })
-        .sum()
-}
-
 async fn search_ids(engine: &SstEngine, coll: &Collection, query: Vec<f32>) -> Vec<String> {
     let ctx = StorageQueryContext {
         search_params: Arc::new(SearchParams {
@@ -184,20 +153,34 @@ async fn search_ids(engine: &SstEngine, coll: &Collection, query: Vec<f32>) -> V
         .collect()
 }
 
-/// RED on current code: the first-delete fault is terminal (executor Err, no
-/// retry, chain killed), so superseded inputs survive the quiesced chain and
-/// the exactly-one-segment assertion fails. GREEN after the TD-COMPACT-13 fix
-/// (in-executor retry absorbs the one-shot fault).
+/// Sum of live rows via the footer (tail 16 B = footer_len + PAXSEG01; footer
+/// prefix 9 B = version u8 + rows u64 LE).
+fn live_row_total(segments: &[PathBuf]) -> u64 {
+    segments
+        .iter()
+        .map(|p| {
+            let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+            assert!(bytes.len() >= 25, "{} too short", p.display());
+            let tail = &bytes[bytes.len() - 16..];
+            assert_eq!(&tail[8..], b"PAXSEG01", "{} missing PAX tail", p.display());
+            let footer_len = u64::from_le_bytes(tail[0..8].try_into().unwrap()) as usize;
+            let footer_start = bytes.len() - 16 - footer_len;
+            assert_eq!(bytes[footer_start], 1, "{} footer version", p.display());
+            u64::from_le_bytes(
+                bytes[footer_start + 1..footer_start + 9]
+                    .try_into()
+                    .unwrap(),
+            )
+        })
+        .sum()
+}
+
+/// Fail-closed: a MISSING input file (external deletion/corruption) must
+/// abort the compaction BEFORE publication — the surviving input remains the
+/// complete live set and stays searchable (publish-then-retire-all after a
+/// partial read would delete the only copy of the unread rows).
 #[tokio::test]
-async fn transient_delete_failure_still_leaves_exactly_one_segment() -> Result<()> {
-    // Arm BEFORE any filesystem is created (the factory consults the env at
-    // filesystem construction and the wrapper at first delete).
-    unsafe {
-        std::env::set_var("PROXIMADB_TEST_FS_DELETE_FAIL_FIRST", "1");
-    }
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+async fn missing_input_fails_compaction_without_publishing_or_retiring() -> Result<()> {
     unsafe {
         std::env::remove_var("PROXIMADB_L0_COMPACTION_ENABLED");
         std::env::remove_var("PROXIMADB_STORAGE_PROFILE");
@@ -206,50 +189,59 @@ async fn transient_delete_failure_still_leaves_exactly_one_segment() -> Result<(
         std::env::set_var("PROXIMADB_IVF_K", "4");
         std::env::set_var("PROXIMADB_PAX_WRITE_A0_TRAIN", "1");
     }
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
     let engine = SstEngine::new().await?;
     let dir = tempfile::tempdir()?;
-    let coll = collection("retire_fault", dir.path().to_str().expect("utf8 tempdir"));
-
-    for round in 0..ROUNDS {
-        let base = round * 2 * BATCH;
-        flush_batch(&engine, &coll, base..base + BATCH).await?;
-        flush_batch(&engine, &coll, base + BATCH..base + 2 * BATCH).await?;
-        quiesce(&engine).await;
-    }
-    quiesce(&engine).await;
-
-    // THE INVARIANT is ROW ACCOUNTING (the T1a lesson: a two-level state with
-    // new rows is legitimate; DUPLICATION is the defect): the faulted deletes
-    // must be retried/reconciled so the live set converges to exactly the
-    // ingested rows — a surplus proves duplicated coverage (the measured
-    // 3.03x/2.1x defect), a deficit proves loss. The fix's guarantee is
-    // eventual (recorded obligation + debounced reconciler), so poll bounded.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
-    let total_live_rows = loop {
-        let segments = pax_segments(dir.path());
-        let total = live_row_total(&segments);
-        if total == (ROUNDS * 2 * BATCH) as u64 || std::time::Instant::now() > deadline {
-            break total;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    };
-    assert_eq!(
-        total_live_rows,
-        (ROUNDS * 2 * BATCH) as u64,
-        "TD-COMPACT-13 RED: transient delete failures must be retried/reconciled \
-         so live rows == ingested rows within 90s (live total {total_live_rows} vs \
-         ingested {}) — a surplus is the duplicated-coverage defect",
-        ROUNDS * 2 * BATCH
+    let coll = collection(
+        "retire_readfault",
+        dir.path().to_str().expect("utf8 tempdir"),
     );
 
-    // Correctness is never in question (MVCC dedup) — assert it anyway so the
-    // test fails loudly on data loss rather than only on geometry.
-    for probe_row in [3usize, ROUNDS * BATCH / 2, ROUNDS * 2 * BATCH - 3] {
+    // Flush batch 1 -> one L0. Make it UNREADABLE (permission bits deny the
+    // owner too on macOS/Linux) so flush batch 2's inline compaction hits a
+    // read failure on that input — the fail-closed path.
+    flush_batch(&engine, &coll, 0..BATCH).await?;
+    let segments = pax_segments(dir.path());
+    assert_eq!(segments.len(), 1, "one L0 after the first flush");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&segments[0], std::fs::Permissions::from_mode(0o000))?;
+    }
+
+    // Flush batch 2 arms the inline compaction; its read of the unreadable
+    // input must FAIL CLOSED — no partial merge published, no input retired.
+    flush_batch(&engine, &coll, BATCH..2 * BATCH).await?;
+    quiesce(&engine).await;
+
+    let after = pax_segments(dir.path());
+    assert_eq!(
+        after.len(),
+        2,
+        "fail-closed: both inputs intact — no partial merge published: {after:?}"
+    );
+
+    // Restore permissions; both rounds stay searchable and the row accounting
+    // holds (nothing lost to a partial merge).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&segments[0], std::fs::Permissions::from_mode(0o644))?;
+    }
+    assert_eq!(
+        live_row_total(&after),
+        (2 * BATCH) as u64,
+        "both inputs hold their rows (nothing lost to a partial merge)"
+    );
+    for probe_row in [7usize, BATCH + 7] {
         let ids = search_ids(&engine, &coll, vector_for(probe_row)).await;
         assert!(
             ids.contains(&format!("v{:05}", probe_row)),
-            "row {probe_row} missing from search under delete faults (got {ids:?})"
+            "row {probe_row} searchable (got {ids:?})"
         );
     }
+
     Ok(())
 }
