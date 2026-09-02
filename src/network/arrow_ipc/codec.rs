@@ -1354,7 +1354,7 @@ impl ArrowProtoCodec {
         batch: &RecordBatch,
         compression: Option<arrow_ipc::CompressionType>,
     ) -> Result<Vec<FlightData>> {
-        use arrow_ipc::writer::{CompressionContext, DictionaryTracker, IpcDataGenerator};
+        use arrow_ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteContext};
 
         let schema = batch.schema();
 
@@ -1373,7 +1373,7 @@ impl ArrowProtoCodec {
         // Encode the batch with compression
         let data_gen = IpcDataGenerator::default();
         let mut dictionary_tracker = DictionaryTracker::new(false);
-        let mut compression_context = CompressionContext::default();
+        let mut compression_context = IpcWriteContext::default();
 
         let (encoded_dictionaries, encoded_batch) = data_gen.encode(
             batch,
@@ -1403,7 +1403,7 @@ impl ArrowProtoCodec {
             return Ok(Vec::new());
         }
 
-        use arrow_ipc::writer::{CompressionContext, DictionaryTracker, IpcDataGenerator};
+        use arrow_ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteContext};
 
         let schema = batches[0].schema();
 
@@ -1421,7 +1421,7 @@ impl ArrowProtoCodec {
 
         let data_gen = IpcDataGenerator::default();
         let mut dictionary_tracker = DictionaryTracker::new(false);
-        let mut compression_context = CompressionContext::default();
+        let mut compression_context = IpcWriteContext::default();
 
         // Estimate capacity
         let mut stream = Vec::with_capacity(1 + batches.len() * 2);

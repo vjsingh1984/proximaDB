@@ -47,6 +47,9 @@ use object_store::ObjectStore;
 use object_store::path::Path;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::arrow::ProjectionMask;
+// arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+// apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+#[allow(deprecated)]
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::file::properties::WriterProperties;
 use proximadb_kernel::error::StorageError;
@@ -145,6 +148,9 @@ impl IcebergObjectStoreBridge {
 
     /// Row count of a Parquet object, read from the footer metadata only (no row data).
     async fn parquet_num_rows(&self, path: &Path) -> Result<i64, StorageError> {
+        // arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+        // apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+        #[allow(deprecated)]
         let reader = ParquetObjectReader::new(self.store.store(), self.full_object_path(path));
         let builder = ParquetRecordBatchStreamBuilder::new(reader)
             .await
@@ -285,6 +291,9 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         // Use the raw inner store + base-resolved key: ParquetObjectReader issues
         // its own range reads, so it must address the concrete object key the way
         // ProximaObjectStore's own methods do (which apply the base prefix).
+        // arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+        // apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+        #[allow(deprecated)]
         let reader = ParquetObjectReader::new(self.store.store(), self.full_object_path(path));
         let mut builder = ParquetRecordBatchStreamBuilder::new(reader)
             .await

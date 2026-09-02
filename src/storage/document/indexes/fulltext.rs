@@ -309,7 +309,10 @@ impl FullTextIndex {
         // Execute search
         let searcher = self.reader.searcher();
         let top_docs = searcher
-            .search(parsed_query.as_ref(), &TopDocs::with_limit(limit))
+            .search(
+                parsed_query.as_ref(),
+                &TopDocs::with_limit(limit).order_by_score(),
+            )
             .context("Search failed")?;
 
         // Extract results

@@ -55,6 +55,7 @@ use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::common::Statistics;
 use datafusion::common::config::ConfigOptions;
+use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::expressions::DynamicFilterPhysicalExpr;
@@ -368,6 +369,16 @@ impl ExecutionPlan for ProximaScanExec {
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![] // Leaf node - no children
+    }
+
+    // DataFusion 55 split this out of `children()`: visit this node's physical
+    // expression roots. Filters here are logical `Expr`s evaluated at scan
+    // time, not `PhysicalExpr` children, so nothing to visit.
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DFResult<TreeNodeRecursion>,
+    ) -> DFResult<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
     }
 
     fn with_new_children(
