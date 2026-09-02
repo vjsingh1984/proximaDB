@@ -1,13 +1,16 @@
 //! ProximaDB Rust SDK
 //!
 //! A native Rust SDK for ProximaDB, optimized for agent development.
-//! Provides both client mode (HTTP/REST) and embedded mode (in-process).
+//! Client mode: HTTP/REST against a running ProximaDB server. This is the
+//! only mode this crate ships — it is the crates.io publish surface.
+//! In-process (embedded) database mode lives in the separate
+//! `proximadb-embedded` crate, built from a proximaDB workspace checkout
+//! (the engine monolith is not published to crates.io).
 //!
 //! # Features
 //!
-//! - `client` (default) - HTTP/REST client for remote connections
-//! - `embedded` - In-process database mode (requires linking to proximadb)
-//! - `full` - Both client and embedded modes
+//! - `client` (default and only feature) - HTTP/REST client for remote
+//!   connections.
 //!
 //! # Quick Start - Client Mode
 //!
@@ -54,48 +57,11 @@
 //! }
 //! ```
 //!
-//! # Quick Start - Embedded Mode
+//! # Embedded (in-process) mode
 //!
-//! ```rust,ignore
-//! use proximadb_sdk::{ProximaDB, StorageEngine};
-//!
-//! fn main() -> proximadb_sdk::Result<()> {
-//!     // Open an embedded database
-//!     let db = ProximaDB::embedded()
-//!         .data_dir("/tmp/agent-memory")
-//!         .cache_size_mb(512)
-//!         .open()?;
-//!
-//!     // Create a collection
-//!     db.create_collection("memories")
-//!         .dimension(768)
-//!         .engine(StorageEngine::Sst)
-//!         .execute_sync()?;
-//!
-//!     // Insert vectors
-//!     let embedding = vec![0.1; 768];
-//!     db.collection("memories")
-//!         .insert()
-//!         .id("mem_123")
-//!         .vector(&embedding)
-//!         .meta("type", "conversation")
-//!         .execute_sync()?;
-//!
-//!     // Search
-//!     let query = vec![0.15; 768];
-//!     let results = db.collection("memories")
-//!         .search_embedded()
-//!         .vector(&query)
-//!         .top_k(10)
-//!         .execute_sync()?;
-//!
-//!     // Cleanup
-//!     db.flush()?;
-//!     db.close()?;
-//!
-//!     Ok(())
-//! }
-//! ```
+//! Not part of this crate. The in-process engine ships as the separate
+//! `proximadb-embedded` crate (workspace-local, and as the native Python
+//! wheel); build it from a proximaDB checkout.
 //!
 //! # Search Modes
 //!
@@ -252,9 +218,6 @@ pub mod graph;
 pub mod collection;
 pub mod search;
 
-#[cfg(feature = "embedded")]
-pub mod embedded;
-
 // Re-exports for convenient access
 pub use error::{
     CollectionError, ConfigError, EmbeddedError, NetworkError, ProximaError, Result, SearchError,
@@ -290,9 +253,6 @@ pub use graph::{
     TraversalDirection, TraversalResult,
 };
 
-#[cfg(feature = "embedded")]
-pub use embedded::{EmbeddedBuilder, EmbeddedConfig, ProximaDB, StorageLocation, StorageStats};
-
 /// Version of the ProximaDB SDK
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -300,12 +260,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(feature = "client")]
 pub fn connect(url: impl Into<String>) -> Result<ProximaClient> {
     ProximaClient::connect(url)
-}
-
-/// Convenience function to create an embedded database builder
-#[cfg(feature = "embedded")]
-pub fn embedded() -> EmbeddedBuilder {
-    ProximaDB::embedded()
 }
 
 #[cfg(test)]
