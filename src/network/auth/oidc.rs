@@ -825,23 +825,113 @@ mod tests {
         assert!(c3.pinned_algorithms().is_err());
     }
 
-    /// B (adversarial review): end-to-end ES256 — the reviewer's finding was
-    /// that config-only acceptance wouldn't catch a decoding_key regression.
-    /// This signs with EC P-256 and verifies through the full pipeline.
-    #[test]
-    fn es256_config_not_token_test() {
-        // ES256 requires an EC keypair; generating one at test time via openssl
-        // is heavy. Instead: assert the verifier REJECTS an RSA-signed token
-        // when only ES256 is pinned (the negative half of the proof).
-        // The positive half is covered by the config-acceptance test +
-        // the EC arm existing in decoding_key.
-        let mut c = test_fixtures::verifier(&[], false);
-        c.allowed_algorithms = vec!["ES256".to_string()];
-        c.pinned_algorithms().expect("ES256 should pin");
-        // An RSA-signed token sent to an ES256-only verifier must fail
-        // at the algorithm check.
-        // (Covered by wrong_issuer test pattern — different config but same
-        // mechanism: token algorithm not in pinned set → Rejected.)
+    /// F-3 (third-pass review): REAL end-to-end ES256 — signs with EC P-256
+    /// and verifies through the full OidcTokenVerifier pipeline. The prior
+    /// placeholder only checked config acceptance; sabotaging the EC arm in
+    /// decoding_key or EC verification would have passed.
+    #[tokio::test]
+    async fn es256_end_to_end_token_verifies() {
+        const EC_JWKS_JSON: &str = include_str!("../../../tests/fixtures/ec_test_jwks.json");
+
+        // Serve the EC JWKS
+        let server = httpmock::MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET).path("/jwks");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(EC_JWKS_JSON);
+            })
+            .await;
+
+        // Configure for ES256
+        let cfg = OidcProviderConfig {
+            jwks_url: Some(format!("{}/jwks", server.base_url())),
+            allowed_algorithms: vec!["ES256".to_string()],
+            ..test_fixtures::verifier(&[], false)
+        };
+        let verifier = OidcTokenVerifier::new(cfg).expect("verifier");
+
+        // Sign a token with EC P-256 (ES256)
+        let now = chrono::Utc::now().timestamp();
+        let claims = std_claims(now);
+        let header_json = serde_json::json!({"alg":"ES256","kid":"test-ec-key-1","typ":"JWT"});
+        let signing_input = format!(
+            "{}.{}",
+            base64_url(serde_json::to_vec(&header_json).unwrap()),
+            base64_url(serde_json::to_vec(&claims).unwrap())
+        );
+        let sig = openssl_es256_sign(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/ec_test_key.pem"
+            ),
+            signing_input.as_bytes(),
+        )
+        .expect("EC sign");
+        let token = format!("{}.{}", signing_input, sig);
+
+        // Verify through the full pipeline
+        let verified = verifier
+            .verify(&token)
+            .await
+            .expect("ES256 token must verify end-to-end");
+        assert_eq!(verified.sub, "user-1");
+    }
+
+    /// Helper: base64url without padding.
+    fn base64_url(data: Vec<u8>) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
+    }
+
+    /// Helper: sign with EC P-256 via openssl CLI, converting the DER
+    /// signature to the JWS raw R||S format (64 bytes) that ES256 requires.
+    fn openssl_es256_sign(pem_path: &str, input: &[u8]) -> Option<String> {
+        use std::io::Write;
+        let output = std::process::Command::new("openssl")
+            .args(["dgst", "-sha256", "-sign"])
+            .arg(pem_path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()
+            .and_then(|mut c| {
+                if let Some(mut stdin) = c.stdin.take() {
+                    let _ = stdin.write_all(input);
+                }
+                c.wait_with_output().ok()
+            })?;
+        let der = output.stdout;
+        let raw = der_to_raw_rs(&der)?;
+        Some(base64_url(raw))
+    }
+
+    /// Convert a DER-encoded ECDSA signature to the raw R||S format.
+    fn der_to_raw_rs(der: &[u8]) -> Option<Vec<u8>> {
+        if der.len() < 8 || der[0] != 0x30 {
+            return None;
+        }
+        let mut pos = 2;
+        let mut parts: Vec<u8> = Vec::with_capacity(64);
+        for _ in 0..2 {
+            if der[pos] != 0x02 {
+                return None;
+            }
+            pos += 1;
+            let len = der[pos] as usize;
+            pos += 1;
+            let val = &der[pos..pos + len];
+            let stripped = val.iter().position(|&b| b != 0).unwrap_or(len);
+            let val = &val[stripped..];
+            let mut padded = [0u8; 32];
+            let copy_len = val.len().min(32);
+            padded[32 - copy_len..].copy_from_slice(&val[val.len() - copy_len..]);
+            parts.extend_from_slice(&padded);
+            pos += len;
+        }
+        if parts.len() == 64 { Some(parts) } else { None }
     }
 
     /// C/I (adversarial review): multi-audience any-of actually works at

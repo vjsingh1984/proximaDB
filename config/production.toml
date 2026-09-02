@@ -136,9 +136,6 @@ issuer = "proximadb-production"
 audience = "proximadb-clients"
 algorithm = "HS256"
 
-["aws_iam", "azure_ad"]  # Enable enterprise SSO
-token_cache_ttl_minutes = 5
-
 [security.rbac]
 enabled = true
 enable_field_level_permissions = true

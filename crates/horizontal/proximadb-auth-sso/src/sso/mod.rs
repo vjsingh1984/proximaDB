@@ -69,13 +69,24 @@ impl SSOIntegrationManager {
         }
 
         // Validate with appropriate provider
-        let validation_result = match &sso_token.provider {
+        let validation_result: SSOValidationResult = match &sso_token.provider {
             SSOProvider::AWSIAM => {
                 let aws = self
                     .aws_integration
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("AWS IAM not configured"))?;
-                aws.validate_token(sso_token).await?
+                {
+                    #[cfg(test)]
+                    {
+                        aws.validate_token(sso_token).await?
+                    }
+                    #[cfg(not(test))]
+                    {
+                        return Err(anyhow::anyhow!(
+                            "AWS IAM stub quarantined (TD-SSO-1); use [security.authentication.oidc]"
+                        ));
+                    }
+                }
             }
             SSOProvider::AzureAD => {
                 #[cfg(test)]
