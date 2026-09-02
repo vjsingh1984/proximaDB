@@ -224,3 +224,17 @@ serial-RTT terms (~top-k × RTT for region-D, 3 × RTT for rehydrate). The disk 
 now precisely: region-B 83 ms (bytes-bound SQ8 survivor fetch — recall-gated pool-sizing
 lever), rehydrate 166 ms (block fetch + full-record decode — wanted-rows decode lever), rank
 48 ms, cascade/REST remainder ~46 ms.
+
+== S3/MinIO integration on the 2b binary (dataserver2 localhost) — 2026-09-02
+
+The same 2b release binary, run against MinIO (S3 API, localhost:9000) from dataserver2 with
+the full harness: clean single-segment bed (30 cells, 1M rows), **object_cold p50 = 586.1 ms,
+21.95 GETs/q, 58.5 MB/q, recall .9835** — a sub-second S3 cold query at strict parity (identity
+hashes equal to the disk runs). Attribution over S3: cascade umbrella 562.9 ms; rehydrate
+318.4 ms (#1 — RG-body block fetches over HTTP + full-record decode), region-B 146.0 ms, region-D
+23.2 ms, rank 44.9 ms (~95% attributed). The object-store suite (8/8) — including
+`armed_compaction_on_object_store_preserves_all_records` with its structural duplicate-detector
+assertion — passed against MinIO with the fix binary, verifying TD-COMPACT-13's retirement over
+the real S3 path. Deployment note: the suite requires the registry-documented
+`PROXIMADB_S3_ENDPOINT`/`PROXIMADB_S3_FORCE_PATH_STYLE` gates for the engine AND
+`AWS_ALLOW_HTTP=true` for the system-catalog's object_store client (plain HTTP).
