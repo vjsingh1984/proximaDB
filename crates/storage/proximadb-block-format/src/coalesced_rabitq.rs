@@ -470,6 +470,159 @@ pub fn rank_probed_rows_allowed(
     Ok(scored.into_iter().map(|(row, _)| row).collect())
 }
 
+/// TD-RDSTRAT-13 C2: the per-query preparation [`rank_probed_rows_allowed`]
+/// does inline (params → cached rotation → rotate → LUT build, ~50 µs), hoisted
+/// so a morsel-parallel rank builds it ONCE and shares it across workers.
+/// `QueryLut` is plain data (`Vec<f32>` + scalars), so this is `Send + Sync`
+/// and cheaply `Arc`-clonable.
+#[derive(Clone)]
+pub struct PreparedProbeRank {
+    lut: std::sync::Arc<QueryLut>,
+    metric: RankMetric,
+    /// `code_stride(header.dim)` — the packed row width the LUT was built for.
+    stride: usize,
+}
+
+impl PreparedProbeRank {
+    /// Run the exact sequential prep sequence for `header`/`query`/`metric`.
+    pub fn build(
+        header: &CoalescedRaBitQHeader,
+        query: &[f32],
+        metric: RankMetric,
+    ) -> Result<Self> {
+        let params = header.to_params();
+        let rotation = build_rotation_cached(params.dim, params.seed);
+        let q_rotated = rotate_query(query, &params, &rotation);
+        let lut = QueryLut::build(&q_rotated);
+        Ok(Self {
+            lut: std::sync::Arc::new(lut),
+            metric,
+            stride: code_stride(header.dim),
+        })
+    }
+}
+
+/// TD-RDSTRAT-13 C2: a 'static, `Send` probed-run descriptor so morsel workers
+/// can own their slice without borrowing the caller's fetch buffers. `bytes`
+/// is the WHOLE fetched buffer (shared, zero-copy); `[byte_start, byte_start +
+/// byte_len)` is this run's row-code span (exactly `rows × code_stride(dim)`).
+#[derive(Clone)]
+pub struct ProbedRun {
+    pub row_start: usize,
+    pub bytes: std::sync::Arc<[u8]>,
+    pub byte_start: usize,
+    pub byte_len: usize,
+}
+
+/// TD-RDSTRAT-13 C2: partition `runs` into at most `degree` contiguous
+/// morsels, greedily balanced by byte length (byte length is exactly
+/// rows × stride for every run, so byte-balancing IS row-balancing; a run is
+/// never split). Pure — unit-tested for coverage/cap invariants.
+pub fn plan_rank_morsels(runs: &[ProbedRun], degree: usize) -> Vec<std::ops::Range<usize>> {
+    if runs.is_empty() || degree == 0 {
+        return Vec::new();
+    }
+    let degree = degree.min(runs.len());
+    let total_bytes: usize = runs.iter().map(|r| r.byte_len).sum();
+    let target_bytes = total_bytes.div_ceil(degree).max(1);
+    let mut bounds: Vec<std::ops::Range<usize>> = Vec::with_capacity(degree);
+    let mut start = 0usize;
+    let mut acc_bytes = 0usize;
+    let mut morsels_left = degree;
+    let mut i = 0usize;
+    while i < runs.len() {
+        if morsels_left == 1 {
+            // The last morsel absorbs every remaining run.
+            bounds.push(start..runs.len());
+            break;
+        }
+        if runs.len() - i == morsels_left {
+            // One run per remaining morsel — lands exactly on degree morsels.
+            bounds.push(start..i + 1);
+            start = i + 1;
+            i += 1;
+            morsels_left -= 1;
+            acc_bytes = 0;
+            continue;
+        }
+        acc_bytes += runs[i].byte_len;
+        i += 1;
+        if acc_bytes >= target_bytes {
+            bounds.push(start..i);
+            start = i;
+            morsels_left -= 1;
+            acc_bytes = 0;
+        }
+    }
+    bounds
+}
+
+/// The (score, row-ordinal) total order the sequential rank finalizes with —
+/// NaN scores compare Equal and fall through to the ordinal, exactly like the
+/// sequential path. A TOTAL order is what makes chunked top-`keep` merging
+/// byte-identical to the sequential result (membership AND order): the global
+/// top-`keep` is a subset of the union of per-chunk top-`keep`s, and
+/// select_nth + sort are uniquely determined under a total order.
+pub fn probed_score_compare(a: &(usize, f32), b: &(usize, f32)) -> std::cmp::Ordering {
+    a.1.partial_cmp(&b.1)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a.0.cmp(&b.0))
+}
+
+/// TD-RDSTRAT-13 C2: rank one morsel's runs down to its local top-`keep`
+/// (score, ordinal order — the sequential comparator). The per-row loop is
+/// byte-identical to [`rank_probed_rows_allowed`]'s; only the finalizer is
+/// applied per morsel. Returns at most `keep` `(global_row, score)` pairs,
+/// nearest-first.
+pub fn rank_run_group_top(
+    prepared: &PreparedProbeRank,
+    runs: &[ProbedRun],
+    allow: Option<&crate::row_allow::RowAllow>,
+    keep: usize,
+) -> Result<Vec<(usize, f32)>> {
+    let mut scored: Vec<(usize, f32)> = Vec::new();
+    for run in runs {
+        let bytes = run
+            .bytes
+            .get(run.byte_start..run.byte_start + run.byte_len)
+            .ok_or_else(|| anyhow::anyhow!("coarse-probe morsel run slice out of bounds"))?;
+        for (local_row, packed) in bytes.chunks_exact(prepared.stride).enumerate() {
+            let global_row = run
+                .row_start
+                .checked_add(local_row)
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe global row overflow"))?;
+            if let Some(allow) = allow
+                && !allow.contains(global_row)
+            {
+                continue;
+            }
+            let dist_to_centroid = f32::from_le_bytes(packed[0..4].try_into()?);
+            let inv_factor = f32::from_le_bytes(packed[4..8].try_into()?);
+            let bits = &packed[8..];
+            let score =
+                match prepared.metric {
+                    RankMetric::L2 => {
+                        prepared
+                            .lut
+                            .l2_rank_score_parts(dist_to_centroid, inv_factor, bits)
+                    }
+                    RankMetric::Cosine | RankMetric::DotProduct => prepared
+                        .lut
+                        .ip_rank_score_parts(dist_to_centroid, inv_factor, bits),
+                }
+                .ok_or_else(|| anyhow::anyhow!("coarse-probe packed bit width mismatch"))?;
+            scored.push((global_row, score));
+        }
+    }
+    let keep = keep.min(scored.len());
+    if keep < scored.len() {
+        scored.select_nth_unstable_by(keep, probed_score_compare);
+        scored.truncate(keep);
+    }
+    scored.sort_unstable_by(probed_score_compare);
+    Ok(scored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -838,5 +991,202 @@ mod tests {
         // (no centroid) — 16 bytes exactly.
         assert_eq!(short.len(), 16);
         assert!(CoalescedRaBitQHeader::parse(&short).is_err());
+    }
+
+    /// TD-RDSTRAT-13 C2 fixture: an encoded region + probed runs built from
+    /// uneven cell slices, mirroring what `coarse_probe_survivors` hands the
+    /// rank (each run shares the region's `Arc<[u8]>`-equivalent buffer with
+    /// its own byte window). The caller derives borrowed `(row, slice)` runs
+    /// from the returned region for the sequential oracle.
+    fn probed_runs_fixture(
+        dim: usize,
+        n: usize,
+    ) -> (CoalescedRaBitQHeader, Vec<u8>, Vec<ProbedRun>) {
+        let corpus: Vec<Vec<f32>> = (0..n).map(|i| synth_vec(i as u64, dim)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (region, _) = encode_region(&vectors, dim as u32, RABITQ_SEED_BASE ^ 20).unwrap();
+        let header = CoalescedRaBitQHeader::parse(&region).unwrap();
+        let stride = code_stride(dim as u32);
+        let codes_base = region_header_len(dim as u32) + n.div_ceil(8);
+        // Uneven runs (cell sizes vary; gaps between probed cells).
+        let mut runs = Vec::new();
+        let mut row = 0usize;
+        let mut width = 1usize;
+        while row < n {
+            let count = width.min(n - row);
+            let start = codes_base + row * stride;
+            runs.push(ProbedRun {
+                row_start: row,
+                bytes: std::sync::Arc::from(region.clone()),
+                byte_start: start,
+                byte_len: count * stride,
+            });
+            row += count + 7; // leave unprobed gaps, like nprobe cells do
+            width = width * 2 + 3;
+        }
+        (header, region, runs)
+    }
+
+    /// Parent-side merge contract (mirrors the segment_format orchestrator):
+    /// union of per-morsel top-`keep`s, finalized with the sequential
+    /// select_nth + sort under the (score, ordinal) total order.
+    fn merge_group_tops(
+        prepared: &PreparedProbeRank,
+        runs: &[ProbedRun],
+        groups: &[std::ops::Range<usize>],
+        allow: Option<&crate::row_allow::RowAllow>,
+        pool: usize,
+    ) -> Vec<usize> {
+        let mut merged: Vec<(usize, f32)> = Vec::new();
+        for group in groups {
+            merged.extend(rank_run_group_top(prepared, &runs[group.clone()], allow, pool).unwrap());
+        }
+        let keep = pool.min(merged.len());
+        if keep < merged.len() {
+            merged.select_nth_unstable_by(keep, probed_score_compare);
+            merged.truncate(keep);
+        }
+        merged.sort_unstable_by(probed_score_compare);
+        merged.into_iter().map(|(row, _)| row).collect()
+    }
+
+    /// TD-RDSTRAT-13 C2 THE determinism contract: morsel-parallel rank ==
+    /// sequential rank (membership AND order) for any degree, metric, and
+    /// allow-set. Tie-heavy fixtures (duplicated rows → colliding scores)
+    /// exercise the ordinal tie-break through select_nth — the case a
+    /// score-only merge would corrupt.
+    #[test]
+    fn morsel_probe_rank_is_byte_identical_to_sequential() {
+        const DIM: usize = 129;
+        const N: usize = 2_048;
+        let (header, region, runs) = probed_runs_fixture(DIM, N);
+        let borrowed: Vec<(usize, &[u8])> = runs
+            .iter()
+            .map(|r| {
+                (
+                    r.row_start,
+                    region[r.byte_start..r.byte_start + r.byte_len].as_ref(),
+                )
+            })
+            .collect();
+        let query = synth_vec(0x5EED, DIM);
+        let mut odd = crate::row_allow::RowAllow::new(N);
+        for row in (0..N).step_by(2) {
+            odd.insert(row);
+        }
+        for metric in [RankMetric::L2, RankMetric::Cosine, RankMetric::DotProduct] {
+            for allow in [None, Some(&odd)] {
+                for pool in [10usize, 100, 4096] {
+                    let sequential =
+                        rank_probed_rows_allowed(&header, &borrowed, &query, metric, pool, allow)
+                            .unwrap();
+                    let prepared = PreparedProbeRank::build(&header, &query, metric).unwrap();
+                    for degree in [1usize, 2, 3, 7, 16, 64] {
+                        let groups = plan_rank_morsels(&runs, degree);
+                        assert!(groups.len() <= degree, "planner exceeds degree {degree}");
+                        let morsel =
+                            merge_group_tops(&prepared, &runs, &groups, allow, pool.max(1));
+                        assert_eq!(
+                            morsel,
+                            sequential,
+                            "degree={degree} metric={metric:?} pool={pool} allow={}",
+                            allow.is_some()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tie-heavy: EVERY row scores identically (duplicated packed rows), so
+    /// ranking falls entirely to the ordinal tie-break. The survivor list must
+    /// equal the sequential one exactly — the first `keep` ordinals in order.
+    #[test]
+    fn morsel_probe_rank_tie_heavy_matches_sequential() {
+        const DIM: usize = 64;
+        const N: usize = 1_024;
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| synth_vec(i as u64, DIM)).collect();
+        let vectors: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (region, _) = encode_region(&vectors, DIM as u32, RABITQ_SEED_BASE ^ 77).unwrap();
+        let header = CoalescedRaBitQHeader::parse(&region).unwrap();
+        let stride = code_stride(DIM as u32);
+        let codes_base = region_header_len(DIM as u32) + N.div_ceil(8);
+        // Overwrite every packed row with row 0's bytes → identical scores.
+        let row_bytes = region[codes_base..codes_base + stride].to_vec();
+        let mut tied_region = region.clone();
+        for row in 0..N {
+            tied_region[codes_base + row * stride..codes_base + (row + 1) * stride]
+                .copy_from_slice(&row_bytes);
+        }
+        let runs: Vec<ProbedRun> = (0..8)
+            .map(|g| ProbedRun {
+                row_start: g * (N / 8),
+                bytes: std::sync::Arc::from(tied_region.clone()),
+                byte_start: codes_base + g * (N / 8) * stride,
+                byte_len: (N / 8) * stride,
+            })
+            .collect();
+        let borrowed: Vec<(usize, &[u8])> = runs
+            .iter()
+            .map(|r| {
+                (
+                    r.row_start,
+                    r.bytes[r.byte_start..r.byte_start + r.byte_len].as_ref(),
+                )
+            })
+            .collect();
+        let query = &corpus[5];
+        let pool = 37usize;
+        let sequential =
+            rank_probed_rows_allowed(&header, &borrowed, query, RankMetric::L2, pool, None)
+                .unwrap();
+        let prepared = PreparedProbeRank::build(&header, query, RankMetric::L2).unwrap();
+        for degree in [2usize, 3, 8, 13] {
+            let groups = plan_rank_morsels(&runs, degree);
+            let morsel = merge_group_tops(&prepared, &runs, &groups, None, pool);
+            assert_eq!(morsel, sequential, "tie-heavy degree={degree}");
+        }
+        // And the tie itself resolves by ordinal: the kept set is exactly the
+        // first `pool` ordinals, in ascending order.
+        let expected: Vec<usize> = (0..pool).collect();
+        assert_eq!(sequential, expected);
+    }
+
+    /// Planner invariants: runs never split, coverage is exact, morsel count
+    /// ≤ degree, and degree ≥ runs collapses to one run per morsel.
+    #[test]
+    fn plan_rank_morsels_partitions_are_balanced_and_exact() {
+        const DIM: usize = 64;
+        let stride = code_stride(DIM as u32);
+        let runs: Vec<ProbedRun> = (0..31usize)
+            .map(|i| {
+                let rows = 1 + (i * 7) % 23;
+                ProbedRun {
+                    row_start: i * 100,
+                    bytes: std::sync::Arc::from(vec![0u8; rows * stride]),
+                    byte_start: 0,
+                    byte_len: rows * stride,
+                }
+            })
+            .collect();
+        let total_rows: usize = runs.iter().map(|r| r.byte_len / stride).sum();
+        for degree in [1usize, 2, 3, 5, 31, 64] {
+            let groups = plan_rank_morsels(&runs, degree);
+            assert!(!groups.is_empty());
+            assert!(groups.len() <= degree.max(1), "degree={degree}");
+            assert_eq!(groups[0].start, 0);
+            assert_eq!(groups.last().unwrap().end, runs.len());
+            for pair in groups.windows(2) {
+                assert_eq!(pair[0].end, pair[1].start, "contiguous, unsplit runs");
+            }
+            let covered: usize = groups
+                .iter()
+                .flat_map(|g| &runs[g.clone()])
+                .map(|r| r.byte_len / stride)
+                .sum();
+            assert_eq!(covered, total_rows, "exact row coverage, degree={degree}");
+        }
+        assert!(plan_rank_morsels(&[], 4).is_empty());
+        assert_eq!(plan_rank_morsels(&runs, 0).len(), 0);
     }
 }

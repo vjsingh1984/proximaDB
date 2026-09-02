@@ -15,12 +15,15 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
+import logging
 import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class QueryType(Enum):
@@ -372,6 +375,43 @@ class MultiModalQueryResult:
     component_times: dict[str, float]
     fusion_strategy: str
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    #: Component name -> the error that component failed with.
+    #:
+    #: A fused query runs several legs and merges what they return. Each leg used
+    #: to swallow any exception and contribute `[]`, so a leg that FAILED and a
+    #: leg that legitimately MATCHED NOTHING were indistinguishable, and the
+    #: caller received a partial answer presented as complete. For a database
+    #: those are different facts; this is where the difference lives.
+    #:
+    #: The parallel to `component_times` is deliberate: per-component timing was
+    #: already worth reporting, and per-component failure is strictly more so.
+    component_errors: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def partial(self) -> bool:
+        """True when at least one component failed, so `records` is incomplete.
+
+        Check this before treating an empty or short result as an answer.
+        """
+        return bool(self.component_errors)
+
+    def raise_if_partial(self) -> None:
+        """Convert a partial result into an error, for callers that want one.
+
+        Offered rather than imposed: some callers genuinely want best-effort
+        fusion across legs, which is why the legs still return `[]`. What they
+        cannot be allowed to do is *not know*.
+        """
+        if self.component_errors:
+            detail = "; ".join(
+                f"{k}: {v}" for k, v in sorted(self.component_errors.items())
+            )
+            raise RuntimeError(
+                f"multi-modal query was partial -- {len(self.component_errors)} of "
+                f"{len(self.component_times) or len(self.component_errors)} components "
+                f"failed and contributed no records ({detail})"
+            )
 
     def __iter__(self):
         return iter(self.records)
@@ -1235,6 +1275,7 @@ class MultiModalQueryExecutor:
         """
         start_time = time.time()
         component_times = {}
+        component_errors: dict[str, str] = {}
         component_results = []
 
         # Execute each component
@@ -1242,33 +1283,66 @@ class MultiModalQueryExecutor:
             comp_start = time.time()
 
             comp_type = component.get("type")
-            if comp_type == "vector":
-                results = self._execute_vector(component)
-            elif comp_type == "graph":
-                # Check if this depends on previous results
-                if hasattr(component, "_from_previous") and component.get(
-                    "_from_previous"
-                ):
-                    if component_results:
-                        prev_results = component_results[-1]
-                        id_field = component.get("_id_field", "id")
-                        start_nodes = [
-                            r.get(id_field) for r in prev_results if r.get(id_field)
-                        ]
-                        component["start_nodes"] = start_nodes
-                results = self._execute_graph(component)
-            elif comp_type == "document":
-                results = self._execute_document(component)
-            elif comp_type == "logs":
-                results = self._execute_logs(component)
-            elif comp_type == "metrics":
-                results = self._execute_metrics(component)
-            else:
+            comp_key = f"{comp_type}_{i}"
+            try:
+                results = self._dispatch_component(
+                    comp_type, component, component_results
+                )
+            except Exception as exc:  # noqa: BLE001 - recorded, not discarded
+                # Best-effort fusion is the intended behaviour: one failing leg
+                # should not lose the others. What is NOT acceptable is the
+                # caller being unable to tell. The leg contributes nothing and
+                # the failure is named on the result.
+                logger.warning(
+                    "multi-modal component %s failed: %s", comp_key, exc, exc_info=True
+                )
+                component_errors[comp_key] = f"{type(exc).__name__}: {exc}"
                 results = []
 
             component_results.append(results)
-            component_times[f"{comp_type}_{i}"] = (time.time() - comp_start) * 1000
+            component_times[comp_key] = (time.time() - comp_start) * 1000
 
+        return self._finish_execute(
+            query, component_results, component_times, component_errors, start_time
+        )
+
+    def _dispatch_component(
+        self,
+        comp_type: str | None,
+        component: dict[str, Any],
+        component_results: list[list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """Run one query leg. Raises; the caller decides what a failure means."""
+        if comp_type == "vector":
+            return self._execute_vector(component)
+        if comp_type == "graph":
+            # Check if this depends on previous results
+            if hasattr(component, "_from_previous") and component.get("_from_previous"):
+                if component_results:
+                    prev_results = component_results[-1]
+                    id_field = component.get("_id_field", "id")
+                    start_nodes = [
+                        r.get(id_field) for r in prev_results if r.get(id_field)
+                    ]
+                    component["start_nodes"] = start_nodes
+            return self._execute_graph(component)
+        if comp_type == "document":
+            return self._execute_document(component)
+        if comp_type == "logs":
+            return self._execute_logs(component)
+        if comp_type == "metrics":
+            return self._execute_metrics(component)
+        return []
+
+    def _finish_execute(
+        self,
+        query: Any,
+        component_results: list[list[dict[str, Any]]],
+        component_times: dict[str, float],
+        component_errors: dict[str, str],
+        start_time: float,
+    ) -> "MultiModalQueryResult":
+        """Join, fuse and package. Split out so `execute` reads as its policy."""
         # Apply joins if specified
         if query.joins:
             component_results = self._apply_joins(component_results, query.joins)
@@ -1301,6 +1375,7 @@ class MultiModalQueryExecutor:
             query_time_ms=total_time,
             component_times=component_times,
             fusion_strategy=query.fusion_strategy,
+            component_errors=component_errors,
             metadata={
                 "component_count": len(query.components),
                 "join_count": len(query.joins),
@@ -1329,8 +1404,12 @@ class MultiModalQueryExecutor:
                 }
                 for r in results
             ]
-        except Exception:
-            return []
+        except Exception as exc:  # noqa: BLE001 - re-raised; the caller records it
+            # Deliberately NOT swallowed. A leg that failed and a leg that
+            # matched nothing both used to return []. The dispatch loop in
+            # `execute` owns the best-effort policy and records which
+            # component failed, so a partial answer says so.
+            raise exc
 
     def _execute_graph(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute graph traversal component.
@@ -1360,8 +1439,12 @@ class MultiModalQueryExecutor:
                     for r in results
                 ]
             return []
-        except Exception:
-            return []
+        except Exception as exc:  # noqa: BLE001 - re-raised; the caller records it
+            # Deliberately NOT swallowed. A leg that failed and a leg that
+            # matched nothing both used to return []. The dispatch loop in
+            # `execute` owns the best-effort policy and records which
+            # component failed, so a partial answer says so.
+            raise exc
 
     def _execute_document(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute document query component.
@@ -1385,8 +1468,12 @@ class MultiModalQueryExecutor:
                     for r in results
                 ]
             return []
-        except Exception:
-            return []
+        except Exception as exc:  # noqa: BLE001 - re-raised; the caller records it
+            # Deliberately NOT swallowed. A leg that failed and a leg that
+            # matched nothing both used to return []. The dispatch loop in
+            # `execute` owns the best-effort policy and records which
+            # component failed, so a partial answer says so.
+            raise exc
 
     def _execute_logs(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute log query component.
@@ -1412,8 +1499,12 @@ class MultiModalQueryExecutor:
                     for r in results
                 ]
             return []
-        except Exception:
-            return []
+        except Exception as exc:  # noqa: BLE001 - re-raised; the caller records it
+            # Deliberately NOT swallowed. A leg that failed and a leg that
+            # matched nothing both used to return []. The dispatch loop in
+            # `execute` owns the best-effort policy and records which
+            # component failed, so a partial answer says so.
+            raise exc
 
     def _execute_metrics(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute metric aggregation component.
@@ -1438,8 +1529,12 @@ class MultiModalQueryExecutor:
                     for r in results
                 ]
             return []
-        except Exception:
-            return []
+        except Exception as exc:  # noqa: BLE001 - re-raised; the caller records it
+            # Deliberately NOT swallowed. A leg that failed and a leg that
+            # matched nothing both used to return []. The dispatch loop in
+            # `execute` owns the best-effort policy and records which
+            # component failed, so a partial answer says so.
+            raise exc
 
     def _apply_joins(
         self,

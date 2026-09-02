@@ -29,6 +29,8 @@ class CollectionV2Response:
 
     Attributes:
         collection_id (str): Collection ID
+        content_revision (int): Monotonic server-owned content revision for cache revalidation.
+        content_revision_token (str): Opaque validator that also fences server restarts.
         created_at (str): Creation timestamp
         dimension (int): Vector dimension
         distance_metric (str): Distance metric
@@ -49,6 +51,8 @@ class CollectionV2Response:
     """
 
     collection_id: str
+    content_revision: int
+    content_revision_token: str
     created_at: str
     dimension: int
     distance_metric: str
@@ -70,6 +74,10 @@ class CollectionV2Response:
         from ..models.schema_definition import SchemaDefinition
 
         collection_id = self.collection_id
+
+        content_revision = self.content_revision
+
+        content_revision_token = self.content_revision_token
 
         created_at = self.created_at
 
@@ -123,6 +131,8 @@ class CollectionV2Response:
         field_dict.update(
             {
                 "collection_id": collection_id,
+                "content_revision": content_revision,
+                "content_revision_token": content_revision_token,
                 "created_at": created_at,
                 "dimension": dimension,
                 "distance_metric": distance_metric,
@@ -153,6 +163,10 @@ class CollectionV2Response:
 
         d = dict(src_dict)
         collection_id = d.pop("collection_id")
+
+        content_revision = d.pop("content_revision")
+
+        content_revision_token = d.pop("content_revision_token")
 
         created_at = d.pop("created_at")
 
@@ -233,6 +247,8 @@ class CollectionV2Response:
 
         collection_v2_response = cls(
             collection_id=collection_id,
+            content_revision=content_revision,
+            content_revision_token=content_revision_token,
             created_at=created_at,
             dimension=dimension,
             distance_metric=distance_metric,

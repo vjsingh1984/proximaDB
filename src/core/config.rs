@@ -1475,12 +1475,26 @@ pub struct CoarseProbeConfig {
     /// Geometric nprobe multiplier: `nprobe = ceil(sqrt(ncells) × multiplier)`.
     ///
     /// Default 2.0. The settled one-segment SIFT1M geometry has 30 cells:
-    /// multiplier 1.0 probes 6 and missed the recall@10 ratchet (0.9786), while
-    /// multiplier 2.0 probes 11 and cleared the hardest measured 1,000-query
-    /// acceptance slice. Backend-bounded range coalescing absorbs the added
-    /// cell fanout (15.90 GET/query under the Azure policy); the full
-    /// three-phase harness remains the release gate. Operators may lower this
-    /// only with a representative recall gate.
+    /// multiplier 1.0 probes 6 and measured **recall@10 = 0.9795**, below the
+    /// 0.98 ratchet, while multiplier 2.0 probes 11 and measured 0.9822 on an
+    /// independent 1,000-query slice (TD-SEARCH-3 §S5).
+    ///
+    /// Two caveats that the sweep records and this default should not obscure:
+    ///
+    /// * **The GET comparison is not planner-matched.** The 6-cell reading was
+    ///   taken under the *local* planner (26.69 GET/query); the 11-cell reading
+    ///   under the *Azure* planner (15.90). The multiplier change and the
+    ///   bounded-coalescing change were measured together, so "2.0 costs
+    ///   nothing in requests" does not follow from these two rows. Bytes did
+    ///   rise, 24.66 → 48.82 MB/query.
+    /// * Those are **diagnostic sweeps over the immutable acceptance segment**,
+    ///   not a post-change evidence run; the full three-phase harness remains
+    ///   the release gate.
+    ///
+    /// This is process-global: `coarse_probe_nprobe` takes only `k_c`, with no
+    /// collection or query identity, so there is no per-collection retune
+    /// without a signature change (TD-RDSTRAT-9 tracks the missing controller).
+    /// Operators may lower this only with a representative recall gate.
     #[serde(default = "default_nprobe_multiplier")]
     pub nprobe_multiplier: f32,
     /// Minimum nprobe (floor). Default 3.
@@ -1489,6 +1503,18 @@ pub struct CoarseProbeConfig {
     /// Maximum nprobe (0 = unlimited; capped at ncells anyway). Default 0.
     #[serde(default)]
     pub nprobe_max: usize,
+    /// WRITE gate (TD-IVF-3): floor on the coarse-PCA projection width used to
+    /// train the A0 directory. **0 = disabled** (the legacy
+    /// `max(1.5·log2 dim, 1.5·log2 k)` formula, which yields 10–14 components).
+    ///
+    /// Measurement puts the GET/query optimum at 32 (128-d) and 64 (384-d and
+    /// 768-d), and wider widths are markedly more robust to poor cell geometry
+    /// (degrading `k_c` 90→30 costs +21% at width 32 but only +2.6% at 64) —
+    /// which matters because production `k_c` is derived from corpus size and
+    /// varies over orders of magnitude. Ships at 0 pending the seed-sensitivity
+    /// and PCA-conditioning bake. Env: `PROXIMADB_IVF_NCOMP_FLOOR`.
+    #[serde(default)]
+    pub ncomp_floor: usize,
 }
 
 /// Cache population performed only after a segment is atomically published.
@@ -1538,6 +1564,7 @@ impl Default for CoarseProbeConfig {
             nprobe_multiplier: default_nprobe_multiplier(),
             nprobe_min: default_nprobe_min(),
             nprobe_max: 0,
+            ncomp_floor: 0, // TD-IVF-3: disabled until the bake clears it
         }
     }
 }

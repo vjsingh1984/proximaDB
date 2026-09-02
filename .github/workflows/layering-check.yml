@@ -67,6 +67,13 @@ jobs:
     - name: Run tenant ingress contract guard
       run: python3 scripts/check_tenant_ingress_contract.py
 
+    # TD-CAT-7: `Catalog::create_table` is a provided method carrying the
+    # identity post-condition (an authority may not create a table with no
+    # object_id — authorization keys on it). Rust has no `final`, so this guard
+    # is the seal: backends implement `create_table_inner`, never `create_table`.
+    - name: Run catalog seal guard (TD-CAT-7)
+      run: python3 scripts/check_catalog_seal.py
+
     # OSS/enterprise boundary: fails on NEW commercial leaks (pricing/billing/
     # control-plane refs) in non-gated engine code. Known debt is tracked (warn).
     # See docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc.

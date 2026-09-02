@@ -224,6 +224,14 @@ impl UnifiedStorageFormat for SstEngine {
                     Ok(EmbeddingPrecision::Unspecified | EmbeddingPrecision::Fp32) | Err(_) => None,
                 }
             });
+        // TD-PAXRG-1: resolve the row-group switch from the collection's
+        // `pax_rg_layout` tag (same precedence the flush seam applies).
+        let rg_tags = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.tags.as_slice())
+            .unwrap_or(&[]);
         let enqueued = compaction
             .enqueue_due_compaction(
                 collection_object_id,
@@ -231,6 +239,7 @@ impl UnifiedStorageFormat for SstEngine {
                 std::path::Path::new(&collection_dir),
                 l0_threshold,
                 precision_hint,
+                Some(super::flush::resolve_pax_rg_layout(rg_tags)),
             )
             .await?;
 

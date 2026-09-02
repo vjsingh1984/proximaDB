@@ -72,7 +72,7 @@ pub use proximadb_embedded_common::{
 
 // Re-export coordination types for public API
 pub use coordination::{
-    AccessMode, CoordinationError, FileLockManager, LeaderElection, LeaderStatus,
+    AccessMode, CoordinationError, FileLockManager, FileLockSet, LeaderElection, LeaderStatus,
 };
 
 // Language-specific bindings - compiled when corresponding feature is enabled
@@ -569,8 +569,13 @@ pub struct EmbeddedGraphNode {
     pub id: String,
     /// Node labels/types (e.g., "Person", "function", "Document")
     pub labels: Vec<String>,
-    /// Flexible property storage for domain-specific attributes
-    pub properties: std::collections::HashMap<String, String>,
+    /// Typed property storage. Was `HashMap<String, String>`, which forced
+    /// every value through stringification on write (`line: 42` stored as
+    /// `StringValue("42")`, leaving the engine's numeric index permanently
+    /// empty) and silently DROPPED Bytes/Array/Object/Vector on read
+    /// (proximaDB#1698). `PropertyValue` has `From<&str>/String/i64/i32/f64/
+    /// bool`, so `with_property("name", "Alice")` still reads the same.
+    pub properties: std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
 }
 
 impl EmbeddedGraphNode {
@@ -589,28 +594,22 @@ impl EmbeddedGraphNode {
         self
     }
 
-    /// Add a property to this node
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    /// Add a property to this node (typed; `&str`/`String`/`i64`/`i32`/`f64`/
+    /// `bool` convert implicitly, or pass a `PropertyValue` for the rest)
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<proximadb::graph::model::PropertyValue>,
+    ) -> Self {
         self.properties.insert(key.into(), value.into());
         self
     }
 
-    /// Convert to proto Node for storage
+    /// Convert to proto Node for storage (lossless: properties are typed)
     pub fn to_proto(&self) -> proximadb::graph::Node {
-        use proximadb::graph::{Node, PropertyValue, property_value::Value};
+        use proximadb::graph::Node;
 
-        let properties: std::collections::HashMap<String, PropertyValue> = self
-            .properties
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    PropertyValue {
-                        value: Some(Value::StringValue(v.clone())),
-                    },
-                )
-            })
-            .collect();
+        let properties = self.properties.clone();
 
         Node {
             id: self.id.clone(),
@@ -622,21 +621,10 @@ impl EmbeddedGraphNode {
         }
     }
 
-    /// Create from proto Node
+    /// Create from proto Node (lossless: every variant survives, where the
+    /// stringly version dropped Bytes/Array/Object/Vector outright)
     pub fn from_proto(node: &proximadb::graph::Node) -> Self {
-        use proximadb::graph::model::property_value::Value;
-
-        let properties: std::collections::HashMap<String, String> = node
-            .properties
-            .iter()
-            .filter_map(|(k, v)| match &v.value {
-                Some(Value::StringValue(s)) => Some((k.clone(), s.clone())),
-                Some(Value::IntValue(i)) => Some((k.clone(), i.to_string())),
-                Some(Value::DoubleValue(d)) => Some((k.clone(), d.to_string())),
-                Some(Value::BoolValue(b)) => Some((k.clone(), b.to_string())),
-                _ => None,
-            })
-            .collect();
+        let properties = node.properties.clone();
 
         Self {
             id: node.id.clone(),
@@ -666,8 +654,8 @@ pub struct EmbeddedGraphEdge {
     pub edge_type: String,
     /// Optional weight for weighted traversal
     pub weight: Option<f64>,
-    /// Flexible property storage
-    pub properties: std::collections::HashMap<String, String>,
+    /// Typed property storage (see the node-side comment; proximaDB#1698)
+    pub properties: std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
 }
 
 impl EmbeddedGraphEdge {
@@ -699,8 +687,12 @@ impl EmbeddedGraphEdge {
         self
     }
 
-    /// Add a property
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    /// Add a property (typed; scalars convert implicitly)
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<proximadb::graph::model::PropertyValue>,
+    ) -> Self {
         self.properties.insert(key.into(), value.into());
         self
     }
@@ -715,20 +707,9 @@ impl EmbeddedGraphEdge {
 
     /// Convert to proto Edge
     pub fn to_proto(&self) -> proximadb::graph::Edge {
-        use proximadb::graph::{Edge, PropertyValue, property_value::Value};
+        use proximadb::graph::Edge;
 
-        let properties: std::collections::HashMap<String, PropertyValue> = self
-            .properties
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    PropertyValue {
-                        value: Some(Value::StringValue(v.clone())),
-                    },
-                )
-            })
-            .collect();
+        let properties = self.properties.clone();
 
         Edge {
             id: self.id.clone().unwrap_or_else(|| self.generated_id()),
@@ -744,19 +725,7 @@ impl EmbeddedGraphEdge {
 
     /// Create from proto Edge
     pub fn from_proto(edge: &proximadb::graph::Edge) -> Self {
-        use proximadb::graph::model::property_value::Value;
-
-        let properties: std::collections::HashMap<String, String> = edge
-            .properties
-            .iter()
-            .filter_map(|(k, v)| match &v.value {
-                Some(Value::StringValue(s)) => Some((k.clone(), s.clone())),
-                Some(Value::IntValue(i)) => Some((k.clone(), i.to_string())),
-                Some(Value::DoubleValue(d)) => Some((k.clone(), d.to_string())),
-                Some(Value::BoolValue(b)) => Some((k.clone(), b.to_string())),
-                _ => None,
-            })
-            .collect();
+        let properties = edge.properties.clone();
 
         Self {
             id: Some(edge.id.clone()),
@@ -807,6 +776,18 @@ pub struct EmbeddedGraphStats {
 /// // Call close() to persist RL policy before dropping
 /// db.close();
 /// ```
+/// TD-DSEFF-2: `true` when a non-SST-declared collection's data directory
+/// holds files and every one of them carries the legacy SST extension —
+/// the residue of the pre-#1743 flush-routing bug (`FlushExecutionCoordinator::
+/// engine_for` unconditionally used a caller-supplied SST fallback, so every
+/// embedded collection flushed as SST regardless of its declared engine).
+/// Pure and unit-testable: callers already gate this on the declared engine
+/// being non-SST before listing the directory, so this only needs the
+/// resulting file names.
+fn engine_data_mismatch(file_names: &[String]) -> bool {
+    !file_names.is_empty() && file_names.iter().all(|name| name.ends_with(".sst"))
+}
+
 pub struct EmbeddedProximaDB {
     /// Configuration
     config: EmbeddedConfig,
@@ -824,10 +805,16 @@ pub struct EmbeddedProximaDB {
     metrics_collector: std::sync::Arc<EmbeddedMetricsCollector>,
     /// Checkpoint manager for incremental persistence
     checkpoint_manager: std::sync::Arc<CheckpointManager>,
-    /// File lock manager for multi-process coordination
-    lock_manager: Option<FileLockManager>,
+    /// One ownership lease spanning every configured local writable root.
+    lock_manager: Option<FileLockSet>,
     /// Leader election for leader/follower mode
     leader_election: Option<LeaderElection>,
+    /// Per-open fence for cursors. An embedded close/reopen is a database
+    /// incarnation change even when the host process stays alive.
+    content_revision_incarnation: String,
+    /// Makes close idempotent and prevents Drop from flushing after ownership
+    /// has already been handed to a newly opened instance.
+    closed: std::sync::atomic::AtomicBool,
 }
 
 impl EmbeddedProximaDB {
@@ -836,6 +823,80 @@ impl EmbeddedProximaDB {
     /// This initializes the database with the given configuration,
     /// including multi-disk support and WAL settings.
     pub fn new(config: EmbeddedConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let base_path = config
+            .storage_locations
+            .first()
+            .map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
+        let mut ownership_roots: Vec<std::path::PathBuf> = config
+            .storage_locations
+            .iter()
+            .filter_map(|location| {
+                location
+                    .path
+                    .strip_prefix("file://")
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| {
+                        (!location.path.contains("://"))
+                            .then(|| std::path::PathBuf::from(&location.path))
+                    })
+            })
+            .collect();
+        if let Some(path) = config.metadata_path.strip_prefix("file://") {
+            ownership_roots.push(std::path::PathBuf::from(path));
+        } else if !config.metadata_path.contains("://") {
+            ownership_roots.push(std::path::PathBuf::from(&config.metadata_path));
+        }
+
+        // Ownership is the first side effect. A losing opener must not reset
+        // process globals, construct services, or begin recovery before it
+        // learns that this database is already in use.
+        let (lock_manager, leader_election) = match config.access_mode {
+            AccessMode::Exclusive => {
+                let lock = FileLockSet::acquire(&ownership_roots, AccessMode::Exclusive).map_err(
+                    |e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to acquire exclusive lock: {}",
+                            e
+                        )))
+                    },
+                )?;
+                (Some(lock), None)
+            }
+            AccessMode::SharedRead => {
+                let lock = FileLockSet::acquire(&ownership_roots, AccessMode::SharedRead).map_err(
+                    |e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to acquire shared read lock: {}",
+                            e
+                        )))
+                    },
+                )?;
+                (Some(lock), None)
+            }
+            AccessMode::LeaderFollower => {
+                let access_lock = FileLockSet::acquire(&ownership_roots, AccessMode::SharedRead)
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to acquire leader/follower access lock: {}",
+                            e
+                        )))
+                    })?;
+                let node_id = config
+                    .node_id
+                    .clone()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let election = LeaderElection::new(&base_path, &node_id).map_err(
+                    |e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to initialize leader election: {}",
+                            e
+                        )))
+                    },
+                )?;
+                (Some(access_lock), Some(election))
+            }
+        };
+
         // [AGENT_FIX]: Forcefully reset global static state to allow multiple
         // embedded instances within the same process, which is critical for tests
         // and benchmarks. This is an unsafe workaround for a design limitation
@@ -863,6 +924,27 @@ impl EmbeddedProximaDB {
         // Initialize SharedServices using the runtime
         let (shared_services, collection_port) =
             runtime.block_on(async { Self::init_services(storage_config).await })?;
+
+        // Recover graphs from snapshots + WAL before serving any request.
+        //
+        // The other half of #1524. `ProximaDB::start` has always done this,
+        // but — exactly like the shutdown-side flush — its call is gated on
+        // `self.multi_server`, the NETWORK object. Port-free embedded never
+        // constructs one, so it started with an empty ORION engine no matter
+        // what the WAL held: reopening a directory containing 177k durable
+        // edges answered `edges=0`, indistinguishable from data loss.
+        //
+        // Both halves of durability were attached to the network server, so a
+        // transport choice silently decided whether data survived. Recovery is
+        // best-effort here for the same reason the server treats it that way:
+        // a corrupt or partial WAL should degrade to an empty graph with a
+        // warning, not prevent the database from opening at all.
+        runtime.block_on(async {
+            match shared_services.graph_service.recover_all_graphs().await {
+                Ok(()) => tracing::info!("EMBEDDED: graphs recovered from persistent storage"),
+                Err(e) => tracing::warn!("EMBEDDED: graph recovery failed (continuing): {}", e),
+            }
+        });
 
         // Initialize RL planner if enabled
         let rl_policy_path = if config.enable_rl_planner {
@@ -910,11 +992,6 @@ impl EmbeddedProximaDB {
         tracing::debug!("EMBEDDED: Metrics collector initialized");
 
         // Initialize checkpoint manager for incremental persistence
-        let base_path = config
-            .storage_locations
-            .first()
-            .map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
-
         let catalog_manager = shared_services.catalog_manager.clone();
         runtime
             .block_on(async {
@@ -943,66 +1020,55 @@ impl EmbeddedProximaDB {
         });
         tracing::debug!("EMBEDDED: Checkpoint manager initialized");
 
-        // Initialize multi-process coordination based on access mode
-        let (lock_manager, leader_election) = match config.access_mode {
-            AccessMode::Exclusive => {
-                // Acquire exclusive lock
-                let lock = FileLockManager::new(&base_path, AccessMode::Exclusive).map_err(
-                    |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(format!(
-                            "Failed to acquire exclusive lock: {}",
-                            e
-                        )))
-                    },
-                )?;
-                tracing::info!("EMBEDDED: Acquired exclusive lock for multi-process coordination");
-                (Some(lock), None)
-            }
-            AccessMode::SharedRead => {
-                // Acquire shared read lock
-                let lock = FileLockManager::new(&base_path, AccessMode::SharedRead).map_err(
-                    |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(format!(
-                            "Failed to acquire shared read lock: {}",
-                            e
-                        )))
-                    },
-                )?;
-                tracing::info!(
-                    "EMBEDDED: Acquired shared read lock for multi-process coordination"
-                );
-                (Some(lock), None)
-            }
-            AccessMode::LeaderFollower => {
-                // Attempt leader election
-                let node_id = config
-                    .node_id
-                    .clone()
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                let election = LeaderElection::new(&base_path, &node_id).map_err(
-                    |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(format!(
-                            "Failed to initialize leader election: {}",
-                            e
-                        )))
-                    },
-                )?;
-
-                if election.is_leader() {
-                    tracing::info!(
-                        "EMBEDDED: Node '{}' elected as leader for multi-process coordination",
-                        node_id
-                    );
-                } else {
-                    tracing::info!(
-                        "EMBEDDED: Node '{}' is follower (leader: {:?})",
-                        node_id,
-                        election.leader_id()
+        // TD-DSEFF-2: pre-#1743, `FlushExecutionCoordinator::engine_for`
+        // unconditionally used a caller-supplied SST fallback, so every
+        // embedded collection's flushes were routed through SST regardless
+        // of its declared engine. Post-fix, new flushes correctly write the
+        // declared engine's own format — but a pre-existing deployment's
+        // non-SST-declared collection may have OLD SST-formatted data that
+        // its declared engine's extension-filtered reader will never see.
+        // One-shot, best-effort, log-only diagnostic on open: never blocks
+        // startup or fails construction.
+        runtime.block_on(async {
+            let Ok(collections) = collection_port.list_collections(None).await else {
+                return;
+            };
+            for collection in collections {
+                let Ok(plan) =
+                    proximadb::storage::flush_materializer::flush_plan_from_collection_meta(
+                        &collection,
+                    )
+                else {
+                    continue;
+                };
+                if plan.engine_type == proximadb::proto::proximadb_v1::StorageEngine::Sst as i32 {
+                    continue;
+                }
+                let data_dir = format!("{}/{}/data", plan.base_location, plan.collection_object_id);
+                let Ok(fs) = shared_services.filesystem_factory.get_filesystem(&data_dir) else {
+                    continue;
+                };
+                let Ok(entries) = fs.list(&data_dir).await else {
+                    continue; // no flushes yet — nothing to migrate
+                };
+                let file_names: Vec<String> = entries
+                    .into_iter()
+                    .filter(|e| !e.metadata.is_directory)
+                    .map(|e| e.name)
+                    .collect();
+                if engine_data_mismatch(&file_names) {
+                    let declared =
+                        proximadb::proto::proximadb_v1::StorageEngine::try_from(plan.engine_type);
+                    tracing::warn!(
+                        "⚠️ EMBEDDED: collection '{}' declares engine {:?} but its data directory \
+                         contains only .sst-formatted files (pre-#1743 flush) — this data is \
+                         invisible to the declared engine's reader; re-ingest to migrate",
+                        plan.collection_name,
+                        declared,
                     );
                 }
-                (None, Some(election))
             }
-        };
+        });
 
         Ok(Self {
             config,
@@ -1015,6 +1081,8 @@ impl EmbeddedProximaDB {
             checkpoint_manager,
             lock_manager,
             leader_election,
+            content_revision_incarnation: uuid::Uuid::new_v4().simple().to_string(),
+            closed: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -1223,10 +1291,13 @@ impl EmbeddedProximaDB {
     /// Returns `Ok(())` if writes are allowed, or an error if not.
     fn check_write_access(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match self.config.access_mode {
-            AccessMode::Exclusive => {
-                // Exclusive mode always allows writes (we have the exclusive lock)
-                Ok(())
-            }
+            AccessMode::Exclusive => match &self.lock_manager {
+                Some(lock) if lock.is_locked() => Ok(()),
+                _ => Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "Database is closed: exclusive access lock is not held.",
+                ))),
+            },
             AccessMode::SharedRead => {
                 // SharedRead mode never allows writes
                 Err(Box::new(std::io::Error::new(
@@ -2175,14 +2246,48 @@ impl EmbeddedProximaDB {
             .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
 
-        let inbound_cursor = match cursor.as_deref() {
-            Some(raw) if !raw.is_empty() => Some(
-                proximadb::services::scan_cursor::ScanCursor::decode(raw, collection, now_ns)?,
-            ),
-            _ => None,
-        };
-
         self.runtime.block_on(async {
+            let tenant_id = self
+                .config
+                .tenant_id
+                .as_deref()
+                .filter(|tenant| !tenant.is_empty());
+            let collection_record = self
+                .collection_port
+                .get_collection(collection, tenant_id)
+                .await
+                .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(error.to_string()))
+                })?
+                .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Collection '{collection}' not found"),
+                    ))
+                })?;
+            let canonical_collection_id = collection_record.id;
+            let revision_tenant =
+                tenant_id.unwrap_or(proximadb::catalog::DEFAULT_CORPUS_VERSION_TENANT);
+            let revision = proximadb::catalog::CorpusVersionRegistry::global()
+                .content_snapshot(
+                    revision_tenant,
+                    &canonical_collection_id,
+                    &self.content_revision_incarnation,
+                )
+                .await;
+            let inbound_cursor = match cursor.as_deref() {
+                Some(raw) if !raw.is_empty() => {
+                    let decoded = proximadb::services::scan_cursor::ScanCursor::decode(
+                        raw,
+                        &canonical_collection_id,
+                        now_ns,
+                    )?;
+                    decoded.validate_content_revision(revision.revision, &revision.token)?;
+                    Some(decoded)
+                }
+                _ => None,
+            };
+
             // TD-099(3d): push cursor + limit into the WAL streaming layer via
             // the same VectorOperationsService pathway used by
             // `insert_proxima_records`, so writes and reads agree on the
@@ -2192,7 +2297,8 @@ impl EmbeddedProximaDB {
                 .shared_services
                 .vector_operations_service
                 .scan_records_paginated(
-                    collection,
+                    &canonical_collection_id,
+                    &canonical_collection_id,
                     inbound_cursor.as_ref(),
                     limit,
                     true,
@@ -2206,12 +2312,30 @@ impl EmbeddedProximaDB {
                     Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
+            let revision_after = proximadb::catalog::CorpusVersionRegistry::global()
+                .content_snapshot(
+                    revision_tenant,
+                    &canonical_collection_id,
+                    &self.content_revision_incarnation,
+                )
+                .await;
+            if revision_after != revision {
+                return Err(Box::new(std::io::Error::other(
+                    "collection changed while scanning; restart pagination",
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
+
             let next_str = match next {
-                Some(c) => Some(c.encode().map_err(
-                    |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(e))
-                    },
-                )?),
+                Some(mut c) => {
+                    c.stamp_content_revision(revision.revision, revision.token);
+                    Some(
+                        c.encode()
+                            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                                Box::new(std::io::Error::other(e))
+                            })?,
+                    )
+                }
                 None => None,
             };
 
@@ -2588,6 +2712,7 @@ impl EmbeddedProximaDB {
         collection: &str,
         vector_id: &str,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        self.check_write_access()?;
         use std::sync::Arc;
 
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
@@ -2927,7 +3052,57 @@ impl EmbeddedProximaDB {
     /// db.flush()?;  // Persist vector data
     /// db.close();   // Persist RL policy and cleanup
     /// ```
+    /// Flush every graph's WAL buffer to disk. Idempotent and best-effort.
+    ///
+    /// Graph writes land in `UnifiedWALWriter::current_segment_data`, an
+    /// in-memory buffer that reaches disk only on an explicit flush or a 64 MB
+    /// segment rotation. `UnifiedWALEntry::new` never sets `requires_fsync`, so
+    /// no graph write triggers the former, and a realistic code graph (93k
+    /// nodes / 177k edges) never reaches the latter. Nothing on the in-process
+    /// path called flush, so the buffer died with the process: measured before
+    /// this change, ingest reported 177,046 edges, `graph_stats` agreed,
+    /// `close()` returned cleanly, the WAL file on disk was 0 bytes, and a
+    /// fresh process saw `edges=0`. Total silent data loss (#1524).
+    ///
+    /// The server has always flushed here (`ProximaDB::stop`), but its loop is
+    /// gated on `self.multi_server` — the NETWORK object. Embedded is
+    /// deliberately port-free and never constructs one, so it inherited none of
+    /// the durability. Attaching a durability step to the network layer is what
+    /// let a transport choice decide whether data survives.
+    ///
+    /// Errors are logged rather than propagated: this runs from `close()` and
+    /// from `Drop`, where raising is worse than warning, and one unflushable
+    /// graph must not stop the others from flushing.
+    fn flush_graph_wals(&self) {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+            match graph_service.list_graphs().await {
+                Ok(graph_ids) => {
+                    let total = graph_ids.len();
+                    let mut flushed = 0usize;
+                    for graph_id in graph_ids {
+                        match graph_service.flush_wal(&graph_id).await {
+                            Ok(()) => flushed += 1,
+                            Err(e) => tracing::warn!(
+                                "EMBEDDED: failed to flush WAL for graph {}: {}",
+                                graph_id,
+                                e
+                            ),
+                        }
+                    }
+                    if total > 0 {
+                        tracing::info!("EMBEDDED: flushed WAL for {flushed}/{total} graph(s)");
+                    }
+                }
+                Err(e) => tracing::warn!("EMBEDDED: could not list graphs to flush WAL: {}", e),
+            }
+        });
+    }
+
     pub fn close(&self) {
+        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         // Persist RL planner policy if enabled
         if let Some(ref policy_path) = self.rl_policy_path
             && let Some(planner) = proximadb::query::rl_planner::get_rl_planner()
@@ -2953,7 +3128,24 @@ impl EmbeddedProximaDB {
             });
         }
 
+        self.flush_graph_wals();
+
+        self.release_coordination();
+
         tracing::info!("🛑 EMBEDDED: Database closed");
+    }
+
+    fn release_coordination(&self) {
+        if let Some(election) = &self.leader_election
+            && let Err(e) = election.release()
+        {
+            tracing::warn!("EMBEDDED: failed to release leadership: {}", e);
+        }
+        if let Some(lock) = &self.lock_manager
+            && let Err(e) = lock.release()
+        {
+            tracing::warn!("EMBEDDED: failed to release access lock: {}", e);
+        }
     }
 
     // ========================================================================
@@ -3449,7 +3641,7 @@ impl EmbeddedProximaDB {
             graph_service
                 .batch_create_edges(graph_id, proto_edges)
                 .await
-                .map(|inserted| inserted.len())
+                .map(|outcome| outcome.created.len())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
                 })
@@ -3462,7 +3654,7 @@ impl EmbeddedProximaDB {
         graph_id: &str,
         node_id: &str,
         labels: Vec<String>,
-        properties: std::collections::HashMap<String, String>,
+        properties: std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
     ) -> Result<EmbeddedGraphNode, Box<dyn std::error::Error + Send + Sync>> {
         let node = EmbeddedGraphNode {
             id: node_id.to_string(),
@@ -3482,7 +3674,7 @@ impl EmbeddedProximaDB {
         to_node_id: &str,
         edge_type: &str,
         weight: Option<f64>,
-        properties: std::collections::HashMap<String, String>,
+        properties: std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
     ) -> Result<EmbeddedGraphEdge, Box<dyn std::error::Error + Send + Sync>> {
         let edge = EmbeddedGraphEdge {
             id: edge_id.map(str::to_string),
@@ -3550,7 +3742,9 @@ impl EmbeddedProximaDB {
         &self,
         graph_id: &str,
         labels: Option<Vec<String>>,
-        properties: Option<std::collections::HashMap<String, String>>,
+        properties: Option<
+            std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
+        >,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<EmbeddedGraphNode>, Box<dyn std::error::Error + Send + Sync>> {
@@ -4955,20 +5149,20 @@ impl EmbeddedProximaDB {
     }
 
     fn property_filters_from_map(
-        properties: &std::collections::HashMap<String, String>,
+        properties: &std::collections::HashMap<String, proximadb::graph::model::PropertyValue>,
     ) -> Vec<proximadb::graph::PropertyFilter> {
-        use proximadb::graph::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+        use proximadb::graph::{PropertyFilter, PropertyFilterOperator};
 
+        // Typed filters against typed stored values. When both sides were
+        // stringly this happened to match; once storage is typed (see
+        // #1698), a StringValue("42") filter would never equal IntValue(42),
+        // so the filter map carries PropertyValue end to end.
         properties
             .iter()
             .map(|(key, value)| PropertyFilter {
                 key: key.clone(),
                 operator: PropertyFilterOperator::Equals as i32,
-                value: Some(PropertyValue {
-                    value: Some(proximadb::graph::model::property_value::Value::StringValue(
-                        value.clone(),
-                    )),
-                }),
+                value: Some(value.clone()),
             })
             .collect()
     }
@@ -6126,3 +6320,34 @@ pub struct UnifiedQueryPlan {
 
 #[cfg(test)]
 mod tests;
+
+/// Flush graph WALs if the handle is dropped without an explicit `close()`.
+///
+/// `close()` is the documented path, but a Rust caller doing `drop(db)` — or a
+/// Python object collected without `close()` — must not silently lose data;
+/// that asymmetry is exactly how #1524 stayed invisible (the existing
+/// `embedded_flush_persists_and_recovers` test drops the handle, and covers
+/// only VECTOR durability, so the graph gap sat under a passing suite).
+///
+/// Guarded on not already being inside a Tokio runtime: `block_on` from within
+/// a runtime thread panics, and Drop can run on odd threads (interpreter
+/// teardown, nested runtimes). In that case the flush is skipped with a
+/// warning rather than taking the process down during cleanup — callers who
+/// need the guarantee should call `close()` explicitly.
+impl Drop for EmbeddedProximaDB {
+    fn drop(&mut self) {
+        if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tracing::warn!(
+                "EMBEDDED: dropped inside a Tokio runtime; skipping graph WAL flush. \
+                 Call close() explicitly to guarantee durability."
+            );
+            self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.release_coordination();
+            return;
+        }
+        self.close();
+    }
+}

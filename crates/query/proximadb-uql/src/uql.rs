@@ -1568,10 +1568,12 @@ impl UQLParser {
         let operation = match model {
             DataModel::Vector => ModelOperation::VectorSearch(VectorSearchExpr {
                 collection: target,
+                vector_column: None,
                 query_vector: vec![0.0],
                 top_k: limit,
                 threshold: None,
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             }),
             DataModel::Document => ModelOperation::DocumentQuery(DocumentQueryExpr {
@@ -1646,10 +1648,12 @@ impl UQLParser {
 
                 ModelOperation::VectorSearch(VectorSearchExpr {
                     collection: source.collection.clone(),
+                    vector_column: None,
                     query_vector,
                     top_k: 100,
                     threshold: Some(threshold),
                     metric: DistanceMetric::Cosine,
+                    filter: None,
                     params: VectorSearchParams::default(),
                 })
             }

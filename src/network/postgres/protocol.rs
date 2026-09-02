@@ -110,6 +110,12 @@ pub struct PostgresProtocol {
     /// policies reject it at the assertion point (SQLSTATE 28000) through the
     /// same shared primitive REST/gRPC/Arrow Flight use. Default `Open`.
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// ADR-0053 W8: trust policy for the `proximadb_tier` startup-parameter
+    /// claim. pgwire runs trust auth — there is structurally NO authenticated
+    /// binding (the same fact the tenant gate above states) — so any strict
+    /// policy makes the tier claim inert (dropped, connection proceeds at the
+    /// default tier). Default `Open`.
+    tier_header_trust: proximadb_tenant::HeaderTrustPolicy,
     /// Request-tenant presence/defaulting contract for this deployment.
     tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode,
     /// TD-ABAC-10 (ADR-087): resolver stamping `tenant_stable_id` on the
@@ -457,6 +463,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
@@ -515,6 +522,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
@@ -565,6 +573,7 @@ impl PostgresProtocol {
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
             result_bytes_pending: 0,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
             stable_id_resolver: None,
             tenant_deployment_mode: proximadb_tenant::TenantDeploymentMode::single_tenant_default(),
         }
@@ -592,6 +601,13 @@ impl PostgresProtocol {
     /// the same `HeaderTrustPolicy` REST/gRPC/Arrow Flight enforce.
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
+        self
+    }
+
+    /// ADR-0053 W8: set the tier-claim trust policy (same gate the REST
+    /// `X-Tenant-Tier` and gRPC `x-tenant-tier` paths enforce).
+    pub fn with_tier_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tier_header_trust = policy;
         self
     }
 
@@ -1033,11 +1049,34 @@ impl PostgresProtocol {
             // Open-core cache tier hook: a `proximadb_tier` startup parameter
             // (control-plane supplied) records the connection tenant's tier for
             // the cache policy. database == tenant/catalog (TD-064). Opaque id.
-            if let (Some(tier), db) = (params.get("proximadb_tier"), session.database.clone())
-                && !tier.is_empty()
-                && !db.is_empty()
-            {
-                crate::services::record_store::set_tenant_tier(db, tier.clone());
+            // ADR-0053 W8: gated by tier_header_trust. pgwire has no
+            // authenticated binding (trust auth), so the binding is None and
+            // any strict policy drops the claim (warned, never SQLSTATE) —
+            // under strict policies the startup parameter is inert.
+            // TD-TENANT-3: the shared claim vocabulary. pgwire's spelling
+            // differs because the PG startup-parameter grammar forbids `-`, so
+            // the canonical `x-tenant-tier` cannot be spelled here — the
+            // mapping is protocol-forced and owned by the vocabulary module,
+            // not re-derived at this call site.
+            let tier_claim =
+                proximadb_tenant::tier_claim_pg(|name| params.get(name).map(String::as_str));
+            let db = session.database.clone();
+            match (
+                db.is_empty(),
+                proximadb_tenant::resolve_tier_claim(tier_claim, None, self.tier_header_trust),
+            ) {
+                // Rejected: DROPPED (never SQLSTATE). pgwire's drop was fully
+                // silent — count it (ADR-0053 W8) so a strict deployment can
+                // see how many connections are losing their claim.
+                (false, Err(rejection)) => {
+                    crate::network::middleware::claim_metrics::record_tier_claim_dropped(
+                        "pgwire", &rejection,
+                    );
+                }
+                (false, Ok(Some(tier))) => {
+                    crate::services::record_store::set_tenant_tier(db, tier);
+                }
+                _ => {}
             }
         }
 
@@ -1519,11 +1558,6 @@ impl PostgresProtocol {
                 return self.send_single_value_result(&column, &value).await;
             }
 
-            // Check if this is a vector search query
-            if upper.contains("<->") || upper.contains("<=>") || upper.contains("<#>") {
-                return self.execute_vector_search(query).await;
-            }
-
             // TD-REL-LOWER-1: the legacy path below is SINGLE-TABLE only — its
             // `FROM <token>` extraction misparses a multi-table FROM
             // (`customer,` / `(select` become "table names") and then fails
@@ -1546,7 +1580,7 @@ impl PostgresProtocol {
             }
 
             // Check if this is a simple table query
-            if let Some(table_name) = self.extract_table_name(&upper) {
+            if let Some(table_name) = self.extract_table_name(query) {
                 // Detect store type from table name or query content
                 let store_type = self.detect_select_store_type(&table_name, &upper);
                 return match store_type {
@@ -2301,8 +2335,19 @@ impl PostgresProtocol {
     }
 
     fn extract_table_name(&self, query: &str) -> Option<String> {
-        // Simple extraction: look for FROM <table>
-        let from_pos = query.find("FROM ")?;
+        // Simple extraction: look for FROM <table>. The scan is
+        // case-insensitive over a length-preserving uppercase copy, but the
+        // slice comes from the ORIGINAL text so the identifier keeps its
+        // as-spelled case (TD-OLAP-18: lowercasing here used to destroy the
+        // declared case, so `SELECT ... FROM CaseTbl` could never resolve
+        // against a declared-case catalog entry). Only the quote characters
+        // are stripped — the DOTTED QUALIFIER must survive, because the
+        // downstream legacy path (`CatalogManager::resolve_table`) parses
+        // `ns.table` for cross-namespace routing (dropping the qualifier, as
+        // `clean_identifier` does for column refs, broke
+        // `pgwire_enforces_cross_namespace_fk_referential_actions`).
+        let upper = query.to_ascii_uppercase();
+        let from_pos = upper.find("FROM ")?;
         let after_from = &query[from_pos + 5..];
         let table_end = after_from
             .find(|c: char| c.is_whitespace() || c == ';')
@@ -2311,170 +2356,7 @@ impl PostgresProtocol {
         if table.is_empty() {
             None
         } else {
-            Some(table.to_lowercase())
-        }
-    }
-
-    /// Execute a vector search query
-    async fn execute_vector_search(&mut self, query: &str) -> Result<()> {
-        // Parse vector from query: look for '[...]'
-        let query_vector = self.extract_vector_from_query(query);
-        let table_name = self
-            .extract_table_name(&query.to_uppercase())
-            .unwrap_or_else(|| "default".to_string());
-
-        // Get top_k from LIMIT clause, default to 10
-        let top_k = self.extract_limit(query).unwrap_or(10);
-
-        // TD-100: push the WHERE metadata predicate into the search so
-        // mem0-style `WHERE payload->>'type'='fact'` queries actually filter.
-        // (Previously this path passed `None`, returning unfiltered results.)
-        // NOTE: parameter-bound vector/metadata values (`$1`) are not yet bound
-        // here; that is tracked as a TD-102 follow-up.
-        let metadata_filter =
-            crate::network::postgres::pgvector_params::extract_metadata_filter_from_where(query);
-
-        // TD-064 S2: structural tenant/namespace isolation at the search routing
-        // boundary. Resolve the target collection through the tenant-scoped
-        // catalog BEFORE searching, so a pgwire client cannot read another
-        // tenant's collection by naming it. The collection service compares the
-        // caller's tenant against the collection's owning tenant and returns
-        // `None` on mismatch (the same enforcement REST v2 / gRPC v2 use). S1
-        // read-half: the read scope is the connection's catalog (`database` ==
-        // account == tenant), falling back to the legacy `proximadb.write.tenant_id`
-        // var for clients that sent no database. Behavior by mode:
-        //   * single-tenant (no tenant manager): unscoped → no behavior change.
-        //   * multi-tenant: missing/unknown tenant → Err, cross-tenant → Ok(None);
-        //     both fail closed below as an indistinguishable "relation does not
-        //     exist" so cross-tenant existence cannot be probed.
-        let tenant_id = self.pgwire_resolve_read_tenant().await;
-        let tenant_scope = (!tenant_id.is_empty()).then_some(tenant_id.as_str());
-        match self
-            .collection_port
-            .get_collection(&table_name, tenant_scope)
-            .await
-        {
-            Ok(Some(_)) => {}
-            Ok(None) | Err(_) => {
-                warn!(
-                    "🚨 pgwire vector search denied: collection '{}' not accessible for tenant scope '{}'",
-                    table_name, tenant_id
-                );
-                return self
-                    .send_error(
-                        "ERROR",
-                        "42P01",
-                        &format!("relation \"{}\" does not exist", table_name),
-                    )
-                    .await;
-            }
-        }
-
-        debug!(
-            "Executing vector search on {} with top_k={} filter={}",
-            table_name,
-            top_k,
-            metadata_filter.is_some()
-        );
-
-        // TD-ABAC-10c (ADR-087): resolve the CLIENT read context from the
-        // session identity through the ONE composition rule every surface
-        // shares (`records_read_context`) — this path previously passed a
-        // hardcoded `System` context ("[CLIENT-PLACEHOLDER]"), so every pgwire
-        // pgvector search bypassed ABAC entirely. `None` ⇒ the subject was
-        // DENIED ⇒ fail closed: emit an empty result set, never rows.
-        #[cfg(feature = "abac-policy")]
-        let read_context = {
-            let (subject, tenant_stable_id, auth_class) = {
-                let session = self.session.read().await;
-                match session.identity.as_ref() {
-                    Some(identity) => (
-                        identity.subject.clone(),
-                        identity.tenant_stable_id,
-                        identity.auth_class,
-                    ),
-                    None => (None, None, proximadb_tenant::AuthClass::Anonymous),
-                }
-            };
-            match self
-                .vector_ops
-                .records_read_context(
-                    subject.as_deref(),
-                    tenant_stable_id,
-                    auth_class,
-                    &table_name,
-                )
-                .await
-            {
-                Some(context) => context,
-                None => {
-                    warn!(
-                        target: "proximadb::tenant_audit",
-                        surface = "pgwire",
-                        collection = %table_name,
-                        subject = ?subject,
-                        "ABAC denied the pgwire vector search subject — failing closed (empty result)"
-                    );
-                    let fields = vec![
-                        FieldDescription::new("id", PgType::Text),
-                        FieldDescription::new("distance", PgType::Float8),
-                        FieldDescription::new("metadata", PgType::Jsonb),
-                    ];
-                    self.send_row_description(&fields).await?;
-                    self.send_command_complete("SELECT 0").await?;
-                    return Ok(());
-                }
-            }
-        };
-
-        if let Some(ref vector) = query_vector {
-            // Execute actual vector search
-            match self
-                .vector_ops
-                .unified_search_native(
-                    &table_name,
-                    vector.clone(),
-                    top_k,
-                    metadata_filter, // TD-100: mem0 metadata-scoped WHERE pushdown
-                    None,            // Default config
-                    #[cfg(feature = "abac-policy")]
-                    &read_context,
-                )
-                .await
-            {
-                Ok(results) => {
-                    // Define result columns
-                    let fields = vec![
-                        FieldDescription::new("id", PgType::Text),
-                        FieldDescription::new("distance", PgType::Float8),
-                        FieldDescription::new("metadata", PgType::Jsonb),
-                    ];
-                    self.send_row_description(&fields).await?;
-
-                    // Send each result as a row
-                    let mut count = 0;
-                    for record in &results {
-                        let id = &record.id;
-                        let distance = format!("{:.6}", record.score);
-                        let metadata = serde_json::to_string(&record.metadata)
-                            .unwrap_or_else(|_| "{}".to_string());
-
-                        self.send_data_row(&[id, &distance, &metadata]).await?;
-                        count += 1;
-                    }
-
-                    self.send_command_complete(&format!("SELECT {}", count))
-                        .await
-                }
-                Err(e) => {
-                    warn!("Vector search error: {}", e);
-                    // Return empty result on error
-                    self.send_empty_result().await
-                }
-            }
-        } else {
-            // No vector found in query, return empty
-            self.send_empty_result().await
+            Some(table.trim_matches('"').to_string())
         }
     }
 
@@ -5243,7 +5125,7 @@ impl PostgresProtocol {
     }
 
     async fn emit_portal_page(&mut self, portal_name: &str, max_rows: usize) -> Result<()> {
-        let (rows, finished) = {
+        let (page, offsets, finished) = {
             let Some(portal) = self.portals.get_mut(portal_name) else {
                 return self
                     .send_error(
@@ -5260,23 +5142,28 @@ impl PostgresProtocol {
             let start = state.next_row;
             let (end, finished) =
                 Self::portal_page_bounds(state.result.rows.len(), state.next_row, max_rows);
-            let rows: Vec<Vec<Option<String>>> = state.result.rows[start..end]
-                .iter()
-                .map(|row| {
-                    row.iter()
-                        .map(super::relational_pipeline::text_encode)
-                        .collect()
-                })
-                .collect();
+            // Sends need &mut self, so the page must be materialized out of
+            // the portal borrow — but as ONE flat cell buffer plus per-row
+            // offsets (was a nested Vec<Vec<Option<String>>> with a Vec
+            // allocation per row per page). Ragged rows stay exact.
+            let mut page: Vec<Option<String>> = Vec::new();
+            let mut offsets: Vec<usize> = Vec::with_capacity(end - start + 1);
+            offsets.push(0);
+            for row in &state.result.rows[start..end] {
+                page.extend(row.iter().map(super::relational_pipeline::text_encode));
+                offsets.push(page.len());
+            }
             state.next_row = end;
-            (rows, finished)
+            (page, offsets, finished)
         };
 
-        for row in &rows {
-            self.send_data_row_nullable(row).await?;
+        let row_count = offsets.len().saturating_sub(1);
+        for bounds in offsets.windows(2) {
+            self.send_data_row_nullable(&page[bounds[0]..bounds[1]])
+                .await?;
         }
         if finished {
-            self.send_command_complete(&format!("SELECT {}", rows.len()))
+            self.send_command_complete(&format!("SELECT {}", row_count))
                 .await
         } else {
             self.send_portal_suspended().await
@@ -5343,13 +5230,15 @@ impl PostgresProtocol {
                     self.send_parameter_description(&param_types).await?;
                     // TD-102: report the result columns this statement will
                     // return so the client's column read matches the DataRows
-                    // streamed during Execute. A vector-search SELECT returns
-                    // (id, distance, metadata); other statements report no
-                    // columns (NoData-equivalent empty descriptor) as before.
-                    let fields = crate::network::postgres::pgvector_params::described_result_fields(
+                    // streamed during Execute. The typed lowerer owns projection
+                    // for both phases; an unsupported vector shape fails here
+                    // instead of advertising no columns and failing later.
+                    match crate::network::postgres::pgvector_params::described_result_fields(
                         &stmt_query,
-                    );
-                    self.send_row_description(&fields).await?;
+                    ) {
+                        Ok(fields) => self.send_row_description(&fields).await?,
+                        Err(error) => self.send_error("ERROR", "0A000", &error).await?,
+                    }
                 } else {
                     self.send_error("ERROR", "26000", "Prepared statement does not exist")
                         .await?;

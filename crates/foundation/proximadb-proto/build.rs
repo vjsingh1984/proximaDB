@@ -32,17 +32,19 @@ fn main() {
     let fusion_proto = repo_root.join("proto/proximadb/v2/fusion.proto");
     let entity_proto = repo_root.join("proto/proximadb/v2/entity.proto");
     let ledger_proto = repo_root.join("proto/proximadb/v2/ledger.proto");
+    let model_registry_proto = repo_root.join("proto/proximadb/v2/model_registry.proto");
     let include = repo_root.join("proto");
     let out_dir = manifest_dir.join("src/proto");
 
     println!(
-        "cargo:warning=regenerating {} + {} + {} + {} + {} + {} -> {}",
+        "cargo:warning=regenerating {} + {} + {} + {} + {} + {} + {} -> {}",
         record_proto.display(),
         graph_proto.display(),
         document_proto.display(),
         fusion_proto.display(),
         entity_proto.display(),
         ledger_proto.display(),
+        model_registry_proto.display(),
         out_dir.display()
     );
     tonic_prost_build::configure()
@@ -57,6 +59,7 @@ fn main() {
                 fusion_proto,
                 entity_proto,
                 ledger_proto,
+                model_registry_proto,
             ],
             &[include],
         )

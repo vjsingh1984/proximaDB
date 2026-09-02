@@ -10,10 +10,11 @@
 //!
 //! Requires a ClickBench `hits` Parquet (VARCHAR string cols); point
 //! `CLICKBENCH_PARQUET` at it. Its directory is auto-allowlisted for the
-//! external-table load. The Parquet columns MUST be lowercase: ProximaDB folds
-//! unquoted SQL identifiers to lowercase while DataFusion resolves the external
-//! Parquet schema case-sensitively, so a CamelCase column (`CounterID`) never
-//! matches the folded reference (`counterid`). See the v1 evidence doc. Run:
+//! external-table load. Column case is no longer a constraint (TD-OLAP-18 fix):
+//! unquoted references resolve case-insensitively against declared CamelCase
+//! columns (declared-case always wins; unique fold on miss), so the stock
+//! CamelCase `hits` Parquet works — the lowercase pre-folded fixture remains
+//! supported and exercises the exact-match path. See the v1 evidence doc. Run:
 //!   CLICKBENCH_PARQUET=/path/cb_hits.parquet DUCKDB_BIN=/path/duckdb \
 //!     cargo test --features datafusion-integration --test clickbench_ledger_e2e \
 //!     clickbench_ledger -- --ignored --nocapture

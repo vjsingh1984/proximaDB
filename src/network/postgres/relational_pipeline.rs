@@ -46,10 +46,10 @@ use proximadb_relational_planner::{
 use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{ColumnInfo, Expr, ExprError, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
-    BinaryOperator, Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr,
-    SetOperator, Statement, TableFactor, TableWithJoins,
+    BinaryOperator, Expr as SqlExpr, GroupByExpr, LimitClause, OrderByKind, Query as SqlQuery,
+    SelectItem, SetExpr, SetOperator, Statement, TableFactor, TableWithJoins, Value,
 };
-use sqlparser::dialect::GenericDialect;
+use sqlparser::dialect::{GenericDialect, PostgreSqlDialect};
 use sqlparser::parser::Parser;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,8 +60,590 @@ use crate::query::cache::query_result_cache::{QueryKey, QueryResultCache, Struct
 use crate::services::dml::DmlService;
 use crate::storage::tenant::context::TenantContext;
 use proximadb_runtime::{OwnedPortIdentity, PortIdentity};
+use proximadb_vector_query::{VectorSearchExpr, VectorSearchParams};
 
 use super::types::PgType;
+
+// =========================================================================
+// Canonical pgvector SELECT lowering
+// =========================================================================
+
+/// Logical vector-search shape lowered from PostgreSQL's pgvector operators.
+///
+/// This lives at the query boundary, not in `protocol.rs`: pgwire supplies SQL
+/// and identity, while the query plane owns parsing, semantics, and execution.
+/// The private type deliberately exposes no second public vector API.
+#[derive(Debug, Clone, PartialEq)]
+struct PgVectorSelectPlan {
+    search: VectorSearchExpr,
+    output: Vec<PgVectorOutputColumn>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum PgVectorOutputColumn {
+    Id(String),
+    Distance(String),
+    Metadata { source: String, output: String },
+}
+
+impl PgVectorOutputColumn {
+    fn schema_column(&self) -> ColumnInfo {
+        match self {
+            Self::Id(name) => ColumnInfo::new(name, ProximaType::String, false),
+            Self::Distance(name) => ColumnInfo::new(name, ProximaType::Float64, false),
+            Self::Metadata { output, .. } => ColumnInfo::new(output, ProximaType::Jsonb, false),
+        }
+    }
+
+    fn field_description(&self) -> super::types::FieldDescription {
+        match self {
+            Self::Id(name) => super::types::FieldDescription::new(name, PgType::Text),
+            Self::Distance(name) => super::types::FieldDescription::new(name, PgType::Float8),
+            Self::Metadata { output, .. } => {
+                super::types::FieldDescription::new(output, PgType::Jsonb)
+            }
+        }
+    }
+}
+
+/// Lower the supported pgvector nearest-neighbour SELECT into one typed plan.
+/// `Ok(None)` means the SQL is not a pgvector operator query. Once an operator
+/// is present, malformed or unsupported semantics are errors; they must never
+/// fall through to a string parser or silently widen a metadata predicate.
+fn lower_pgvector_select(sql: &str) -> Result<Option<PgVectorSelectPlan>, String> {
+    let statements = match Parser::parse_sql(&PostgreSqlDialect {}, sql) {
+        Ok(statements) => statements,
+        Err(_) => return Ok(None),
+    };
+    let [Statement::Query(query)] = statements.as_slice() else {
+        return Ok(None);
+    };
+    let Some(metric) = pgvector_ordering_metric(query)? else {
+        return Ok(None);
+    };
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return Err("pgvector operators require a simple SELECT body".to_string());
+    };
+    let [from] = select.from.as_slice() else {
+        return Err("pgvector operators require exactly one source collection".to_string());
+    };
+    if !from.joins.is_empty() {
+        return Err(
+            "pgvector operator JOINs must use vector_search(...) in the relational pipeline"
+                .to_string(),
+        );
+    }
+    let TableFactor::Table {
+        name,
+        args: None,
+        with_hints,
+        ..
+    } = &from.relation
+    else {
+        return Err("pgvector operators require a collection table source".to_string());
+    };
+    if !with_hints.is_empty() {
+        return Err("table hints are not supported for pgvector search".to_string());
+    }
+
+    let Some(order_by) = query.order_by.as_ref() else {
+        return Err("pgvector nearest-neighbour SELECT requires ORDER BY".to_string());
+    };
+    let OrderByKind::Expressions(order_exprs) = &order_by.kind else {
+        return Err("ORDER BY ALL is not valid for pgvector search".to_string());
+    };
+    let [order] = order_exprs.as_slice() else {
+        return Err(
+            "pgvector search requires exactly one distance expression in ORDER BY".to_string(),
+        );
+    };
+    if order.options.asc == Some(false) {
+        return Err("pgvector nearest-neighbour ORDER BY must be ascending".to_string());
+    }
+
+    let SqlExpr::BinaryOp { left, op, right } = &order.expr else {
+        return Err("ORDER BY must contain a pgvector distance operator".to_string());
+    };
+    debug_assert_eq!(pgvector_metric(op), Some(metric));
+    let vector_column = sql_column_name(left)
+        .ok_or_else(|| "pgvector distance left operand must be a vector column".to_string())?;
+    let query_vector = parse_vector_expr(right)?;
+    if query_vector.is_empty() {
+        return Err("pgvector query vector must not be empty".to_string());
+    }
+
+    let top_k = match query.limit_clause.as_ref() {
+        None => 10,
+        Some(LimitClause::LimitOffset {
+            limit: Some(limit),
+            offset: None,
+            limit_by,
+        }) if limit_by.is_empty() => parse_positive_usize(limit, "LIMIT")?,
+        Some(_) => {
+            return Err("pgvector search supports LIMIT without OFFSET or LIMIT BY".to_string());
+        }
+    };
+    let top_k = u32::try_from(top_k)
+        .map_err(|_| "pgvector LIMIT exceeds the supported u32 result cardinality".to_string())?;
+
+    let filter = select
+        .selection
+        .as_ref()
+        .map(lower_vector_filter)
+        .transpose()?;
+    let output = lower_pgvector_projection(&select.projection, metric)?;
+
+    Ok(Some(PgVectorSelectPlan {
+        search: VectorSearchExpr {
+            collection: name.to_string(),
+            vector_column: Some(vector_column),
+            query_vector,
+            top_k,
+            threshold: None,
+            metric,
+            filter,
+            params: VectorSearchParams::default(),
+        },
+        output,
+    }))
+}
+
+/// Return the metric only when the parsed query's ordering expression is a
+/// pgvector operator. Literal/comment text is deliberately irrelevant to this
+/// routing decision.
+fn pgvector_ordering_metric(
+    query: &SqlQuery,
+) -> Result<Option<proximadb_distance_types::DistanceMetric>, String> {
+    let Some(order_by) = query.order_by.as_ref() else {
+        return Ok(None);
+    };
+    let OrderByKind::Expressions(order_exprs) = &order_by.kind else {
+        return Ok(None);
+    };
+    let metrics = order_exprs
+        .iter()
+        .filter_map(|order| match &order.expr {
+            SqlExpr::BinaryOp { op, .. } => pgvector_metric(op),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if metrics.is_empty() {
+        return Ok(None);
+    }
+    if order_exprs.len() != 1 || metrics.len() != 1 {
+        return Err(
+            "pgvector search requires exactly one distance expression in ORDER BY".to_string(),
+        );
+    }
+    Ok(metrics.first().copied())
+}
+
+fn pgvector_metric(operator: &BinaryOperator) -> Option<proximadb_distance_types::DistanceMetric> {
+    match operator {
+        BinaryOperator::LtDashGt => Some(proximadb_distance_types::DistanceMetric::L2),
+        BinaryOperator::Spaceship => Some(proximadb_distance_types::DistanceMetric::Cosine),
+        BinaryOperator::Custom(operator) if operator == "<#>" => {
+            Some(proximadb_distance_types::DistanceMetric::InnerProduct)
+        }
+        _ => None,
+    }
+}
+
+fn lower_pgvector_projection(
+    projection: &[SelectItem],
+    order_metric: proximadb_distance_types::DistanceMetric,
+) -> Result<Vec<PgVectorOutputColumn>, String> {
+    if matches!(projection, [SelectItem::Wildcard(_)]) {
+        return Ok(vec![
+            PgVectorOutputColumn::Id("id".to_string()),
+            PgVectorOutputColumn::Distance("distance".to_string()),
+            PgVectorOutputColumn::Metadata {
+                source: "metadata".to_string(),
+                output: "metadata".to_string(),
+            },
+        ]);
+    }
+
+    projection
+        .iter()
+        .map(|item| {
+            let (expr, alias) = match item {
+                SelectItem::UnnamedExpr(expr) => (expr, None),
+                SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.as_str())),
+                _ => return Err(format!("unsupported pgvector projection: {item}")),
+            };
+            if let Some(column) = sql_column_name(expr) {
+                return match column.to_ascii_lowercase().as_str() {
+                    "id" => Ok(PgVectorOutputColumn::Id(
+                        alias.unwrap_or(column.as_str()).to_string(),
+                    )),
+                    "payload" | "metadata" => Ok(PgVectorOutputColumn::Metadata {
+                        source: column.clone(),
+                        output: alias.unwrap_or(column.as_str()).to_string(),
+                    }),
+                    _ => Err(format!("unsupported pgvector projection column: {column}")),
+                };
+            }
+            let SqlExpr::BinaryOp { op, .. } = uncast(expr) else {
+                return Err(format!("unsupported pgvector projection: {item}"));
+            };
+            if pgvector_metric(op) != Some(order_metric) {
+                return Err("projected vector distance must use the ORDER BY metric".to_string());
+            }
+            Ok(PgVectorOutputColumn::Distance(
+                alias.unwrap_or("distance").to_string(),
+            ))
+        })
+        .collect()
+}
+
+pub(super) fn describe_pgvector_select(
+    sql: &str,
+) -> Result<Option<Vec<super::types::FieldDescription>>, String> {
+    let statements = match Parser::parse_sql(&PostgreSqlDialect {}, sql) {
+        Ok(statements) => statements,
+        Err(_) => return Ok(None),
+    };
+    let [Statement::Query(query)] = statements.as_slice() else {
+        return Ok(None);
+    };
+    let Some(metric) = pgvector_ordering_metric(query)? else {
+        return Ok(None);
+    };
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return Err("pgvector operators require a simple SELECT body".to_string());
+    };
+    let Some(order_by) = query.order_by.as_ref() else {
+        return Err("pgvector nearest-neighbour SELECT requires ORDER BY".to_string());
+    };
+    let OrderByKind::Expressions(order_exprs) = &order_by.kind else {
+        return Err("ORDER BY ALL is not valid for pgvector search".to_string());
+    };
+    let [order] = order_exprs.as_slice() else {
+        return Err("pgvector search requires one distance ORDER BY".to_string());
+    };
+    let SqlExpr::BinaryOp { op, .. } = &order.expr else {
+        return Err("ORDER BY must contain a pgvector distance operator".to_string());
+    };
+    debug_assert_eq!(pgvector_metric(op), Some(metric));
+    Ok(Some(
+        lower_pgvector_projection(&select.projection, metric)?
+            .iter()
+            .map(PgVectorOutputColumn::field_description)
+            .collect(),
+    ))
+}
+
+fn sql_column_name(expr: &SqlExpr) -> Option<String> {
+    match expr {
+        SqlExpr::Identifier(ident) => Some(ident.value.clone()),
+        SqlExpr::CompoundIdentifier(parts) => parts.last().map(|ident| ident.value.clone()),
+        SqlExpr::Nested(expr) => sql_column_name(expr),
+        _ => None,
+    }
+}
+
+fn uncast(expr: &SqlExpr) -> &SqlExpr {
+    match expr {
+        SqlExpr::Cast { expr, .. } | SqlExpr::Nested(expr) => uncast(expr),
+        _ => expr,
+    }
+}
+
+fn sql_string(expr: &SqlExpr) -> Option<&str> {
+    let SqlExpr::Value(value) = uncast(expr) else {
+        return None;
+    };
+    match &value.value {
+        Value::SingleQuotedString(value)
+        | Value::EscapedStringLiteral(value)
+        | Value::DoubleQuotedString(value) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn parse_vector_expr(expr: &SqlExpr) -> Result<Vec<f32>, String> {
+    let literal = sql_string(expr)
+        .ok_or_else(|| "pgvector query operand must be a bound or literal vector".to_string())?;
+    let values = literal
+        .trim()
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .ok_or_else(|| "pgvector literal must use [x,y,...] syntax".to_string())?;
+    values
+        .split(',')
+        .map(|value| {
+            let parsed = value
+                .trim()
+                .parse::<f32>()
+                .map_err(|error| format!("invalid pgvector component `{value}`: {error}"))?;
+            if !parsed.is_finite() {
+                return Err(format!(
+                    "invalid pgvector component `{value}`: value must be finite"
+                ));
+            }
+            Ok(parsed)
+        })
+        .collect()
+}
+
+fn parse_positive_usize(expr: &SqlExpr, label: &str) -> Result<usize, String> {
+    let value = match uncast(expr) {
+        SqlExpr::Value(value) => match &value.value {
+            Value::Number(value, _) | Value::SingleQuotedString(value) => value.as_str(),
+            _ => return Err(format!("{label} must be a positive integer")),
+        },
+        _ => return Err(format!("{label} must be a positive integer")),
+    };
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| format!("{label} must be a positive integer"))?;
+    if parsed == 0 {
+        return Err(format!("{label} must be greater than zero"));
+    }
+    Ok(parsed)
+}
+
+fn lower_vector_filter(
+    expr: &SqlExpr,
+) -> Result<proximadb_filter_expression::FilterExpression, String> {
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+
+    let SqlExpr::BinaryOp { left, op, right } = uncast(expr) else {
+        return Err(format!("unsupported vector-search filter: {expr}"));
+    };
+    match op {
+        BinaryOperator::And => Ok(FilterExpression::And(vec![
+            lower_vector_filter(left)?,
+            lower_vector_filter(right)?,
+        ])),
+        BinaryOperator::Or => Ok(FilterExpression::Or(vec![
+            lower_vector_filter(left)?,
+            lower_vector_filter(right)?,
+        ])),
+        BinaryOperator::Eq
+        | BinaryOperator::NotEq
+        | BinaryOperator::Gt
+        | BinaryOperator::GtEq
+        | BinaryOperator::Lt
+        | BinaryOperator::LtEq => {
+            let field = vector_filter_field(left)
+                .ok_or_else(|| format!("unsupported vector-search filter field: {left}"))?;
+            let value = vector_filter_value(right)
+                .ok_or_else(|| format!("unsupported vector-search filter value: {right}"))?;
+            let operator = match op {
+                BinaryOperator::Eq => ComparisonOperator::Equals,
+                BinaryOperator::NotEq => ComparisonOperator::NotEquals,
+                BinaryOperator::Gt => ComparisonOperator::GreaterThan,
+                BinaryOperator::GtEq => ComparisonOperator::GreaterThanOrEqual,
+                BinaryOperator::Lt => ComparisonOperator::LessThan,
+                BinaryOperator::LtEq => ComparisonOperator::LessThanOrEqual,
+                _ => return Err(format!("unsupported vector-search filter: {expr}")),
+            };
+            Ok(FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            })
+        }
+        _ => Err(format!("unsupported vector-search filter: {expr}")),
+    }
+}
+
+fn vector_filter_field(expr: &SqlExpr) -> Option<String> {
+    if let Some(field) = sql_column_name(expr) {
+        return Some(field);
+    }
+    if let SqlExpr::Function(function) = uncast(expr) {
+        let name = function.name.to_string().to_ascii_lowercase();
+        if matches!(
+            name.rsplit('.').next(),
+            Some("json_extract_text" | "json_extract_path_text")
+        ) && let sqlparser::ast::FunctionArguments::List(arguments) = &function.args
+            && arguments.clauses.is_empty()
+            && arguments.args.len() >= 2
+        {
+            let mut args = arguments.args.iter().filter_map(|argument| match argument {
+                sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(
+                    expr,
+                )) => Some(expr),
+                _ => None,
+            });
+            let container = sql_column_name(args.next()?)?;
+            let path = args.map(sql_string).collect::<Option<Vec<_>>>()?;
+            if !path.is_empty() {
+                return Some(format!("{container}.{}", path.join(".")));
+            }
+        }
+    }
+    let SqlExpr::BinaryOp { left, op, right } = uncast(expr) else {
+        return None;
+    };
+    if !matches!(op, BinaryOperator::LongArrow) {
+        return None;
+    }
+    let container = sql_column_name(left)?;
+    if !matches!(
+        container.to_ascii_lowercase().as_str(),
+        "payload" | "metadata"
+    ) {
+        return None;
+    }
+    sql_string(right).map(|field| format!("{container}.{field}"))
+}
+
+fn vector_filter_value(expr: &SqlExpr) -> Option<serde_json::Value> {
+    let SqlExpr::Value(value) = uncast(expr) else {
+        return None;
+    };
+    match &value.value {
+        Value::SingleQuotedString(value)
+        | Value::EscapedStringLiteral(value)
+        | Value::DoubleQuotedString(value) => Some(serde_json::Value::String(value.clone())),
+        Value::Number(value, _) => value
+            .parse::<i64>()
+            .map(serde_json::Value::from)
+            .or_else(|_| value.parse::<f64>().map(serde_json::Value::from))
+            .ok(),
+        Value::Boolean(value) => Some(serde_json::Value::Bool(*value)),
+        Value::Null => Some(serde_json::Value::Null),
+        _ => None,
+    }
+}
+
+async fn execute_pgvector_plan(
+    plan: PgVectorSelectPlan,
+    dml: Option<&Arc<DmlService>>,
+    vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+    identity: PortIdentity<'_>,
+    tenant_context: Option<&TenantContext>,
+    controls: ExecutionControls,
+) -> Result<ExecutionPipelineResult, String> {
+    controls
+        .check_cancelled()
+        .map_err(|error| error.to_string())?;
+    // Catalog tables search their authoritative TableRecordStore primary. Native
+    // collections search VectorOps. The catalog existence check is the one route
+    // decision; there is no dual read and no empty-result fallback between stores.
+    let results = if let Some(dml) = dml {
+        let vector_column =
+            plan.search.vector_column.as_deref().ok_or_else(|| {
+                "pgvector table search requires a named vector column".to_string()
+            })?;
+        let requested_metadata: Vec<String> = plan
+            .output
+            .iter()
+            .filter_map(|column| match column {
+                PgVectorOutputColumn::Metadata { source, .. }
+                    if !source.eq_ignore_ascii_case("metadata") =>
+                {
+                    Some(source.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        let metadata_columns = (!plan.output.iter().any(|column| {
+            matches!(column, PgVectorOutputColumn::Metadata { source, .. } if source.eq_ignore_ascii_case("metadata"))
+        }))
+        .then_some(requested_metadata.as_slice());
+        match dml
+            .search_table_vectors_exact(
+                &plan.search.collection,
+                vector_column,
+                &plan.search.query_vector,
+                plan.search.top_k as usize,
+                plan.search.filter.as_ref(),
+                plan.search.metric,
+                metadata_columns,
+                tenant_context,
+                identity,
+                &controls,
+            )
+            .await
+            .map_err(|error| format!("catalog-table vector search failed: {error}"))?
+        {
+            Some(results) => results,
+            None => vector_ops
+                .unified_search_native(&plan.search, identity)
+                .await
+                .map_err(|error| format!("native collection vector search failed: {error}"))?,
+        }
+    } else {
+        vector_ops
+            .unified_search_native(&plan.search, identity)
+            .await
+            .map_err(|error| format!("native collection vector search failed: {error}"))?
+    };
+
+    let schema = RelationalSchema::new(
+        plan.output
+            .iter()
+            .map(PgVectorOutputColumn::schema_column)
+            .collect(),
+    );
+    let rows = results
+        .into_iter()
+        .map(|record| {
+            plan.output
+                .iter()
+                .map(|column| match column {
+                    PgVectorOutputColumn::Id(_) => Ok(ProximaValue::String(record.id.clone())),
+                    PgVectorOutputColumn::Distance(_) => {
+                        pgvector_distance(&record, plan.search.metric).map(ProximaValue::Float64)
+                    }
+                    PgVectorOutputColumn::Metadata { source, .. }
+                        if source.eq_ignore_ascii_case("metadata") =>
+                    {
+                        serde_json::to_value(&record.metadata)
+                            .map(ProximaValue::Jsonb)
+                            .map_err(|error| format!("vector metadata conversion failed: {error}"))
+                    }
+                    PgVectorOutputColumn::Metadata { source, .. } => Ok(record
+                        .metadata
+                        .get(source)
+                        .cloned()
+                        .unwrap_or(ProximaValue::Null)),
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    ExecutionPipelineResult { schema, rows }
+        .enforce_row_limit(controls.max_rows)
+        .map_err(|error| error.to_string())
+}
+
+fn pgvector_distance(
+    record: &proximadb_search_types::results::OptimizedSearchRecord,
+    metric: proximadb_distance_types::DistanceMetric,
+) -> Result<f64, String> {
+    let expected = match metric {
+        proximadb_distance_types::DistanceMetric::L2 => {
+            proximadb_distance_kernel::DistanceMetric::Euclidean
+        }
+        proximadb_distance_types::DistanceMetric::Cosine => {
+            proximadb_distance_kernel::DistanceMetric::Cosine
+        }
+        proximadb_distance_types::DistanceMetric::InnerProduct => {
+            proximadb_distance_kernel::DistanceMetric::DotProduct
+        }
+        proximadb_distance_types::DistanceMetric::L1 => {
+            proximadb_distance_kernel::DistanceMetric::Manhattan
+        }
+    };
+    let semantic = record.semantic_similarity.as_ref().ok_or_else(|| {
+        format!(
+            "vector search result '{}' omitted the requested {metric} distance",
+            record.id
+        )
+    })?;
+    if semantic.metric != expected {
+        return Err(format!(
+            "vector search result '{}' used {:?}, expected {:?}",
+            record.id, semantic.metric, expected
+        ));
+    }
+    Ok(semantic.distance as f64)
+}
 
 // =========================================================================
 // Process-wide engine
@@ -292,6 +874,34 @@ pub async fn try_run_select(
         context.tenant_stable_id = identity.tenant_stable_id;
         context
     });
+
+    // TD-XMODAL-4: pgvector operators are a logical vector source in this
+    // pipeline, not a protocol-level string-dispatch escape hatch. Parse them
+    // before relational catalog lowering: a native vector collection need not
+    // also masquerade as a relational table. Once an operator is recognized,
+    // every lowering/execution failure is surfaced instead of falling through
+    // to the legacy single-table parser or returning an empty success.
+    match lower_pgvector_select(sql) {
+        Ok(Some(plan)) => {
+            let Some(vector_ops) = vector_ops else {
+                return Some(Err("vector search service is unavailable".to_string()));
+            };
+            return Some(
+                execute_pgvector_plan(
+                    plan,
+                    dml,
+                    vector_ops,
+                    identity.as_borrowed(),
+                    tenant_ctx.as_ref(),
+                    controls,
+                )
+                .await,
+            );
+        }
+        Ok(None) => {}
+        Err(error) => return Some(Err(error)),
+    }
+
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
     if std::env::var("PROXIMADB_PGWIRE_RELATIONAL_PIPELINE")
         .ok()
@@ -397,6 +1007,8 @@ pub async fn try_run_select(
         String,
         crate::query::execution::olap_delta_merge::OlapDeltaTable,
     > = HashMap::new();
+    // TD-OLAP-1 Test 2.1: per-table PAX-backed flag (has ProximaBlock format layout)
+    let mut pax_tables: std::collections::HashSet<String> = std::collections::HashSet::new();
     for raw in &names {
         let key = normalize_table_key(raw);
         if tables.contains_key(&key) {
@@ -411,6 +1023,10 @@ pub async fn try_run_select(
                     if let Some(params) = olap_delta_table_params(&catalog_schema) {
                         olap_delta_tables.insert(key.clone(), params);
                     }
+                }
+                // TD-OLAP-1 Test 2.1: Track PAX-backed tables from catalog signals
+                if catalog_table_is_pax_backed(&catalog_schema) {
+                    pax_tables.insert(key.clone());
                 }
                 tables.insert(key, PreparedTable::from_catalog(raw, &catalog_schema));
             }
@@ -435,6 +1051,14 @@ pub async fn try_run_select(
         && tables.keys().all(|k| parquet_loc_by_key.contains_key(k));
     #[cfg(not(feature = "datafusion-integration"))]
     let parquet_backed = false;
+
+    // TD-OLAP-1 Test 2.1: compute the per-query PAX-backed signal from catalog
+    // PAX format detection. A table is PAX-backed if it has ANY storage layout
+    // with ProximaBlock format (the native vector+relational hybrid format).
+    // Mixed PAX+non-PAX queries report `false` (cross-engine join is later phase).
+    let pax_backed = !relational_abac_required
+        && !tables.is_empty()
+        && tables.keys().all(|k| pax_tables.contains(k));
 
     // C4 Phase-2b: refine the shape-class with real fan-out / cardinality for
     // hot Parquet-backed tables, peeked from the in-memory stat cache warmed by
@@ -472,7 +1096,8 @@ pub async fn try_run_select(
     let shape = crate::query::compute_scheduler::QueryShape {
         engages_relational: true,
         parquet_backed,
-        pax_backed: false,
+        // TD-OLAP-1 Test 2.1: Route flip from catalog signals (no longer hard-coded)
+        pax_backed,
         partition_fanout,
         cardinality,
         operation_class,
@@ -631,7 +1256,7 @@ pub async fn try_run_select(
                     let duck_context = QueryExecutionContext {
                         parquet_tables: parquet_tables.clone(),
                         parquet_table_trust: parquet_table_trust.clone(),
-                        tenant_id: tenant.map(str::to_string),
+                        identity: identity.clone(),
                         controls: controls.clone(),
                         ..Default::default()
                     };
@@ -690,7 +1315,7 @@ pub async fn try_run_select(
             parquet_table_trust,
             vector_ops,
             graph_ops,
-            tenant_id: tenant.map(str::to_string),
+            identity: identity.clone(),
             // ADR-025: reconcile opted-in parquet-backed tables with their
             // post-snapshot WAL delta at scan time. `None` (no opted-in table)
             // keeps the legacy bare-Parquet read (default-OFF).
@@ -1458,6 +2083,20 @@ fn catalog_table_is_parquet_backed(
     })
 }
 
+/// Check if a catalog table is PAX-backed (has ProximaBlock format storage layout).
+///
+/// Returns `true` if the table has ANY storage layout with `ProximaBlock` format,
+/// `false` otherwise. This is the PAX analog of `catalog_table_is_parquet_backed`
+/// but returns a bool instead of an optional location (PAX location is derived
+/// via `DrPathBuilder`, not catalog.location).
+pub(crate) fn catalog_table_is_pax_backed(schema: &proximadb_catalog::CatalogTableSchema) -> bool {
+    use proximadb_catalog::CatalogPhysicalFormat;
+    schema
+        .storage_layouts
+        .iter()
+        .any(|layout| matches!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock))
+}
+
 /// Derive a parquet table's [`StatsTrust`] from its catalog authority. The ONLY
 /// untrusted writers are external sources ProximaDB did not generate —
 /// `FederatedRead` / `ExternalAuthoritative` / `ImportedSnapshot` (their parquet
@@ -1569,8 +2208,8 @@ fn olap_delta_table_params(
 struct EngineCatalog(Arc<InMemoryRelationalEngine>);
 
 impl CatalogLookup for EngineCatalog {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
-        self.0.schema_of(name)
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+        self.0.schema_of(name).map(std::sync::Arc::new)
     }
 }
 
@@ -1578,7 +2217,10 @@ impl CatalogLookup for EngineCatalog {
 #[derive(Clone, Debug)]
 struct PreparedTable {
     table_name: String,
-    schema: RelationalSchema,
+    /// Shared per-connection snapshot: readers clone the Arc, not the whole
+    /// column list, on every open (the schema Vec was deep-cloned per
+    /// reader-open and per planner lookup before).
+    schema: std::sync::Arc<RelationalSchema>,
     pk_columns: Vec<usize>,
     /// TD-127: names of this table's single-column non-PK secondary indexes
     /// (from `schema_secondary_index_columns`). Threaded into the planner's
@@ -1602,7 +2244,7 @@ impl PreparedTable {
         }
         Self {
             table_name: name.to_string(),
-            schema: RelationalSchema::new(cols),
+            schema: std::sync::Arc::new(RelationalSchema::new(cols)),
             pk_columns: pk,
             secondary_columns: crate::services::record_store::schema_secondary_index_columns(
                 schema,
@@ -1624,10 +2266,11 @@ struct SnapshotCatalog {
 }
 
 impl CatalogLookup for SnapshotCatalog {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+        // Refcount bump — the per-lookup schema deep clone is gone.
         self.tables
             .get(&normalize_table_key(name))
-            .map(|t| t.schema.clone())
+            .map(|t| std::sync::Arc::clone(&t.schema))
     }
 }
 
@@ -1641,7 +2284,7 @@ impl ReaderFactory for SnapshotCatalog {
         Ok(Box::new(DmlTableReader {
             dml: self.dml.clone(),
             table_name: prepared.table_name.clone(),
-            full_schema: prepared.schema.clone(),
+            full_schema: std::sync::Arc::clone(&prepared.schema),
             pk_columns: prepared.pk_columns.clone(),
             tenant: self.tenant.clone(),
             identity: self.identity.clone(),
@@ -1699,7 +2342,7 @@ impl CapabilityResolver for SnapshotCapabilities {
 /// Per-scan state captured at `open`: the projected output schema + the rows
 /// already fetched (predicate-filtered + projected + limited at the store).
 struct ReaderOpenState {
-    output_schema: RelationalSchema,
+    output_schema: Arc<RelationalSchema>,
     rows: Vec<RelationalRow>,
     cursor: usize,
 }
@@ -1707,7 +2350,7 @@ struct ReaderOpenState {
 struct DmlTableReader {
     dml: Arc<DmlService>,
     table_name: String,
-    full_schema: RelationalSchema,
+    full_schema: Arc<RelationalSchema>,
     /// Single-column PK ordinal(s) for the PK-lookup arity check (empty when the
     /// planner won't pick PkLookup for this table).
     pk_columns: Vec<usize>,
@@ -1724,9 +2367,9 @@ impl DmlTableReader {
     fn resolve_output_schema(
         &self,
         projection: &Option<Vec<String>>,
-    ) -> Result<RelationalSchema, ReaderError> {
+    ) -> Result<Arc<RelationalSchema>, ReaderError> {
         let Some(names) = projection else {
-            return Ok(self.full_schema.clone());
+            return Ok(Arc::clone(&self.full_schema));
         };
         let mut cols = Vec::with_capacity(names.len());
         for n in names {
@@ -1736,7 +2379,7 @@ impl DmlTableReader {
                 .ok_or_else(|| ReaderError::InvalidProjection(n.clone()))?;
             cols.push(info.clone());
         }
-        Ok(RelationalSchema::new(cols))
+        Ok(Arc::new(RelationalSchema::new(cols)))
     }
 }
 
@@ -2830,7 +3473,7 @@ mod route_explain_tests {
         use crate::observability::io_trace::IoTraceSnapshot;
         use crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL;
         let snap = IoTraceSnapshot {
-            range_gets: 5,
+            get_ops: 5,
             bytes_read: 1 << 20,
             ..Default::default()
         };
@@ -3527,6 +4170,214 @@ fn collect_from_table_factor(factor: &TableFactor, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pgvector_operator_lowers_to_typed_vector_plan() {
+        let plan = lower_pgvector_select(
+            "SELECT id, payload FROM public.memories \
+             WHERE payload->>'type' = 'fact' AND priority >= 3 \
+             ORDER BY embedding <-> '[0.1, -0.2, 0.3]'::vector LIMIT 7",
+        )
+        .expect("vector SQL must parse")
+        .expect("vector operator must engage");
+
+        assert_eq!(plan.search.collection, "public.memories");
+        assert_eq!(plan.search.vector_column.as_deref(), Some("embedding"));
+        assert_eq!(plan.search.query_vector, vec![0.1, -0.2, 0.3]);
+        assert_eq!(plan.search.top_k, 7);
+        assert_eq!(
+            plan.search.metric,
+            proximadb_distance_types::DistanceMetric::L2
+        );
+        assert_eq!(
+            plan.output,
+            vec![
+                PgVectorOutputColumn::Id("id".to_string()),
+                PgVectorOutputColumn::Metadata {
+                    source: "payload".to_string(),
+                    output: "payload".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            plan.search.filter,
+            Some(proximadb_filter_expression::FilterExpression::And(vec![
+                proximadb_filter_expression::FilterExpression::Comparison {
+                    field: "payload.type".to_string(),
+                    operator: proximadb_filter_expression::ComparisonOperator::Equals,
+                    value: serde_json::json!("fact"),
+                },
+                proximadb_filter_expression::FilterExpression::Comparison {
+                    field: "priority".to_string(),
+                    operator: proximadb_filter_expression::ComparisonOperator::GreaterThanOrEqual,
+                    value: serde_json::json!(3),
+                },
+            ]))
+        );
+    }
+
+    #[test]
+    fn pgvector_operator_detection_uses_the_ast_not_literal_or_comment_text() {
+        for sql in [
+            "SELECT '<->' AS operator_name",
+            "SELECT 1 /* <=> is documentation, not an expression */",
+            "SELECT '<#>' AS operator_name ORDER BY operator_name",
+        ] {
+            assert_eq!(
+                lower_pgvector_select(sql),
+                Ok(None),
+                "non-operator SQL must stay on the relational path: {sql}"
+            );
+            assert!(
+                matches!(describe_pgvector_select(sql), Ok(None)),
+                "describe must make the same AST-based routing decision: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn pgvector_filter_accepts_translator_normalized_json_path_ast() {
+        let plan = lower_pgvector_select(
+            "SELECT id FROM memories \
+             WHERE JSON_EXTRACT_TEXT(payload, 'type') = 'fact' \
+             ORDER BY embedding <-> '[0.1, 0.2]'::vector LIMIT 5",
+        )
+        .expect("normalized vector SQL must parse")
+        .expect("vector operator must engage");
+
+        assert_eq!(
+            plan.search.filter,
+            Some(proximadb_filter_expression::FilterExpression::Comparison {
+                field: "payload.type".to_string(),
+                operator: proximadb_filter_expression::ComparisonOperator::Equals,
+                value: serde_json::json!("fact"),
+            })
+        );
+    }
+
+    #[test]
+    fn pgvector_operator_preserves_each_metric() {
+        for (operator, expected) in [
+            ("<->", proximadb_distance_types::DistanceMetric::L2),
+            ("<=>", proximadb_distance_types::DistanceMetric::Cosine),
+            (
+                "<#>",
+                proximadb_distance_types::DistanceMetric::InnerProduct,
+            ),
+        ] {
+            let sql = format!(
+                "SELECT id FROM docs ORDER BY embedding {operator} '[1,2]'::vector LIMIT 2"
+            );
+            let plan = lower_pgvector_select(&sql)
+                .expect("vector SQL must parse")
+                .expect("vector operator must engage");
+            assert_eq!(plan.search.metric, expected, "operator {operator}");
+        }
+    }
+
+    #[test]
+    fn pgvector_distance_uses_metric_tagged_distance_not_normalized_score() {
+        let record = proximadb_search_types::results::OptimizedSearchRecord {
+            id: "doc-1".to_string(),
+            score: 0.9,
+            semantic_similarity: Some(proximadb_distance_kernel::SimilarityResult::new(
+                6.0,
+                proximadb_distance_kernel::DistanceMetric::DotProduct,
+            )),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            pgvector_distance(
+                &record,
+                proximadb_distance_types::DistanceMetric::InnerProduct
+            ),
+            Ok(-6.0),
+            "<#> exposes negative inner product, not normalized similarity"
+        );
+        assert!(
+            pgvector_distance(&record, proximadb_distance_types::DistanceMetric::L2).is_err(),
+            "a distance computed under another metric must fail closed"
+        );
+    }
+
+    #[test]
+    fn pgvector_projection_is_sql_shaped_and_rejects_metric_drift() {
+        let plan = lower_pgvector_select(
+            "SELECT id, embedding <=> '[1,2]'::vector AS cosine_distance, payload \
+             FROM docs ORDER BY embedding <=> '[1,2]'::vector LIMIT 2",
+        )
+        .expect("vector SQL must parse")
+        .expect("vector operator must engage");
+        assert_eq!(
+            plan.output,
+            vec![
+                PgVectorOutputColumn::Id("id".to_string()),
+                PgVectorOutputColumn::Distance("cosine_distance".to_string()),
+                PgVectorOutputColumn::Metadata {
+                    source: "payload".to_string(),
+                    output: "payload".to_string(),
+                },
+            ]
+        );
+
+        let error = lower_pgvector_select(
+            "SELECT embedding <#> '[1,2]'::vector AS wrong FROM docs \
+             ORDER BY embedding <=> '[1,2]'::vector LIMIT 2",
+        )
+        .expect_err("projection and ordering metrics must agree");
+        assert!(error.contains("must use the ORDER BY metric"), "{error}");
+    }
+
+    #[test]
+    fn pgvector_projection_alias_does_not_replace_its_catalog_source() {
+        let plan = lower_pgvector_select(
+            "SELECT payload AS body FROM docs \
+             ORDER BY embedding <-> '[1,2]'::vector LIMIT 2",
+        )
+        .expect("vector SQL must parse")
+        .expect("vector operator must engage");
+
+        assert_eq!(
+            plan.output,
+            vec![PgVectorOutputColumn::Metadata {
+                source: "payload".to_string(),
+                output: "body".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn pgvector_operator_rejects_predicates_it_cannot_push_down() {
+        let error = lower_pgvector_select(
+            "SELECT id FROM docs WHERE lower(category) = 'fact' \
+             ORDER BY embedding <-> '[1,2]'::vector LIMIT 2",
+        )
+        .expect_err("unsupported filter must not widen to an unfiltered search");
+
+        assert!(
+            error.contains("unsupported vector-search filter"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn pgvector_limit_cannot_wrap_the_canonical_top_k() {
+        let error = lower_pgvector_select(
+            "SELECT id FROM docs ORDER BY embedding <-> '[1,2]'::vector LIMIT 4294967296",
+        )
+        .expect_err("LIMIT must not truncate while lowering into the canonical u32 top_k");
+        assert!(error.contains("u32 result cardinality"), "{error}");
+    }
+
+    #[test]
+    fn pgvector_query_vector_rejects_non_finite_components() {
+        let error = lower_pgvector_select(
+            "SELECT id FROM docs ORDER BY embedding <-> '[NaN,2]'::vector LIMIT 2",
+        )
+        .expect_err("non-finite components must not enter distance or heap ordering");
+        assert!(error.contains("must be finite"), "{error}");
+    }
 
     fn gate(sql: &str) -> bool {
         let statements = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");

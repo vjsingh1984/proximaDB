@@ -90,6 +90,16 @@ fn collection_uses_axis_indexes(axis_runtime_enabled: bool, collection: &Collect
         && crate::storage::traits::collection_declares_axis_index(collection.config.as_ref())
 }
 
+#[cfg_attr(not(feature = "axis"), allow(dead_code))]
+fn query_allows_axis(
+    search_mode: &crate::core::search::SearchMode,
+    query_metric: crate::compute::distance_computation::DistanceMetric,
+    collection_metric: crate::compute::distance_computation::DistanceMetric,
+) -> bool {
+    !matches!(search_mode, crate::core::search::SearchMode::Exact)
+        && query_metric == collection_metric
+}
+
 // Import vector query service contract (Phase 2.1)
 use proximadb_vector_query::{VectorQueryRequest, VectorQueryService, VectorSearchResult};
 
@@ -865,6 +875,26 @@ impl VectorOperationsService {
         self.query_cache.invalidate_collection(collection_id).await;
     }
 
+    /// Advance the canonical collection revision at the same successful-write
+    /// boundary used for query-cache invalidation.
+    async fn publish_content_revision(
+        &self,
+        collection_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> u64 {
+        let tenant = tenant_context
+            .map(|context| context.tenant_id.as_str())
+            .filter(|tenant| !tenant.is_empty())
+            .unwrap_or(
+                crate::services::collection::manager::CollectionService::DEFAULT_VERSION_TENANT,
+            );
+        let revision = crate::catalog::CorpusVersionRegistry::global()
+            .bump_content(tenant, collection_id)
+            .await;
+        debug!(tenant, collection_id, revision, "content revision advanced");
+        revision
+    }
+
     async fn validate_tenant_collection_access(
         &self,
         collection_id: &str,
@@ -1237,9 +1267,17 @@ impl VectorOperationsService {
     /// collection. A future storage range-scan trait can replace this
     /// materialization without changing the API semantics pinned here.
     #[allow(clippy::too_many_arguments)]
+    /// `cursor_scope` is the CALLER-FACING collection identifier — the exact
+    /// string the caller validated the inbound cursor against and will
+    /// validate the next cursor against. Cursors must be minted and decoded
+    /// against ONE identity; minting with the resolved internal
+    /// `CollectionObjectId` while callers validate against the URL-path name
+    /// made every page-2 request fail `CollectionMismatch` → HTTP 400
+    /// (the "HTTP 400 after 10000 rows" wall).
     pub async fn scan_records_paginated(
         &self,
         collection_id: &str,
+        cursor_scope: &str,
         cursor: Option<&crate::services::scan_cursor::ScanCursor>,
         limit: usize,
         include_vector: bool,
@@ -1272,7 +1310,7 @@ impl VectorOperationsService {
             records,
             cursor,
             limit,
-            &collection_id,
+            cursor_scope,
             now_ns,
         );
 
@@ -1477,6 +1515,8 @@ impl VectorOperationsService {
         // Read-after-write coherence: a deleted record must not resurface
         // from a stale cached query result. Await so the next search sees it.
         self.invalidate_query_cache(&collection_id).await;
+        self.publish_content_revision(&collection_id, tenant_context)
+            .await;
         let total_processed = result.metrics.total_processed.max(0);
         let processing_time_us = start.elapsed().as_micros() as i64;
 
@@ -1555,6 +1595,7 @@ impl VectorOperationsService {
         let search_started_at = std::time::Instant::now();
 
         let cfg = Some(UnifiedSearchConfig {
+            distance_metric: None,
             optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
             progressive_search: true,
             progressive_recalls: None,
@@ -2147,6 +2188,7 @@ impl VectorOperationsService {
         filter: Option<&FilterExpression>,
         top_k: usize,
         freshness_mode: &crate::core::search::VectorFreshnessMode,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
         optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord>,
     ) -> Result<(
         Vec<crate::core::search::results::OptimizedSearchRecord>,
@@ -2166,14 +2208,9 @@ impl VectorOperationsService {
             return Ok((optimized_results, None));
         }
 
-        // Use the COLLECTION's configured metric for the WAL delta re-score.
-        // This was hardcoded Cosine, which put delta scores on a different
-        // scale than the directory/storage results (Euclidean = 1/(1+L2) ≈
-        // 0.005 vs cosine ≈ 0.9 on SIFT-like data) — so ANY unflushed record
-        // displaced EVERY flushed result in the merged top-k and recall
-        // collapsed to the memtable fraction of the corpus (TD-RECALL-1).
-        let collection = self.get_or_load_collection(collection_id).await?;
-        let distance_metric = Self::collection_distance_metric(&collection);
+        // Use the request's effective metric for WAL delta re-score. It is the
+        // collection metric for ordinary calls and the SQL operator metric for
+        // pgvector calls; either way directory and delta scores share a scale.
         // Slice 5.10: fetch both LSN and ns watermarks so BoundedStale
         // can apply its time-bound check. When unavailable, fall back
         // to (0, 0) — the scan helper treats ns=0 as "time unknown"
@@ -2434,6 +2471,7 @@ impl VectorOperationsService {
             .await?;
         if result.success {
             self.invalidate_query_cache(&collection_id).await;
+            self.publish_content_revision(&collection_id, None).await;
         }
         Ok(result)
     }
@@ -2489,6 +2527,7 @@ impl VectorOperationsService {
             .await?;
         if result.success {
             self.invalidate_query_cache(&collection_id).await;
+            self.publish_content_revision(&collection_id, None).await;
         }
         Ok(result)
     }
@@ -2529,6 +2568,8 @@ impl VectorOperationsService {
         // visible to the next search, not hidden behind a stale cached result.
         if result.success {
             self.invalidate_query_cache(&collection_id).await;
+            self.publish_content_revision(&collection_id, tenant_context)
+                .await;
         }
         Ok(result)
     }
@@ -2585,9 +2626,16 @@ impl VectorOperationsService {
             }
         }
 
-        self.write_coordinator()
+        let result = self
+            .write_coordinator()
             .insert_batch_internal(&collection_id, records)
-            .await
+            .await?;
+        if result.success {
+            self.invalidate_query_cache(&collection_id).await;
+            self.publish_content_revision(&collection_id, tenant_context)
+                .await;
+        }
+        Ok(result)
     }
 
     /// Check whether a rich record ID already exists in WAL or the collection's
@@ -2836,8 +2884,16 @@ impl VectorOperationsService {
         let mut validated_results = Vec::new();
 
         for search_result in results {
-            let mut validated_search_result = search_result.clone();
-            validated_search_result.results.clear();
+            // Fresh envelope instead of clone-and-clear: the old path cloned
+            // the FULL envelope — every result record, vectors included — and
+            // immediately dropped the records. Kept results are cloned once;
+            // dropped results are never cloned. Verdicts, log lines, and the
+            // empty-envelope skip below are unchanged.
+            let mut validated_search_result = crate::proto::proximadb_v1::SearchResult {
+                results: Vec::with_capacity(search_result.results.len()),
+                total_found: search_result.total_found,
+                collection_id: search_result.collection_id.clone(),
+            };
 
             // Corroborate tenant labelling on each result.
             //
@@ -2999,9 +3055,14 @@ impl VectorOperationsService {
             .filter(|name| !name.is_empty())
             .unwrap_or(collection_id);
         let config = config.clone();
+        let distance_metric = Self::effective_distance_metric(&collection, config.as_ref());
 
-        // Reuse the same cache key as legacy and convert on hit
-        let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
+        // Metric is query semantics and therefore part of result identity. A
+        // cosine cache entry must never satisfy an L2/IP request.
+        let filter_str = Some(format!(
+            "filter={:?};metric={distance_metric:?}",
+            filter.as_ref()
+        ));
         let cache_key = QueryKey::new(
             collection_id.to_string(),
             &query_vector,
@@ -3070,6 +3131,7 @@ impl VectorOperationsService {
         // which incorrectly limits all searches to 100 results regardless of the requested k.
         let search_params = crate::query::query_optimizer::SearchParams {
             top_k: Some(k as u16),
+            distance_metric: Some(distance_metric),
             ..Default::default()
         };
         let optimization_goal = config
@@ -3112,6 +3174,7 @@ impl VectorOperationsService {
                 k,
                 filter,
                 search_mode,
+                distance_metric,
             )
             .await?;
 
@@ -3126,6 +3189,7 @@ impl VectorOperationsService {
                 delta_filter.as_ref(),
                 k,
                 &freshness_mode,
+                distance_metric,
                 optimized_results,
             )
             .await?;
@@ -3293,6 +3357,7 @@ impl VectorOperationsService {
         let collection_id_text = collection_object_id.to_string();
         let collection_id = collection_id_text.as_str();
         let config = config.clone();
+        let distance_metric = Self::effective_distance_metric(&collection, config.as_ref());
 
         // Extract search_mode from config (defaults to Exact for 100% recall)
         let search_mode = config
@@ -3307,6 +3372,7 @@ impl VectorOperationsService {
         // which incorrectly limits all searches to 100 results regardless of the requested k.
         let search_params = crate::query::query_optimizer::SearchParams {
             top_k: Some(k as u16),
+            distance_metric: Some(distance_metric),
             ..Default::default()
         };
         let optimization_goal = config
@@ -3340,6 +3406,7 @@ impl VectorOperationsService {
                 k,
                 filter,
                 search_mode.clone(),
+                distance_metric,
             )
             .await?;
         // FA-2 (abac-policy): a non-conjunctive security predicate (Or/Not) can't
@@ -3702,11 +3769,13 @@ impl VectorOperationsService {
 
         // Get collection
         let collection = self.get_or_load_collection(collection_id).await?;
+        let distance_metric = Self::collection_distance_metric(&collection);
 
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
             top_k: Some(top_k as u16),
+            distance_metric: Some(distance_metric),
             filter_expression: filter.clone(),
             enable_progressive_search: Some(true), // Enable by default if quantization available
             ..Default::default()
@@ -3750,6 +3819,7 @@ impl VectorOperationsService {
                 top_k,
                 filter,
                 crate::core::search::SearchMode::default(), // Default to Exact for legacy paths
+                distance_metric,
             )
             .await?;
 
@@ -3765,6 +3835,7 @@ impl VectorOperationsService {
                 delta_filter.as_ref(),
                 top_k,
                 &freshness_mode,
+                distance_metric,
                 optimized_results,
             )
             .await?;
@@ -3879,6 +3950,7 @@ impl VectorOperationsService {
         top_k: usize,
         filter: Option<FilterExpression>,
         search_mode: crate::core::search::SearchMode,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         tracing::debug!(
             "🔍 execute_unified_plan received filter: {:?}",
@@ -3939,6 +4011,7 @@ impl VectorOperationsService {
                             query_vector.clone(),
                             filter.clone(),
                             search_mode.clone(),
+                            distance_metric,
                             &ann_filtering_mode,
                             ann_filtering_selectivity,
                         )
@@ -3990,6 +4063,7 @@ impl VectorOperationsService {
                             query_vector.clone(),
                             filter.clone(),
                             search_mode.clone(),
+                            distance_metric,
                             &ann_filtering_mode,
                             ann_filtering_selectivity,
                         )
@@ -4143,6 +4217,27 @@ impl VectorOperationsService {
         }
     }
 
+    fn effective_distance_metric(
+        collection: &Collection,
+        config: Option<&UnifiedSearchConfig>,
+    ) -> crate::proto::proximadb_v1::DistanceMetric {
+        match config.and_then(|config| config.distance_metric) {
+            Some(proximadb_distance_types::DistanceMetric::L2) => {
+                crate::proto::proximadb_v1::DistanceMetric::Euclidean
+            }
+            Some(proximadb_distance_types::DistanceMetric::Cosine) => {
+                crate::proto::proximadb_v1::DistanceMetric::Cosine
+            }
+            Some(proximadb_distance_types::DistanceMetric::InnerProduct) => {
+                crate::proto::proximadb_v1::DistanceMetric::DotProduct
+            }
+            Some(proximadb_distance_types::DistanceMetric::L1) => {
+                crate::proto::proximadb_v1::DistanceMetric::Manhattan
+            }
+            None => Self::collection_distance_metric(collection),
+        }
+    }
+
     #[cfg_attr(not(feature = "axis"), allow(unused_variables))]
     async fn execute_two_stage_search_with_mode(
         &self,
@@ -4153,6 +4248,7 @@ impl VectorOperationsService {
         query_vector: Vec<f32>,
         filter: Option<FilterExpression>,
         search_mode: crate::core::search::SearchMode,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
         ann_filtering_mode: &Option<String>,
         ann_filtering_selectivity: Option<f64>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
@@ -4163,9 +4259,10 @@ impl VectorOperationsService {
             filter.is_some()
         );
 
-        // Get collection for distance metric
+        // Load collection metadata for engine/index routing. The metric is
+        // request-semantic and was resolved by the caller.
         let collection = self.get_or_load_collection(collection_id).await?;
-        let distance_metric = Self::collection_distance_metric(&collection);
+        let collection_distance_metric = Self::collection_distance_metric(&collection);
 
         // Execute Stage 1 and Stage 2 in PARALLEL for maximum performance
         debug!(
@@ -4237,15 +4334,16 @@ impl VectorOperationsService {
         // cost-optimized, object-storage-backed collections.
         #[cfg(feature = "axis")]
         let collection_has_axis_indexes =
-            collection_uses_axis_indexes(self.axis_runtime_enabled, &collection);
+            query_allows_axis(&search_mode, distance_metric, collection_distance_metric)
+                && collection_uses_axis_indexes(self.axis_runtime_enabled, &collection);
         #[cfg(not(feature = "axis"))]
         let collection_has_axis_indexes = false;
 
         #[cfg(feature = "axis")]
         let axis_optimized_results = if !collection_has_axis_indexes {
             info!(
-                "🔍 Co-design: skipping AXIS for collection {} (no index_configs) — \
-                 using PAX scan path",
+                "🔍 Co-design: skipping AXIS for collection {} (exact request, incompatible \
+                 metric, or no index_configs) — using PAX scan path",
                 collection_id
             );
             Vec::new()
@@ -4408,6 +4506,28 @@ impl VectorOperationsService {
                     }
                 })
                 .collect();
+
+        // The canonical result envelope promises a metric-tagged semantic distance,
+        // but several storage engines historically populated only the normalized
+        // `score`. Enrich the bounded candidate set from the returned vector so SQL
+        // operators can expose their real value (`<#>` is negative inner product),
+        // never a mislabeled normalized similarity. Exact SQL requests skip AXIS
+        // above, so their records retain vectors; a missing vector remains `None`
+        // and the protocol boundary fails closed instead of inventing a distance.
+        let distance_compute =
+            crate::compute::distance_computation::UnifiedDistanceCompute::new(distance_metric);
+        for result in &mut all_results {
+            if result.semantic_similarity.is_none()
+                && let Some(vector) = result.vector.as_deref()
+                && vector.len() == query_vector.len()
+            {
+                result.semantic_similarity = Some(distance_compute.calculate_distance(
+                    &query_vector,
+                    vector,
+                    &distance_metric,
+                ));
+            }
+        }
 
         debug!(
             "TWO-STAGE dedup: {} unique results after MVCC resolution and tombstone filtering",
@@ -4760,6 +4880,7 @@ impl VectorOperationsService {
             .write_vector_batch_native_arc(&collection_id, Arc::new(vectors))
             .await?;
         self.invalidate_query_cache(&collection_id).await;
+        self.publish_content_revision(&collection_id, None).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written,
@@ -4852,6 +4973,7 @@ impl VectorOperationsService {
             axis_duration
         );
         self.invalidate_query_cache(&collection_id).await;
+        self.publish_content_revision(&collection_id, None).await;
 
         Ok(crate::storage::engines::InsertResult {
             entries_written: vectors.len() as i64,
@@ -5234,6 +5356,28 @@ mod wlp5_freshness_tests {
             freshness_mode: Some(mode),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn exact_or_metric_mismatch_cannot_use_axis() {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::core::search::SearchMode;
+
+        assert!(!query_allows_axis(
+            &SearchMode::Exact,
+            DistanceMetric::Cosine,
+            DistanceMetric::Cosine,
+        ));
+        assert!(!query_allows_axis(
+            &SearchMode::Adaptive { threshold: 100 },
+            DistanceMetric::Euclidean,
+            DistanceMetric::Cosine,
+        ));
+        assert!(query_allows_axis(
+            &SearchMode::Adaptive { threshold: 100 },
+            DistanceMetric::Cosine,
+            DistanceMetric::Cosine,
+        ));
     }
 
     /// TD-WLP-5 (ADR-061 D4): a `Churn` collection forces Strong reads even when
@@ -6567,29 +6711,61 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     /// NOT weaken isolation. `None`/empty tenant ⇒ single-tenant, no scoping change.
     async fn unified_search_native(
         &self,
-        collection_id: &str,
-        query_vector: Vec<f32>,
-        k: usize,
-        filter: Option<proximadb_filter_expression::FilterExpression>,
-        tenant_id: Option<&str>,
+        search: &proximadb_vector_query::VectorSearchExpr,
+        identity: proximadb_runtime::PortIdentity<'_>,
     ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        let tenant_ctx = tenant_id
+        search.validate().map_err(anyhow::Error::msg)?;
+        let route = crate::query::compute_scheduler::ComputeScheduler::new().route_vector_search(
+            crate::query::compute_scheduler::VectorQueryShape {
+                dimensions: search.query_vector.len(),
+                top_k: search.top_k,
+                has_filter: search.filter.is_some(),
+                requested_mode: search.params.search_mode.clone(),
+            },
+        );
+        tracing::debug!(
+            target: "proximadb::vector_route",
+            backend = ?route.backend,
+            workload = ?route.workload_profile,
+            strategy = route.strategy_label(),
+            source = route.source.as_str(),
+            reason = %route.reason,
+            "{}",
+            route.explain_line()
+        );
+        let tenant_ctx = identity
+            .tenant_id
             .filter(|t| !t.is_empty())
             .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
-        self.unified_search_native_with_tenant_context(
-            collection_id,
-            query_vector,
-            k,
-            filter,
-            None,
-            tenant_ctx.as_ref(),
-            #[cfg(feature = "abac-policy")]
-            &proximadb_abac::ReadContext::system(
-                proximadb_abac::SystemReadReason::Statistics,
-                "legacy::tests",
-            ),
-        )
-        .await
+
+        #[cfg(feature = "abac-policy")]
+        let read_context = self
+            .records_read_context(
+                identity.subject,
+                identity.tenant_stable_id,
+                identity.auth_class,
+                &search.collection,
+            )
+            .await
+            .ok_or_else(|| anyhow::anyhow!("vector search denied by row policy"))?;
+        let mut results = self
+            .unified_search_native_with_tenant_context(
+                &search.collection,
+                search.query_vector.clone(),
+                search.top_k as usize,
+                search.filter.clone(),
+                Some(UnifiedSearchConfig {
+                    distance_metric: Some(search.metric),
+                    search_mode: route.search_mode,
+                    ..Default::default()
+                }),
+                tenant_ctx.as_ref(),
+                #[cfg(feature = "abac-policy")]
+                &read_context,
+            )
+            .await?;
+        results.retain(|record| search.matches_similarity_threshold(record.score));
+        Ok(results)
     }
 
     async fn batch_upsert(

@@ -286,13 +286,20 @@ pub struct BatchResults<T> {
 
 impl<T> BatchResults<T> {
     fn new(results: Vec<T>) -> Self {
+        Self::with_errors(results, Vec::new())
+    }
+
+    /// Batch outcome with per-item rejections: `failed_count`/`errors[]` carry
+    /// what was skipped while `results` carries what landed (the shape this
+    /// response always promised).
+    fn with_errors(results: Vec<T>, errors: Vec<serde_json::Value>) -> Self {
         let created_count = results.len();
         Self {
             created_count,
             updated_count: 0,
-            failed_count: 0,
+            failed_count: errors.len(),
             results,
-            errors: vec![],
+            errors,
         }
     }
 }
@@ -1554,8 +1561,20 @@ async fn batch_create_edges(
         Ok(batch) => {
             let canonical: Vec<CanonicalEdge> =
                 batch.edges.iter().map(CanonicalEdge::from_proto).collect();
-            info!("Batch created {} edges", canonical.len());
-            Json(GraphResponse::success(BatchResults::new(canonical))).into_response()
+            let errors: Vec<serde_json::Value> = batch
+                .errors
+                .iter()
+                .map(|e| serde_json::json!({"id": e.id, "error": e.message}))
+                .collect();
+            info!(
+                "Batch created {} edges ({} rejected)",
+                canonical.len(),
+                errors.len()
+            );
+            Json(GraphResponse::success(BatchResults::with_errors(
+                canonical, errors,
+            )))
+            .into_response()
         }
         Err(e) => {
             error!("Batch create edges failed: {e}");

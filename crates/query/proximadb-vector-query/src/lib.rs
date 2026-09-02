@@ -17,10 +17,13 @@
 //! for the deliberate-not-duplicate rationale.
 
 /// Vector search expression used by cross-model query orchestration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VectorSearchExpr {
     /// Collection to search.
     pub collection: String,
+    /// Named vector column for table/collection schemas that expose more than
+    /// one vector. `None` asks the authority to resolve its sole/default vector.
+    pub vector_column: Option<String>,
     /// Query vector.
     pub query_vector: Vec<f32>,
     /// Number of results to return.
@@ -29,8 +32,55 @@ pub struct VectorSearchExpr {
     pub threshold: Option<f32>,
     /// Distance metric.
     pub metric: DistanceMetric,
+    /// Canonical metadata/column predicate pushed into the chosen authority.
+    pub filter: Option<proximadb_filter_expression::FilterExpression>,
     /// Search parameters.
     pub params: VectorSearchParams,
+}
+
+impl VectorSearchExpr {
+    /// Validate semantics shared by every lowering/execution surface.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.collection.trim().is_empty() {
+            return Err("vector search requires a non-empty collection".to_string());
+        }
+        if self.query_vector.is_empty() {
+            return Err("vector search requires a non-empty query vector".to_string());
+        }
+        if self.query_vector.iter().any(|value| !value.is_finite()) {
+            return Err("vector search query components must be finite".to_string());
+        }
+        if self.top_k == 0 {
+            return Err("vector search top_k must be greater than zero".to_string());
+        }
+        if let Some(threshold) = self.threshold
+            && (!threshold.is_finite() || !(0.0..=1.0).contains(&threshold))
+        {
+            return Err("vector search threshold must be finite and within [0, 1]".to_string());
+        }
+        match self.params.search_mode.as_ref() {
+            Some(proximadb_search_types::search_params::SearchMode::Approximate {
+                nprobe: Some(0),
+            }) => {
+                return Err("vector search nprobe must be greater than zero".to_string());
+            }
+            Some(proximadb_search_types::search_params::SearchMode::Adaptive { threshold: 0 }) => {
+                return Err(
+                    "vector search adaptive threshold must be greater than zero".to_string()
+                );
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Return whether a normalized similarity score satisfies this search's
+    /// optional threshold. Keeping this semantic on the canonical expression
+    /// prevents individual execution surfaces from accepting `threshold` and
+    /// then silently omitting it.
+    pub fn matches_similarity_threshold(&self, score: f32) -> bool {
+        self.threshold.is_none_or(|minimum| score >= minimum)
+    }
 }
 
 // ============================================================================
@@ -130,14 +180,14 @@ pub trait VectorQueryService: Send + Sync {
 // ============================================================================
 
 /// Vector search parameters.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct VectorSearchParams {
-    /// Search mode (exact, approximate, adaptive).
-    pub mode: Option<String>,
-    /// EF search parameter for HNSW.
-    pub ef_search: Option<u32>,
-    /// Number of probes for IVF.
-    pub n_probes: Option<u32>,
+    /// Typed accuracy/cost intent. `None` preserves the SQL correctness floor:
+    /// exact search until the cost router has measured evidence to select a
+    /// recall-trading access method. `Approximate` carries its optional
+    /// `nprobe` effort in the canonical search-mode type instead of accepting
+    /// independent index-family knobs before an access path has been selected.
+    pub search_mode: Option<proximadb_search_types::search_params::SearchMode>,
 }
 
 /// Distance metrics for vector search — re-exported from the foundation crate.
@@ -157,25 +207,78 @@ mod tests {
     }
 
     #[test]
-    fn vector_search_expr_carries_metric_and_params() {
+    fn vector_search_expr_carries_and_validates_canonical_intent() {
+        use proximadb_search_types::search_params::SearchMode;
+
         let expr = VectorSearchExpr {
             collection: "embeddings".to_string(),
+            vector_column: Some("embedding".to_string()),
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 20,
             threshold: Some(0.75),
             metric: DistanceMetric::InnerProduct,
+            filter: None,
             params: VectorSearchParams {
-                mode: Some("adaptive".to_string()),
-                ef_search: Some(128),
-                n_probes: Some(16),
+                search_mode: Some(SearchMode::Approximate { nprobe: Some(16) }),
             },
         };
 
         assert_eq!(expr.collection, "embeddings");
+        assert_eq!(expr.vector_column.as_deref(), Some("embedding"));
+        assert_eq!(expr.threshold, Some(0.75));
         assert_eq!(expr.metric, DistanceMetric::InnerProduct);
-        assert_eq!(expr.params.mode.as_deref(), Some("adaptive"));
-        assert_eq!(expr.params.ef_search, Some(128));
-        assert_eq!(expr.params.n_probes, Some(16));
+        assert!(expr.filter.is_none());
+        assert_eq!(
+            expr.params.search_mode,
+            Some(SearchMode::Approximate { nprobe: Some(16) })
+        );
+        assert_eq!(expr.validate(), Ok(()));
+        assert!(expr.matches_similarity_threshold(0.75));
+        assert!(!expr.matches_similarity_threshold(0.74));
+    }
+
+    #[test]
+    fn vector_search_expr_rejects_invalid_shared_semantics() {
+        use proximadb_search_types::search_params::SearchMode;
+
+        let valid = VectorSearchExpr {
+            collection: "embeddings".to_string(),
+            vector_column: None,
+            query_vector: vec![0.1, 0.2],
+            top_k: 10,
+            threshold: Some(0.5),
+            metric: DistanceMetric::Cosine,
+            filter: None,
+            params: VectorSearchParams::default(),
+        };
+
+        let mut invalid = valid.clone();
+        invalid.query_vector[0] = f32::NAN;
+        assert_eq!(
+            invalid.validate().unwrap_err(),
+            "vector search query components must be finite"
+        );
+
+        let mut invalid = valid.clone();
+        invalid.threshold = Some(1.01);
+        assert_eq!(
+            invalid.validate().unwrap_err(),
+            "vector search threshold must be finite and within [0, 1]"
+        );
+
+        let mut invalid = valid.clone();
+        invalid.params.search_mode = Some(SearchMode::Approximate { nprobe: Some(0) });
+        assert_eq!(
+            invalid.validate().unwrap_err(),
+            "vector search nprobe must be greater than zero"
+        );
+
+        let mut invalid = valid;
+        invalid.params.search_mode = Some(SearchMode::Adaptive { threshold: 0 });
+        assert_eq!(
+            invalid.validate().unwrap_err(),
+            "vector search adaptive threshold must be greater than zero"
+        );
     }
 
     // ========================================================================

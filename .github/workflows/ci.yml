@@ -96,6 +96,7 @@ jobs:
       # filter definition below and the rust-compile job comment.
       compile: ${{ steps.filter.outputs.compile }}
       python: ${{ steps.filter.outputs.python }}
+      ui: ${{ steps.filter.outputs.ui }}
       docker: ${{ steps.filter.outputs.docker }}
       docs: ${{ steps.filter.outputs.docs }}
       proto: ${{ steps.filter.outputs.proto }}
@@ -134,7 +135,9 @@ jobs:
           # Full history so dorny/paths-filter can reach the merge-base across a
           # large develop→main gap (shallow --deepen fails: "shallow file has changed").
           fetch-depth: 0
-      - uses: dorny/paths-filter@v3
+      - name: Validate rust-cache key inputs before fan-out
+        run: python3 scripts/check_deterministic_commit_contract.py
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -155,6 +158,14 @@ jobs:
               # workspace-wide, so a bump must re-run the Rust suite.
               - 'rust-toolchain*'
               - '.cargo/**'
+              # This file DEFINES the Rust jobs (clippy args, feature matrix
+              # combos, test shapes), so a change to it changes their outcome —
+              # but it was not listed, which meant **CI could not validate a
+              # change to its own Rust gating**. The PR that added `--tests` to
+              # the feature matrix skipped that very matrix and reported green:
+              # skipped is not passed. A gate that cannot see the change to
+              # itself is the same defect class it exists to catch.
+              - '.github/workflows/ci.yml'
             # `compile` gates the rust-compile hard gate. It is a deliberate
             # SUPERSET of every path that can affect `cargo check --workspace`:
             # the root `src/**`, every workspace member under `crates/**` and
@@ -179,6 +190,9 @@ jobs:
               - 'clients/python/**'
               - 'clients/python-embedded/**'
               - 'proto/**'
+            ui:
+              - 'ui/**'
+              - '.github/workflows/ci.yml'
             docker:
               - 'Dockerfile*'
               - 'docker-compose*.yml'
@@ -205,6 +219,13 @@ jobs:
               - 'src/query/**'
               - 'tests/*query*'
               - 'tests/*federated*'
+              # TD-SELECTOR-1: the selector/answer-quality gates are #[path]-included
+              # modules of this test file; editing the harness is editing the test.
+              - 'tests/retrieval_quality_gates.rs'
+              - 'benches/bench_selector_benchmark.rs'
+              - 'benches/selector_benchmark_data.rs'
+              - 'benches/bench_answer_quality.rs'
+              - 'benches/answer_quality_data.rs'
               # The unflushed-tail search path feeds vector recall — changes here
               # must run the recall+leaks E2E (vector_ann_recall_e2e) in the query
               # integration job, which the storage-only filter would otherwise miss.
@@ -225,6 +246,12 @@ jobs:
               - 'tests/*storage*'
               - 'tests/*sst*'
               - 'tests/*wal*'
+              # The recall ratchet itself matched NONE of the globs above, so
+              # editing the ratchet did not run the ratchet — a change that
+              # weakened it would have gone unmeasured. Same class as
+              # TD-RECALL-2/#1406: track what can break the outcome, not who
+              # owns the file.
+              - 'tests/sift_pax_recall_ratchet_test.rs'
             # Cloud object-store Cool-tier validation (TD-168). The tier-mapping code
             # lives in the object-store crate + the cold-payload store; the orchestration
             # is scripts/run_cloud_emulator_tests.sh. Re-run the (cheap) emulator tier
@@ -837,9 +864,24 @@ jobs:
   # that would have caught the cloud-full `ObjectStoreExt` compile-rot (the
   # AnvaiOps ADLS CrashLoopBackOff) at PR time instead of in production:
   # aws/azure/gcp/onnx/cluster/catalog code is gated, so the default build
-  # skips it and rot accumulates invisibly. `cargo check` (no link/test) keeps
+  # skips it and rot accumulates invisibly. `cargo check` (no link/run) keeps
   # this cheap while still surfacing E0599-class errors. Each combo runs on its
   # own runner (fail-fast: false) so one feature's break doesn't mask others.
+  #
+  # `--tests` is load-bearing, not tidiness. Plain `cargo check` compiles the
+  # LIBRARY ONLY, so a `#[cfg(test)]` module behind a feature is never compiled
+  # by CI — the feature is covered and its tests are not. That is how
+  # `rest/canonical/catalog.rs`'s test module came to carry a `CatalogNamespace`
+  # literal seven fields out of date and stay green while `enterprise-catalogs`
+  # sat in this very matrix (TD-CAT-8).
+  #
+  # `--tests`, NOT `--all-targets`, deliberately. `--all-targets` would add the
+  # root crate's 38 benches + 23 examples per combo, and the clippy job above
+  # records that `--all-targets` OOMs these runners. That evidence is from a
+  # heavier pass (clippy, workspace-wide) than this one (`check -p <pkg>`), so it
+  # does not transfer directly — but the headroom warning is real and
+  # benches/examples are not the rot class this closes. Verified locally: all 13
+  # combos pass with `--tests` (and with `--all-targets`) as of TD-CAT-8.
   feature-matrix:
     name: Feature Matrix (${{ matrix.label }})
     runs-on: ubuntu-latest
@@ -851,7 +893,7 @@ jobs:
         include:
           # The two combos the published images actually ship (PR #78):
           - { label: "cloud-full",          pkg: proximadb-server, args: "--features cloud-full" }
-          - { label: "cloud-full,onnx",     pkg: proximadb-server, args: "--features cloud-full,onnx" }
+          - { label: "cloud-full+onnx",     pkg: proximadb-server, args: "--features cloud-full,onnx" }
           # Other gated surfaces invisible to default CI:
           - { label: "cluster",             pkg: proximadb,        args: "--features cluster" }
           - { label: "enterprise-catalogs", pkg: proximadb,        args: "--features enterprise-catalogs" }
@@ -899,16 +941,41 @@ jobs:
         with:
           prefix-key: "v1-feature-matrix"
           shared-key: ${{ matrix.label }}
-      - name: cargo check -p ${{ matrix.pkg }} ${{ matrix.args }}
+      - name: cargo check -p ${{ matrix.pkg }} --tests ${{ matrix.args }}
         env:
           CARGO_PROFILE_DEV_DEBUG: 0
         run: |
           # Batched small-crates entry: check each package sequentially on one runner.
           for pkg in ${{ matrix.pkg }}; do
-            echo "::group::cargo check -p $pkg ${{ matrix.args }}"
-            cargo check -p "$pkg" ${{ matrix.args }}
+            echo "::group::cargo check -p $pkg --tests ${{ matrix.args }}"
+            cargo check -p "$pkg" --tests ${{ matrix.args }}
             echo "::endgroup::"
           done
+      # TD-V1SUNSET-1 census finding 4: this lane COMPILES enterprise-catalogs
+      # but never SERVED it — the /api/v1 path collision survived a green lane.
+      # Run the (small, filtered) feature-gated catalog tests so the surface's
+      # serving contract is verified where it is built. Nextest when present
+      # (install-fast-tools convention), libtest fallback otherwise.
+      - name: serve enterprise-catalog tests (compile is not verification)
+        if: matrix.label == 'enterprise-catalogs'
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
+        run: |
+          if cargo nextest --version >/dev/null 2>&1; then
+            cargo nextest run -p proximadb --lib --features enterprise-catalogs -E 'test(catalog)'
+          else
+            cargo test -p proximadb --lib --features enterprise-catalogs catalog
+          fi
+      # Residue-closure (2026-08-30): feature-gated code accumulated 9 clippy
+      # lints invisibly — CI's clippy job runs DEFAULT features and this lane
+      # only checked+served. Lint the feature code where it is built, so this
+      # debt class cannot regrow unseen. lib-only, same as the main clippy job
+      # (CI memory limits).
+      - name: clippy enterprise-catalogs (feature code is not lint-blind)
+        if: matrix.label == 'enterprise-catalogs'
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
+        run: cargo clippy -p proximadb --lib --features enterprise-catalogs -- -D warnings
 
   rust-security:
     name: Security Audit
@@ -999,6 +1066,25 @@ jobs:
       - name: Run lint
         working-directory: clients/nodejs-embedded
         run: npm run lint
+
+  ui-build:
+    name: Admin UI Install + Build
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install dependencies
+        working-directory: ui
+        run: npm ci
+      - name: Build production bundle
+        working-directory: ui
+        run: npm run build
 
   rust-sdk-lint:
     name: Rust SDK Lint
@@ -1167,7 +1253,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '19'
@@ -1238,7 +1324,7 @@ jobs:
 
       - name: Upload Python Trivy Results
         if: needs.changes.outputs.python == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'python-trivy-results.sarif'
           category: 'python-sdk-security'
@@ -1246,7 +1332,7 @@ jobs:
 
       - name: Upload Go Trivy Results
         if: needs.changes.outputs.go_sdk == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'go-trivy-results.sarif'
           category: 'go-sdk-security'
@@ -1254,7 +1340,7 @@ jobs:
 
       - name: Upload Node.js Trivy Results
         if: needs.changes.outputs.nodejs_sdk == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'nodejs-trivy-results.sarif'
           category: 'nodejs-sdk-security'
@@ -1262,7 +1348,7 @@ jobs:
 
       - name: Upload Rust Trivy Results
         if: needs.changes.outputs.rust_sdk == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'rust-trivy-results.sarif'
           category: 'rust-sdk-security'
@@ -1615,9 +1701,11 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true        # advisory — never a merge gate (also not in ci-success.needs)
     # 10m is a CANARY, not a budget: with the selection fixed this lane is a
-    # cheap leaf compile (observed 58-165s from cold), so ~4x headroom. If a
-    # future dependency edge makes a "leaf" crate heavy again, we want to find
-    # out after 10 wasted minutes, not 15.
+    # cheap leaf compile plus fast unit tests. Production-scale ratchets stay in
+    # their required, explicitly budgeted lanes below; duplicating one here made
+    # 709/710 fast tests pass before the job was cancelled on the final N=100k
+    # recall harness. If a future dependency edge makes the remaining graph
+    # heavy again, fail after 10 wasted minutes, not 15.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -1665,7 +1753,17 @@ jobs:
             pkg_args="$pkg_args -p $p"
           done
           echo "Affected leaf crates:$pkg_args"
-          cargo nextest run --lib --profile unit $pkg_args
+          # This production-scale synthetic recall ratchet takes minutes by
+          # design. The required 90-minute rust-test/unit lane still runs it;
+          # only this explicitly advisory fast-feedback lane excludes it.
+          # --no-tests=pass: a PR whose touched crates have no #[cfg(test)]
+          # unit tests makes nextest exit 4 ("no tests to run"), reddening this
+          # lane for a PR that did nothing wrong. Observed on #1701 (typed
+          # graph properties). Advisory lanes must stay signal, not noise —
+          # a lane that cries wolf is one people stop reading.
+          cargo nextest run --lib --profile unit --no-tests=pass \
+            -E 'not test(rabitq_cold_recall_harness_n100000_recall_at_10)' \
+            $pkg_args
 
   # TD-168 develop early-detection: run the CHEAP object-store Cool-tier tests
   # (scripts/run_cloud_emulator_tests.sh --fast — compiles only the small
@@ -1898,7 +1996,7 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Query Integration Tests
         run: |
-          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs tests/filtered_ann_recall_bands.rs tests/query_cache_test.rs tests/vector_ann_recall_e2e.rs; do
+          for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs tests/filtered_ann_recall_bands.rs tests/query_cache_test.rs tests/vector_ann_recall_e2e.rs tests/retrieval_quality_gates.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
@@ -2149,7 +2247,8 @@ jobs:
   python-test:
     name: Python SDK Tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    # Defense-in-depth: the suite runs in ~5min. If a future test leaks a
+    # Defense-in-depth: the suite runs in ~9min (measured, TD-CI-2; the "~5min"
+    # this comment used to claim was stale). If a future test leaks a
     # non-daemon thread / unshutdown pool, the interpreter's atexit join can hang
     # the job for hours. Cap it so a leak fails fast instead of stalling CI.
     timeout-minutes: 20
@@ -2157,11 +2256,24 @@ jobs:
     strategy:
       matrix:
         # 3.9 dropped: the package declares requires-python ">=3.10".
-        python-version: ["3.10", "3.11", "3.12"]
-    # medium_tier (base qa OR main), not extensive (base main only): the ~5min
-    # Python SDK suite runs at develop->qa too, so SDK regressions block one
-    # stage earlier instead of only surfacing at the qa->main boundary.
-    if: ${{ !inputs.skip_tests && needs.changes.outputs.medium_tier == 'true' }}
+        #
+        # The matrix WIDTH is the cost dial (TD-CI-2). At promotion the full
+        # three-interpreter sweep runs; on feat->develop only 3.12 does, because
+        # the failure this lane exists to catch is almost never version-specific
+        # -- a broken test breaks on every interpreter -- while the width is
+        # what costs runner time. Measured: 8.89 min mean per job-run, so three
+        # versions is 26.7 runner-minutes per PR and one is 8.9.
+        python-version: >-
+          ${{ (needs.changes.outputs.medium_tier == 'true'
+               && fromJSON('["3.10", "3.11", "3.12"]'))
+              || fromJSON('["3.12"]') }}
+    # Runs at promotion (medium_tier) AND on any feat->develop PR that actually
+    # touches Python (TD-CI-2). Before this, the suite was medium_tier-only, so
+    # ~4,500 tests never ran on the PR that introduced a Python change: measured
+    # on #1679, which rewrote large parts of the SDK, five Python gates ran and
+    # this one was SKIPPED. Breakage therefore landed on develop and waited for
+    # whoever promoted next to diagnose it.
+    if: ${{ !inputs.skip_tests && (needs.changes.outputs.medium_tier == 'true' || needs.changes.outputs.python == 'true') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -2210,10 +2322,16 @@ jobs:
           # process. Parallelized for speed; failures print with ::error::.
           #
           # Permanently skipped (not isolation-related):
-          #   victor_cov     -> imports the internal, unpublished `victor` package
-          #   chunking_code  -> needs tree-sitter grammars not installed in CI
+          #   victor_cov -> imports the internal, unpublished `victor` package
+          #
+          # `chunking_code` used to be listed here as "needs tree-sitter grammars
+          # not installed in CI". TD-CG2 S4 deleted the in-SDK grammars, so that
+          # reason became false while the exclusion stayed -- and the file was
+          # silently red outside the gate. It now skips ITSELF via importorskip
+          # on the optional `codegraph` extra, so it is honest in both
+          # environments and needs no name-based exclusion here.
           set -u
-          SKIP_RE='test_integrations_victor_cov|test_chunking_code_cov'
+          SKIP_RE='test_integrations_victor_cov'
           # Run one file in its own process. exit 0 = ok, 5 = no tests collected
           # (e.g. a whole module importorskip-skipped) -> ok; anything else fails.
           test_one() {
@@ -2275,6 +2393,58 @@ jobs:
           python3 scripts/coverage_ratchet.py check \
             --baseline docs/_internal/roadmap/COVERAGE_BASELINE.json \
             --current /tmp/sdk-current.json
+
+  # TD-CHUNK-1 / ADR-091: the chunking conformance ratchet.
+  #
+  # Chunking had NO gate at all. `sdk-coverage-ratchet` runs `tests/unit/` only,
+  # so `tests/chunking/` was never executed by CI — which is precisely how 56
+  # failing tests came to live on develop unnoticed while the subsystem carried no
+  # tier in docs/SUPPORTED_SURFACE.adoc.
+  #
+  # This job runs the invariant sweep (ADR-091's axioms over the shared corpus)
+  # against a RECORDED baseline. It is a bidirectional ratchet: a new violation
+  # fails, and a *fixed* violation also fails until the baseline is updated in the
+  # same commit — so a defect cannot be repaired silently, nor rot back.
+  #
+  # Deliberately narrow and fast (~30s): it does not run the rest of
+  # tests/chunking/, whose pre-existing failures are TD-CG2's business. Widening
+  # it to the whole directory is a step in TD-CG2, not here.
+  chunking-conformance:
+    name: Chunking Conformance + Quality Evals (TD-CHUNK-1/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: ${{ !inputs.skip_tests && needs.changes.outputs.python == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: clients/python/pyproject.toml
+      - name: Install SDK
+        working-directory: clients/python
+        run: pip install -e ".[test]"
+      # Runs the whole file, so this covers BOTH gates: the deterministic
+      # invariant ratchet and the rubric-scored quality evals. Tests cover what
+      # has a right answer; evals cover boundary quality, which does not.
+      - name: Run the chunking invariant sweep and the quality evals
+        working-directory: clients/python
+        # The capability suites are listed explicitly rather than by running
+        # tests/chunking/ wholesale: that directory also holds the code-path
+        # suites, which need the optional `codegraph` extra this job does not
+        # install. Naming them keeps the gate narrow AND keeps it able to SEE
+        # the thing it is named for -- the eval floors for TD-CHUNK-3's
+        # capabilities were unreachable from this job while it ran only the
+        # conformance file.
+        run: |
+          pytest \
+            tests/chunking/test_chunking_conformance.py \
+            tests/chunking/test_chunk_passes.py \
+            tests/chunking/test_capability_evals.py \
+            tests/chunking/test_processor_pass_wiring.py \
+            tests/chunking/test_native_boundaries.py \
+            -q -p no:cacheprovider --timeout=300 -o addopts=""
 
   # ============================================================================
   # INTEGRATION TESTS - Server + Python SDK
@@ -2589,9 +2759,15 @@ jobs:
     # comfortable headroom without masking a genuine hang.
     timeout-minutes: 45
     # only run when search/flush/WAL/PAX/cascade code changes
+    # core_changes is required, not decorative: nprobe_multiplier/min/max and the
+    # coarse-probe gates live in src/core/config.rs, which matches core_changes
+    # and NOT storage_changes. Without it, a PR that lowers the probe count --
+    # the single most direct way to trade recall for GETs -- ran no recall
+    # ratchet at all.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (needs.changes.outputs.storage_changes == 'true')
+      needs.changes.outputs.storage_changes == 'true' ||
+      needs.changes.outputs.core_changes == 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -2620,7 +2796,9 @@ jobs:
       - name: Build ratchet binary
         env:
           CARGO_BUILD_JOBS: "4"
-        run: cargo test --release --test sift_pax_recall_ratchet_test --no-run
+        # Cache-regime admission is fail-closed: without `io-trace`, cache
+        # probes intentionally no-op and the paired cohort remains `unknown`.
+        run: cargo test --release --features io-trace --test sift_pax_recall_ratchet_test --no-run
       - name: Run SIFT PAX recall ratchet (N=10000, floor=0.85)
         env:
           PROXIMADB_SIFT_DATASET_DIR: /home/runner/sift1m
@@ -2628,7 +2806,7 @@ jobs:
           PROXIMADB_SIFT_QUERIES: "100"
           PROXIMADB_SIFT_RECALL_FLOOR: "0.85"
           PROXIMADB_RECALL_DATASET_REQUIRED: "1"
-        run: cargo test --release --test sift_pax_recall_ratchet_test -- --nocapture
+        run: cargo test --release --features io-trace --test sift_pax_recall_ratchet_test -- --nocapture
 
   # ============================================================================
   # SUMMARY - Final status check
@@ -2666,6 +2844,8 @@ jobs:
       - python-lint
       - python-test
       - sdk-coverage-ratchet
+      # chunking invariants (ADR-091 axioms) — the subsystem had no gate at all
+      - chunking-conformance
       - integration-test
       - docker-build
       - docs-validation
@@ -2674,6 +2854,7 @@ jobs:
       - go-sdk-codegen-drift
       - rust-sdk-codegen-drift
       - nodejs-lint
+      - ui-build
       - ts-sdk-codegen-drift
       - python-sdk-codegen-drift
       - python-sdk-round-trip

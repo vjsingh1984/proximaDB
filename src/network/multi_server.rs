@@ -128,6 +128,10 @@ pub struct MultiServer {
     /// surface: REST tenant middleware, gRPC auth layer, Arrow Flight
     /// service, and pgwire protocol.
     tenant_header_trust: proximadb_tenant::HeaderTrustPolicy,
+    /// ADR-0053 W8: deployment-effective tier-claim trust policy (the
+    /// `X-Tenant-Tier` / `x-tenant-tier` / `proximadb_tier` entitlement
+    /// claim gate). Resolved alongside `tenant_header_trust` in database.rs.
+    tier_header_trust: proximadb_tenant::HeaderTrustPolicy,
 }
 
 impl MultiServer {
@@ -229,6 +233,19 @@ impl MultiServer {
         .into_server()
     }
 
+    /// Build the native model-registry facade over the exact application
+    /// service instance also exposed through REST.
+    fn canonical_model_registry_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_model_registry_service_server::ProximaModelRegistryServiceServer<
+        crate::network::grpc::v2::ProximaModelRegistryServiceImpl,
+    >{
+        crate::network::grpc::v2::ProximaModelRegistryServiceImpl::new(
+            services.model_registry_service.clone(),
+        )
+        .into_server()
+    }
+
     /// Create new multi-server instance (orchestrator only)
     /// MultiServer focuses on network orchestration, SharedServices handles business logic
     pub fn new(
@@ -282,6 +299,7 @@ impl MultiServer {
             llm_engine,
             queue_client,
             tenant_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
+            tier_header_trust: proximadb_tenant::HeaderTrustPolicy::default(),
         }
     }
 
@@ -291,6 +309,12 @@ impl MultiServer {
     /// pass here). Threaded into every network surface at start.
     pub fn with_tenant_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
         self.tenant_header_trust = policy;
+        self
+    }
+
+    /// ADR-0053 W8: set the deployment-effective tier-claim trust policy.
+    pub fn with_tier_header_trust(mut self, policy: proximadb_tenant::HeaderTrustPolicy) -> Self {
+        self.tier_header_trust = policy;
         self
     }
 
@@ -544,6 +568,7 @@ impl MultiServer {
                                 as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_tier_header_trust(self.tier_header_trust)
                             .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
@@ -643,6 +668,7 @@ impl MultiServer {
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
+                .add_service(Self::canonical_model_registry_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
@@ -730,6 +756,7 @@ impl MultiServer {
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
             let tenant_header_trust = self.tenant_header_trust;
+            let tier_header_trust = self.tier_header_trust;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
 
             let arrow_handle = tokio::spawn(async move {
@@ -743,6 +770,7 @@ impl MultiServer {
                     arrow_graph,
                 )
                 .with_tenant_header_trust(tenant_header_trust)
+                .with_tier_header_trust(tier_header_trust)
                 .with_tenant_deployment_mode(tenant_deployment_mode)
                 .with_stable_id_resolver(Some(Arc::new(
                     crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
@@ -794,6 +822,7 @@ impl MultiServer {
             let rest_auth_enabled = self.rest_auth_enabled;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let tenant_header_trust = self.tenant_header_trust;
+            let tier_header_trust = self.tier_header_trust;
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -836,6 +865,9 @@ impl MultiServer {
                 // resolved once in database.rs) overrides the mode preset;
                 // server.rs re-applies the env override idempotently.
                 rest_security.tenant.header_trust = tenant_header_trust;
+                // ADR-0053 W8: same deployment-effective resolution for the
+                // tier-claim gate (server.rs re-applies env idempotently).
+                rest_security.tenant.tier_header_trust = tier_header_trust;
                 rest_security.auth.enabled = auth_enabled;
 
                 // Pass port objects so document/graph/observability routes use
@@ -921,6 +953,7 @@ impl MultiServer {
                 });
 
             let tenant_header_trust = self.tenant_header_trust;
+            let tier_header_trust = self.tier_header_trust;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
@@ -946,6 +979,7 @@ impl MultiServer {
                 server = server.with_partition_lease_manager(partition_lease_manager);
                 server = server.with_warehouse_materialization(warehouse_root_url);
                 server = server.with_tenant_header_trust(tenant_header_trust);
+                server = server.with_tier_header_trust(tier_header_trust);
                 server = server.with_tenant_deployment_mode(tenant_deployment_mode);
                 if let Some(limiter) = pgwire_rate_limiter {
                     server = server.with_rate_limiter(limiter);
@@ -1126,9 +1160,17 @@ impl MultiServer {
 
             let handle = tokio::spawn(async move {
                 // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+                // TD-TENANT-4: `_with_connect_info` supplies the real peer
+                // address so the edge classifies an OBSERVED client rather than
+                // a header claim (KOU egress metering reads it).
                 match tokio::net::TcpListener::bind(&internal_rest_addr).await {
                     Ok(listener) => {
-                        if let Err(e) = axum::serve(listener, router.into_make_service()).await {
+                        if let Err(e) = axum::serve(
+                            listener,
+                            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                        )
+                        .await
+                        {
                             tracing::error!("Internal REST server error: {}", e);
                         }
                     }
@@ -1158,6 +1200,7 @@ impl MultiServer {
                     None
                 })
                 .with_tenant_header_trust(self.tenant_header_trust)
+                .with_tier_header_trust(self.tier_header_trust)
                 .with_tenant_deployment_mode(self.tenant_deployment_mode.clone())
                 .with_catalog_manager(Some(services.catalog_manager.clone()))
                 .with_stable_id_resolver(Some(Arc::new(
@@ -1184,6 +1227,7 @@ impl MultiServer {
                                 as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_tier_header_trust(self.tier_header_trust)
                             .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
@@ -1207,6 +1251,7 @@ impl MultiServer {
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
+                .add_service(Self::canonical_model_registry_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1296,6 +1341,7 @@ impl MultiServer {
             let direct_write_services = self.build_direct_pgwire_write_services().await?;
             let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
             let tenant_header_trust = self.tenant_header_trust;
+            let tier_header_trust = self.tier_header_trust;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
@@ -1333,6 +1379,7 @@ impl MultiServer {
                     server.with_partition_lease_manager(services.partition_lease_manager.clone());
                 server = server.with_warehouse_materialization(warehouse_root_url);
                 server = server.with_tenant_header_trust(tenant_header_trust);
+                server = server.with_tier_header_trust(tier_header_trust);
                 server = server.with_tenant_deployment_mode(tenant_deployment_mode);
 
                 if let Err(e) = server.start().await {
@@ -1562,6 +1609,7 @@ impl MultiServer {
                                 as Arc<dyn proximadb_tenant::TenantStableIdResolver>;
                         crate::network::grpc::auth::GrpcAuthLayer::new(sc)
                             .with_header_trust(self.tenant_header_trust)
+                            .with_tier_header_trust(self.tier_header_trust)
                             .with_stable_id_resolver(stable_id_resolver)
                     })
                 } else {
@@ -1586,6 +1634,7 @@ impl MultiServer {
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(Self::canonical_entity_grpc_service(&services))
+                .add_service(Self::canonical_model_registry_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Experimental transactional ledger service (ADR-071 / TD-LEDGER-1): registered only
@@ -1685,6 +1734,7 @@ impl MultiServer {
             let primary_pod_registry = services.primary_pod_registry.clone();
             let self_pod_id = services.self_pod_id.clone();
             let tenant_header_trust = self.tenant_header_trust;
+            let tier_header_trust = self.tier_header_trust;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
 
             let arrow_handle = tokio::spawn(async move {
@@ -1698,6 +1748,7 @@ impl MultiServer {
                     arrow_graph,
                 )
                 .with_tenant_header_trust(tenant_header_trust)
+                .with_tier_header_trust(tier_header_trust)
                 .with_tenant_deployment_mode(tenant_deployment_mode)
                 .with_stable_id_resolver(Some(Arc::new(
                     crate::security::CatalogTenantStableIdResolver::new(catalog_manager.clone()),
@@ -1738,6 +1789,7 @@ impl MultiServer {
             let rest_auth_enabled = self.rest_auth_enabled;
             let tenant_deployment_mode = self.tenant_deployment_mode.clone();
             let tenant_header_trust = self.tenant_header_trust;
+            let tier_header_trust = self.tier_header_trust;
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -1775,6 +1827,9 @@ impl MultiServer {
                 // resolved once in database.rs) overrides the mode preset;
                 // server.rs re-applies the env override idempotently.
                 rest_security.tenant.header_trust = tenant_header_trust;
+                // ADR-0053 W8: same deployment-effective resolution for the
+                // tier-claim gate (server.rs re-applies env idempotently).
+                rest_security.tenant.tier_header_trust = tier_header_trust;
                 rest_security.auth.enabled = auth_enabled;
 
                 let rest_ports = RestServerPorts {

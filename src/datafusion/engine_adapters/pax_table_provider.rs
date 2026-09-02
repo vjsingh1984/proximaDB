@@ -21,9 +21,11 @@ use std::sync::Arc;
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::catalog::Session;
+use datafusion::common::DFSchema;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
+use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::SessionContext;
 
@@ -42,6 +44,10 @@ pub struct PaxTableProvider {
     filesystem_factory: Arc<FilesystemFactory>,
     name_to_col_id: HashMap<String, i32>,
     collection_name: String,
+    /// TD-OLAP-1 Test 2.3: Tenant ID for predicate filtering (optional).
+    tenant_id: Option<String>,
+    /// TD-OLAP-1 Test 2.3: Time range for predicate filtering (optional).
+    time_range: Option<(i64, i64)>,
 }
 
 impl PaxTableProvider {
@@ -49,12 +55,18 @@ impl PaxTableProvider {
     /// The schema + `name_to_col_id` are the caller's responsibility (from the
     /// catalog schema — system columns via `col_id::*`, user columns via their
     /// assigned PAX column IDs).
+    ///
+    /// TD-OLAP-1 Test 2.3: `tenant_id` and `time_range` enable tenant/time
+    /// predicate filtering at the storage layer. When `None`, no filtering is
+    /// applied (backward-compatible with `ScanPredicate::default()`).
     pub async fn new(
         schema: SchemaRef,
         base_path: &str,
         filesystem_factory: Arc<FilesystemFactory>,
         name_to_col_id: HashMap<String, i32>,
         collection_name: String,
+        tenant_id: Option<String>,
+        time_range: Option<(i64, i64)>,
     ) -> DFResult<Self> {
         let splits = discover_pax_segments(base_path, &filesystem_factory)
             .await
@@ -65,16 +77,22 @@ impl PaxTableProvider {
             filesystem_factory,
             name_to_col_id,
             collection_name,
+            tenant_id,
+            time_range,
         })
     }
 
-    /// Construct the `SplitReader` that decodes PAX segments → Arrow batches.
-    fn reader(&self) -> Arc<dyn SplitReader> {
+    /// Construct the `SplitReader` that decodes PAX segments → Arrow batches,
+    /// seeded with the caller-resolved physical filters so `PaxSegmentScanner`
+    /// can prune blocks off the decode path (TD-OLAP-1 Test 2.6).
+    fn reader(&self, physical_filters: Vec<Arc<dyn PhysicalExpr>>) -> Arc<dyn SplitReader> {
         Arc::new(PaxSplitReader::new(
             self.schema.clone(),
             self.filesystem_factory.clone(),
             self.name_to_col_id.clone(),
-            vec![],
+            physical_filters,
+            self.tenant_id.clone(),
+            self.time_range,
         ))
     }
 }
@@ -106,10 +124,20 @@ impl TableProvider for PaxTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
+        // TD-OLAP-1 Test 2.6: lower the pushed WHERE predicates to physical exprs
+        // and hand them to the split reader, so the PAX prune stack (zone maps +
+        // column stats via `pruning_predicates`) can skip blocks pre-decode.
+        // Fail loudly on lowering errors — a silently dropped filter would only
+        // cost bytes on the FilterExec path but hides translator gaps.
+        let df_schema = DFSchema::try_from(self.schema.as_ref().clone())?;
+        let mut physical_filters = Vec::with_capacity(filters.len());
+        for expr in filters {
+            physical_filters.push(state.create_physical_expr(expr.clone(), &df_schema)?);
+        }
         let exec = ProximaScanExec::builder()
             .schema(self.schema.clone())
             .splits(self.splits.clone())
-            .reader(self.reader())
+            .reader(self.reader(physical_filters))
             .projection(projection.cloned())
             .filters(filters.to_vec())
             .limit(limit)
@@ -124,6 +152,10 @@ impl TableProvider for PaxTableProvider {
 /// Convenience: discover PAX segments under `base_path`, construct a
 /// [`PaxTableProvider`], and register it with the DataFusion `SessionContext`.
 /// Mirrors `register_object_store_parquet_location`.
+///
+/// TD-OLAP-1 Test 2.3: `tenant_id` and `time_range` enable tenant/time
+/// predicate filtering at the storage layer. When `None`, no filtering is
+/// applied (backward-compatible with `ScanPredicate::default()`).
 pub async fn register_pax_location(
     ctx: &SessionContext,
     name: &str,
@@ -131,6 +163,8 @@ pub async fn register_pax_location(
     schema: SchemaRef,
     name_to_col_id: HashMap<String, i32>,
     filesystem_factory: Arc<FilesystemFactory>,
+    tenant_id: Option<String>,
+    time_range: Option<(i64, i64)>,
 ) -> DFResult<Arc<PaxTableProvider>> {
     let table = Arc::new(
         PaxTableProvider::new(
@@ -139,6 +173,8 @@ pub async fn register_pax_location(
             filesystem_factory,
             name_to_col_id,
             name.into(),
+            tenant_id,
+            time_range,
         )
         .await?,
     );

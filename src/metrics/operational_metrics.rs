@@ -34,6 +34,24 @@ fn counter(name: &str, help: &str) -> IntCounter {
     })
 }
 
+lazy_static::lazy_static! {
+    /// TD-COMPACT-13: compaction input deletes that failed and are pending
+    /// reconciliation. >0 means superseded segments are still serving (cost
+    /// defect, results correct) — observable rot, never silent.
+    pub static ref PAX_PENDING_RETIREMENTS: IntGauge = gauge(
+        "proximadb_pax_pending_retirements",
+        "Compaction input deletes pending reconciliation (TD-COMPACT-13)",
+    );
+    pub static ref PAX_RETIREMENT_RETRIES_TOTAL: IntCounter = counter(
+        "proximadb_pax_retirement_retries_total",
+        "Retried compaction input deletes (TD-COMPACT-13)",
+    );
+    pub static ref PAX_RETIREMENT_RECORD_TOTAL: IntCounter = counter(
+        "proximadb_pax_retirement_record_total",
+        "Retirement obligations recorded to the pending ledger (TD-COMPACT-13)",
+    );
+}
+
 fn gauge(name: &str, help: &str) -> IntGauge {
     register_int_gauge!(name, help).unwrap_or_else(|_| {
         IntGauge::new(format!("{name}_fallback"), help)

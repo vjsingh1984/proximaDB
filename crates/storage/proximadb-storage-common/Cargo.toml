@@ -14,6 +14,7 @@ name = "proximadb_storage_common"
 path = "src/lib.rs"
 
 [dependencies]
+proximadb-storage-filesystem-types.workspace = true
 anyhow.workspace = true
 arrow.workspace = true
 bincode.workspace = true
@@ -30,8 +31,11 @@ object_store.workspace = true
 tokio = { version = "1.37", features = ["sync", "rt", "time"] }
 proximadb-kernel.workspace = true
 proximadb-compression-types.workspace = true
+proximadb-compression.workspace = true
+proximadb-proto.workspace = true
 proximadb-data-model = { workspace = true }
 proximadb-records = { workspace = true }
+proximadb-search-types = { workspace = true }
 proximadb-block-format = { workspace = true }
 proximadb-codec = { workspace = true }
 proximadb-filter-expression = { workspace = true }
@@ -42,8 +46,16 @@ proximadb-cache = { workspace = true }
 # control-layer catalog), so storage -> foundation is a clean downward edge with
 # no grandfathered control-layer coupling (TD-DECOMP ratchet).
 proximadb-catalog-schema = { workspace = true }
+# text_search/text_filter n-gram bloom (TD-DECOMP-73)
+proximadb-bloom = { workspace = true }
+proximadb-hardware.workspace = true
+proximadb-hardware-caps.workspace = true
+regex.workspace = true
+arrow-select = { version = "58", default-features = false }
 crc32fast.workspace = true
 proximadb-runtime-common.workspace = true
+# columnar footer_cache + utilities (TD-DECOMP-76)
+moka.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

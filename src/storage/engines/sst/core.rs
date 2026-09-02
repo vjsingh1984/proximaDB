@@ -400,8 +400,9 @@ pub struct SstEngine {
 
     /// ADR-065 Q3: ranged RAM cache for survivor (Region B SQ8) + OID (Region D)
     /// byte ranges. Hot repeat queries skip the per-range `fs.read_range` GETs.
-    /// Default `None` (read path byte-for-byte unchanged); opt in via
-    /// [`Self::with_survivor_cache`].
+    /// Configured from the shared warm-tier policy at construction and
+    /// replaceable through [`Self::with_warm_tier_caches`] for controlled
+    /// benchmarks and explicit dependency injection.
     pub(crate) survivor_cache:
         Option<Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>>,
 
@@ -574,9 +575,9 @@ impl SstEngine {
         }
 
         // TD-CACHE-4: ARM the warm-tier caches at construction. The builder
-        // setters below (`with_segment_invariants_cache` / `with_survivor_cache`)
-        // had ZERO production callers, so both caches stayed `None` on the live
-        // serving path and every novel query re-paid the full GET chain (the
+        // injection boundary below had ZERO production callers, so both caches
+        // stayed `None` on the live serving path and every novel query re-paid
+        // the full GET chain (the
         // ADR-065 #32-35 warm tier was dead code; found when the TD-METRICS-1
         // hit/miss counters scraped 0 across a 920-query 1M run).
         //
@@ -682,11 +683,16 @@ impl SstEngine {
                     .map(|policy| {
                         let policy = std::sync::Arc::new(policy);
                         let default_tier = policy.default_tier.clone();
+                        // TD-TENANT-3 S3: canonical-then-raw probe, matching
+                        // the shared-services resolver exactly.
+                        let probe_policy = std::sync::Arc::clone(&policy);
                         let tenant_to_tier: std::sync::Arc<
                             dyn Fn(&str) -> String + Send + Sync,
                         > = std::sync::Arc::new(move |t: &str| {
-                            crate::services::record_store::tenant_tier(t)
-                                .unwrap_or_else(|| default_tier.clone())
+                            crate::services::record_store::tenant_tier_policy_key(t, |key| {
+                                probe_policy.has_tier(key)
+                            })
+                            .unwrap_or_else(|| default_tier.clone())
                         });
                         policy.resolver(budget_bytes, tenant_to_tier)
                     });
@@ -815,23 +821,20 @@ impl SstEngine {
         self
     }
 
-    /// PR2: supply a per-segment invariants cache. Hot queries skip the 3
-    /// header+region+footer read_range calls → 3 GETs → 0.
-    pub fn with_segment_invariants_cache(
+    /// Replace both query-side warm tiers as one policy boundary. Passing
+    /// `None` explicitly disables a tier, which keeps paired benchmarks from
+    /// inheriting process-global cache state accidentally.
+    pub fn with_warm_tier_caches(
         mut self,
-        cache: Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+        segment_invariants: Option<
+            Arc<crate::storage::engines::sst::segment_format::SegmentInvariantsCache>,
+        >,
+        survivor: Option<
+            Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
+        >,
     ) -> Self {
-        self.segment_invariants_cache = Some(cache);
-        self
-    }
-
-    /// ADR-065 Q3: supply a ranged survivor/OID cache. Hot repeat queries skip
-    /// the per-range `fs.read_range` GETs for survivors + OIDs → billed GETs → 0.
-    pub fn with_survivor_cache(
-        mut self,
-        cache: Arc<crate::storage::engines::sst::survivor_range_cache::SurvivorRangeCache>,
-    ) -> Self {
-        self.survivor_cache = Some(cache);
+        self.segment_invariants_cache = segment_invariants;
+        self.survivor_cache = survivor;
         self
     }
 
@@ -981,6 +984,13 @@ impl SstEngine {
     /// Get filesystem factory
     pub fn filesystem(&self) -> &Arc<FilesystemFactory> {
         &self.filesystem
+    }
+
+    /// Get the filesystem factory as the extracted-port view (TD-DECOMP-82):
+    /// `FilesystemFactory` impls `FilesystemPort` root-side, so callers bound
+    /// for the sst-engine crate coerce through here.
+    pub fn filesystem_port(&self) -> std::sync::Arc<dyn proximadb_storage_ports::FilesystemPort> {
+        self.filesystem.clone()
     }
 
     /// Get unified filesystem (if initialized)

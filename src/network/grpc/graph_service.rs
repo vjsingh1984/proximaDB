@@ -270,46 +270,11 @@ fn create_batch_response_for_nodes_with_errors(
     }
 }
 
-/// Create a populated BatchResponse for edges with all canonical fields properly initialized.
-///
-/// For responses with per-item errors, use `create_batch_response_for_edges_with_errors` instead.
-fn create_batch_response_for_edges(
-    edges: Vec<crate::proto::proximadb_v1::Edge>,
-    success: bool,
-    error_message: Option<String>,
-) -> BatchResponse {
-    let created_count = if success {
-        Some(edges.len() as u32)
-    } else {
-        Some(0)
-    };
-    let failed_count = if success {
-        Some(0)
-    } else {
-        Some(edges.len() as u32)
-    };
-
-    BatchResponse {
-        success,
-        nodes: vec![],
-        edges,
-        error_message,
-        next_token: None,
-        created_count,
-        updated_count: Some(0),
-        failed_count,
-        failed_ids: vec![],
-        error_messages: vec![],
-        errors: vec![],
-    }
-}
-
 /// Create a populated BatchResponse for edges with structured per-item error details.
 /// This aligns with REST API's BatchResults<T> format which includes a Vec<BatchError>.
 ///
 /// Both legacy fields (failed_ids, error_messages) and the new structured errors field
 /// are populated for backward compatibility with older clients.
-#[allow(dead_code)]
 fn create_batch_response_for_edges_with_errors(
     edges: Vec<crate::proto::proximadb_v1::Edge>,
     errors: Vec<BatchItemError>,
@@ -984,11 +949,27 @@ impl GraphServiceImpl {
             )
             .await
         {
-            Ok(edges) => {
-                info!("Successfully batch created {} edges via gRPC", edges.len());
-                let edges_vec: Vec<crate::proto::proximadb_v1::Edge> =
-                    edges.into_iter().map(|e| (*e).clone().into()).collect();
-                let response = create_batch_response_for_edges(edges_vec, true, None);
+            Ok(outcome) => {
+                info!(
+                    "Batch created {} edges via gRPC ({} rejected)",
+                    outcome.created.len(),
+                    outcome.rejected.len()
+                );
+                let edges_vec: Vec<crate::proto::proximadb_v1::Edge> = outcome
+                    .created
+                    .into_iter()
+                    .map(|e| (*e).clone().into())
+                    .collect();
+                let errors: Vec<BatchItemError> = outcome
+                    .rejected
+                    .into_iter()
+                    .map(|r| BatchItemError {
+                        id: r.edge_id,
+                        message: r.reason,
+                        ..Default::default()
+                    })
+                    .collect();
+                let response = create_batch_response_for_edges_with_errors(edges_vec, errors);
                 Ok(Response::new(response))
             }
             Err(err) => {

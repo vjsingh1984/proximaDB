@@ -644,10 +644,12 @@ mod tests {
             model: DataModel::Vector,
             operation: ModelOperation::VectorSearch(VectorSearchExpr {
                 collection: "embeddings".to_string(),
+                vector_column: None,
                 query_vector: vec![0.1, 0.2, 0.3],
                 top_k,
                 threshold,
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             }),
             filters: vec![],

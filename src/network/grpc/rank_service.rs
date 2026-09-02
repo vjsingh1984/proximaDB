@@ -81,6 +81,7 @@ impl RankServiceImpl {
             self.services.candidate_provider.as_ref(),
             self.services.blueprint_factory.clone(),
             second_phase_scorer,
+            self.services.rerank_config.clone(),
             // R-7c.4d follow-up: forward the metrics handle so the
             // gRPC path emits NFR-8 observations alongside REST.
             // None when RankServices was constructed without
@@ -193,7 +194,7 @@ fn _shape_lock(sv: &ScoreVector) -> PhaseId {
 mod tests {
     use super::*;
     use crate::network::rest::canonical::rank::{
-        CandidateBatch, CandidateProvider, MockRangeCandidateProvider,
+        CandidateBatch, CandidateProvider, MockRangeCandidateProvider, default_rerank_config,
     };
     use proximadb_kernel::ScoreComponent;
     use proximadb_rank_core::{
@@ -419,6 +420,7 @@ mod tests {
             blueprint_factory: factory,
             candidate_provider: candidates,
             second_phase_scorers: dashmap::DashMap::new(),
+            rerank_config: default_rerank_config(),
             metrics: None,
         })
     }
@@ -576,6 +578,7 @@ mod tests {
             blueprint_factory: factory,
             candidate_provider: candidates,
             second_phase_scorers: dashmap::DashMap::new(),
+            rerank_config: default_rerank_config(),
             metrics: None,
         })
     }
@@ -603,6 +606,7 @@ mod tests {
             blueprint_factory: factory,
             candidate_provider: candidates,
             second_phase_scorers: dashmap::DashMap::new(),
+            rerank_config: default_rerank_config(),
             metrics: None,
         })
     }

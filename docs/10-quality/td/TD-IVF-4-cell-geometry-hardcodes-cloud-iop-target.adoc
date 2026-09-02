@@ -1,0 +1,99 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-IVF-4: IVF cell geometry hard-codes the CLOUD IOP target while the reader resolves it per backend
+:status: Open
+:dim: D1
+:pillar: PERF
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | **Open — one shared helper now exists (`write_target_block_bytes`), but the divergence remains: the write path cannot see its destination backend. Not measured; every bed to date ran on Azure Blob, where the two happen to agree.**
+| Priority | **P3 — latent.** No incorrect behaviour on Azure (the hard-coded constant is the correct one there). The risk is that S3/GCS deployments silently size cells for a different IOP than the reader coalesces to.
+| Component | `src/storage/engines/sst/block_cluster.rs` — `ivf_fine_cell_count()`. Compare `src/storage/engines/sst/segment_format.rs` (D-block coalescing, `default_probe_range_policy`) and `crates/storage/proximadb-storage-common/src/iops_budget.rs`.
+| Evidence | Code inspection only. No measurement on a non-Azure backend exists.
+|===
+
+== The divergence
+
+ADR-065's co-design premise is "one IVF cell ≈ one IOP-sized block", so the cell
+count and the read-side range coalescing must agree on what an IOP *is*. They are
+derived two different ways:
+
+* **Write side** — `ivf_fine_cell_count()` computes
+  `k = clamp((n_usable · dim) / iop_target, 2, 4096)` with `iop_target` taken from
+  **`IopsBudget::CLOUD`** as a hard-coded constant, regardless of the actual
+  backend the segment is being written to.
+* **Read side** — the segment reader resolves its budget via
+  `IopsBudget::for_path(path)`, which dispatches on the URL scheme and returns a
+  **different** profile per backend.
+
+Those profiles do not agree. `CLOUD` targets 4 MiB; the S3 profile targets 8 MiB.
+So on an S3 deployment, cells are sized for 4 MiB while range coalescing is
+planned against 8 MiB — the two halves of a co-design are calibrated to different
+constants.
+
+== Why it has not shown up
+
+Every bed in the TD-IVF-3 width study, and every `k_c` sweep behind ADR-065's
+4 MiB target, ran against **Azure Blob (Azurite)**. There, `CLOUD`'s 4 MiB is the
+correct value, so the hard-code is indistinguishable from a correct
+`for_path()` resolution. The 4 MiB target itself is well supported — it was
+bracketed on both sides (12 MiB, 8 MiB and 1.2 MiB cells all measured worse on
+GET/query at the recall floor) — but **only on Azure**.
+
+This is therefore untested divergence, not a measured defect. It is filed so the
+first non-Azure measurement is not spent rediscovering it.
+
+== The real blocker (found 2026-08-16)
+
+The fix this TD proposes — "a single helper consulted by both" — is now in place:
+`iops_budget::write_target_block_bytes(Option<&str>)` is the one definition, and
+`ivf_fine_cell_count` calls it. **But the divergence cannot actually be closed by
+threading the path that is already in hand**, and that is worth recording because
+it is the non-obvious part:
+
+**The write path does not know its destination backend at clustering time.**
+Compaction writes to a LOCAL staging file (`&staging_file_path` at
+`src/storage/engines/sst/compaction.rs`) and publishes to object storage
+afterwards. `write_pax_segment_compacted` therefore holds a `&Path` to local
+scratch, not the destination URL. Passing it to `IopsBudget::for_path` would
+resolve the **LOCAL** profile (1 MiB) — actively wrong for a segment destined for
+Azure (4 MiB) or S3/GCS (8 MiB), and worse than today's hard-coded `CLOUD`.
+
+So the helper takes `Option<&str>` and the write side passes `None`, which yields
+the `CLOUD` target — exactly today's behaviour, with the unknown-destination case
+now **explicit in the signature** instead of hidden inside a constant.
+
+Closing this fully means plumbing the destination storage URL from the
+flush/compaction caller (which does know it) down through
+`write_pax_segment_compacted` → `cluster_plan_ivf_probe` → `ivf_training_shape` →
+`ivf_fine_cell_count`. That is a signature change across the write path and is
+not free; it should be done together with, not before, the decision about what
+the target should be per backend.
+
+== Proposed resolution
+
+. **Do not "fix" it blind.** Switching `ivf_fine_cell_count()` to `for_path()`
+  would change cell geometry on S3/GCS — a write-path change to the physical
+  layout, which per the storage-format mandate needs to be measured and gated,
+  not assumed. It is also not obvious which side is right: the measured optimum is
+  a property of the *request* economics, and 4 MiB may well be correct on S3 too.
+. **Measure before choosing.** Run the `k_c` bracket on an S3-compatible backend
+  (MinIO serves for the request/coalescing shape) at 4 MiB and 8 MiB cells, at the
+  recall floor. That answers whether the optimum tracks the backend's IOP profile
+  or is a constant of the workload.
+. **Then make the two sides share one resolution** — whichever value wins — so the
+  write-side cell sizing and the read-side coalescing can never drift apart again.
+  A single helper consulted by both is the fix; two independent constants is the
+  defect.
+
+== What is NOT established
+
+* Whether 4 MiB or 8 MiB is better on S3. Untested. The Azure result does not
+  transfer: it is a request-economics optimum, and the request pricing, minimum
+  billable size and range behaviour all differ per provider.
+* Whether GCS is affected in the same direction — its profile is a third value
+  again, and GCS PUT tiering is separately still a TODO.
+* Whether the divergence is observable at all below some corpus size, since `k` is
+  clamped to `2..4096` and the clamp may mask the difference at both extremes.

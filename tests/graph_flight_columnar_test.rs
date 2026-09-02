@@ -156,7 +156,8 @@ async fn columnar_edge_ingest_and_export_round_trip() {
         .batch_create_edges(graph_id, decoded)
         .await
         .expect("bulk create edges");
-    assert_eq!(created.len(), 2);
+    assert_eq!(created.created.len(), 2);
+    assert!(created.rejected.is_empty(), "no rejections expected");
 
     // Edge export is endpoint-scoped (the engine has no full edge scan), so
     // read each source node's outgoing edges — the columnar `graph_edges` DoGet

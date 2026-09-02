@@ -945,16 +945,34 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .batch_create_edges(&graph_id, edges)
             .await
         {
-            Ok(created) => {
-                let edges: Vec<pv2::GraphEdge> = created
+            Ok(outcome) => {
+                let edges: Vec<pv2::GraphEdge> = outcome
+                    .created
                     .into_iter()
                     .map(|e| conv::edge_to_v2((*e).clone()))
                     .collect();
+                // Rejections are per-edge and non-fatal; surface them in
+                // error_message so partial outcomes are visible on the wire.
+                let error_message = if outcome.rejected.is_empty() {
+                    None
+                } else {
+                    Some(format!(
+                        "{} edge(s) rejected: {}",
+                        outcome.rejected.len(),
+                        outcome
+                            .rejected
+                            .iter()
+                            .take(5)
+                            .map(|r| format!("{}: {}", r.edge_id, r.reason))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    ))
+                };
                 Ok(Response::new(pv2::BatchCreateGraphEdgesResponse {
-                    success: true,
+                    success: outcome.rejected.is_empty(),
                     created_count: edges.len() as u32,
                     edges,
-                    error_message: None,
+                    error_message,
                 }))
             }
             Err(e) => Err(graph_status("batch create edges", e)),

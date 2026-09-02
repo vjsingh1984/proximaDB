@@ -5,10 +5,25 @@ Chunks text at paragraph boundaries while respecting size constraints.
 """
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
+from .base import (
+    OFFSET_CONTRACT_EXACT,
+    ChunkingConfig,
+    ChunkingStrategyInterface,
+    TextChunk,
+)
+from .spans import (
+    Slicer,
+    Span,
+    SpanBuffer,
+    TextSlicer,
+    hard_split,
+    is_empty,
+    merge_spans,
+    strip_span,
+)
 
 
 class ParagraphStrategy(ChunkingStrategyInterface):
@@ -21,6 +36,9 @@ class ParagraphStrategy(ChunkingStrategyInterface):
     #: Paragraph boundaries (blank lines) are local; a buffer holding the
     #: current paragraph group plus the in-progress paragraph is enough.
     supports_streaming = True
+
+    #: Span-first: every chunk is a verbatim slice of the source.
+    _offset_contract = OFFSET_CONTRACT_EXACT
 
     def __init__(self, config: ChunkingConfig):
         super().__init__(config)
@@ -37,23 +55,34 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         # Pattern for numbered lists
         self.numbered_list_pattern = re.compile(r"^\s*\d+[\.\)]\s+", re.MULTILINE)
 
+    def _paragraph_spans(self, text: str, origin: int = 0) -> list[Span]:
+        """Paragraph spans, derived from the separator matches themselves.
+
+        Replaces the old ``text.find(stripped_part, cursor)`` search: `find` is
+        O(n*m) over a large document — one of the two quadratic paths the
+        ``whitespace_heavy`` corpus entry exists to catch — and it can only
+        recover a position for text it already reconstructed. Deriving the span
+        directly from ``finditer`` is both linear and exact.
+        """
+        spans: list[Span] = []
+        cursor = 0
+        for match in self.paragraph_pattern.finditer(text):
+            span = strip_span(text, cursor, match.start())
+            if not is_empty(span):
+                spans.append((span[0] + origin, span[1] + origin))
+            cursor = match.end()
+        tail = strip_span(text, cursor, len(text))
+        if not is_empty(tail):
+            spans.append((tail[0] + origin, tail[1] + origin))
+        return spans
+
     def _split_into_paragraphs(self, text: str) -> list[tuple[str, int]]:
-        """Split text into paragraphs with positions"""
-        paragraphs = []
+        """Split text into paragraphs with positions.
 
-        # Split by paragraph breaks
-        parts = self.paragraph_pattern.split(text)
-        current_pos = 0
-
-        for part in parts:
-            part = part.strip()
-            if part:
-                # Find actual position in original text
-                start_pos = text.find(part, current_pos)
-                paragraphs.append((part, start_pos))
-                current_pos = start_pos + len(part)
-
-        return paragraphs
+        Retained as the ``(text, start)`` view over :meth:`_paragraph_spans` for
+        callers and tests that predate the span-first migration.
+        """
+        return [(text[start:end], start) for start, end in self._paragraph_spans(text)]
 
     def _is_list_paragraph(self, text: str) -> bool:
         """Check if paragraph is a list"""
@@ -70,43 +99,78 @@ class ParagraphStrategy(ChunkingStrategyInterface):
 
         return list_lines >= len(lines) * 0.7
 
+    def _split_large_paragraph_spans(
+        self, slicer: Slicer, start: int, end: int, max_size: int
+    ) -> list[tuple[Span, bool]]:
+        """Split one oversized paragraph into (span, forced) of at most ``max_size``.
+
+        Sentence boundaries first, then :func:`hard_split` as the terminal
+        backstop so a paragraph with no sentence boundary at all (minified
+        content, CJK without terminators) still cannot exit over the cap. The
+        old version grouped to ``chunk_size`` with no cap check and rebuilt text
+        with ``" ".join``, then guessed offsets by advancing a cursor by the
+        rejoined length — the single worst offset site in this file.
+        """
+        text = slicer(start, end)
+        if self._size(slicer, start, end) <= max_size:
+            return [((start, end), False)]
+
+        endings = "".join(re.escape(e) for e in self.config.sentence_endings)
+        sentence_pattern = re.compile(rf"(?<=[{endings}])\s+")
+
+        units: list[Span] = []
+        cursor = 0
+        for match in sentence_pattern.finditer(text):
+            span = strip_span(text, cursor, match.start())
+            if not is_empty(span):
+                units.append(span)
+            cursor = match.end()
+        tail = strip_span(text, cursor, len(text))
+        if not is_empty(tail):
+            units.append(tail)
+        if not units:
+            units = [(0, len(text))]
+
+        out: list[Span] = []
+        group: list[Span] = []
+        for unit in units:
+            if group and self._size(text, group[0][0], unit[1]) > max_size:
+                out.append(merge_spans(group))
+                group = []
+            group.append(unit)
+        if group:
+            out.append(merge_spans(group))
+
+        # Absolutize, enforcing the cap on anything a sentence split left over.
+        # `forced` marks a cut made with no boundary to honour, so the trace's
+        # boundary histogram shows how often the backstop actually fires.
+        capped: list[tuple[Span, bool]] = []
+        for local_start, local_end in out:
+            if self._size(text, local_start, local_end) <= max_size:
+                capped.append(((start + local_start, start + local_end), False))
+                continue
+            for piece_start, piece_end in hard_split(
+                text, local_start, local_end, max_size
+            ):
+                capped.append(((start + piece_start, start + piece_end), True))
+        return capped
+
     def _split_large_paragraph(self, text: str, max_size: int) -> list[str]:
-        """Split a large paragraph into smaller chunks"""
-        if len(text) <= max_size:
-            return [text]
-
-        # Try to split at sentence boundaries first
-        sentence_endings = "|".join(re.escape(e) for e in self.config.sentence_endings)
-        sentence_pattern = re.compile(rf"(?<=[{sentence_endings}])\s+")
-
-        sentences = sentence_pattern.split(text)
-
-        # Group sentences into chunks
-        chunks = []
-        current_chunk = []
-        current_length = 0
-
-        for sentence in sentences:
-            sentence_length = len(sentence)
-
-            if current_chunk and current_length + sentence_length + 1 > max_size:
-                chunks.append(" ".join(current_chunk))
-                current_chunk = []
-                current_length = 0
-
-            current_chunk.append(sentence)
-            current_length += sentence_length + (1 if current_chunk else 0)
-
-        if current_chunk:
-            chunks.append(" ".join(current_chunk))
-
-        return chunks
+        """Text view over :meth:`_split_large_paragraph_spans` (compat)."""
+        return [
+            text[span[0] : span[1]]
+            for span, _forced in self._split_large_paragraph_spans(
+                TextSlicer(text), 0, len(text), max_size
+            )
+        ]
 
     def _group_paragraphs(
         self,
-        paragraphs: Iterable[tuple[str, int]],
+        paragraphs: Iterable[Span],
+        slicer: Slicer,
         source_id: str,
         base_metadata: dict[str, Any],
+        release: Callable[[int], None] = lambda _pos: None,
     ) -> Iterator[TextChunk]:
         """Group a stream of (paragraph, abs_start) into chunks.
 
@@ -115,93 +179,65 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         the count, the streaming path cannot know it.
         """
         chunk_index = 0
-        current_chunk_paras: list[str] = []
-        current_chunk_length = 0
-        current_chunk_start = 0
+        group: list[Span] = []
 
-        for para_text, para_start in paragraphs:
-            para_length = len(para_text)
-            is_list = self._is_list_paragraph(para_text)
+        def emit(
+            spans: list[Span], is_list: bool = False, forced: bool = False
+        ) -> TextChunk:
+            nonlocal chunk_index
+            start, end = merge_spans(spans)
+            chunk = self._create_chunk(
+                slicer(start, end),
+                start,
+                chunk_index,
+                source_id,
+                base_metadata,
+                len(spans),
+                is_list,
+                forced,
+            )
+            chunk_index += 1
+            release(end)
+            return chunk
 
-            # Check if paragraph itself is too large
+        for span in paragraphs:
+            para_start, para_end = span
+            para_length = self._size(slicer, para_start, para_end)
+
+            # A paragraph larger than the cap cannot join a group at all.
             if para_length > self.config.max_chunk_size:
-                # First, create chunk from accumulated paragraphs
-                if current_chunk_paras:
-                    chunk_text = "\n\n".join(current_chunk_paras)
-                    if len(chunk_text) >= self.config.min_chunk_size:
-                        yield self._create_chunk(
-                            chunk_text,
-                            current_chunk_start,
-                            chunk_index,
-                            source_id,
-                            base_metadata,
-                            len(current_chunk_paras),
-                        )
-                        chunk_index += 1
-                    current_chunk_paras = []
-                    current_chunk_length = 0
-
-                # Split large paragraph
-                sub_chunks = self._split_large_paragraph(
-                    para_text, self.config.chunk_size
-                )
-                for sub_chunk in sub_chunks:
-                    yield self._create_chunk(
-                        sub_chunk,
-                        para_start,
-                        chunk_index,
-                        source_id,
-                        base_metadata,
-                        1,
-                        is_list,
-                    )
-                    chunk_index += 1
-                    para_start += len(sub_chunk) + 1
-
-                current_chunk_start = para_start
+                if group:
+                    yield emit(group)
+                    group = []
+                is_list = self._is_list_paragraph(slicer(para_start, para_end))
+                for sub, forced in self._split_large_paragraph_spans(
+                    slicer, para_start, para_end, self.config.chunk_size
+                ):
+                    yield emit([sub], is_list, forced)
                 continue
 
-            # Check if adding this paragraph exceeds chunk size
-            separator_length = 2 if current_chunk_paras else 0  # "\n\n"
-            if (
-                current_chunk_paras
-                and current_chunk_length + separator_length + para_length
-                > self.config.chunk_size
-            ):
-                # Create chunk from accumulated paragraphs
-                chunk_text = "\n\n".join(current_chunk_paras)
-                if len(chunk_text) >= self.config.min_chunk_size:
-                    yield self._create_chunk(
-                        chunk_text,
-                        current_chunk_start,
-                        chunk_index,
-                        source_id,
-                        base_metadata,
-                        len(current_chunk_paras),
+            # Flush when adding this paragraph would exceed chunk_size — but
+            # only if what we already have clears the floor. Otherwise keep
+            # accumulating: an undersized group MERGES FORWARD rather than being
+            # dropped, which is what previously deleted interior content
+            # outright (only the final group had an escape hatch).
+            if group:
+                group_start = group[0][0]
+                if self._size(slicer, group_start, para_end) > self.config.chunk_size:
+                    current_length = self._size(slicer, group_start, group[-1][1])
+                    fits_cap = (
+                        self._size(slicer, group_start, para_end)
+                        <= self.config.max_chunk_size
                     )
-                    chunk_index += 1
+                    if current_length >= self.config.min_chunk_size or not fits_cap:
+                        yield emit(group)
+                        group = []
 
-                # Start new chunk
-                current_chunk_paras = [para_text]
-                current_chunk_length = para_length
-                current_chunk_start = para_start
-            else:
-                # Add to current chunk
-                current_chunk_paras.append(para_text)
-                current_chunk_length += separator_length + para_length
+            group.append(span)
 
-        # Handle remaining paragraphs
-        if current_chunk_paras:
-            chunk_text = "\n\n".join(current_chunk_paras)
-            if len(chunk_text) >= self.config.min_chunk_size or chunk_index == 0:
-                yield self._create_chunk(
-                    chunk_text,
-                    current_chunk_start,
-                    chunk_index,
-                    source_id,
-                    base_metadata,
-                    len(current_chunk_paras),
-                )
+        # Never drop the remainder — emit it short rather than lose it.
+        if group:
+            yield emit(group)
 
     def chunk(
         self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
@@ -215,11 +251,13 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         base_metadata = base_metadata or {}
 
         # Split into paragraphs
-        paragraphs = self._split_into_paragraphs(text)
-        if not paragraphs:
+        spans = self._paragraph_spans(text)
+        if not spans:
             return []
 
-        chunks = list(self._group_paragraphs(paragraphs, source_id, base_metadata))
+        chunks = list(
+            self._group_paragraphs(spans, TextSlicer(text), source_id, base_metadata)
+        )
 
         # Update total chunks count
         for chunk in chunks:
@@ -257,20 +295,31 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         current paragraph group plus the in-progress paragraph.
         """
         self.validate_config()
+        self._require_streamable_measure()
 
         base_metadata = base_metadata or {}
+        buffer = SpanBuffer()
+        # The grouper releases only up to the end of a chunk it has just
+        # emitted, so the buffer always still holds the current group. That is
+        # what lets streaming slice `source[group_span]` — the same operation
+        # batch performs — instead of rejoining paragraph texts.
         yield from self._group_paragraphs(
-            self._paragraph_stream(text_source), source_id, base_metadata
+            self._paragraph_span_stream(text_source, buffer),
+            buffer.slice,
+            source_id,
+            base_metadata,
+            buffer.trim_to,
         )
 
-    def _paragraph_stream(
-        self, text_source: "str | Iterable[str]"
-    ) -> Iterator[tuple[str, int]]:
-        """Yield (stripped_paragraph, absolute_start) incrementally.
+    def _paragraph_span_stream(
+        self, text_source: "str | Iterable[str]", buffer: SpanBuffer
+    ) -> Iterator[Span]:
+        """Yield absolute paragraph spans as boundaries are confirmed.
 
-        Mirrors :meth:`_split_into_paragraphs` exactly (same strip + ``find``
-        offset semantics) but emits paragraphs as soon as a paragraph break is
-        confirmed, holding back only the trailing (possibly incomplete) one.
+        Feeds the SAME grouping engine the batch path uses, so the two cannot
+        disagree. Only the trailing paragraph is held back — a separator match
+        that ends exactly at the buffer end may still grow with the next piece,
+        so it is not yet a decided boundary.
         """
         pieces: Iterable[str]
         if isinstance(text_source, str):
@@ -278,47 +327,41 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         else:
             pieces = text_source
 
-        buffer = ""
-        # Absolute index in the concatenated input of buffer[0].
-        buffer_origin = 0
-        # Where the next `find` search starts, RELATIVE to buffer[0]
-        # (matches batch's `current_pos` which advances past emitted paragraphs).
-        search_rel = 0
+        # Absolute offset up to which spans have already been emitted.
+        emitted_to = 0
 
-        def emit_from_buffer(hold_last: bool) -> Iterator[tuple[str, int]]:
-            nonlocal buffer, buffer_origin, search_rel
-            parts = self.paragraph_pattern.split(buffer)
-            # When holding the last (more input may come), the final part might
-            # still grow; only commit complete parts before it.
-            committable = parts[:-1] if (hold_last and parts) else parts
-            consumed_rel = search_rel
-            for part in committable:
-                stripped = part.strip()
-                if stripped:
-                    start_rel = buffer.find(stripped, consumed_rel)
-                    yield (stripped, buffer_origin + start_rel)
-                    consumed_rel = start_rel + len(stripped)
-            if hold_last:
-                # Drop everything we've consumed; keep the unsplit tail so the
-                # next piece can extend the final (held) paragraph and any
-                # boundary that follows it.
-                if committable:
-                    # Recompute a safe carry point: keep from the start of the
-                    # held (last) part. Find where the tail begins.
-                    drop = consumed_rel
-                    if drop > 0:
-                        buffer = buffer[drop:]
-                        buffer_origin += drop
-                        search_rel = 0
+        def drain(final: bool) -> Iterator[Span]:
+            nonlocal emitted_to
+            text = buffer.buffer
+            origin = buffer.origin
+            last_end = 0
+            for match in self.paragraph_pattern.finditer(text):
+                if not final and match.end() == len(text):
+                    # The separator may extend with the next piece; not decided.
+                    break
+                span = strip_span(text, last_end, match.start())
+                last_end = match.end()
+                if is_empty(span):
+                    continue
+                absolute = (span[0] + origin, span[1] + origin)
+                if absolute[0] >= emitted_to:
+                    emitted_to = absolute[1]
+                    yield absolute
+            if final:
+                tail = strip_span(text, last_end, len(text))
+                if not is_empty(tail):
+                    absolute = (tail[0] + origin, tail[1] + origin)
+                    if absolute[0] >= emitted_to:
+                        emitted_to = absolute[1]
+                        yield absolute
 
         for piece in pieces:
             if not piece:
                 continue
-            buffer += piece
-            yield from emit_from_buffer(hold_last=True)
+            buffer.append(piece)
+            yield from drain(final=False)
 
-        # Flush remaining paragraphs at EOF.
-        yield from emit_from_buffer(hold_last=False)
+        yield from drain(final=True)
 
     def _create_chunk(
         self,
@@ -329,6 +372,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         base_metadata: dict[str, Any],
         paragraph_count: int,
         is_list: bool = False,
+        forced_split: bool = False,
     ) -> TextChunk:
         """Create a chunk with metadata"""
         chunk_metadata = {
@@ -336,6 +380,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
             "chunk_type": "paragraph",
             "paragraph_count": paragraph_count,
             "is_list": is_list,
+            "forced_split": forced_split,
             "first_line": (
                 text.split("\n")[0][:50] + "..."
                 if len(text.split("\n")[0]) > 50

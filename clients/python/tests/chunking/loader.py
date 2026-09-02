@@ -112,8 +112,12 @@ def _setup_modules():
         chunking_strategies = sys.modules["proximadb.chunking_strategies"]
 
     # Load modules in dependency order
-    # 1. Base module (no dependencies)
+    # 1. Leaf modules (no intra-package dependencies)
     _load_module("proximadb.chunking_strategies.base", "base.py", chunking_strategies)
+    # spans.py is the span-first primitive layer every strategy imports; it must
+    # be present before them or their `from .spans import ...` fails and the
+    # whole synthetic package silently fails to build.
+    _load_module("proximadb.chunking_strategies.spans", "spans.py", chunking_strategies)
 
     # 2. Strategy modules (depend on base)
     _load_module(
@@ -163,6 +167,20 @@ def _setup_modules():
     _load_module(
         "proximadb.chunking_strategies.pipeline", "pipeline.py", chunking_strategies
     )
+
+    # `code_knowledge` imports `._code_oid`, so the synthetic package must carry
+    # it first. Registered explicitly rather than relied upon: this loader
+    # rebuilds the package by hand, so any module reached only through an
+    # import chain is invisible to it until something breaks.
+    if "proximadb._code_oid" not in sys.modules:
+        code_oid_spec = importlib.util.spec_from_file_location(
+            "proximadb._code_oid",
+            str(src_path / "proximadb_sdk" / "_code_oid.py"),
+        )
+        code_oid_module = importlib.util.module_from_spec(code_oid_spec)
+        sys.modules["proximadb._code_oid"] = code_oid_module
+        code_oid_spec.loader.exec_module(code_oid_module)
+        proximadb._code_oid = code_oid_module
 
     # Load code_knowledge module if not already loaded
     if "proximadb.code_knowledge" not in sys.modules:

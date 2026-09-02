@@ -44,8 +44,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 use proximadb_cache::{
-    CacheBudget, CacheKey, CacheKind, CacheScope, L2CacheStats, L2Class, L2ValueStore,
-    PersistentArcBytesL2, PersistentByteStore, TenantCache,
+    CacheBudget, CacheKey, CacheKind, CacheReadOutcome, CacheScope, L2CacheStats, L2Class,
+    L2ValueStore, PersistentArcBytesL2, PersistentByteStore, TenantCache,
 };
 use proximadb_storage_filesystem_types::{FilesystemError, FsResult};
 
@@ -136,6 +136,12 @@ pub struct WarmKey {
 /// Per-tenant cap on tracked hot keys (~100 B each ⇒ ≤ ~400 KB/tenant).
 const HOT_KEYS_CAP: usize = 4096;
 
+/// TD-RDSTRAT-12 §3: L2 namespace the exact-key write path uses (via
+/// `TracedSurvivorL2`/`PersistentArcBytesL2` in [`Self::with_resolver_and_l2`]).
+/// Shared by the write path and [`Self::peek_parent_residency`]'s exact-L2
+/// probe so the two can never drift.
+const L2_EXACT_NAMESPACE: &str = "survivor-exact";
+
 impl SurvivorRangeCache {
     /// New cache with a `budget_bytes` byte ceiling (the shared elastic pool;
     /// also the per-tenant hard ceiling — entries beyond it bypass caching, so
@@ -192,7 +198,7 @@ impl SurvivorRangeCache {
         if let Some(store) = &l2_store {
             cache = cache.with_l2_backend(Arc::new(TracedSurvivorL2(PersistentArcBytesL2::new(
                 store.clone(),
-                "survivor-exact",
+                L2_EXACT_NAMESPACE,
                 L2Class::Survivor,
             ))));
         }
@@ -320,14 +326,22 @@ impl SurvivorRangeCache {
         let Ok(slice_len) = usize::try_from(len) else {
             return self.get_or_fetch(kind, path, off, len, loader).await;
         };
-        if let Some(exact) = self.inner.get(&exact_key).await {
+        if let Some((exact, outcome)) = self.inner.get_with_outcome(&exact_key).await {
+            crate::observability::io_trace::record_survivor_l1s(
+                u64::from(outcome == CacheReadOutcome::MemoryHit),
+                u64::from(outcome != CacheReadOutcome::MemoryHit),
+            );
             self.sync_prometheus();
             return Ok(exact);
         }
         let end = start.saturating_add(slice_len);
-        if let Some(parent) = self.inner.get(&parent_key).await
+        if let Some((parent, outcome)) = self.inner.get_with_outcome(&parent_key).await
             && let Some(slice) = parent.get(start..end)
         {
+            crate::observability::io_trace::record_survivor_l1s(
+                u64::from(outcome == CacheReadOutcome::MemoryHit),
+                u64::from(outcome != CacheReadOutcome::MemoryHit),
+            );
             // A complete write-time seed already occupies the useful cache
             // slot. Do not admit every query-dependent slice as another exact
             // entry: doing so duplicates the region, evicts its parent, and
@@ -347,6 +361,7 @@ impl SurvivorRangeCache {
                 self.inner
                     .insert_memory_only(exact_key, weight, bytes.clone())
                     .await;
+                crate::observability::io_trace::record_survivor_l1s(0, 1);
                 self.sync_prometheus();
                 return Ok(bytes);
             }
@@ -360,8 +375,9 @@ impl SurvivorRangeCache {
                 Ok::<Arc<[u8]>, FilesystemError>(Arc::from(loader().await?))
             })
             .await;
+        crate::observability::io_trace::record_survivor_l1s(0, 1);
         self.sync_prometheus();
-        result
+        result.map(|(value, _)| value)
     }
 
     pub fn l2_stats(&self) -> L2CacheStats {
@@ -475,8 +491,124 @@ impl SurvivorRangeCache {
                 Ok::<Arc<[u8]>, FilesystemError>(Arc::from(bytes))
             })
             .await;
+        if let Ok((_, outcome)) = &result {
+            crate::observability::io_trace::record_survivor_l1s(
+                u64::from(*outcome == CacheReadOutcome::MemoryHit),
+                u64::from(*outcome != CacheReadOutcome::MemoryHit),
+            );
+        }
         self.sync_prometheus();
-        result
+        result.map(|(value, _)| value)
+    }
+
+    /// TD-RDSTRAT-12 §3: side-effect-free residency probe for batch-prefetch
+    /// planning — `Some(bytes)` iff a subsequent [`Self::get_or_fetch`] with
+    /// these exact coordinates would be served from DRAM (pinned or L1)
+    /// WITHOUT running its loader. No `track_hot_key`, no hit/miss counters,
+    /// no inserts, no persistent-tier reads. Deliberately conservative: an
+    /// `None` answer may still be served from a lower tier by the eventual
+    /// consume call, so callers must treat every batched range as payable I/O
+    /// they intended to issue anyway.
+    pub async fn peek_memory_exact(
+        &self,
+        kind: CacheKind,
+        path: &str,
+        off: u64,
+        len: u64,
+    ) -> Option<Arc<[u8]>> {
+        let scope = request_cache_scope();
+        let key = CacheKey::with_scope(scope, kind, format!("{path}:{off}:{len}"));
+        self.inner.peek_memory(&key).await
+    }
+
+    /// TD-RDSTRAT-12 §3 (round 4): the [`Self::get_or_fetch_in_parent`] mirror
+    /// of [`Self::peek_memory_exact`] — `Some(bytes)` iff a subsequent
+    /// `get_or_fetch_in_parent(kind, path, off, len, parent_off, parent_len)`
+    /// would be served WITHOUT running its loader. Probes, in the same order
+    /// as the real method and ALL side-effect-free (no `track_hot_key`, no
+    /// hit/miss or `parent_l2_*` counters, no `record_l2s`, no L1 promotion —
+    /// every accounting in `get_or_fetch_in_parent` lives in its body, not in
+    /// the stores):
+    ///
+    /// 1. exact-range L1 (the `{path}:{off}:{len}` scoped key);
+    /// 2. parent-region L1 slice (the write-time seed key);
+    /// 3. parent-key L2 range (`survivor-parent/…`, covering seeds);
+    /// 4. **exact-key L2** (`persistent_key(L2_EXACT_NAMESPACE)`) — the
+    ///    clustered-loop loaders persist under exact keys via `get_or_load`'s
+    ///    write-through; without this step a RAM-only peek classifies
+    ///    L1-evicted-but-L2-resident ranges as cold and re-GETs them from the
+    ///    object store (a warm-phase billing regression). Probed through the
+    ///    RAW `PersistentByteStore` (never the traced wrapper) so no io_trace
+    ///    or l2 counters move. The only effect is an LRU recency tick plus a
+    ///    local-disk read (~ms per 4 MiB range, gated-only) — accepted.
+    ///
+    /// `None` ⇒ the loader WILL run ⇒ the caller may batch this range.
+    pub async fn peek_parent_residency(
+        &self,
+        kind: CacheKind,
+        path: &str,
+        off: u64,
+        len: u64,
+        parent_off: u64,
+        parent_len: u64,
+    ) -> Option<Arc<[u8]>> {
+        let scope = request_cache_scope();
+        // 1. Exact-range L1 (same key get_or_fetch_in_parent builds).
+        let exact_key = CacheKey::with_scope(scope.clone(), kind, format!("{path}:{off}:{len}"));
+        if let Some(bytes) = self.inner.peek_memory(&exact_key).await {
+            return Some(bytes);
+        }
+        // 2./3. Parent tiers (mirror the real method's coordinate checks).
+        let Some(relative_off) = off.checked_sub(parent_off) else {
+            // Outside the parent: the real method falls back to plain
+            // get_or_fetch semantics — only the exact tiers apply.
+            return self.peek_exact_l2(&exact_key, len).await;
+        };
+        if relative_off.saturating_add(len) > parent_len {
+            return self.peek_exact_l2(&exact_key, len).await;
+        }
+        let parent_key = CacheKey::shared(
+            CacheKind::QuantizedCodes,
+            format!("{path}:{parent_off}:{parent_len}"),
+        );
+        let Ok(start) = usize::try_from(relative_off) else {
+            return self.peek_exact_l2(&exact_key, len).await;
+        };
+        let Ok(slice_len) = usize::try_from(len) else {
+            return self.peek_exact_l2(&exact_key, len).await;
+        };
+        let end = start.saturating_add(slice_len);
+        // 2. Parent-region L1 slice.
+        if let Some(parent) = self.inner.peek_memory(&parent_key).await
+            && parent.get(start..end).is_some()
+        {
+            return Some(parent);
+        }
+        // 3. Parent-key L2 (covers write-time seeds). Raw store, no counters.
+        if let Some(store) = &self.l2_store
+            && let Ok(Some(bytes)) = store
+                .get_range(
+                    &Self::parent_key(path, parent_off, parent_len),
+                    relative_off,
+                    len,
+                )
+                .await
+        {
+            return Some(bytes);
+        }
+        // 4. Exact-key L2 (clustered-loop loader write-through entries).
+        self.peek_exact_l2(&exact_key, len).await
+    }
+
+    /// Exact-key L2 probe through the RAW store — no `TracedSurvivorL2`
+    /// io_trace recording, no L1 promotion, no counters.
+    async fn peek_exact_l2(&self, exact_key: &CacheKey, len: u64) -> Option<Arc<[u8]>> {
+        let store = self.l2_store.as_ref()?;
+        store
+            .get_range(&exact_key.persistent_key(L2_EXACT_NAMESPACE), 0, len)
+            .await
+            .ok()
+            .flatten()
     }
 
     /// TD-CACHE-1 S2: the top-`k` hot ranges per tenant by hit count — the
@@ -834,6 +966,38 @@ mod tests {
             snap.l2_hits,
             snap.l2_misses
         );
+        assert_eq!(
+            (snap.survivor_l1_hits, snap.survivor_l1_misses),
+            (0, 1),
+            "the exact-key and parent-key probes are one logical DRAM miss"
+        );
+    }
+
+    /// A survivor lookup records one logical L1 outcome per requested range.
+    /// The first request misses and loads; the second request hits DRAM.
+    #[cfg(feature = "io-trace")]
+    #[tokio::test]
+    async fn dram_probe_outcomes_reach_the_ambient_io_trace() {
+        let cache = SurvivorRangeCache::new(1 << 20);
+        let snap =
+            crate::observability::io_trace::instrument(Some("t".to_string()), "test", async move {
+                cache
+                    .get_or_fetch(CacheKind::QuantizedCodes, "seg.pax", 8, 4, || async {
+                        Ok(vec![1, 2, 3, 4])
+                    })
+                    .await
+                    .expect("cold load");
+                cache
+                    .get_or_fetch(CacheKind::QuantizedCodes, "seg.pax", 8, 4, || async {
+                        panic!("warm lookup must not call loader")
+                    })
+                    .await
+                    .expect("warm hit");
+                crate::observability::io_trace::snapshot().expect("trace in scope")
+            })
+            .await;
+
+        assert_eq!((snap.survivor_l1_hits, snap.survivor_l1_misses), (1, 1));
     }
 
     /// TD-CACHE-1 S2: warm_set ranks by hit count, caps at top_k, and
@@ -968,5 +1132,197 @@ mod tests {
         }
         // (0,1024) hits on the 3rd call; the two distinct ranges miss once each.
         assert_eq!(fetches.load(Ordering::SeqCst), 2);
+    }
+
+    /// TD-RDSTRAT-12 §3: `peek_memory_exact` uses THE SAME scoped key as
+    /// `get_or_fetch`, so a peek-None followed by a load makes the next peek
+    /// Some — and a peek-Some guarantees the consume loader never runs (the
+    /// property the batch-prefetch planner leans on).
+    #[tokio::test]
+    async fn peek_memory_exact_key_matches_get_or_fetch() {
+        let cache = SurvivorRangeCache::new(16 * 1024 * 1024);
+        assert_eq!(
+            cache
+                .peek_memory_exact(CacheKind::Other, "seg.pax", 0, 1024)
+                .await,
+            None,
+            "unknown range is not resident"
+        );
+
+        let loaded: Arc<[u8]> = Arc::from(vec![7u8; 1024].as_slice());
+        cache
+            .get_or_fetch(CacheKind::Other, "seg.pax", 0, 1024, || async {
+                Ok(loaded.to_vec())
+            })
+            .await
+            .unwrap();
+
+        // Resident after the load — identical coordinates, identical key.
+        let resident = cache
+            .peek_memory_exact(CacheKind::Other, "seg.pax", 0, 1024)
+            .await;
+        assert!(
+            resident.is_some(),
+            "peek must see the entry get_or_fetch wrote"
+        );
+
+        // A peek-verified range served via get_or_fetch never runs its loader.
+        let ran = Arc::new(AtomicUsize::new(0));
+        let r = ran.clone();
+        let again = cache
+            .get_or_fetch(CacheKind::Other, "seg.pax", 0, 1024, move || {
+                let ran = r.clone();
+                async move {
+                    ran.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![0u8; 1024]) // would be wrong if it ran
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(ran.load(Ordering::SeqCst), 0, "loader skipped on residency");
+        assert_eq!(&*again, resident.as_deref().unwrap());
+    }
+
+    /// TD-RDSTRAT-12 §3 round 4: `peek_parent_residency` must see EVERY tier
+    /// `get_or_fetch_in_parent` can serve without its loader — exact L1,
+    /// parent L1 (write-time seed), parent L2 (seed across a cache restart),
+    /// and exact-key L2 (clustered-loop loader write-through after an L1
+    /// eviction/restart). Dropping any probe step flips that tier to `None`
+    /// and the batch planner would re-GET resident ranges.
+    #[tokio::test]
+    async fn peek_parent_residency_matches_get_or_fetch_in_parent_residency_tiers() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let store =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("open persistent L2"));
+
+        // Tier: exact L1 (loader wrote the exact entry; L1 resident).
+        let cache = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        let payload: Arc<[u8]> = Arc::from(vec![9u8; 512].as_slice());
+        cache
+            .get_or_fetch_in_parent(
+                CacheKind::QuantizedCodes,
+                "seg.pax",
+                256,
+                512,
+                0,
+                4096,
+                || {
+                    let payload = payload.clone();
+                    async move { Ok(payload.to_vec()) }
+                },
+            )
+            .await
+            .expect("load exact range");
+        assert!(
+            cache
+                .peek_parent_residency(CacheKind::QuantizedCodes, "seg.pax", 256, 512, 0, 4096)
+                .await
+                .is_some(),
+            "tier exact-L1 must be visible to the peek"
+        );
+
+        // Tier: parent L1 (write-time seed in DRAM).
+        let cache2 = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        let parent: Arc<[u8]> = Arc::from((0u8..64).collect::<Vec<_>>());
+        cache2
+            .seed_parent_region("seed.pax", 0, parent)
+            .await
+            .expect("seed parent");
+        assert!(
+            cache2
+                .peek_parent_residency(CacheKind::QuantizedCodes, "seed.pax", 16, 8, 0, 64)
+                .await
+                .is_some(),
+            "tier parent-L1 must be visible to the peek"
+        );
+
+        // Tier: parent L2 (seed persisted; a FRESH cache over the same store
+        // has an empty L1, so only the persistent tier can answer).
+        let cache3 = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        assert!(
+            cache3
+                .peek_parent_residency(CacheKind::QuantizedCodes, "seed.pax", 16, 8, 0, 64)
+                .await
+                .is_some(),
+            "tier parent-L2 must be visible to the peek after restart"
+        );
+
+        // Tier: exact-key L2 (loader write-through; L1 empty after restart).
+        let cache4 = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        assert!(
+            cache4
+                .peek_parent_residency(CacheKind::QuantizedCodes, "seg.pax", 256, 512, 0, 4096)
+                .await
+                .is_some(),
+            "tier exact-L2 must be visible to the peek after restart"
+        );
+
+        // Unknown coordinates miss every tier.
+        assert!(
+            cache4
+                .peek_parent_residency(CacheKind::QuantizedCodes, "seg.pax", 999_999, 8, 0, 4096)
+                .await
+                .is_none(),
+            "unknown range must not be reported resident"
+        );
+    }
+
+    /// TD-RDSTRAT-12 §3 round 4: the peek is SIDE-EFFECT-FREE — no hit/miss
+    /// or parent_l2 counters, no io_trace l2 recordings, no L1 inserts. Any
+    /// accounting added to the peek distorts hit ratios and the warm-set
+    /// manifest, which the batch planner (and evidence) rely on.
+    #[tokio::test]
+    async fn peek_parent_residency_is_side_effect_free() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let store =
+            Arc::new(PersistentByteStore::open(dir.path(), 1 << 20).expect("open persistent L2"));
+        let cache = SurvivorRangeCache::with_resolver_and_l2(1 << 20, None, Some(store.clone()));
+        let parent: Arc<[u8]> = Arc::from((0u8..128).collect::<Vec<_>>());
+        cache
+            .seed_parent_region("seg.pax", 0, parent)
+            .await
+            .expect("seed parent");
+
+        let parent_l2_hits_before = cache.parent_l2_hits.load(Ordering::SeqCst);
+        let parent_l2_misses_before = cache.parent_l2_misses.load(Ordering::SeqCst);
+        let l2_stats_before = cache.l2_stats();
+        let inner_l2_before = cache.inner.l2_stats();
+
+        for off in [0u64, 16, 64, 120, 4_096] {
+            let _ = cache
+                .peek_parent_residency(CacheKind::QuantizedCodes, "seg.pax", off, 8, 0, 128)
+                .await;
+        }
+
+        assert_eq!(
+            cache.parent_l2_hits.load(Ordering::SeqCst),
+            parent_l2_hits_before,
+            "peek must not count parent L2 hits"
+        );
+        assert_eq!(
+            cache.parent_l2_misses.load(Ordering::SeqCst),
+            parent_l2_misses_before,
+            "peek must not count parent L2 misses"
+        );
+        assert_eq!(
+            cache.l2_stats().hits,
+            l2_stats_before.hits,
+            "peek must not move L1 hit counters"
+        );
+        assert_eq!(
+            cache.l2_stats().misses,
+            l2_stats_before.misses,
+            "peek must not move L1 miss counters"
+        );
+        assert_eq!(
+            cache.inner.l2_stats().hits,
+            inner_l2_before.hits,
+            "peek must not move the exact-L2 traced counters"
+        );
+        assert_eq!(
+            cache.inner.l2_stats().misses,
+            inner_l2_before.misses,
+            "peek must not move the exact-L2 traced counters"
+        );
     }
 }

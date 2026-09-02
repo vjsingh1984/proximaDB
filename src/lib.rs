@@ -297,11 +297,6 @@ pub use catalog::{
     // Catalog management
     CatalogManager,
     TableIdentifier,
-    // Catalog federation for unified view across internal and external catalogs
-    federation::{
-        ConstraintSupport, ExternalCatalog, ExternalCatalogConfig, ExternalCatalogType,
-        FederatedCatalog, FederatedCatalogConfig, FederatedTableInfo,
-    },
     // Internal schema registry
     internal::{
         // Object model

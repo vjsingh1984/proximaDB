@@ -62,7 +62,9 @@ static TIER_CONFIG: OnceLock<TierConfig> = OnceLock::new();
 #[derive(Debug, Deserialize)]
 pub struct TierConfig {
     pub schema_version: u32,
-    #[allow(dead_code)]
+    /// Fallback tier for tenants with no explicit stamp — READ cross-crate by
+    /// `catalog::tenant_tier::default_tier()`, which prefers the overlay's
+    /// value over the compiled `Tier::default()`.
     pub default_tier: String,
     pub tiers: Vec<TierSpec>,
 }
@@ -531,5 +533,67 @@ impl TenantTierRecord {
     pub fn effective_freshness_sla_seconds(&self) -> u32 {
         self.freshness_sla_seconds
             .unwrap_or_else(|| self.tier.default_freshness_sla_seconds())
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    //! ADR-0053: the exact artifact a commercial operator ships — a runtime
+    //! overlay at `PROXIMADB_TIER_CONFIG_PATH` whose tier ids are the
+    //! operator's own (commercial aliases), not the canonical `tier1..tier5`.
+    //! Exercises the full chain: `resolve_tier_config_source` →
+    //! `parse_and_validate` (alias-aware enum coverage) → `tier_row` alias
+    //! lookup. Exactly ONE test in this crate may initialize `TIER_CONFIG`
+    //! (the OnceLock has no reset); nextest's process-per-test makes that
+    //! safe, and no other test in this crate touches `tier_config()`.
+    use super::*;
+
+    /// The AnvaiOps-shaped projection (ADR-0053 W1): mechanics only — ids,
+    /// prom labels, soft caps, cost multiplier. Distinct values from the OSS
+    /// baseline so overlay-preference is observable.
+    const OVERLAY_JSON: &str = r#"{
+        "schema_version": 1,
+        "default_tier": "free_trial",
+        "tiers": [
+            { "id": "free_trial", "prom_label": "overlay-free",
+              "soft_caps": { "scan_budget_gb": 2.0, "ef_search_cap": 70, "freshness_sla_seconds": 800 },
+              "cost_multiplier": 1.25 },
+            { "id": "team", "prom_label": "overlay-team",
+              "soft_caps": { "scan_budget_gb": 5.0, "ef_search_cap": 170, "freshness_sla_seconds": 290 } },
+            { "id": "pro", "prom_label": "overlay-pro",
+              "soft_caps": { "scan_budget_gb": 42.0, "ef_search_cap": 300, "freshness_sla_seconds": 100 },
+              "cost_multiplier": 2.5 },
+            { "id": "business", "prom_label": "overlay-business",
+              "soft_caps": { "scan_budget_gb": 51.0, "ef_search_cap": 390, "freshness_sla_seconds": 50 } },
+            { "id": "enterprise", "prom_label": "overlay-enterprise",
+              "soft_caps": { "scan_budget_gb": 257.0, "ef_search_cap": 1030, "freshness_sla_seconds": 10 } }
+        ]
+    }"#;
+
+    #[test]
+    fn runtime_overlay_with_commercial_alias_ids_is_loaded_and_preferred() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tier-config.json");
+        std::fs::write(&path, OVERLAY_JSON).expect("write overlay");
+
+        // SAFETY: nextest runs process-per-test, so the env mutation cannot
+        // leak into sibling tests (same justification as
+        // config_loader_tests.rs).
+        unsafe { std::env::set_var("PROXIMADB_TIER_CONFIG_PATH", &path) };
+
+        // Alias-aware validation passed: all five commercial ids deserialized
+        // onto the Tier enum and covered every variant.
+        assert_eq!(tier_config().tiers.len(), 5);
+
+        // The overlay's row won over the baked baseline for the aliased tier.
+        assert_eq!(Tier::Tier3.prometheus_label(), "overlay-pro");
+        // The C5 governance scalar round-trips from the overlay (Tier3 = pro).
+        assert!((Tier::Tier3.cost_multiplier() - 2.5).abs() < 1e-9);
+        // Soft caps come from the overlay row, not the compiled defaults.
+        assert!((Tier::Tier3.default_scan_budget_gb() - 42.0).abs() < 1e-9);
+        assert_eq!(Tier::Tier3.default_ef_search_cap(), 300);
+        // Tier1 = free_trial via alias.
+        assert_eq!(Tier::Tier1.prometheus_label(), "overlay-free");
+        assert!((Tier::Tier1.cost_multiplier() - 1.25).abs() < 1e-9);
     }
 }

@@ -34,6 +34,20 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
       description: Authentication required or insufficient permissions.
   schemas:
+    ApplyModelRegistryMutationRequest:
+      properties:
+        expected_revision:
+          description: Optimistic concurrency token returned by the previous read or mutation.
+          format: int64
+          minimum: 0
+          type: integer
+        mutation:
+          $ref: '#/components/schemas/CatalogModelRegistryMutation'
+          description: Command-shaped mutation; whole-registry replacement is intentionally unsupported.
+      required:
+      - expected_revision
+      - mutation
+      type: object
     BatchCreateEdgesRequest:
       description: |
         Body for `POST /api/v2/graphs/{id}/edges/batch`.
@@ -112,6 +126,446 @@ components:
         surface:
           type: string
       type: object
+    CatalogArtifactDescriptor:
+      description: Content-addressed reference to bytes held outside xCatalog.
+      properties:
+        digest:
+          type: string
+        media_type:
+          type: string
+        size_bytes:
+          format: int64
+          minimum: 0
+          type: integer
+        uri:
+          type: string
+      required:
+      - uri
+      - digest
+      - size_bytes
+      - media_type
+      type: object
+    CatalogDeploymentBinding:
+      description: Mutable serving intent that always resolves to an immutable version/digest.
+      properties:
+        artifact_digest:
+          type: string
+        endpoint:
+          type: string
+        name:
+          type: string
+        runtime:
+          type: string
+        updated_at_ms:
+          format: int64
+          type: integer
+        version:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - name
+      - version
+      - artifact_digest
+      - runtime
+      - endpoint
+      - updated_at_ms
+      type: object
+    CatalogDimensionPolicy:
+      oneOf:
+      - enum:
+        - fixed
+        type: string
+      - enum:
+        - discrete
+        type: string
+      - properties:
+          range:
+            $ref: '#/components/schemas/CatalogDimensionRange'
+        required:
+        - range
+        type: object
+    CatalogDimensionRange:
+      properties:
+        minimum:
+          format: int32
+          minimum: 0
+          type: integer
+      required:
+      - minimum
+      type: object
+    CatalogEmbeddingInputContract:
+      description: Exact rendered-input and tokenizer budget consumed by an embedding runtime.
+      properties:
+        declared_context_limit:
+          format: int32
+          minimum: 0
+          type: integer
+        document_parameters:
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+          type: object
+        document_template:
+          type: string
+        effective_context_limit:
+          format: int32
+          minimum: 0
+          type: integer
+        model_revision:
+          type: string
+        query_parameters:
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+          type: object
+        query_template:
+          type: string
+        special_token_count:
+          format: int32
+          minimum: 0
+          type: integer
+        tokenizer_fingerprint:
+          type: string
+        tokenizer_id:
+          type: string
+        tokenizer_revision:
+          type: string
+      required:
+      - model_revision
+      - tokenizer_id
+      - tokenizer_revision
+      - tokenizer_fingerprint
+      - declared_context_limit
+      - effective_context_limit
+      - special_token_count
+      - document_template
+      - query_template
+      type: object
+    CatalogEmbeddingModelRegistry:
+      description: |-
+        Registered embedding model: immutable versions plus separately mutable or
+        append-only lifecycle records.
+      properties:
+        aliases:
+          additionalProperties:
+            format: int64
+            minimum: 0
+            type: integer
+          propertyNames:
+            type: string
+          type: object
+        decisions:
+          items:
+            $ref: '#/components/schemas/CatalogModelDecision'
+          type: array
+        deployments:
+          additionalProperties:
+            $ref: '#/components/schemas/CatalogDeploymentBinding'
+          propertyNames:
+            type: string
+          type: object
+        evidence:
+          items:
+            $ref: '#/components/schemas/CatalogEvaluationEvidence'
+          type: array
+        name:
+          type: string
+        revision:
+          description: |-
+            Optimistic concurrency token for catalog/API mutations. Old rows default
+            to zero; every successful command increments it.
+          format: int64
+          minimum: 0
+          type: integer
+        schema_version:
+          format: int32
+          minimum: 0
+          type: integer
+        tags:
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+          type: object
+        versions:
+          additionalProperties:
+            $ref: '#/components/schemas/CatalogEmbeddingModelVersion'
+          propertyNames:
+            format: int64
+            minimum: 0
+            type: integer
+          type: object
+      required:
+      - schema_version
+      - name
+      type: object
+    CatalogEmbeddingModelVersion:
+      description: Immutable executable contract for one registered model version.
+      properties:
+        artifact:
+          $ref: '#/components/schemas/CatalogArtifactDescriptor'
+        created_at_ms:
+          format: int64
+          type: integer
+        governance:
+          $ref: '#/components/schemas/CatalogModelGovernance'
+        input:
+          $ref: '#/components/schemas/CatalogEmbeddingInputContract'
+        lineage:
+          $ref: '#/components/schemas/CatalogModelLineage'
+        output:
+          $ref: '#/components/schemas/CatalogEmbeddingOutputContract'
+        provider_model_id:
+          type: string
+        source_run_id:
+          type:
+          - string
+          - 'null'
+        version:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - version
+      - provider_model_id
+      - artifact
+      - input
+      - output
+      - created_at_ms
+      type: object
+    CatalogEmbeddingOutputContract:
+      properties:
+        dimension_policy:
+          $ref: '#/components/schemas/CatalogDimensionPolicy'
+        native_dimension:
+          format: int32
+          minimum: 0
+          type: integer
+        normalized:
+          type: boolean
+        pooling:
+          type: string
+        supported_dimensions:
+          items:
+            format: int32
+            minimum: 0
+            type: integer
+          type: array
+      required:
+      - native_dimension
+      - dimension_policy
+      - supported_dimensions
+      - normalized
+      - pooling
+      type: object
+    CatalogEvaluationEvidence:
+      description: Append-only evaluation summary. Large row-level results remain external.
+      properties:
+        created_at_ms:
+          format: int64
+          type: integer
+        dataset_digest:
+          type: string
+        dataset_name:
+          type: string
+        evaluator:
+          type: string
+        evidence_id:
+          type: string
+        metrics:
+          additionalProperties:
+            format: double
+            type: number
+          propertyNames:
+            type: string
+          type: object
+        version:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - evidence_id
+      - version
+      - dataset_name
+      - dataset_digest
+      - evaluator
+      - metrics
+      - created_at_ms
+      type: object
+    CatalogLineageInput:
+      description: Digest-pinned input consumed by the execution that produced a model.
+      properties:
+        digest:
+          type: string
+        kind:
+          $ref: '#/components/schemas/CatalogLineageInputKind'
+        name:
+          type: string
+      required:
+      - kind
+      - name
+      - digest
+      type: object
+    CatalogLineageInputKind:
+      enum:
+      - dataset
+      - feature_set
+      - model
+      - artifact
+      type: string
+    CatalogModelAccess:
+      enum:
+      - open
+      - gated
+      - unreviewed
+      type: string
+    CatalogModelAliasMutation:
+      properties:
+        alias:
+          type: string
+        version:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - alias
+      - version
+      type: object
+    CatalogModelDecision:
+      description: Append-only policy/audit decision, intentionally separate from evidence.
+      properties:
+        created_at_ms:
+          format: int64
+          type: integer
+        decision:
+          $ref: '#/components/schemas/CatalogModelDecisionKind'
+        decision_id:
+          type: string
+        evidence_ids:
+          items:
+            type: string
+          type: array
+        principal:
+          type: string
+        version:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - decision_id
+      - version
+      - decision
+      - evidence_ids
+      - principal
+      - created_at_ms
+      type: object
+    CatalogModelDecisionKind:
+      enum:
+      - approved
+      - rejected
+      - deprecated
+      type: string
+    CatalogModelGovernance:
+      description: |-
+        Supply-chain and runtime policy declared for an immutable model version.
+        Approval decisions remain separate append-only audit records.
+      properties:
+        access:
+          $ref: '#/components/schemas/CatalogModelAccess'
+        approved_runtimes:
+          items:
+            type: string
+          type: array
+          uniqueItems: true
+        license_id:
+          type: string
+        requires_remote_code:
+          type: boolean
+      type: object
+    CatalogModelLineage:
+      description: MLMD/OpenLineage-shaped producer execution and its declared inputs.
+      properties:
+        code_revision:
+          type:
+          - string
+          - 'null'
+        inputs:
+          items:
+            $ref: '#/components/schemas/CatalogLineageInput'
+          type: array
+        producer_execution_id:
+          type:
+          - string
+          - 'null'
+      type: object
+    CatalogModelRegistryMutation:
+      description: |-
+        Command-shaped mutations preserve version/evidence/decision immutability at
+        the persistence boundary. API adapters lower into these commands instead
+        of replacing a whole registry document.
+      oneOf:
+      - properties:
+          operation:
+            enum:
+            - register_version
+            type: string
+          payload:
+            $ref: '#/components/schemas/CatalogEmbeddingModelVersion'
+        required:
+        - payload
+        - operation
+        title: RegisterModelVersionMutation
+        type: object
+      - properties:
+          operation:
+            enum:
+            - set_alias
+            type: string
+          payload:
+            $ref: '#/components/schemas/CatalogModelAliasMutation'
+        required:
+        - payload
+        - operation
+        type: object
+      - properties:
+          operation:
+            enum:
+            - append_evidence
+            type: string
+          payload:
+            $ref: '#/components/schemas/CatalogEvaluationEvidence'
+        required:
+        - payload
+        - operation
+        title: AppendModelEvidenceMutation
+        type: object
+      - properties:
+          operation:
+            enum:
+            - record_decision
+            type: string
+          payload:
+            $ref: '#/components/schemas/CatalogModelDecision'
+        required:
+        - payload
+        - operation
+        title: RecordModelDecisionMutation
+        type: object
+      - properties:
+          operation:
+            enum:
+            - upsert_deployment
+            type: string
+          payload:
+            $ref: '#/components/schemas/CatalogDeploymentBinding'
+        required:
+        - payload
+        - operation
+        title: UpsertModelDeploymentMutation
+        type: object
     CollectionStatsV2:
       description: Collection statistics for v2 API
       properties:
@@ -121,10 +575,20 @@ components:
           minimum: 0
           type: integer
         record_count:
-          description: Total number of records
+          description: |-
+            Total number of records, or `null` when the server does not know.
+
+            `null` is a real answer here, not a gap. The counter is maintained by
+            `MetadataStore::update_stats`, which the record write path does not call,
+            so a collection that has never had stats written carries none. Reporting
+            `0` in that case is a *confident wrong answer* — indistinguishable from a
+            genuinely empty collection, and it cost one downstream project a false
+            durability bug report before the cause was found (#1527).
           format: int64
           minimum: 0
-          type: integer
+          type:
+          - integer
+          - 'null'
         storage_size_bytes:
           description: Total storage size in bytes
           format: int64
@@ -136,7 +600,6 @@ components:
           minimum: 0
           type: integer
       required:
-      - record_count
       - storage_size_bytes
       - indexed_fields
       - text_field_count
@@ -156,6 +619,14 @@ components:
           - 'null'
         collection_id:
           description: Collection ID
+          type: string
+        content_revision:
+          description: Monotonic server-owned content revision for cache revalidation.
+          format: int64
+          minimum: 0
+          type: integer
+        content_revision_token:
+          description: Opaque validator that also fences server restarts.
           type: string
         created_at:
           description: Creation timestamp
@@ -210,6 +681,8 @@ components:
       - distance_metric
       - proxima_record_enabled
       - stats
+      - content_revision
+      - content_revision_token
       - index_specs
       - created_at
       type: object
@@ -437,6 +910,14 @@ components:
           type: string
       required:
       - graph_id
+      type: object
+    CreateModelRegistryRequest:
+      properties:
+        name:
+          description: Tenant-local registry name. Must be one traversal-free catalog segment.
+          type: string
+      required:
+      - name
       type: object
     CreateNodeRequest:
       description: |
@@ -1334,6 +1815,31 @@ components:
         success:
           type: boolean
       type: object
+    ListModelRegistriesResponse:
+      properties:
+        registries:
+          items:
+            $ref: '#/components/schemas/ModelRegistryRecordResponse'
+          type: array
+      required:
+      - registries
+      type: object
+    ModelRegistryRecordResponse:
+      description: |-
+        REST uses a decimal string for stable catalog IDs so JavaScript clients do
+        not lose precision. gRPC exposes the same value as `uint64`.
+      properties:
+        asset_id:
+          type: string
+        registry:
+          $ref: '#/components/schemas/CatalogEmbeddingModelRegistry'
+        tenant_id:
+          type: string
+      required:
+      - tenant_id
+      - asset_id
+      - registry
+      type: object
     NodeInput:
       description: |
         Node payload nested inside `CreateNodeRequest.node`. Matches
@@ -1562,6 +2068,73 @@ components:
       - id
       - props
       type: object
+    ResolveModelAliasRequest:
+      properties:
+        alias:
+          type: string
+        dimension:
+          format: int32
+          minimum: 0
+          type: integer
+        require_approved:
+          description: Require the latest append-only decision to approve the selected version.
+          type: boolean
+        runtime:
+          description: Runtime implementation that will execute the immutable contract.
+          type:
+          - string
+          - 'null'
+      required:
+      - alias
+      - dimension
+      type: object
+    ResolvedEmbeddingModelResponse:
+      properties:
+        asset_id:
+          type: string
+        contract_sha256:
+          type: string
+        model:
+          $ref: '#/components/schemas/CatalogEmbeddingModelVersion'
+        registry_name:
+          type: string
+        registry_revision:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - asset_id
+      - registry_name
+      - registry_revision
+      - contract_sha256
+      - model
+      type: object
+    ResolvedModelBindingResponse:
+      properties:
+        contract_sha256:
+          type: string
+        dimension:
+          format: int32
+          minimum: 0
+          type: integer
+        model:
+          type: string
+        model_asset_id:
+          type: string
+        model_version:
+          format: int64
+          minimum: 0
+          type: integer
+        snapshot:
+          $ref: '#/components/schemas/ResolvedEmbeddingModelResponse'
+      required:
+      - model
+      - dimension
+      - model_asset_id
+      - model_version
+      - contract_sha256
+      - snapshot
+      type: object
     RestColumnDefinition:
       description: Column definition for schema
       properties:
@@ -1691,6 +2264,12 @@ components:
         `next_cursor` signals end-of-scan. Each record matches the OpenAPI
         `RecordResponse` schema (same shape used by `getRecord`).
       properties:
+        content_revision:
+          format: int64
+          minimum: 0
+          type: integer
+        content_revision_token:
+          type: string
         next_cursor:
           type:
           - string
@@ -1707,6 +2286,8 @@ components:
           - 'null'
       required:
       - records
+      - content_revision
+      - content_revision_token
       type: object
     SchemaChange:
       description: Description of a schema change
@@ -2793,13 +3374,12 @@ paths:
   /api/v2/collections/{collection_id}/records/scan:
     post:
       description: |-
-        Returns the next page of records (TD-099 acceptance 2, live). The
-        handler resolves the collection id, calls
-        `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-        `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-        `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-        still deferred: `next_cursor` is always `None` today; callers bump
-        `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+        Returns the next page of records (TD-099 acceptance 2 + 3, live).
+        Cursor-based pagination: pass the response's `next_cursor` back as
+        `cursor` to fetch the next page; a `null` cursor means the scan is
+        exhausted. Cursors are minted and validated against the caller-facing
+        collection id in the URL path, expire after 24h (HTTP 410), and reject
+        cross-collection reuse (HTTP 400).
       operationId: scanRecords
       parameters:
       - description: Collection name/ID.
@@ -2832,13 +3412,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: Invalid request.
+          description: Invalid request (including a cursor minted for a different collection).
         '404':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Resource not found.
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Collection changed during the scan; restart pagination.
+        '410':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Cursor expired (older than 24h); restart the scan.
       summary: Paginated scan of records in a collection.
       tags:
       - Records
@@ -3702,6 +4294,184 @@ paths:
       summary: BM25 + vector hybrid (fusion) search.
       tags:
       - Hybrid
+  /api/v2/model-registries:
+    get:
+      operationId: listModelRegistries
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListModelRegistriesResponse'
+          description: Tenant-scoped registries in deterministic name order.
+      tags:
+      - Model Registry
+    post:
+      operationId: createModelRegistry
+      parameters:
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelRegistryRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelRegistryRecordResponse'
+          description: Created model registry.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid registry name.
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Registry already exists.
+      tags:
+      - Model Registry
+  /api/v2/model-registries/{name}:
+    get:
+      operationId: getModelRegistry
+      parameters:
+      - description: Tenant-local registry name.
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelRegistryRecordResponse'
+          description: Model registry.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Registry not found.
+      tags:
+      - Model Registry
+  /api/v2/model-registries/{name}/mutations:
+    post:
+      operationId: applyModelRegistryMutation
+      parameters:
+      - description: Tenant-local registry name.
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyModelRegistryMutationRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelRegistryRecordResponse'
+          description: Updated registry.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid lifecycle command.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Registry not found.
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Revision conflict.
+      tags:
+      - Model Registry
+  /api/v2/model-registries/{name}/resolve:
+    post:
+      operationId: resolveModelAlias
+      parameters:
+      - description: Tenant-local registry name.
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      - description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        in: header
+        name: X-Tenant-ID
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveModelAliasRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolvedModelBindingResponse'
+          description: Immutable version and digest binding.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Alias, dimension, runtime, or approval policy rejected.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Registry not found.
+      tags:
+      - Model Registry
   /api/v2/observability/namespaces/{namespace}/logs:
     parameters:
     - in: path
@@ -3980,3 +4750,5 @@ tags:
   name: Entities
 - description: Native-embedding document ingest.
   name: Documents
+- description: Tenant-scoped embedding-model lifecycle backed by xCatalog.
+  name: Model Registry

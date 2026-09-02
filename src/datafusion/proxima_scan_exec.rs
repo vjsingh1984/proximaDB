@@ -490,9 +490,21 @@ impl ExecutionPlan for ProximaScanExec {
                         );
                         return Ok(empty);
                     }
-                    reader
-                        .read_split(&split, projection.as_deref(), batch_size)
-                        .await
+                    // TD-CACHE-10 / attribution closeout: rebind the captured
+                    // query trace around the split read. This closure runs on
+                    // a DataFusion-spawned partition task where the io_trace
+                    // task-local is absent; without the rebind, every physical
+                    // read inside `read_split` records NOWHERE (ambient
+                    // snapshots saw 0 bytes — the measured attribution gap).
+                    // `scope_with_handle` is the documented rebind seam.
+                    let read_fut = reader.read_split(&split, projection.as_deref(), batch_size);
+                    match &trace {
+                        Some(t) => {
+                            crate::observability::io_trace::scope_with_handle(t.clone(), read_fut)
+                                .await
+                        }
+                        None => read_fut.await,
+                    }
                 }
             })
             .try_flatten();

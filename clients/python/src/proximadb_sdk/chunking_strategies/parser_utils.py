@@ -312,9 +312,20 @@ class ConfigValidator:
 
     @staticmethod
     def validate_chunk_size(
-        chunk_size: int, min_chunk_size: int = 0, max_chunk_size: int = 100000
+        chunk_size: int,
+        min_chunk_size: int = 0,
+        max_chunk_size: int = 100000,
+        measure_name: str = "char",
     ) -> ValidationResult:
-        """Validate chunk size configuration"""
+        """Validate chunk size configuration.
+
+        The ordering errors hold in any measure. The magnitude WARNINGS below do
+        not: 100 and 10 000 are character intuitions, and a 100-TOKEN chunk is
+        perfectly ordinary while a 10 000-token one exceeds most model contexts.
+        Emitting character advice about a token budget is worse than emitting
+        none -- it trains readers to ignore the warnings -- so they are scoped
+        to the measure they were calibrated for and named in the text.
+        """
         result = ValidationResult(valid=True)
 
         if chunk_size < min_chunk_size:
@@ -329,15 +340,17 @@ class ConfigValidator:
                 f"chunk_size ({chunk_size}) must be <= max_chunk_size ({max_chunk_size})"
             )
 
-        if chunk_size < 100:
-            result.warnings.append(
-                f"chunk_size ({chunk_size}) is very small, may result in too many chunks"
-            )
-
-        if chunk_size > 10000:
-            result.warnings.append(
-                f"chunk_size ({chunk_size}) is large, may affect embedding quality"
-            )
+        if measure_name == "char":
+            if chunk_size < 100:
+                result.warnings.append(
+                    f"chunk_size ({chunk_size} chars) is very small, may result "
+                    "in too many chunks"
+                )
+            if chunk_size > 10000:
+                result.warnings.append(
+                    f"chunk_size ({chunk_size} chars) is large, may affect "
+                    "embedding quality"
+                )
 
         return result
 
@@ -368,11 +381,13 @@ class ConfigValidator:
     def validate_languages(languages: list[str]) -> ValidationResult:
         """Validate language configuration against the live parser registry"""
         result = ValidationResult(valid=True)
-        # Use the real per-language registry from code.py rather than the
-        # (always-empty) plugin registry that previously backed this check.
-        from .code import get_supported_languages
+        # Static language knowledge, not parser capability. `python` is a real
+        # language whether or not the optional `codegraph` extra is installed,
+        # so validating a config against the DERIVED map made every language
+        # warn on a machine without the extra.
+        from .code import STATIC_EXTENSION_TO_LANGUAGE
 
-        supported = {lang.lower() for lang in get_supported_languages()}
+        supported = {lang.lower() for lang in STATIC_EXTENSION_TO_LANGUAGE.values()}
 
         for lang in languages:
             if lang.lower() not in supported:
@@ -389,7 +404,17 @@ class ConfigValidator:
         if hasattr(config, "chunk_size"):
             min_size = getattr(config, "min_chunk_size", 0)
             max_size = getattr(config, "max_chunk_size", 100000)
-            size_result = cls.validate_chunk_size(config.chunk_size, min_size, max_size)
+            # Forward the measure, or the scoping above never takes effect
+            # where it matters -- this is the only in-tree caller.
+            measure = getattr(config, "measure", None)
+            size_result = cls.validate_chunk_size(
+                config.chunk_size,
+                min_size,
+                max_size,
+                measure_name=(
+                    "char" if measure is None else str(getattr(measure, "name", "char"))
+                ),
+            )
             if not size_result.valid:
                 result.valid = False
             result.errors.extend(size_result.errors)

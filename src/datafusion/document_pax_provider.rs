@@ -193,6 +193,8 @@ impl DocumentPaxPushdownProvider {
             self.filesystem_factory.clone(),
             self.name_to_col_id.clone(),
             physical_filters,
+            None, // tenant_id
+            None, // time_range
         );
 
         let id_idx = self.pax_read_schema.index_of("id")?;

@@ -367,21 +367,20 @@ impl PolarisCatalog {
                 match type_name {
                     "list" => {
                         // Check if it's a vector (list of floats)
-                        if let Some(element) = obj.get("element") {
-                            if element.as_str() == Some("float")
-                                || element.as_str() == Some("double")
-                            {
-                                if let Some(length) = obj.get("length").and_then(|v| v.as_i64()) {
-                                    properties.insert("dimension".to_string(), length.to_string());
-                                }
-                                return (
-                                    ProximaType::DenseVector {
-                                        element: VectorElement::Float32,
-                                        dim: 0,
-                                    },
-                                    properties,
-                                );
+                        if let Some(element) = obj.get("element")
+                            && (element.as_str() == Some("float")
+                                || element.as_str() == Some("double"))
+                        {
+                            if let Some(length) = obj.get("length").and_then(|v| v.as_i64()) {
+                                properties.insert("dimension".to_string(), length.to_string());
                             }
+                            return (
+                                ProximaType::DenseVector {
+                                    element: VectorElement::Float32,
+                                    dim: 0,
+                                },
+                                properties,
+                            );
                         }
                         ProximaType::Json
                     }
@@ -611,7 +610,7 @@ impl Catalog for PolarisCatalog {
     // Table Operations
     // ========================
 
-    async fn create_table(
+    async fn create_table_inner(
         &self,
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
@@ -1313,5 +1312,27 @@ mod tests {
         });
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&struct_type);
         assert!(matches!(dt, ProximaType::Json));
+    }
+
+    #[test]
+    fn list_float_without_length_remains_a_vector() {
+        // Polaris/Iceberg payloads may omit the ProximaDB-specific fixed
+        // length. That loses the optional dimension property, but it must not
+        // change the canonical type from the historical DenseVector fallback
+        // to Json.
+        let vector_type = serde_json::json!({
+            "type": "list",
+            "element": "float"
+        });
+        let (data_type, properties) = PolarisCatalog::parse_iceberg_type(&vector_type);
+
+        assert!(matches!(
+            data_type,
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0
+            }
+        ));
+        assert!(!properties.contains_key("dimension"));
     }
 }

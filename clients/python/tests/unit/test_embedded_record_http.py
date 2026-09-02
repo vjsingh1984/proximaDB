@@ -32,16 +32,24 @@ class RecordingAsyncClient:
 
 
 @pytest.mark.asyncio
-async def test_embedded_insert_records_uses_v2_record_endpoint(monkeypatch):
+async def test_embedded_insert_records_uses_v2_record_endpoint(monkeypatch, tmp_path):
     import httpx
 
     RecordingAsyncClient.calls = []
     monkeypatch.setattr(httpx, "AsyncClient", RecordingAsyncClient)
 
-    # transport="tcp" exercises the plain httpx path (no UDS socket dir needed);
-    # the embedded default changed to "uds", which requires _socket_dir setup.
-    db = EmbeddedProximaDB.__new__(EmbeddedProximaDB)
-    db.config = EmbeddedConfig(rest_port=15678, transport="tcp")
+    # transport="tcp" exercises the plain httpx path, so no UDS socket is needed.
+    #
+    # Constructed normally rather than by bypassing the constructor. Skipping
+    # __init__ to avoid socket setup is what broke these two tests: when
+    # HTTP-client pooling added `self._shared_http_client` to __init__, the
+    # half-built object stopped carrying the attribute `_http_client` reads, and
+    # both failed with an AttributeError that pointed at the code under test
+    # rather than at their own setup. A test that skips initialisation breaks
+    # every time initialisation grows.
+    db = EmbeddedProximaDB(
+        config=EmbeddedConfig(data_dir=str(tmp_path), rest_port=15678, transport="tcp")
+    )
 
     result = await db._insert_records(
         "items",
@@ -59,14 +67,15 @@ async def test_embedded_insert_records_uses_v2_record_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_embedded_insert_vectors_aliases_record_insert(monkeypatch):
+async def test_embedded_insert_vectors_aliases_record_insert(monkeypatch, tmp_path):
     import httpx
 
     RecordingAsyncClient.calls = []
     monkeypatch.setattr(httpx, "AsyncClient", RecordingAsyncClient)
 
-    db = EmbeddedProximaDB.__new__(EmbeddedProximaDB)
-    db.config = EmbeddedConfig(rest_port=15678, transport="tcp")
+    db = EmbeddedProximaDB(
+        config=EmbeddedConfig(data_dir=str(tmp_path), rest_port=15678, transport="tcp")
+    )
 
     await db._insert_vectors("items", [{"id": "r1", "vector": [1, 2]}])
 

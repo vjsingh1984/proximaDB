@@ -44,7 +44,6 @@
 //! - `tokio` — runtime / scheduler
 //! - `tokenizers` — server-side chunking + token counting
 
-pub mod chunker;
 pub mod config;
 pub mod metrics;
 pub mod models;
@@ -54,7 +53,7 @@ pub mod scheduler;
 pub mod service;
 pub mod tokenizer;
 
-pub use config::{ChunkConfig, EmbedRoute, EmbedRouteIdentity, EmbeddingConfig};
+pub use config::{EmbedRoute, EmbedRouteIdentity, EmbeddingConfig};
 pub use models::{BatchConversionSummary, EmbedUsage, ModelRegistry};
 // INT-1 (mini-phase): typed embedding values for native-precision
 // inference output. Re-exported from proximadb-records so callers don't

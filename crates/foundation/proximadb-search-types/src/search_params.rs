@@ -339,6 +339,24 @@ pub enum HybridSearchMode {
     },
 }
 
+/// Interpretation contract for lexical query text.
+///
+/// A string alone is ambiguous: punctuation such as `:` and `-` occurs in
+/// ordinary prose but is also meaningful to query-language parsers. Callers
+/// must select the interpretation explicitly at engine boundaries. Product
+/// surfaces default to [`Self::NaturalLanguage`]; advanced syntax is opt-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LexicalQueryMode {
+    /// Analyze the input as ordinary user text. Punctuation is data, never
+    /// field/operator syntax, and malformed prose cannot cause a parse error.
+    #[default]
+    NaturalLanguage,
+    /// Interpret the input using the selected engine's documented query
+    /// language. Unsupported engines and malformed expressions fail loudly.
+    AdvancedSyntax,
+}
+
 /// Hints to guide the filter optimizer for better execution plans
 #[derive(Debug, Clone, Default)]
 pub struct FilterOptimizationHints {

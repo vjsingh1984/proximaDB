@@ -45,6 +45,12 @@ pub struct EmbedResult {
     /// (TD-SANDHI-1 / ADR-067). `None` for local BGE and BYO — callers keep the
     /// compute-based estimate for those.
     pub usage: Option<crate::models::EmbedUsage>,
+    /// Wall clock of the provider adapter call itself, measured inside the scheduler
+    /// worker (TD-SANDHI-3) — deliberately EXCLUDING queue wait: the usage-event
+    /// `duration_ms` contract is "adapter boundary … excludes host-side queueing",
+    /// and the sync queue is bounded (8 deep), so a submit-side bracket would smear
+    /// scheduler backlog into provider latency.
+    pub provider_duration_ms: u64,
 }
 
 /// INT-2.5c result for the precision-aware embed path
@@ -194,15 +200,21 @@ impl EmbeddingService {
         let service = self.clone();
         let texts: Vec<String> = batch.records.iter().map(|r| r.text.clone()).collect();
         let route_inner = route.clone();
-        let rx = self
-            .scheduler
-            .submit_sync(move || service.models.embed_batch_with_usage(&route_inner, &texts))?;
+        let rx = self.scheduler.submit_sync(move || {
+            // TD-SANDHI-3: bracket the adapter call itself, inside the worker, so the
+            // measured duration excludes queue wait (see `EmbedResult::provider_duration_ms`).
+            let started = std::time::Instant::now();
+            let outcome = service.models.embed_batch_with_usage(&route_inner, &texts);
+            let provider_duration_ms = started.elapsed().as_millis() as u64;
+            outcome.map(|(vectors, usage)| (vectors, usage, provider_duration_ms))
+        })?;
         rx.await
             .map_err(|_| EmbeddingError::Other(anyhow::anyhow!("scheduler dropped")))?
-            .map(|(vectors, usage)| EmbedResult {
+            .map(|(vectors, usage, provider_duration_ms)| EmbedResult {
                 vectors,
                 route,
                 usage,
+                provider_duration_ms,
             })
     }
 
@@ -265,14 +277,17 @@ impl EmbeddingService {
         let route_inner = route.clone();
         self.scheduler.submit_async(move || {
             let texts: Vec<String> = batch.records.iter().map(|r| r.text.clone()).collect();
-            let outcome = service
-                .models
-                .embed_batch_with_usage(&route_inner, &texts)
-                .map(|(vectors, usage)| EmbedResult {
-                    vectors,
-                    route,
-                    usage,
-                });
+            // TD-SANDHI-3: same worker-side bracket as the sync path — duration excludes
+            // queue wait by contract.
+            let started = std::time::Instant::now();
+            let raw = service.models.embed_batch_with_usage(&route_inner, &texts);
+            let provider_duration_ms = started.elapsed().as_millis() as u64;
+            let outcome = raw.map(|(vectors, usage)| EmbedResult {
+                vectors,
+                route,
+                usage,
+                provider_duration_ms,
+            });
             on_complete(outcome);
             Ok(())
         })

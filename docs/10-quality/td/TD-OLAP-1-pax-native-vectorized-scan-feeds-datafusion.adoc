@@ -123,3 +123,45 @@ tables a flush-to-PAX materialization is separate storage-engine work, not part 
 * ADR-039 leakage ratchet green (no new `datafusion::` import outside the adapter allow-list).
 * TD-OLAP-4 ledger: SF1 scan-heavy query bytes-scanned vs DataFusion-on-Parquet — promotion
   requires a measured win on the dominant (I/O) cost term, not a CPU microbenchmark.
+
+== Slice-2 dispatch design record (2026-08, TD-PAXRG-1 closeout pressure test)
+
+The storage layout work (TD-PAXRG-1) is complete and default-ON, but the QUERY
+route (`pax_backed` OLAP shapes → `DataFusionLocal`) remains default-OFF — and
+must stay so until the **dispatch wiring** below lands. Exploration verified
+that flipping `PROXIMADB_DF_PAX_READER` today changes only decision stamping
+and metrics: the dispatch block requires `parquet_backed`, so Volcano still
+serves — while `finalize_route` attributes Volcano's measured costs to
+DataFusion cost-model cells (attribution poisoning) and EXPLAIN diverges from
+the stamped decision.
+
+=== Requirements before any route default changes
+
+1. **WAL-delta reconciliation for the pax route.** `PaxSplitReader` scans only
+   `.pax` segments under the discovered base path; there is no delta merge
+   (`OlapDeltaConfig` is parquet-only). Freshness gate: row-exactness over
+   real flushed segments *plus* un-flushed WAL tail before any promotion.
+2. **Segment base-path reconciliation.** Three conventions coexist (SST
+   `{base}/{collection}/data`, DrPathBuilder
+   `data/{tenant}/{ns}/{collection}/segments/`, MVP
+   `{PROXIMADB_DATA_DIR}/collections/{table}`); `layout.location` is `None`
+   for native tables. The dispatch wiring must resolve the base path the way
+   `DrPathBuilder` does (TD-OLAP-1 Test 2.2's contract).
+3. **`pax_backed` predicate refinement.** `CatalogTableSchema::default()`
+   ships one InternalCanonical/ProximaBlock layout, so EVERY freshly created
+   native table is `pax_backed` — a false positive for relational tables
+   whose rows live in WAL/RecordStorage. The route predicate needs a
+   "has flushed PAX segments" signal (segment-directory non-empty), not the
+   catalog layout alone.
+4. **Dispatch wiring.** The unlanded slice-2 prototype (`pax_olap_route`
+   table property → `catalog_table_pax_route_base` → `PaxTableSpec` →
+   `register_pax_location`): rebuild against the current
+   `route_select`/dispatch block, with the decision stamp and the actual
+   dispatch driven by the SAME signal.
+5. **EXPLAIN/decision alignment.** `classify_select_route` (both variants)
+   must consume the same predicate as `try_run_select` so EXPLAIN never
+   diverges from the executed route.
+
+Until all five land: leave `PROXIMADB_DF_PAX_READER` default-OFF (both gate
+definitions carry the warning); the cost model stays observe-only for
+`olap/native` cells.

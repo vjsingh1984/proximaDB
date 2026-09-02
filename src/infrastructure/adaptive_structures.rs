@@ -75,6 +75,30 @@ where
     /// Get a value by key
     async fn get(&self, key: &K) -> Option<V>;
 
+    /// Synchronous in-place read-modify-write, without cloning the stored
+    /// value out. DashMap-backed backends run `f` under the shard guard via
+    /// `get_mut`; async-backed stores (Moka cache) return `None` and the
+    /// caller must fall back to `get` → modify → `insert`.
+    ///
+    /// Returns `Some(true)` when the key was present and `f` ran,
+    /// `Some(false)` when the key was absent, `None` when this backend cannot
+    /// mutate synchronously.
+    ///
+    /// CONTRACT: `f` must not call back into the same store (shard deadlock).
+    fn try_mutate_sync(&self, key: &K, f: &mut (dyn FnMut(&mut V) + Send + '_)) -> Option<bool>;
+
+    /// Synchronous zero-copy read visit: run `f` against a reference to the
+    /// stored value under the storage guard, without cloning it. Async-backed
+    /// stores (Moka cache) return `None` and the caller must fall back to
+    /// [`AdaptiveStore::get`] (which clones).
+    ///
+    /// Returns `Some(true)` when the key was present and `f` ran,
+    /// `Some(false)` when the key was absent, `None` when this backend cannot
+    /// visit synchronously.
+    ///
+    /// CONTRACT: `f` must not call back into the same store (shard deadlock).
+    fn try_with_value_sync(&self, key: &K, f: &mut (dyn FnMut(&V) + Send + '_)) -> Option<bool>;
+
     /// Remove a key-value pair
     async fn remove(&self, key: &K) -> Option<V>;
 
@@ -1091,6 +1115,46 @@ where
         value
     }
 
+    fn try_mutate_sync(&self, key: &K, f: &mut (dyn FnMut(&mut V) + Send + '_)) -> Option<bool> {
+        let start = Instant::now();
+
+        // In-place update under the DashMap shard guard — no value clone.
+        let mut mutated = false;
+        if let Some(mut entry) = self.storage.get_mut(key) {
+            f(entry.value_mut());
+            mutated = true;
+        }
+
+        self.metrics.record_operation("mutate", start.elapsed());
+        if mutated {
+            self.metrics.record_hit();
+        } else {
+            self.metrics.record_miss();
+        }
+
+        Some(mutated)
+    }
+
+    fn try_with_value_sync(&self, key: &K, f: &mut (dyn FnMut(&V) + Send + '_)) -> Option<bool> {
+        let start = Instant::now();
+
+        // Visit under the DashMap shard guard — no value clone.
+        let mut present = false;
+        if let Some(entry) = self.storage.get(key) {
+            f(entry.value());
+            present = true;
+        }
+
+        self.metrics.record_operation("get", start.elapsed());
+        if present {
+            self.metrics.record_hit();
+        } else {
+            self.metrics.record_miss();
+        }
+
+        Some(present)
+    }
+
     async fn remove(&self, key: &K) -> Option<V> {
         let start = Instant::now();
 
@@ -1230,6 +1294,18 @@ where
         value
     }
 
+    fn try_mutate_sync(&self, _key: &K, _f: &mut (dyn FnMut(&mut V) + Send + '_)) -> Option<bool> {
+        // Moka future::Cache has no synchronous get_mut; callers fall back
+        // to the get → modify → insert clone path.
+        None
+    }
+
+    fn try_with_value_sync(&self, _key: &K, _f: &mut (dyn FnMut(&V) + Send + '_)) -> Option<bool> {
+        // Moka future::Cache requires async access; callers fall back to
+        // `get` (which clones).
+        None
+    }
+
     async fn remove(&self, key: &K) -> Option<V> {
         let start = Instant::now();
 
@@ -1344,6 +1420,44 @@ where
             index.get(key).map(|r| r.clone())
         } else if let Some(ref cache) = self.cache_storage {
             cache.get(key).await
+        } else {
+            None
+        };
+
+        self.metrics.record_operation("get", start.elapsed());
+        result
+    }
+
+    fn try_mutate_sync(&self, key: &K, f: &mut (dyn FnMut(&mut V) + Send + '_)) -> Option<bool> {
+        let start = Instant::now();
+
+        // Delegate to the active inner storage. The DashMap index path runs
+        // in place; the Moka cache path cannot mutate synchronously.
+        let result = if let Some(ref index) = self.index_storage {
+            let mut mutated = false;
+            if let Some(mut entry) = index.get_mut(key) {
+                f(entry.value_mut());
+                mutated = true;
+            }
+            Some(mutated)
+        } else {
+            None
+        };
+
+        self.metrics.record_operation("mutate", start.elapsed());
+        result
+    }
+
+    fn try_with_value_sync(&self, key: &K, f: &mut (dyn FnMut(&V) + Send + '_)) -> Option<bool> {
+        let start = Instant::now();
+
+        let result = if let Some(ref index) = self.index_storage {
+            let mut present = false;
+            if let Some(entry) = index.get(key) {
+                f(entry.value());
+                present = true;
+            }
+            Some(present)
         } else {
             None
         };

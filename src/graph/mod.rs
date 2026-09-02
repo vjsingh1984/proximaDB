@@ -299,7 +299,7 @@ impl TenantGraphOps<'_> {
         &self,
         graph_id: &str,
         edges: Vec<Edge>,
-    ) -> Result<Vec<Arc<Edge>>> {
+    ) -> Result<crate::graph::service::BatchCreateEdgesResult> {
         self.inner
             .batch_create_edges(&self.scope(graph_id)?, edges)
             .await

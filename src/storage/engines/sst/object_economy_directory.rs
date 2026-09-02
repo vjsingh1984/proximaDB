@@ -557,6 +557,10 @@ pub struct CachedDirectoryEntry {
 #[derive(Debug, Default)]
 pub struct CachedDirectoryHandle {
     cell: OnceCell<Arc<CachedDirectoryEntry>>,
+    /// When the cell was last populated (TD-CACHE-10: drives the cross-pod
+    /// staleness re-check — a handle older than the recheck TTL is replaced
+    /// so the next reader reloads from the shared sidecar).
+    loaded_at: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl CachedDirectoryHandle {
@@ -568,6 +572,17 @@ impl CachedDirectoryHandle {
     /// successful `get_or_load`. Useful for tests and observability.
     pub fn is_initialized(&self) -> bool {
         self.cell.initialized()
+    }
+
+    /// Age of the populated cell, or `None` if never loaded.
+    pub fn age(&self) -> Option<std::time::Duration> {
+        self.loaded_at.lock().ok()?.map(|at| at.elapsed())
+    }
+
+    /// True when the handle is populated AND older than `ttl` — the
+    /// cross-pod staleness condition for the recheck-TTL contract.
+    pub fn expired_for(&self, ttl: std::time::Duration) -> bool {
+        self.age().is_some_and(|age| age > ttl)
     }
 
     /// Return the cached directory entry if this handle has already been
@@ -590,37 +605,85 @@ impl CachedDirectoryHandle {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = (VectorObjectEconomyDirectory, DirectoryLoadStatus)>,
     {
-        self.cell
+        let entry = self
+            .cell
             .get_or_init(|| async {
                 let (directory, status) = loader().await;
                 Arc::new(CachedDirectoryEntry { directory, status })
             })
             .await
-            .clone()
+            .clone();
+        if let Ok(mut at) = self.loaded_at.lock() {
+            *at = Some(std::time::Instant::now());
+        }
+        entry
     }
 }
 
 /// Per-process directory cache shared across query workers. Indexed by
 /// `collection_id` so a single OnceCell load amortizes across every query
 /// against that collection until invalidation.
+///
+/// **TD-CACHE-10 cross-pod staleness bound:** a handle is invalidated by
+/// LOCAL writes only — another pod's flush/compaction is invisible to this
+/// process. `recheck_ttl` bounds that window: a handle older than the TTL is
+/// replaced on `handle_for`, so the next reader reloads from the shared
+/// sidecar. `None` = legacy never-recheck (kill value).
 #[derive(Debug, Default)]
 pub struct VectorObjectEconomyDirectoryCache {
     inner: DashMap<String, Arc<CachedDirectoryHandle>>,
+    recheck_ttl: Option<std::time::Duration>,
 }
 
 impl VectorObjectEconomyDirectoryCache {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            recheck_ttl: directory_recheck_ttl_from_env(),
+            ..Self::default()
+        }
+    }
+
+    /// Test/builder form: explicit recheck TTL (`None` = legacy never-recheck).
+    pub fn with_recheck_ttl(ttl: Option<std::time::Duration>) -> Self {
+        Self {
+            recheck_ttl: ttl,
+            ..Self::default()
+        }
     }
 
     /// Return a handle for `collection_id`, creating a fresh one on first
     /// touch. The returned `Arc` is cheap to clone for callers that want to
     /// hold the handle across awaits.
+    ///
+    /// With a recheck TTL configured, an expired handle (populated longer ago
+    /// than the TTL) is dropped and replaced so the next `get_or_load`
+    /// reloads from shared storage — bounding cross-pod staleness without any
+    /// transport. Same-pod writer invalidation (`invalidate`) continues to
+    /// force an immediate reload regardless of the TTL.
     pub fn handle_for(&self, collection_id: &str) -> Arc<CachedDirectoryHandle> {
-        self.inner
+        let handle = self
+            .inner
             .entry(collection_id.to_string())
             .or_insert_with(|| Arc::new(CachedDirectoryHandle::new()))
-            .clone()
+            .clone();
+        if let Some(ttl) = self.recheck_ttl
+            && handle.expired_for(ttl)
+        {
+            // Replace only if still the same expired handle (a concurrent
+            // invalidate/replace wins over our expiry).
+            if let Some(mut current) = self.inner.get_mut(collection_id)
+                && Arc::ptr_eq(&handle, &current)
+            {
+                *current = Arc::new(CachedDirectoryHandle::new());
+                return current.clone();
+            }
+            return self
+                .inner
+                .get(collection_id)
+                .map(|e| e.clone())
+                .unwrap_or(handle);
+        }
+        handle
     }
 
     /// Return an existing handle without creating or loading one. Used by
@@ -643,6 +706,11 @@ impl VectorObjectEconomyDirectoryCache {
         self.inner.contains_key(collection_id)
     }
 
+    /// The configured recheck TTL (test/diagnostics visibility).
+    pub fn recheck_ttl(&self) -> Option<std::time::Duration> {
+        self.recheck_ttl
+    }
+
     /// Total number of cached collection handles. Used by metrics and tests.
     pub fn len(&self) -> usize {
         self.inner.len()
@@ -650,6 +718,27 @@ impl VectorObjectEconomyDirectoryCache {
 
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+}
+
+/// TD-CACHE-10: the directory-cache recheck TTL — how long a cached
+/// collection directory may serve before the next `handle_for` replaces it
+/// so the reader reloads from the shared sidecar. Bounds cross-pod staleness
+/// (another pod's flush/compaction is otherwise invisible to this process).
+///
+/// `PROXIMADB_DIRECTORY_CACHE_RECHECK_MS`: unset ⇒ 30 s; `0` ⇒ never
+/// re-check (kill value, legacy behavior); garbage ⇒ default.
+pub fn directory_recheck_ttl_from_env() -> Option<std::time::Duration> {
+    const DEFAULT_MS: u64 = 30_000;
+    match std::env::var("PROXIMADB_DIRECTORY_CACHE_RECHECK_MS")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+        .map(str::parse::<u64>)
+    {
+        Some(Ok(0)) => None,
+        Some(Ok(ms)) => Some(std::time::Duration::from_millis(ms)),
+        _ => Some(std::time::Duration::from_millis(DEFAULT_MS)),
     }
 }
 
@@ -1443,7 +1532,7 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let handle = CachedDirectoryHandle::new();
-        let calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         assert!(!handle.is_initialized());
 
         // First load.
@@ -1479,7 +1568,11 @@ mod tests {
                 )
             })
             .await;
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "loader should fire once");
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "loader should fire once"
+        );
         assert!(Arc::ptr_eq(&first, &second));
     }
 
@@ -1488,7 +1581,7 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let handle = Arc::new(CachedDirectoryHandle::new());
-        let calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         let tasks: Vec<_> = (0..8)
             .map(|_| {
@@ -1499,7 +1592,7 @@ mod tests {
                         .get_or_load(|| async move {
                             // Yield to let other tasks queue on the OnceCell.
                             tokio::task::yield_now().await;
-                            calls.fetch_add(1, Ordering::SeqCst);
+                            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             (
                                 VectorObjectEconomyDirectory::empty(
                                     "coll",
@@ -1519,7 +1612,7 @@ mod tests {
         }
 
         assert_eq!(
-            calls.load(Ordering::SeqCst),
+            calls.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "concurrent callers must coalesce to one load"
         );
@@ -1550,12 +1643,12 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let cache = VectorObjectEconomyDirectoryCache::new();
-        let calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         let load = |epoch: u64, status: DirectoryLoadStatus| {
             let calls = calls.clone();
             async move {
-                calls.fetch_add(1, Ordering::SeqCst);
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 (
                     VectorObjectEconomyDirectory::empty(
                         "coll",
@@ -1572,14 +1665,14 @@ mod tests {
             .get_or_load(|| load(1, DirectoryLoadStatus::Missing))
             .await;
         assert_eq!(entry1.directory.storage_epoch, 1);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         // Without invalidation, the cached handle returns the same entry.
         let entry_again = handle1
             .get_or_load(|| load(99, DirectoryLoadStatus::Loaded))
             .await;
         assert!(Arc::ptr_eq(&entry1, &entry_again));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         // Invalidate → next handle_for returns a fresh OnceCell.
         assert!(cache.invalidate("coll"));
@@ -1592,7 +1685,7 @@ mod tests {
         assert_eq!(entry2.directory.storage_epoch, 2);
         assert_eq!(entry2.status, DirectoryLoadStatus::Loaded);
         assert_eq!(
-            calls.load(Ordering::SeqCst),
+            calls.load(std::sync::atomic::Ordering::SeqCst),
             2,
             "reload fires after invalidate"
         );
@@ -1602,6 +1695,218 @@ mod tests {
     fn directory_cache_invalidate_missing_collection_is_no_op() {
         let cache = VectorObjectEconomyDirectoryCache::new();
         assert!(!cache.invalidate("never-touched"));
+    }
+
+    // ── TD-CACHE-10: cross-pod staleness bound (recheck TTL) ─────────────────
+    //
+    // The OnceCell handle is invalidated only by LOCAL writes; a different pod
+    // flushing/compacting the same collection leaves this pod serving a stale
+    // segment list indefinitely. The recheck TTL bounds that window: after
+    // `ttl` elapses since the last load, `handle_for` replaces the handle so
+    // the next reader reloads from the shared sidecar.
+
+    fn counting_loader(
+        calls: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        epoch: u64,
+    ) -> impl FnOnce() -> std::future::Ready<(VectorObjectEconomyDirectory, DirectoryLoadStatus)> + '_
+    {
+        use std::sync::atomic::Ordering;
+        let calls = calls.clone();
+        move || {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::future::ready((
+                VectorObjectEconomyDirectory::empty(
+                    "coll",
+                    epoch,
+                    CatalogAuthorityMode::ProximaAuthoritative,
+                ),
+                DirectoryLoadStatus::Loaded,
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn recheck_ttl_reloads_expired_handle_exactly_once() {
+        use std::time::Duration;
+        let cache =
+            VectorObjectEconomyDirectoryCache::with_recheck_ttl(Some(Duration::from_millis(25)));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let handle = cache.handle_for("coll");
+        let e1 = handle
+            .get_or_load(|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::future::ready((
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        1,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Loaded,
+                ))
+            })
+            .await;
+        assert_eq!(e1.directory.storage_epoch, 1);
+
+        // Within TTL: same handle, no reload.
+        let e1_again = cache
+            .handle_for("coll")
+            .get_or_load(|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::future::ready((
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        99,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Loaded,
+                ))
+            })
+            .await;
+        assert!(Arc::ptr_eq(&e1, &e1_again));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // Past TTL: handle_for replaces the handle; next reader reloads.
+        tokio::time::sleep(Duration::from_millis(45)).await;
+        let handle2 = cache.handle_for("coll");
+        assert!(
+            !Arc::ptr_eq(&handle, &handle2),
+            "expired handle must be replaced"
+        );
+        let e2 = handle2
+            .get_or_load(|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::future::ready((
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        2,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Loaded,
+                ))
+            })
+            .await;
+        assert_eq!(e2.directory.storage_epoch, 2);
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "exactly one reload after expiry"
+        );
+    }
+
+    #[tokio::test]
+    async fn recheck_ttl_none_preserves_legacy_never_recheck() {
+        use std::time::Duration;
+        let cache = VectorObjectEconomyDirectoryCache::with_recheck_ttl(None);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let handle = cache.handle_for("coll");
+        let e1 = handle
+            .get_or_load(|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::future::ready((
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        1,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Loaded,
+                ))
+            })
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let e_again = cache
+            .handle_for("coll")
+            .get_or_load(|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::future::ready((
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        99,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Loaded,
+                ))
+            })
+            .await;
+        assert!(Arc::ptr_eq(&e1, &e_again));
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "None TTL = legacy behavior"
+        );
+    }
+
+    #[tokio::test]
+    async fn writer_invalidate_forces_reload_even_with_ttl_set() {
+        use std::time::Duration;
+        let cache =
+            VectorObjectEconomyDirectoryCache::with_recheck_ttl(Some(Duration::from_secs(3600)));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let handle = cache.handle_for("coll");
+        let e1 = handle
+            .get_or_load(|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::future::ready((
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        1,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Loaded,
+                ))
+            })
+            .await;
+
+        // Writer-side invalidation (same pod) must bypass the TTL entirely.
+        assert!(cache.invalidate("coll"));
+        let e2 = cache
+            .handle_for("coll")
+            .get_or_load(|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::future::ready((
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        2,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Loaded,
+                ))
+            })
+            .await;
+        assert_ne!(e1.directory.storage_epoch, e2.directory.storage_epoch);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn directory_recheck_ttl_env_parses_contract() {
+        use std::time::Duration;
+        unsafe { std::env::remove_var("PROXIMADB_DIRECTORY_CACHE_RECHECK_MS") };
+        assert_eq!(
+            directory_recheck_ttl_from_env(),
+            Some(Duration::from_secs(30)),
+            "unset ⇒ 30 s default"
+        );
+        unsafe { std::env::set_var("PROXIMADB_DIRECTORY_CACHE_RECHECK_MS", "5000") };
+        assert_eq!(
+            directory_recheck_ttl_from_env(),
+            Some(Duration::from_millis(5000))
+        );
+        unsafe { std::env::set_var("PROXIMADB_DIRECTORY_CACHE_RECHECK_MS", "0") };
+        assert_eq!(
+            directory_recheck_ttl_from_env(),
+            None,
+            "0 ⇒ never re-check (kill value)"
+        );
+        unsafe { std::env::set_var("PROXIMADB_DIRECTORY_CACHE_RECHECK_MS", "garbage") };
+        assert_eq!(
+            directory_recheck_ttl_from_env(),
+            Some(Duration::from_secs(30)),
+            "garbage ⇒ default"
+        );
+        unsafe { std::env::remove_var("PROXIMADB_DIRECTORY_CACHE_RECHECK_MS") };
     }
 
     #[tokio::test]

@@ -282,7 +282,12 @@ class ProximaDBDocumentStore:
         """
         # Get collection info to count documents
         collection_info = self._client.get_collection(self._collection_name)
-        return collection_info.vector_count if collection_info else 0
+        # Haystack's count_documents() contract is a plain int, so an unknown
+        # count has to be floored here. Note this can under-report: a populated
+        # collection whose counter was never maintained reports 0.
+        if collection_info is None:
+            return 0
+        return collection_info.vector_count or 0
 
     def filter_documents(
         self,

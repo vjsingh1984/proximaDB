@@ -5,6 +5,11 @@ use crate::query::query_optimizer::OptimizationGoal;
 /// Unified search configuration that works for SQL, REST, and gRPC.
 #[derive(Debug, Clone)]
 pub struct UnifiedSearchConfig {
+    /// Query-semantic distance metric. `None` uses the collection's configured
+    /// metric and its compatible ANN indexes. A differing metric forces the
+    /// exact storage route so SQL operators are never answered by an index
+    /// built for another ordering.
+    pub distance_metric: Option<proximadb_distance_types::DistanceMetric>,
     /// Optimization goal (speed vs accuracy)
     pub optimization_goal: OptimizationGoal,
     /// Enable progressive quantization search
@@ -35,6 +40,7 @@ pub struct UnifiedSearchConfig {
 impl Default for UnifiedSearchConfig {
     fn default() -> Self {
         Self {
+            distance_metric: None,
             optimization_goal: OptimizationGoal::Balanced,
             progressive_search: true,
             progressive_recalls: None,

@@ -210,6 +210,22 @@ pub enum GraphEngineImpl {
 }
 
 impl GraphEngineImpl {
+    /// True when an edge with this exact `(from, to, type)` composite already
+    /// exists in the engine's memory pool.
+    ///
+    /// Batch admission must probe THIS index — the engine's — not a
+    /// service-owned pool. `GraphOperationsService` carries its own
+    /// `GraphMemoryPool` for constraint/property indexes, but nothing ever
+    /// writes edges into it, so probing it for composite uniqueness always
+    /// answered "absent" and cross-batch duplicates were silently admitted.
+    pub fn has_composite_edge(&self, key: &(NodeId, NodeId, String)) -> bool {
+        match self {
+            GraphEngineImpl::Orion(engine) => {
+                engine.memory_pool.edge_composite_index.contains_key(key)
+            }
+        }
+    }
+
     /// Create a new graph engine based on type and configuration
     pub fn new(engine_type: GraphEngineType, _config: GraphEngineConfig) -> Result<Self> {
         match engine_type {

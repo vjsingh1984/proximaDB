@@ -105,6 +105,38 @@ impl ProximaDB {
         // `[storage.optimization] enable_mmap = false` for cloud deployments.
         config.storage.validate_cloud_mmap()?;
 
+        // Wire corpus-revision durability before constructing any service.
+        // SharedServices publishes the registry through the storage port, so
+        // doing this later creates an observable in-memory-only window.
+        if let Ok(path) = std::env::var("PROXIMADB_CORPUS_VERSION_PATH") {
+            if !path.is_empty() {
+                let store = std::sync::Arc::new(crate::catalog::FileSystemCorpusVersionStore::new(
+                    path.clone(),
+                ));
+                let attached = crate::catalog::CorpusVersionRegistry::init_global_with_store(store);
+                if attached {
+                    let loaded = crate::catalog::CorpusVersionRegistry::global()
+                        .hydrate_from_store()
+                        .await;
+                    tracing::info!(
+                        path = %path,
+                        rows = loaded,
+                        "✅ corpus_version durability wired (FileSystemCorpusVersionStore)"
+                    );
+                } else {
+                    tracing::warn!(
+                        path = %path,
+                        "corpus_version durable store was already attached; refusing replacement"
+                    );
+                }
+            }
+        } else {
+            tracing::info!(
+                "PROXIMADB_CORPUS_VERSION_PATH unset; corpus_version registry \
+                 is in-memory only (restart resets all versions)"
+            );
+        }
+
         // Step 1: Create metrics collector first
         tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
         let metrics_collector = Arc::new(crate::metrics::UnifiedMetricsCollector::new());
@@ -174,6 +206,15 @@ impl ProximaDB {
         // (PROXIMADB_ROUTE_COST_OVERRIDE, default OFF; enablement gated by
         // TD-ROUTE-1's capability-aware candidate fix).
         crate::query::route_cost_model::install_route_cost_observer();
+        // Make the SECOND object-storage stack observable. `ProximaObjectStore`
+        // (graph cold payloads/segments, the Iceberg bridge, RangedSegmentReader)
+        // goes straight to upstream `object_store` and recorded nothing, so every
+        // per-query I/O figure this system reported covered only the FileSystem
+        // stack — i.e. vector and relational. Installed once here; absent, the
+        // hook is inert and behaviour is unchanged.
+        proximadb_object_store::install_io_recorder(std::sync::Arc::new(
+            crate::storage::persistence::filesystem::IoTraceObjectStoreRecorder,
+        ));
         // Warm the cost model from persisted cells so the measured routing
         // history survives restarts (behavior unchanged while override is off).
         crate::query::route_cost_model::load_persisted_cost_model(&config.server.data_dir);
@@ -595,51 +636,6 @@ impl ProximaDB {
             None
         };
 
-        // Plan-cache corpus_version durability. When
-        // PROXIMADB_CORPUS_VERSION_PATH is set, construct a
-        // FileSystemCorpusVersionStore at that path, attach it to
-        // the global registry, and hydrate from disk before the
-        // request handlers begin serving traffic. Unset means
-        // in-memory only — restart resets all versions to 1 (which
-        // is correct for single-node deployments that prefer the
-        // simpler operational story).
-        //
-        // The init must happen before any code path touches
-        // CorpusVersionRegistry::global(); this is the earliest spot
-        // in the bootstrap where everything else is wired but
-        // requests haven't yet been served.
-        if let Ok(path) = std::env::var("PROXIMADB_CORPUS_VERSION_PATH") {
-            if !path.is_empty() {
-                let store = std::sync::Arc::new(crate::catalog::FileSystemCorpusVersionStore::new(
-                    path.clone(),
-                ));
-                let inited =
-                    crate::catalog::CorpusVersionRegistry::init_global_with_store(store.clone());
-                if inited {
-                    let loaded = crate::catalog::CorpusVersionRegistry::global()
-                        .hydrate_from_store()
-                        .await;
-                    tracing::info!(
-                        path = %path,
-                        rows = loaded,
-                        "✅ corpus_version durability wired (FileSystemCorpusVersionStore)"
-                    );
-                } else {
-                    tracing::warn!(
-                        path = %path,
-                        "corpus_version global already initialized before \
-                         PROXIMADB_CORPUS_VERSION_PATH wiring; bumps will not \
-                         persist for this process"
-                    );
-                }
-            }
-        } else {
-            tracing::info!(
-                "PROXIMADB_CORPUS_VERSION_PATH unset; corpus_version registry \
-                 is in-memory only (restart resets all versions)"
-            );
-        }
-
         // TD-TENANT-1: resolve the deployment-effective bare tenant-assertion
         // trust policy ONCE (env > [security.tenant] header_trust > deployment-
         // mode preset) and thread it into every network surface via MultiServer.
@@ -662,6 +658,31 @@ impl ProximaDB {
         }
         tracing::info!(policy = %tenant_header_trust, "🔐 tenant header-trust policy (TD-TENANT-1)");
 
+        // ADR-0053 W8: resolve the tier-claim gate identically (env
+        // PROXIMADB_TIER_HEADER_TRUST > [security.tenant] tier_header_trust >
+        // deployment-mode preset). The gates are separate because a
+        // deployment may trust its gateway's tenant ids without (yet)
+        // trusting its tier stamps.
+        let (tier_header_trust, tier_trust_warning) =
+            proximadb_tenant::HeaderTrustPolicy::effective_tier(
+                match &tenant_deployment_mode {
+                    proximadb_tenant::TenantDeploymentMode::MultiTenant => {
+                        proximadb_tenant::HeaderTrustPolicy::AuthenticatedOnly
+                    }
+                    proximadb_tenant::TenantDeploymentMode::SingleTenant { .. } => {
+                        proximadb_tenant::HeaderTrustPolicy::Open
+                    }
+                },
+                config
+                    .security
+                    .as_ref()
+                    .and_then(|security| security.tenant.tier_header_trust),
+            );
+        if let Some(warning) = tier_trust_warning {
+            tracing::warn!("{warning}");
+        }
+        tracing::info!(policy = %tier_header_trust, "🔐 tier-claim trust policy (ADR-0053 W8)");
+
         let multi_server = network::MultiServer::new_with_queue_client(
             multi_config,
             shared_services,
@@ -671,7 +692,8 @@ impl ProximaDB {
             llm_engine,
             queue_client.clone(),
         )
-        .with_tenant_header_trust(tenant_header_trust);
+        .with_tenant_header_trust(tenant_header_trust)
+        .with_tier_header_trust(tier_header_trust);
         tracing::debug!("✅ ProximaDB::new - MultiServer created");
 
         // Phase 2H wiring (drainer half): spawn the drainer only when
@@ -923,6 +945,60 @@ impl ProximaDB {
         }
         tracing::info!("✅ ProximaDB::start - Multi-server started successfully");
 
+        // Periodic graph WAL checkpoint (gated on the same canonical-replay
+        // scope as the checkpoint machinery itself). Without a cadence,
+        // `flush_wal` runs only at shutdown, so the graph WAL grows for the
+        // whole session and the shutdown snapshot is the first-ever (largest
+        // possible) one. Cadence 60s with an edge-epoch dirty check; every
+        // 10th tick runs unconditionally to cover node-only mutations, which
+        // do not bump the edge epoch.
+        if crate::storage::persistence::write_ahead_log::wal_operations::canonical_replay_scope_enabled()
+            && let Some(ref multi_server) = self.multi_server
+        {
+            let graph_service = multi_server.shared_services.graph_service.clone();
+            let (tx, mut rx) = tokio::sync::watch::channel(false);
+            crate::services::shutdown_registry::register("graph-wal-checkpoint", tx);
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(tokio::time::Duration::from_secs(60));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut last_epochs: std::collections::HashMap<String, u64> =
+                    std::collections::HashMap::new();
+                let mut ticks: u64 = 0;
+                loop {
+                    tokio::select! {
+                        _ = tick.tick() => {}
+                        _ = rx.changed() => break,
+                    }
+                    ticks += 1;
+                    let force = ticks.is_multiple_of(10);
+                    let graphs = match graph_service.list_graphs().await {
+                        Ok(g) => g,
+                        Err(e) => {
+                            tracing::debug!("graph checkpoint tick: list_graphs failed: {e}");
+                            continue;
+                        }
+                    };
+                    for graph_id in graphs {
+                        let epoch = graph_service.edge_epoch(&graph_id).0;
+                        let dirty = last_epochs.get(&graph_id) != Some(&epoch);
+                        if !(dirty || force) {
+                            continue;
+                        }
+                        match graph_service.flush_wal(&graph_id).await {
+                            Ok(()) => {
+                                last_epochs.insert(graph_id, epoch);
+                            }
+                            Err(e) => tracing::warn!(
+                                "periodic graph WAL checkpoint failed for {graph_id}: {e:#}"
+                            ),
+                        }
+                    }
+                }
+                tracing::debug!("graph WAL checkpoint loop exited");
+            });
+            tracing::info!("🕒 graph WAL checkpoint loop armed (60s, scope-gated)");
+        }
+
         tracing::info!(
             "🎉 ProximaDB::start - Database startup complete with full persistence recovery!"
         );
@@ -974,7 +1050,10 @@ impl ProximaDB {
         // 2. Flush graph WAL for all graphs before shutdown
         tracing::info!("Flushing graph WAL for all graphs...");
         if let Some(ref multi_server) = self.multi_server {
-            match tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+            // 15s (was 5s): with PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE on,
+            // each graph's flush also writes a full snapshot and truncates
+            // reclaimed WAL segments.
+            match tokio::time::timeout(tokio::time::Duration::from_secs(15), async {
                 let graphs = multi_server
                     .shared_services
                     .graph_service
@@ -1060,7 +1139,13 @@ impl ProximaDB {
         }
 
         // 4. Stop storage engine with timeout
-        match tokio::time::timeout(tokio::time::Duration::from_secs(3), async {
+        // 60s (was 3s): the final flush-on-stop is a real materialize —
+        // TD-FLUSH-4 measured 43.9s at 884k entries — and the same function
+        // already budgets 90s for drain_inline_flushes. 3s guaranteed the
+        // final flush (and with it WAL reclamation via free_wal) was
+        // truncated on every non-trivial embedded run. Returns early when
+        // the flush is small, which the embedded flush profile now ensures.
+        match tokio::time::timeout(tokio::time::Duration::from_secs(60), async {
             let mut storage = self.storage.write().await;
             storage.stop().await
         })
@@ -1718,6 +1803,7 @@ mod security_initialization_tests {
                     cn_role_mapping: HashMap::new(),
                 },
                 audit_fail_closed: false,
+                oidc: None,
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),

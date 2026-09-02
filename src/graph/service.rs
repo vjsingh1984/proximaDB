@@ -195,6 +195,37 @@ fn payload_weight(
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
+/// One edge skipped by [`GraphOperationsService::batch_create_edges`], with the
+/// reason. Carried per-edge so every surface can fill the `errors[]` its
+/// response shape already promises — a rejection never aborts the batch.
+#[derive(Debug, Clone)]
+pub struct BatchEdgeRejection {
+    pub edge_id: String,
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub edge_type: String,
+    pub reason: String,
+}
+
+impl BatchEdgeRejection {
+    fn new(edge: &Edge, reason: String) -> Self {
+        Self {
+            edge_id: edge.id.clone(),
+            from_node_id: edge.from_node_id.clone(),
+            to_node_id: edge.to_node_id.clone(),
+            edge_type: edge.edge_type.clone(),
+            reason,
+        }
+    }
+}
+
+/// Outcome of a batch edge create: what landed and what was skipped (and why).
+#[derive(Debug, Default)]
+pub struct BatchCreateEdgesResult {
+    pub created: Vec<Arc<Edge>>,
+    pub rejected: Vec<BatchEdgeRejection>,
+}
+
 /// Graph operations service providing CRUD operations and queries for graph data
 pub struct GraphOperationsService {
     /// Current operation mode (vector-only, graph-only, unified)
@@ -2687,12 +2718,22 @@ impl GraphOperationsService {
         Ok(results)
     }
 
-    /// Batch create edges for high-performance ingestion
+    /// Batch create edges for high-performance ingestion.
+    ///
+    /// Per-edge admission, not all-or-nothing: an edge that cannot be applied
+    /// (duplicate in batch, composite already present, missing endpoint,
+    /// schema/cardinality violation) is REJECTED with a reason while the rest
+    /// of the batch still lands. The every-surface response shape
+    /// (`created`/`failed`/`errors[]`) always promised exactly this; the old
+    /// abort-on-first-error behavior made it a lie — one dangling edge threw
+    /// away the other 292 valid ones and left the canonical record store
+    /// holding edges the engine never accepted (#1524 follow-up, measured on
+    /// the Victor repo-scale corpus).
     pub async fn batch_create_edges(
         &self,
         graph_id: &str,
         edges: Vec<Edge>,
-    ) -> Result<Vec<Arc<Edge>>> {
+    ) -> Result<BatchCreateEdgesResult> {
         let service_start = std::time::Instant::now();
 
         if !self.graph_enabled() {
@@ -2702,32 +2743,63 @@ impl GraphOperationsService {
         }
 
         if edges.is_empty() {
-            return Ok(Vec::new());
+            return Ok(BatchCreateEdgesResult::default());
         }
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Enforce composite (from,to,type) uniqueness across existing + in-batch edges
+        // Per-edge admission: composite (from,to,type) uniqueness across
+        // existing + in-batch edges, and endpoint existence (the same
+        // pool-resident predicate the engine's bulk insert enforces — checked
+        // here so ONE bad edge rejects itself instead of the whole batch).
         let composite_start = std::time::Instant::now();
         let mut seen: HashSet<(String, String, String)> = HashSet::with_capacity(edges.len());
-        for edge in &edges {
+        let mut rejected: Vec<BatchEdgeRejection> = Vec::new();
+        let mut accepted: Vec<Edge> = Vec::with_capacity(edges.len());
+        for edge in edges {
             let key = (
                 edge.from_node_id.clone(),
                 edge.to_node_id.clone(),
                 edge.edge_type.clone(),
             );
             if !seen.insert(key.clone()) {
-                return Err(ProximaDBError::InvalidInput(format!(
-                    "Duplicate edge in batch: (from='{}', to='{}', type='{}')",
-                    key.0, key.1, key.2
-                )));
+                rejected.push(BatchEdgeRejection::new(
+                    &edge,
+                    format!(
+                        "Duplicate edge in batch: (from='{}', to='{}', type='{}')",
+                        key.0, key.1, key.2
+                    ),
+                ));
+                continue;
             }
-            if self.memory_pool.edge_composite_index.contains_key(&key) {
-                return Err(ProximaDBError::InvalidInput(format!(
-                    "Composite edge already exists: (from='{}', to='{}', type='{}')",
-                    key.0, key.1, key.2
-                )));
+            // Probe the ENGINE's composite index. The service's own pool never
+            // receives edge writes, so the previous probe against it was a
+            // guaranteed miss and cross-batch duplicates sailed through.
+            if engine.has_composite_edge(&key) {
+                rejected.push(BatchEdgeRejection::new(
+                    &edge,
+                    format!(
+                        "Composite edge already exists: (from='{}', to='{}', type='{}')",
+                        key.0, key.1, key.2
+                    ),
+                ));
+                continue;
             }
+            if engine.get_node(&edge.from_node_id)?.is_none() {
+                rejected.push(BatchEdgeRejection::new(
+                    &edge,
+                    format!("Source node {} does not exist", edge.from_node_id),
+                ));
+                continue;
+            }
+            if engine.get_node(&edge.to_node_id)?.is_none() {
+                rejected.push(BatchEdgeRejection::new(
+                    &edge,
+                    format!("Target node {} does not exist", edge.to_node_id),
+                ));
+                continue;
+            }
+            accepted.push(edge);
         }
         let composite_time = composite_start.elapsed();
 
@@ -2739,60 +2811,94 @@ impl GraphOperationsService {
             .is_some_and(|c| c.schema.is_some());
 
         if has_schema {
-            // Schema/cardinality validation (only when schema exists)
-            // Step 1: Batch fetch all nodes first (reduces lock contention)
+            // Schema/cardinality validation (only when schema exists). Admission
+            // above guarantees both endpoints resolve for every accepted edge.
             let mut validation_data: Vec<(Edge, Arc<Node>, Arc<Node>)> =
-                Vec::with_capacity(edges.len());
-            for edge in &edges {
-                if let (Some(from), Some(to)) = (
+                Vec::with_capacity(accepted.len());
+            for edge in accepted.drain(..) {
+                let (Some(from), Some(to)) = (
                     engine.get_node(&edge.from_node_id)?,
                     engine.get_node(&edge.to_node_id)?,
-                ) {
-                    validation_data.push((edge.clone(), from, to));
-                }
+                ) else {
+                    // Endpoint vanished between admission and validation
+                    // (concurrent delete): reject, don't abort.
+                    rejected.push(BatchEdgeRejection::new(
+                        &edge,
+                        "edge endpoint deleted concurrently".to_string(),
+                    ));
+                    continue;
+                };
+                validation_data.push((edge, from, to));
             }
 
-            // Step 2: Check if sequential validation is requested
             let sequential =
                 std::env::var("PROXIMADB_GRAPH_SEQUENTIAL_VALIDATION").unwrap_or_default() == "1";
-
             if sequential {
-                // Sequential validation (original implementation for comparison)
                 tracing::warn!(
                     "TEST MODE: Using sequential validation via PROXIMADB_GRAPH_SEQUENTIAL_VALIDATION=1"
                 );
+            }
+
+            // Per-edge verdicts (parallel by default): a violation rejects that
+            // edge; the rest of the batch proceeds.
+            let mut verdicts: Vec<std::result::Result<(), ProximaDBError>> =
+                Vec::with_capacity(validation_data.len());
+            if sequential {
                 for (edge, from, to) in &validation_data {
-                    self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)
-                        .await?;
-                    self.enforce_cardinality_on_edge(graph_id, edge, engine.as_ref())
-                        .await?;
+                    let outcome = async {
+                        self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)
+                            .await?;
+                        self.enforce_cardinality_on_edge(graph_id, edge, engine.as_ref())
+                            .await?;
+                        Ok::<(), ProximaDBError>(())
+                    }
+                    .await;
+                    verdicts.push(outcome);
                 }
             } else {
-                // Parallel validation (optimized)
                 let validation_futures: Vec<_> = validation_data
                     .iter()
                     .map(|(edge, from, to)| async {
-                        // Schema validation
                         self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)
                             .await?;
-                        // Cardinality validation
                         self.enforce_cardinality_on_edge(graph_id, edge, engine.as_ref())
                             .await?;
                         Ok::<(), ProximaDBError>(())
                     })
                     .collect();
+                verdicts = futures::future::join_all(validation_futures).await;
+            }
 
-                // Execute all validations concurrently and check for errors
-                let results = futures::future::join_all(validation_futures).await;
-                for result in results {
-                    result?;
+            for ((edge, _, _), verdict) in validation_data.into_iter().zip(verdicts) {
+                match verdict {
+                    Ok(()) => accepted.push(edge),
+                    Err(e) => rejected.push(BatchEdgeRejection::new(&edge, e.to_string())),
                 }
             }
         }
         // If no schema, skip validation entirely - major performance win for bulk inserts
 
+        if !rejected.is_empty() {
+            tracing::warn!(
+                graph_id,
+                rejected = rejected.len(),
+                accepted = accepted.len(),
+                first_reason = %rejected[0].reason,
+                "batch_create_edges: rejected edges skipped; remainder of batch applies"
+            );
+        }
+        if accepted.is_empty() {
+            return Ok(BatchCreateEdgesResult {
+                created: Vec::new(),
+                rejected,
+            });
+        }
+
+        // Canonical records for ACCEPTED edges only — writing the whole request
+        // here and then failing the engine insert left the canonical store
+        // holding edges the engine never accepted.
         if let Some(record_store) = &self.canonical_record_store {
-            let records = edges
+            let records = accepted
                 .iter()
                 .map(|edge| edge_to_canonical_record(graph_id, edge))
                 .collect();
@@ -2802,9 +2908,9 @@ impl GraphOperationsService {
                 .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
         }
 
-        let edge_count = edges.len();
+        let edge_count = accepted.len();
         let engine_start = std::time::Instant::now();
-        let inserted = engine.bulk_insert_edges(edges).await?;
+        let inserted = engine.bulk_insert_edges(accepted).await?;
         let engine_time = engine_start.elapsed();
 
         let projection_start = std::time::Instant::now();
@@ -2855,7 +2961,10 @@ impl GraphOperationsService {
             );
         }
 
-        Ok(inserted)
+        Ok(BatchCreateEdgesResult {
+            created: inserted,
+            rejected,
+        })
     }
 
     // Helpers for range/string comparisons

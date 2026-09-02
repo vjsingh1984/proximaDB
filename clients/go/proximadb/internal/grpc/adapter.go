@@ -98,7 +98,7 @@ type CollectionInfo struct {
 	Dimension   int       `json:"dimension"`
 	Metric      string    `json:"metric"`
 	Engine      string    `json:"engine"`
-	VectorCount int64     `json:"vector_count"`
+	VectorCount *int64    `json:"vector_count,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

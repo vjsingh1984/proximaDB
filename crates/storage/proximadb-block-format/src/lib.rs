@@ -72,6 +72,7 @@
 
 pub mod coalesced_rabitq;
 pub mod coalesced_sq8;
+pub mod footer_stats;
 pub mod header;
 pub mod prune;
 pub mod ranged;
@@ -87,21 +88,23 @@ pub mod writer;
 // ---- Top-level re-exports ----
 
 pub use coalesced_rabitq::{
-    CoalescedRaBitQHeader, RABITQ_SEED_BASE, REGION_FIXED_HEADER_LEN, RaBitQRegion, code_stride,
-    encode_region, rank_probed_rows, rank_probed_rows_allowed, region_header_len, region_len,
+    CoalescedRaBitQHeader, PreparedProbeRank, ProbedRun, RABITQ_SEED_BASE, REGION_FIXED_HEADER_LEN,
+    RaBitQRegion, code_stride, encode_region, plan_rank_morsels, probed_score_compare,
+    rank_probed_rows, rank_probed_rows_allowed, rank_run_group_top, region_header_len, region_len,
 };
 pub use coalesced_sq8::{
     CoalescedSq8Header, REGION_SQ8_FIXED_HEADER_LEN, Sq8Region, codes_offset as sq8_codes_offset,
     decode_codes as sq8_decode_codes, encode_region as encode_sq8_region,
     region_header_len as sq8_region_header_len, region_len as sq8_region_len,
 };
+pub use footer_stats::FooterBlockStats;
 pub use header::{
     BLOCK_MAGIC, BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, flags,
     fnv1a_hash,
 };
 pub use prune::{BlockZoneSource, FieldToColumn, PruneResult, evaluate_block, evaluate_row_groups};
 pub use ranged::{BlockLayout, MetadataRanges, footer_tail_range, metadata_ranges};
-pub use reader::{PaxBlockReader, RankMetric};
+pub use reader::{PaxBlockReader, RankMetric, decode_str_chunk, decode_str_chunk_checked};
 pub use record::{
     ColumnDescriptor, FlatRow, canonical_columns, col_id, encode_f32_vec_col, encode_i64_col,
     encode_str_col, update_i64_bounds,

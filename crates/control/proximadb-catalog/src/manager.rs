@@ -265,27 +265,6 @@ impl CatalogManager {
         Ok(catalog)
     }
 
-    /// Create and register a Hive Metastore catalog
-    pub async fn create_hive_catalog(
-        &self,
-        name: &str,
-        thrift_uri: &str,
-    ) -> Result<Arc<dyn Catalog>> {
-        use crate::hive::HiveCatalogConfig;
-
-        let config = HiveCatalogConfig {
-            thrift_uri: thrift_uri.to_string(),
-            ..Default::default()
-        };
-
-        let catalog =
-            crate::hive::HiveCatalog::new(name.to_string(), config, self.cache.clone()).await?;
-
-        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
-        self.register(catalog.clone()).await?;
-        Ok(catalog)
-    }
-
     /// Create and register an Iceberg catalog
     pub async fn create_iceberg_catalog(
         &self,
@@ -730,6 +709,17 @@ impl CatalogManager {
     /// tenant-prefixes the namespace so each tenant's schema row is distinct
     /// (`orders` → namespace `[tenant, "default"]`). An empty/None tenant
     /// resolves identically to [`Self::resolve_table`] (single-tenant).
+    ///
+    /// TD-OLAP-18: after the exact resolution, an id that names no registered
+    /// table falls back to a *unique* case-insensitive match within the final
+    /// namespace (declared-case always wins; ambiguous case-variants stay
+    /// unresolved). This is the write-path mirror of the relational frontend's
+    /// read-path fold — `INSERT INTO casetbl` after `CREATE TABLE CaseTbl`
+    /// resolves. The gate env var is read inline (the canonical
+    /// `ident_case_fold_enabled()` lives in the query-layer
+    /// `proximadb-relational-frontend`, which this control-layer crate must not
+    /// depend on); the name and semantics are those of the registered gate
+    /// `PROXIMADB_IDENT_CASE_FOLD` (see ENV_GATE_REGISTRY).
     pub async fn resolve_table_scoped(
         &self,
         fqn: &str,
@@ -752,22 +742,39 @@ impl CatalogManager {
             );
         }
         let (catalog, id) = self.resolve_table(fqn).await?;
-        match tenant {
+        let id = match tenant {
             Some(tenant) if !tenant.is_empty() => {
                 if id
                     .namespace
                     .first()
                     .is_some_and(|segment| segment == tenant)
                 {
-                    return Ok((catalog, id));
+                    id
+                } else {
+                    let mut namespace = Vec::with_capacity(id.namespace.len() + 1);
+                    namespace.push(tenant.to_string());
+                    namespace.extend(id.namespace.iter().cloned());
+                    TableIdentifier::new(namespace, id.name)
                 }
-                let mut namespace = Vec::with_capacity(id.namespace.len() + 1);
-                namespace.push(tenant.to_string());
-                namespace.extend(id.namespace.iter().cloned());
-                Ok((catalog, TableIdentifier::new(namespace, id.name)))
             }
-            _ => Ok((catalog, id)),
+            _ => id,
+        };
+        // TD-OLAP-18 fold-on-miss (see doc comment). `table_exists` is a
+        // CatalogCache hit on every path that would succeed exactly, so the
+        // common case pays one cached lookup, not a listing.
+        if ident_case_fold_env_enabled() && !catalog.table_exists(&id).await.unwrap_or(false) {
+            let candidates: Vec<TableIdentifier> = catalog
+                .list_tables(&id.namespace)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| t.name.eq_ignore_ascii_case(&id.name))
+                .collect();
+            if let [declared] = candidates.as_slice() {
+                return Ok((catalog, declared.clone()));
+            }
         }
+        Ok((catalog, id))
     }
 
     /// Get cache reference for direct access
@@ -779,6 +786,21 @@ impl CatalogManager {
 impl Default for CatalogManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// TD-OLAP-18 identifier case-fold gate (write path). Mirrors the canonical
+/// `proximadb_relational_frontend::ident_case_fold_enabled()` — read inline
+/// here because this control-layer crate must not depend on the query layer.
+/// Default ON; `PROXIMADB_IDENT_CASE_FOLD=0|false|off|no` restores
+/// case-exact resolution (see ENV_GATE_REGISTRY).
+fn ident_case_fold_env_enabled() -> bool {
+    match std::env::var("PROXIMADB_IDENT_CASE_FOLD") {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        Err(_) => true,
     }
 }
 

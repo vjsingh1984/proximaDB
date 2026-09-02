@@ -88,7 +88,7 @@ async fn build_chain_graph(service: &GraphOperationsService, dir: &str) {
         .batch_create_edges(GRAPH_ID, edges)
         .await
         .expect("create edges");
-    assert_eq!(created_edges.len(), 3, "three edges seeded");
+    assert_eq!(created_edges.created.len(), 3, "three edges seeded");
 }
 
 fn node_ids(service_nodes: &[Node]) -> std::collections::HashSet<&str> {

@@ -229,8 +229,11 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
                 top_k=10_000,
                 metadata_filter={"file_path": file_path},
             )
-        except Exception:
-            return 0
+        except Exception as exc:
+            # NOT 0. Zero means "no records matched", which a caller treats as
+            # success. A failed delete reported as zero deletions leaves data
+            # behind and tells nobody.
+            raise RuntimeError(f"failed to delete records for file: {exc}") from exc
 
         if not hits:
             return 0

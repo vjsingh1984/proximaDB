@@ -414,8 +414,11 @@ impl CollectionPartition {
     fn get_all_vectors(&self) -> Vec<ProximaRecord> {
         use std::collections::HashMap;
 
-        let mut id_to_latest: HashMap<String, (ProximaRecord, u64, u64)> = HashMap::new(); // (record, sequence, record_version)
-        let mut vectors_without_id = Vec::new();
+        // Borrowed MVCC state (single shared borrow over the batches): the
+        // previous map cloned the full record for EVERY newer version; only
+        // the surviving records are cloned, once, in the pass below.
+        let mut id_to_latest: HashMap<&str, (&ProximaRecord, u64, u64)> = HashMap::new(); // (record ref, sequence, record_version)
+        let mut vectors_without_id: Vec<&ProximaRecord> = Vec::new();
         let current_time_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Collect latest versions for each ID
@@ -431,7 +434,7 @@ impl CollectionPartition {
                 if !vector_record.oid.is_empty() {
                     let vector_id = &vector_record.oid;
                     // Check if this is the latest version (prioritize version number over timestamp)
-                    let is_newer = match id_to_latest.get(vector_id) {
+                    let is_newer = match id_to_latest.get(vector_id.as_str()) {
                         Some((_, existing_seq, existing_version)) => {
                             version > *existing_version
                                 || (version == *existing_version && sequence > *existing_seq)
@@ -440,10 +443,7 @@ impl CollectionPartition {
                     };
 
                     if is_newer {
-                        id_to_latest.insert(
-                            vector_record.oid.clone(),
-                            (vector_record.clone(), sequence, version),
-                        );
+                        id_to_latest.insert(vector_id.as_str(), (vector_record, sequence, version));
                     }
                 } else {
                     // No ID - include directly if not expired
@@ -452,7 +452,7 @@ impl CollectionPartition {
                         .map(|expires| expires < current_time_ns);
 
                     if !is_expired.unwrap_or(false) {
-                        vectors_without_id.push(vector_record.clone());
+                        vectors_without_id.push(vector_record);
                     }
                 }
             }
@@ -465,11 +465,11 @@ impl CollectionPartition {
             let is_expired = record.valid_to_ns.map(|expires| expires < current_time_ns);
 
             if !is_expired.unwrap_or(false) {
-                vectors.push(record);
+                vectors.push(record.clone());
             }
         }
 
-        vectors.extend(vectors_without_id);
+        vectors.extend(vectors_without_id.into_iter().cloned());
         vectors
     }
 
@@ -664,9 +664,14 @@ impl CollectionPartition {
     ) -> Vec<(SimilarityResult, ProximaRecord)> {
         use std::collections::HashMap;
 
-        let mut id_to_latest: HashMap<String, (SimilarityResult, ProximaRecord, u64, u64)> =
-            HashMap::new(); // (score, record, sequence, record_version)
-        let mut results_without_id: Vec<(SimilarityResult, ProximaRecord)> = Vec::new();
+        // Borrowed MVCC state: keys/values reference the WAL batches (the
+        // whole scan holds one shared borrow), so superseded versions cost NO
+        // record clone — the previous map cloned the full ProximaRecord for
+        // every newer version seen and dropped the superseded copy at once.
+        // Survivors are cloned exactly once in the materialization pass below.
+        let mut id_to_latest: HashMap<&str, (SimilarityResult, &ProximaRecord, u64, u64)> =
+            HashMap::new(); // (score, record ref, sequence, record_version)
+        let mut results_without_id: Vec<(SimilarityResult, &ProximaRecord)> = Vec::new();
         let current_time_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         let mut batches_checked = 0;
@@ -714,7 +719,7 @@ impl CollectionPartition {
                 if !vector_record.oid.is_empty() {
                     let vector_id = &vector_record.oid;
                     // Check if this is the latest version (prioritize version number over timestamp)
-                    let is_newer = match id_to_latest.get(vector_id) {
+                    let is_newer = match id_to_latest.get(vector_id.as_str()) {
                         Some((_, _, existing_seq, existing_version)) => {
                             version > *existing_version
                                 || (version == *existing_version && sequence > *existing_seq)
@@ -735,7 +740,7 @@ impl CollectionPartition {
                                 .is_some_and(|e| e <= current_time_ns);
                         if is_tombstone {
                             // Remove any previous version from results (tombstone shadows it)
-                            id_to_latest.remove(vector_id);
+                            id_to_latest.remove(vector_id.as_str());
                             tracing::debug!(
                                 "🗑️ Tombstone found for ID {}: removing from results",
                                 vector_id
@@ -747,8 +752,8 @@ impl CollectionPartition {
                                 distance_metric,
                             );
                             id_to_latest.insert(
-                                vector_record.oid.clone(),
-                                (score, vector_record.clone(), sequence, version),
+                                vector_id.as_str(),
+                                (score, vector_record, sequence, version),
                             );
 
                             tracing::debug!(
@@ -780,7 +785,7 @@ impl CollectionPartition {
                             vec_values,
                             distance_metric,
                         );
-                        results_without_id.push((score, vector_record.clone()));
+                        results_without_id.push((score, vector_record));
                     }
                 }
             }
@@ -800,13 +805,18 @@ impl CollectionPartition {
                 tracing::debug!("🗑️ Filtering out expired latest version for ID {}", id);
                 filtered_count += 1;
             } else {
-                final_results.push((score, vector_record));
+                // Survivors only: one clone per returned record.
+                final_results.push((score, vector_record.clone()));
             }
         }
 
         // Add non-ID results
         let results_without_id_count = results_without_id.len();
-        final_results.extend(results_without_id);
+        final_results.extend(
+            results_without_id
+                .into_iter()
+                .map(|(score, record)| (score, record.clone())),
+        );
 
         if metadata_filter.is_some() {
             let skip_percentage = (batches_skipped as f64 / batches_checked as f64) * 100.0;

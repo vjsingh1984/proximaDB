@@ -5,7 +5,6 @@
 //! - AWS Glue: AWS Glue Data Catalog integration (feature-gated)
 //! - Unity: Databricks Unity Catalog integration (feature-gated)
 //! - Polaris: Apache Polaris (Iceberg REST Catalog) (feature-gated)
-//! - Hive: Apache Hive Metastore (Thrift)
 //! - Iceberg: Generic Iceberg catalogs (REST, JDBC, Hadoop)
 //!
 //! Design Principles:
@@ -53,11 +52,6 @@ pub use proximadb_catalog::iceberg_rest_service;
 // Moved to proximadb-catalog (unblocked by `SegmentMeta` moving into proximadb-block-format).
 pub use proximadb_catalog::segment_registry;
 pub use segment_registry::SegmentRegistry;
-
-// Catalog federation (unified view across internal and external catalogs).
-// Moved to proximadb-catalog (Slice 3); re-exported so `crate::catalog::federation::*`
-// paths are unchanged.
-pub use proximadb_catalog::federation;
 
 // Tenant tier store — per-tenant policy + budget + feature flags (LLD §3, §4).
 pub mod tenant_tier;
@@ -583,26 +577,8 @@ mod tests {
     }
 
     // ========================
-    // Hive Catalog Tests
-    // ========================
-
-    #[tokio::test]
-    async fn test_create_hive_catalog() {
-        let manager = CatalogManager::new();
-
-        // Hive catalog creation should work (even without a real Thrift server)
-        let result = manager
-            .create_hive_catalog("hive", "thrift://localhost:9083")
-            .await;
-
-        assert!(result.is_ok());
-        assert!(manager.list_catalogs().await.contains(&"hive".to_string()));
-    }
-
-    // ========================
     // Multi-catalog Tests
     // ========================
-
     #[tokio::test]
     async fn test_multiple_catalogs() {
         let manager = CatalogManager::new();

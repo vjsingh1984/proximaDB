@@ -17,8 +17,9 @@ use proximadb_rank_core::{DocHandle, GlobalScorer, PhaseId, RankError, RankResul
 ///
 /// The wrap step turns `ScoredHit { doc, score, phase }` into a minimal
 /// `UnifiedRecord` so the reranker's MMR / intent / temporal logic can
-/// operate. The unwrap step puts scores back onto `ScoredHit` with
-/// `PhaseId::GLOBAL` set.
+/// operate. The unwrap step puts scores back onto `ScoredHit`: head records
+/// (re-scored by the reranker) get `PhaseId::GLOBAL`; the preserved tail past
+/// the reranker's head bound keeps its input phase.
 ///
 /// IDs flow as `DocHandle.0` → decimal string → and back; this is the
 /// stable contract for the adapter. R-7 may swap to a richer envelope if
@@ -93,15 +94,29 @@ impl GlobalScorer for CrossModalGlobalScorer {
         // Preserve the original DocHandles by lookup table; the
         // reranker only sees stringified ids so we can't trust it to
         // round-trip them as integers.
-        let by_id: HashMap<String, DocHandle> =
-            hits.iter().map(|h| (h.doc.0.to_string(), h.doc)).collect();
+        let by_id: HashMap<String, (DocHandle, PhaseId)> = hits
+            .iter()
+            .map(|h| (h.doc.0.to_string(), (h.doc, h.phase)))
+            .collect();
 
+        // Head records were re-scored this phase → GLOBAL. The preserved tail
+        // (records past the reranker's head bound, appended in input order)
+        // keeps its INPUT phase — the same prefix-rerank + tail-append
+        // convention the second-phase scorer established (`rank.rs` handler
+        // test asserts phase ids `[1,1,1,0,0]` for exactly this shape).
+        let head_len = self.inner.rerank_top_k();
         let mut out: Vec<ScoredHit> = reranked
             .records
             .into_iter()
-            .filter_map(|r| {
-                by_id.get(&r.id).map(|doc| {
-                    ScoredHit::bare(*doc, r.score.unwrap_or(0.0) as f32, PhaseId::GLOBAL)
+            .enumerate()
+            .filter_map(|(i, r)| {
+                by_id.get(&r.id).map(|(doc, input_phase)| {
+                    let phase = if i < head_len {
+                        PhaseId::GLOBAL
+                    } else {
+                        *input_phase
+                    };
+                    ScoredHit::bare(*doc, r.score.unwrap_or(0.0) as f32, phase)
                 })
             })
             .collect();
@@ -182,6 +197,41 @@ mod tests {
         let in_ids: std::collections::HashSet<u32> = input.iter().map(|h| h.doc.0).collect();
         let out_ids: std::collections::HashSet<u32> = out.iter().map(|h| h.doc.0).collect();
         assert_eq!(in_ids, out_ids);
+    }
+
+    /// TD-SELECTOR-1 gate 3: when `topk` exceeds the reranker's head bound,
+    /// the adapter returns `topk` records — the re-scored head stamped GLOBAL,
+    /// the preserved tail keeping its INPUT phase (the second-phase scorer's
+    /// prefix-rerank + tail-append convention; see the rank.rs handler test
+    /// asserting phase ids `[1,1,1,0,0]`).
+    #[tokio::test]
+    async fn adapter_topk_beyond_rerank_head_preserves_tail_with_input_phase() {
+        let config = RerankConfig {
+            rerank_top_k: 2,
+            ..enabled_config()
+        };
+        let scorer = CrossModalGlobalScorer::new(config);
+        // 5 hits, head bound 2, topk 5: head = 2 re-scored records, tail = 3
+        // preserved in input order with PhaseId::FIRST (as constructed above).
+        let input = hits(&[0.9, 0.8, 0.7, 0.6, 0.5]);
+        let out = scorer.score(input, 5).await.unwrap();
+
+        assert_eq!(out.len(), 5, "topk beyond the head bound must be honored");
+        let head = &out[..2];
+        let tail = &out[2..];
+        for h in head {
+            assert_eq!(h.phase, PhaseId::GLOBAL, "head was re-scored this phase");
+        }
+        for h in tail {
+            assert_eq!(
+                h.phase,
+                PhaseId::FIRST,
+                "preserved tail keeps its input phase"
+            );
+        }
+        // Tail is in input order: docs 3, 4, 5.
+        let tail_ids: Vec<u32> = tail.iter().map(|h| h.doc.0).collect();
+        assert_eq!(tail_ids, vec![3, 4, 5]);
     }
 
     #[tokio::test]

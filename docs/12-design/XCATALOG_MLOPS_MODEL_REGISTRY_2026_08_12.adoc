@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:revdate: 2026-08-12
+:revdate: 2026-08-15
 
 [.lead]
 This design makes embedding execution contracts first-class, typed xCatalog assets while keeping
@@ -10,9 +10,10 @@ MLflow, SDK discovery and serving runtimes as adapters. It is the native control
 token-budgeted chunking: the tokenizer, renderer, context and output geometry used to chunk must be
 the same immutable contract pinned by collections and deployments.
 
-Status: *core contract, NativeCatalog persistence, and fail-closed collection-binding resolution
-implemented; public lifecycle API and MLflow REST compatibility are rollout slices*. The shape is
-additive and legacy-read-safe.
+Status: *core contract, NativeCatalog and SystemCatalog persistence, tenant-scoped lifecycle
+service, fail-closed collection-binding resolution, public REST/gRPC lifecycle APIs, and generated
+SDK contracts implemented; MLflow compatibility is the next adapter slice*. The shape is additive
+and legacy-read-safe.
 
 == First principles
 
@@ -159,6 +160,24 @@ separate in-memory `internal::CatalogObject` model is not a second MLOps registr
 parallel-model collapse is already tracked by the TF-1 catalog roadmap. Lifecycle adapters must
 call the durable `Catalog` seam rather than adding MLOps state to that ephemeral registry.
 
+== Public lifecycle contract
+
+REST and gRPC are adapters over the same `Arc<CatalogModelRegistryService>` created in
+`SharedServices`; neither transport constructs or owns a registry. Tenant identity comes only from
+the authenticated request context or gRPC metadata and is deliberately absent from request bodies.
+
+The public lifecycle surface supports create, get, deterministic tenant-scoped list, optimistic
+command mutation, and alias resolution to a concrete immutable version. REST represents `asset_id`
+as a decimal string so JavaScript clients cannot lose `u64` precision; protobuf uses `uint64`.
+Domain failures map to transport-native typed errors, including conflict for stale REST revisions
+and `ABORTED` for stale gRPC revisions. Missing oneof commands, required nested messages, and
+unspecified access policy fail closed.
+
+The OpenAPI schema and v2 protobuf are the transport sources of truth. Go, TypeScript, Python, and
+Rust REST clients are generated from OpenAPI. Python v2 protobuf bindings are generated into the
+canonical runtime package at `clients/python/src/proximadb/v2`; the older
+`proximadb_sdk/v2` path is not an API authority.
+
 == Co-design economics and security
 
 [cols="1,2,2", options="header"]
@@ -179,26 +198,32 @@ execution requires a separately approved sandbox/runtime and existing tenant sec
 Tests require digest identity, valid templates/budgets/dimensions, immutable versions, append-only
 evidence/decisions, optimistic conflict rejection, alias history preservation, digest-pinned and
 runtime-approved deployments, relocation-stable hashes, legacy JSON compatibility, NativeCatalog
-reload persistence, all-or-none collection bindings, and Python conversion from a real
-`ResolvedInputContract` to native JSON.
+and SystemCatalog reload persistence, atomic compare-and-swap mutation on the live SystemCatalog
+authority, tenant isolation, deterministic discovery, all-or-none collection bindings, and Python
+conversion from a real `ResolvedInputContract` to native JSON.
 
 == Rollout
 
 . *Implemented*: typed contracts, validation, collection pins, stable hash, command mutations,
-  optimistic concurrency, NativeCatalog persistence, SDK payload adapter, and one fail-closed
-  binding-resolution query over digest/dimension/decision/runtime/name.
-. Add generated REST/gRPC lifecycle handlers and regenerate SDKs from OpenAPI/proto. Handlers lower
-  to catalog commands and the shared resolution query; no handwritten Python transport.
+  atomic optimistic concurrency, NativeCatalog and SystemCatalog persistence, SDK payload adapter,
+  tenant-scoped lifecycle application service, and one fail-closed binding-resolution query over
+  digest/dimension/decision/runtime/name. Alias resolution returns a concrete version/digest pin;
+  later alias changes cannot drift an existing binding.
+. *Implemented*: generated REST/gRPC lifecycle contracts and handlers over the shared lifecycle
+  service, typed transport errors, tenant isolation, deterministic discovery, lossless REST asset
+  IDs, explicit protobuf conversion, and regenerated Go, TypeScript, Python, and Rust SDK contracts.
 . Add the typed collection binding to generated APIs, then bind collection creation and embedding
   workers to approved resolved snapshots default-OFF, dual-reading the legacy route until baked.
 . Add MLflow model/version/alias/tag compatibility with conformance tests; then add OpenLineage
   import/export over the same producer/input lineage. Neither adapter owns persistence.
 . Add transactional OLTP-catalog overrides and cross-backend conformance tests before advertising
-  that backend's MLOps lifecycle surface.
+  that backend's MLOps lifecycle surface. Unsupported backends remain fail-closed.
 . Ratchet retrieval quality and lifecycle economics per contract hash before making native binding
   the default. The economic rubric includes context, dimension, GETs, bytes, cache hit ratio and
   object access tier; TD-COST-1 shows request-priced Hot and retrieval-byte-priced Cool/Cold can
   prefer different index geometry.
 
-The public API is a distinct slice because it requires generated API changes plus authorization and
-audit review. The core catalog seam is usable now and keeps those adapters thin.
+The next slice binds collection creation and embedding execution to an approved resolved snapshot.
+That is deliberately separate from exposing lifecycle APIs: it changes data-plane behavior and
+therefore remains default-OFF and mixed-read-safe until quality, compatibility, and cost ratchets
+are measured.

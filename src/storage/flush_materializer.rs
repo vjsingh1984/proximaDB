@@ -69,6 +69,16 @@ pub struct CollectionFlushPlan {
     pub dimension: u32,
     /// Owning tenant, when known — the A6 fence input. `None` ⇒ fence fails open.
     pub tenant_id: Option<String>,
+    /// TD-FPRUNE-1 M1: the collection's declared filterable columns, carried from
+    /// the catalog `meta` so the flush can shred them into typed user-columns
+    /// (footer min/max + bloom + self-describing field-map). The transitional
+    /// `collection_config` DTO the materializer rebuilds is otherwise minimal
+    /// (name/engine/dimension only) and drops these — so footer filter-pruning
+    /// stayed dark end-to-end. Empty ⇒ no shredding (byte-identical).
+    pub filterable_columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>,
+    /// TD-FPRUNE-1 M1: whether this is a ProximaRecord (document) collection —
+    /// the gate for shredding (mirrors `collection_mapping`'s precondition).
+    pub enable_proxima_record: Option<bool>,
 }
 
 /// Build a [`CollectionFlushPlan`] from a collection's catalog metadata. The single
@@ -126,6 +136,13 @@ pub fn flush_plan_from_collection_meta(
         engine_type,
         dimension,
         tenant_id,
+        // TD-FPRUNE-1 M1: carry the declared filterable columns from the full
+        // catalog meta so the flush can shred them (the reconstructed DTO below
+        // would otherwise drop them).
+        filterable_columns: config
+            .map(|c| c.filterable_columns.clone())
+            .unwrap_or_default(),
+        enable_proxima_record: config.and_then(|c| c.enable_proxima_record),
     })
 }
 
@@ -195,19 +212,38 @@ impl FlushExecutionCoordinator {
             .clone();
         let engine = cell
             .get_or_try_init(|| async move {
-                if let Some(engine) = fallback_engine {
-                    return Ok(engine);
-                }
-                crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
+                // Route to the collection's DECLARED engine via the factory.
+                // The fallback engine is a create-FAILURE fallback only: the
+                // previous `if let Some(engine) = fallback_engine` returned it
+                // unconditionally, so any caller supplying one (embedded mode
+                // passes the unified SST engine) flushed EVERY collection
+                // through SST regardless of its declared engine — engine/read
+                // mismatch: a HELIX collection flushed to SST files was then
+                // searched by HelixEngine, which found zero .helix SSTables
+                // and returned empty results (the embedded 1536-d failure).
+                match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
                     engine_type,
                 )
                 .await
-                .with_context(|| {
-                    format!(
-                        "failed to construct canonical {} flush engine",
-                        engine_type.as_str_name()
-                    )
-                })
+                {
+                    Ok(engine) => Ok(engine),
+                    Err(create_err) => {
+                        if let Some(engine) = fallback_engine {
+                            tracing::warn!(
+                                engine = engine_type.as_str_name(),
+                                error = %create_err,
+                                "canonical flush engine construction failed;                                  falling back to the unified engine"
+                            );
+                            return Ok(engine);
+                        }
+                        Err(create_err).with_context(|| {
+                            format!(
+                                "failed to construct canonical {} flush engine",
+                                engine_type.as_str_name()
+                            )
+                        })
+                    }
+                }
             })
             .await?;
         Ok(engine.clone())
@@ -251,19 +287,36 @@ pub async fn register_flush_engine(
     engine_type: ProtoStorageEngine,
     engine: Arc<dyn UnifiedStorageFormat>,
 ) {
-    let coordinator = flush_execution_coordinator();
-    let cell = coordinator
-        .engines
-        .entry(engine_type as i32)
-        .or_insert_with(|| Arc::new(OnceCell::new()))
-        .clone();
-    let requested = engine.clone();
-    let resolved = cell.get_or_init(|| async move { engine }).await;
-    if !Arc::ptr_eq(resolved, &requested) {
-        tracing::warn!(
-            engine = engine_type.as_str_name(),
-            "flush engine was resolved before composition-root registration; retaining the existing canonical instance"
-        );
+    flush_execution_coordinator()
+        .register_engine(engine_type, engine)
+        .await;
+}
+
+impl FlushExecutionCoordinator {
+    /// Seed the canonical engine instance for a storage format on THIS
+    /// coordinator (the free function does the same for the process-wide
+    /// one). Composition roots use it to share configured instances across
+    /// flush and compaction; tests use it to inject recording engines — the
+    /// flush-time `fallback_engine` is a create-FAILURE fallback, not an
+    /// injection point.
+    pub async fn register_engine(
+        &self,
+        engine_type: ProtoStorageEngine,
+        engine: Arc<dyn UnifiedStorageFormat>,
+    ) {
+        let cell = self
+            .engines
+            .entry(engine_type as i32)
+            .or_insert_with(|| Arc::new(OnceCell::new()))
+            .clone();
+        let requested = engine.clone();
+        let resolved = cell.get_or_init(|| async move { engine }).await;
+        if !Arc::ptr_eq(resolved, &requested) {
+            tracing::warn!(
+                engine = engine_type.as_str_name(),
+                "flush engine was resolved before registration; retaining the existing canonical instance"
+            );
+        }
     }
 }
 
@@ -536,6 +589,12 @@ async fn materialize_collection_with_coordinator_mode(
             name: plan.collection_name.clone(),
             storage_engine: Some(plan.engine_type),
             dimension: plan.dimension,
+            // TD-FPRUNE-1 M1: propagate the filterable columns + proxima-record
+            // flag so `resolve_flush_shred_spec` can shred declared tags into
+            // typed user-columns (footer filter-pruning). These were dropped by
+            // this transitional DTO, keeping footer-pruning dark end-to-end.
+            filterable_columns: plan.filterable_columns.clone(),
+            enable_proxima_record: plan.enable_proxima_record,
             ..Default::default()
         }),
         ..Default::default()
@@ -862,6 +921,8 @@ mod tests {
             engine_type: ProtoStorageEngine::Sst as i32,
             dimension: 2,
             tenant_id: Some("test-tenant".to_string()),
+            filterable_columns: Vec::new(),
+            enable_proxima_record: None,
         }
     }
 
@@ -921,12 +982,18 @@ mod tests {
         let engine = Arc::new(RecordingEngine::new());
         engine.preflight_allowed.store(false, Ordering::SeqCst);
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
         let error = materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &plan(101),
             None,
-            Some(engine.clone()),
+            None,
             true,
             None,
         )
@@ -968,12 +1035,18 @@ mod tests {
             .expect("legacy zero-byte batch must enter the WAL");
         let engine = Arc::new(RecordingEngine::new());
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
         let outcome = materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &plan(102),
             None,
-            Some(engine.clone()),
+            None,
             true,
             None,
         )
@@ -991,12 +1064,18 @@ mod tests {
         add_records_batch(&write_buffer, 112, vec![tombstone("dead")]).await;
         let engine = Arc::new(RecordingEngine::new());
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
         let outcome = materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &plan(112),
             None,
-            Some(engine.clone()),
+            None,
             true,
             None,
         )
@@ -1025,12 +1104,18 @@ mod tests {
         add_records_batch(&write_buffer, 113, vec![tombstone("dead")]).await;
         let engine = Arc::new(RecordingEngine::new());
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
         let outcome = materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &plan(113),
             None,
-            Some(engine.clone()),
+            None,
             true,
             None,
         )
@@ -1052,12 +1137,18 @@ mod tests {
         add_records_batch(&write_buffer, 114, vec![record("live"), tombstone("dead")]).await;
         let engine = Arc::new(RecordingEngine::new());
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
         let error = materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &plan(114),
             None,
-            Some(engine.clone()),
+            None,
             true,
             None,
         )
@@ -1091,12 +1182,15 @@ mod tests {
             collection_id: 13,
         });
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
         materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &typed_plan,
             None,
-            Some(engine.clone()),
+            None,
             true,
             None,
         )
@@ -1181,13 +1275,17 @@ mod tests {
         let engine = Arc::new(RecordingEngine::new());
         let plan = plan(103);
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
+
         let (first, second) = tokio::join!(
             materialize_collection_with_coordinator(
                 &coordinator,
                 &write_buffer,
                 &plan,
                 None,
-                Some(engine.clone()),
+                None,
                 true,
                 None,
             ),
@@ -1196,7 +1294,7 @@ mod tests {
                 &write_buffer,
                 &plan,
                 None,
-                Some(engine.clone()),
+                None,
                 true,
                 None,
             )
@@ -1227,6 +1325,10 @@ mod tests {
         let left = plan(104);
         let right = plan(105);
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
+
         let (left_result, right_result) =
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
                 tokio::join!(
@@ -1235,7 +1337,7 @@ mod tests {
                         &write_buffer,
                         &left,
                         None,
-                        Some(engine.clone()),
+                        None,
                         false,
                         None,
                     ),
@@ -1244,7 +1346,7 @@ mod tests {
                         &write_buffer,
                         &right,
                         None,
-                        Some(engine.clone()),
+                        None,
                         false,
                         None,
                     )
@@ -1267,12 +1369,15 @@ mod tests {
         let engine = Arc::new(RecordingEngine::new());
         engine.fail_flush.store(true, Ordering::SeqCst);
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
         materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &plan(106),
             None,
-            Some(engine.clone()),
+            None,
             true,
             None,
         )
@@ -1286,7 +1391,7 @@ mod tests {
             &write_buffer,
             &plan(106),
             None,
-            Some(engine.clone()),
+            None,
             true,
             None,
         )
@@ -1304,12 +1409,15 @@ mod tests {
         let engine = Arc::new(RecordingEngine::new());
         engine.successful_result.store(false, Ordering::SeqCst);
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
         materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &plan(107),
             None,
-            Some(engine),
+            None,
             true,
             None,
         )
@@ -1336,6 +1444,9 @@ mod tests {
         let task_coordinator = coordinator.clone();
         let task_buffer = write_buffer.clone();
         let task_engine = engine.clone();
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
 
         let task = tokio::spawn(async move {
             materialize_collection_with_coordinator(
@@ -1343,7 +1454,7 @@ mod tests {
                 &task_buffer,
                 &plan(108),
                 None,
-                Some(task_engine),
+                None,
                 true,
                 None,
             )
@@ -1380,6 +1491,9 @@ mod tests {
         let task_coordinator = coordinator.clone();
         let task_buffer = write_buffer.clone();
         let task_engine = engine.clone();
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, engine.clone())
+            .await;
 
         let task = tokio::spawn(async move {
             materialize_collection_with_coordinator(
@@ -1387,7 +1501,7 @@ mod tests {
                 &task_buffer,
                 &plan(109),
                 None,
-                Some(task_engine),
+                None,
                 true,
                 None,
             )
@@ -1422,12 +1536,15 @@ mod tests {
         let canonical = Arc::new(RecordingEngine::new());
         let discarded = Arc::new(RecordingEngine::new());
 
+        coordinator
+            .register_engine(ProtoStorageEngine::Sst, canonical.clone())
+            .await;
         materialize_collection_with_coordinator(
             &coordinator,
             &write_buffer,
             &plan(110),
             None,
-            Some(canonical.clone()),
+            None,
             true,
             None,
         )
@@ -1438,7 +1555,7 @@ mod tests {
             &write_buffer,
             &plan(111),
             None,
-            Some(discarded.clone()),
+            None,
             true,
             None,
         )

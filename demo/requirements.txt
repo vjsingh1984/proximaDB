@@ -1,12 +1,12 @@
 # Core dependencies
 numpy>=1.24.0
-requests>=2.28.0
-asyncio-mqtt>=0.11.0
+requests>=2.34.2
+asyncio-mqtt>=0.16.2
 
 # Text processing for chunking
-nltk>=3.8.0
+nltk>=3.10.2
 spacy>=3.5.0
-sentence-transformers>=2.2.0
+sentence-transformers>=6.0.0
 
 # Data science and ML
 pandas>=1.5.0
@@ -17,12 +17,12 @@ matplotlib>=3.6.0
 seaborn>=0.12.0
 
 # Progress bars and CLI
-tqdm>=4.64.0
-click>=8.1.0
+tqdm>=4.70.0
+click>=8.4.2
 
 # HTTP clients
 aiohttp>=3.8.0
-aiohttp-cors>=0.7.0
+aiohttp-cors>=0.8.1
 httpx>=0.24.0
 
 # JSON handling
@@ -41,9 +41,9 @@ isort>=5.11.0
 mypy>=1.0.0
 
 # BERT embeddings for real-world demos
-sentence-transformers>=2.2.0
+sentence-transformers>=6.0.0
 torch>=2.13.0
 
 # LLM support for RAG demo
-transformers>=5.14.1
+transformers>=5.15.1
 sentencepiece>=0.1.99

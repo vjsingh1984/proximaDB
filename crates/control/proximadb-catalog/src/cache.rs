@@ -7,10 +7,10 @@
 //! round-trips to the backing store. Shared by all catalog backend implementations
 //! via `Arc<CatalogCache>`.
 
-use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 
-use parking_lot::RwLock;
+use dashmap::DashMap;
 use tracing::{debug, trace};
 
 use crate::{
@@ -48,14 +48,42 @@ impl<T: Clone> CacheEntry<T> {
 }
 
 /// Catalog metadata cache shared by all catalog backend implementations.
+///
+/// TD-CAT-5: the maps are `DashMap` (lookup locks ONE shard for the LRU
+/// touch, not the whole map for every reader) and the counters are plain
+/// atomics (no second whole-cache lock per operation). Eviction at capacity
+/// is shard-sampled — see [`CatalogCache::maybe_evict`].
 pub struct CatalogCache {
     max_entries: usize,
     ttl: Duration,
-    namespaces: RwLock<HashMap<String, CacheEntry<CatalogNamespace>>>,
-    tables: RwLock<HashMap<String, CacheEntry<CatalogTableSchema>>>,
-    indexes: RwLock<HashMap<String, CacheEntry<Vec<CatalogIndex>>>>,
-    statistics: RwLock<HashMap<String, CacheEntry<CatalogTableStatistics>>>,
-    stats: RwLock<CacheStats>,
+    namespaces: DashMap<String, CacheEntry<CatalogNamespace>>,
+    tables: DashMap<String, CacheEntry<CatalogTableSchema>>,
+    indexes: DashMap<String, CacheEntry<Vec<CatalogIndex>>>,
+    statistics: DashMap<String, CacheEntry<CatalogTableStatistics>>,
+    // Counters. The public `CacheStats`/`get_stats()` shape is unchanged
+    // (snapshotted on read); ops just no longer serialize on a second lock.
+    namespace_hits: AtomicU64,
+    namespace_misses: AtomicU64,
+    table_hits: AtomicU64,
+    table_misses: AtomicU64,
+    index_hits: AtomicU64,
+    index_misses: AtomicU64,
+    stats_hits: AtomicU64,
+    stats_misses: AtomicU64,
+    evictions: AtomicU64,
+    invalidations: AtomicU64,
+    /// Bounded ring of recently inserted keys, one per map family — the
+    /// eviction sample set. Each family gets its OWN ring: a shared ring
+    /// filtered by single-map membership would treat every other family's
+    /// keys as "no longer resident" and drop them on each evict check,
+    /// starving whichever family isn't currently dominating insert traffic
+    /// (that family's `maybe_evict` would then find zero candidates while
+    /// its `put_*` keeps inserting unconditionally, growing past
+    /// `max_entries` until the next `evict_expired` sweep).
+    namespace_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
+    table_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
+    index_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
+    stats_ring: std::sync::Mutex<std::collections::VecDeque<String>>,
 }
 
 /// Cache hit/miss/eviction counters.
@@ -98,11 +126,24 @@ impl CatalogCache {
         Self {
             max_entries,
             ttl: Duration::from_secs(ttl_seconds),
-            namespaces: RwLock::new(HashMap::new()),
-            tables: RwLock::new(HashMap::new()),
-            indexes: RwLock::new(HashMap::new()),
-            statistics: RwLock::new(HashMap::new()),
-            stats: RwLock::new(CacheStats::default()),
+            namespaces: DashMap::new(),
+            tables: DashMap::new(),
+            indexes: DashMap::new(),
+            statistics: DashMap::new(),
+            namespace_hits: AtomicU64::new(0),
+            namespace_misses: AtomicU64::new(0),
+            table_hits: AtomicU64::new(0),
+            table_misses: AtomicU64::new(0),
+            index_hits: AtomicU64::new(0),
+            index_misses: AtomicU64::new(0),
+            stats_hits: AtomicU64::new(0),
+            stats_misses: AtomicU64::new(0),
+            evictions: AtomicU64::new(0),
+            invalidations: AtomicU64::new(0),
+            namespace_ring: std::sync::Mutex::new(Default::default()),
+            table_ring: std::sync::Mutex::new(Default::default()),
+            index_ring: std::sync::Mutex::new(Default::default()),
+            stats_ring: std::sync::Mutex::new(Default::default()),
         }
     }
 
@@ -114,34 +155,37 @@ impl CatalogCache {
 
     pub fn get_namespace(&self, catalog: &str, namespace: &[String]) -> Option<CatalogNamespace> {
         let key = ns_key(catalog, namespace);
-        let mut cache = self.namespaces.write();
-        if let Some(e) = cache.get_mut(&key) {
+        // Hit path locks one DashMap shard for the LRU touch (was: the whole
+        // map under an exclusive write lock).
+        if let Some(mut e) = self.namespaces.get_mut(&key) {
             if e.is_expired(self.ttl) {
-                cache.remove(&key);
-                self.stats.write().namespace_misses += 1;
+                drop(e);
+                self.namespaces.remove(&key);
+                self.namespace_misses.fetch_add(1, AtomicOrdering::Relaxed);
                 trace!("namespace cache miss (expired): {key}");
                 return None;
             }
-            self.stats.write().namespace_hits += 1;
+            let value = e.access().clone();
+            self.namespace_hits.fetch_add(1, AtomicOrdering::Relaxed);
             trace!("namespace cache hit: {key}");
-            Some(e.access().clone())
+            Some(value)
         } else {
-            self.stats.write().namespace_misses += 1;
+            self.namespace_misses.fetch_add(1, AtomicOrdering::Relaxed);
             None
         }
     }
 
     pub fn put_namespace(&self, catalog: &str, namespace: &[String], ns: CatalogNamespace) {
         let key = ns_key(catalog, namespace);
-        let mut cache = self.namespaces.write();
-        self.maybe_evict(&mut cache);
-        cache.insert(key, CacheEntry::new(ns));
+        self.maybe_evict(&self.namespaces, &self.namespace_ring);
+        self.namespaces.insert(key.clone(), CacheEntry::new(ns));
+        self.track_insert(&self.namespace_ring, &key);
     }
 
     pub fn invalidate_namespace(&self, catalog: &str, namespace: &[String]) {
         let key = ns_key(catalog, namespace);
-        self.namespaces.write().remove(&key);
-        self.stats.write().invalidations += 1;
+        self.namespaces.remove(&key);
+        self.invalidations.fetch_add(1, AtomicOrdering::Relaxed);
         debug!("invalidated namespace: {key}");
     }
 
@@ -149,71 +193,71 @@ impl CatalogCache {
 
     pub fn get_table(&self, catalog: &str, id: &TableIdentifier) -> Option<CatalogTableSchema> {
         let key = tbl_key(catalog, id);
-        let mut cache = self.tables.write();
-        if let Some(e) = cache.get_mut(&key) {
+        if let Some(mut e) = self.tables.get_mut(&key) {
             if e.is_expired(self.ttl) {
-                cache.remove(&key);
-                self.stats.write().table_misses += 1;
+                drop(e);
+                self.tables.remove(&key);
+                self.table_misses.fetch_add(1, AtomicOrdering::Relaxed);
                 return None;
             }
-            self.stats.write().table_hits += 1;
-            Some(e.access().clone())
+            let value = e.access().clone();
+            self.table_hits.fetch_add(1, AtomicOrdering::Relaxed);
+            Some(value)
         } else {
-            self.stats.write().table_misses += 1;
+            self.table_misses.fetch_add(1, AtomicOrdering::Relaxed);
             None
         }
     }
 
     pub fn put_table(&self, catalog: &str, id: &TableIdentifier, schema: CatalogTableSchema) {
         let key = tbl_key(catalog, id);
-        let mut cache = self.tables.write();
-        self.maybe_evict(&mut cache);
-        cache.insert(key, CacheEntry::new(schema));
+        self.maybe_evict(&self.tables, &self.table_ring);
+        self.tables.insert(key.clone(), CacheEntry::new(schema));
+        self.track_insert(&self.table_ring, &key);
     }
 
     pub fn invalidate_table_in_catalog(&self, catalog: &str, id: &TableIdentifier) {
         let key = tbl_key(catalog, id);
-        self.tables.write().remove(&key);
-        self.indexes.write().remove(&key);
-        self.statistics.write().remove(&key);
-        self.stats.write().invalidations += 1;
+        self.tables.remove(&key);
+        self.indexes.remove(&key);
+        self.statistics.remove(&key);
+        self.invalidations.fetch_add(1, AtomicOrdering::Relaxed);
         debug!("invalidated table {id} in catalog {catalog}");
     }
 
     pub fn invalidate_table(&self, id: &TableIdentifier) {
         let pattern = format!(".{}", id.to_fqn());
-        self.tables.write().retain(|k, _| !k.ends_with(&pattern));
-        self.indexes.write().retain(|k, _| !k.ends_with(&pattern));
-        self.statistics
-            .write()
-            .retain(|k, _| !k.ends_with(&pattern));
-        self.stats.write().invalidations += 1;
+        self.tables.retain(|k, _| !k.ends_with(&pattern));
+        self.indexes.retain(|k, _| !k.ends_with(&pattern));
+        self.statistics.retain(|k, _| !k.ends_with(&pattern));
+        self.invalidations.fetch_add(1, AtomicOrdering::Relaxed);
     }
 
     // ---- Indexes ----
 
     pub fn get_indexes(&self, catalog: &str, id: &TableIdentifier) -> Option<Vec<CatalogIndex>> {
         let key = tbl_key(catalog, id);
-        let mut cache = self.indexes.write();
-        if let Some(e) = cache.get_mut(&key) {
+        if let Some(mut e) = self.indexes.get_mut(&key) {
             if e.is_expired(self.ttl) {
-                cache.remove(&key);
-                self.stats.write().index_misses += 1;
+                drop(e);
+                self.indexes.remove(&key);
+                self.index_misses.fetch_add(1, AtomicOrdering::Relaxed);
                 return None;
             }
-            self.stats.write().index_hits += 1;
-            Some(e.access().clone())
+            let value = e.access().clone();
+            self.index_hits.fetch_add(1, AtomicOrdering::Relaxed);
+            Some(value)
         } else {
-            self.stats.write().index_misses += 1;
+            self.index_misses.fetch_add(1, AtomicOrdering::Relaxed);
             None
         }
     }
 
     pub fn put_indexes(&self, catalog: &str, id: &TableIdentifier, indexes: Vec<CatalogIndex>) {
         let key = tbl_key(catalog, id);
-        let mut cache = self.indexes.write();
-        self.maybe_evict(&mut cache);
-        cache.insert(key, CacheEntry::new(indexes));
+        self.maybe_evict(&self.indexes, &self.index_ring);
+        self.indexes.insert(key.clone(), CacheEntry::new(indexes));
+        self.track_insert(&self.index_ring, &key);
     }
 
     // ---- Statistics ----
@@ -224,17 +268,18 @@ impl CatalogCache {
         id: &TableIdentifier,
     ) -> Option<CatalogTableStatistics> {
         let key = tbl_key(catalog, id);
-        let mut cache = self.statistics.write();
-        if let Some(e) = cache.get_mut(&key) {
+        if let Some(mut e) = self.statistics.get_mut(&key) {
             if e.is_expired(self.ttl) {
-                cache.remove(&key);
-                self.stats.write().stats_misses += 1;
+                drop(e);
+                self.statistics.remove(&key);
+                self.stats_misses.fetch_add(1, AtomicOrdering::Relaxed);
                 return None;
             }
-            self.stats.write().stats_hits += 1;
-            Some(e.access().clone())
+            let value = e.access().clone();
+            self.stats_hits.fetch_add(1, AtomicOrdering::Relaxed);
+            Some(value)
         } else {
-            self.stats.write().stats_misses += 1;
+            self.stats_misses.fetch_add(1, AtomicOrdering::Relaxed);
             None
         }
     }
@@ -246,74 +291,118 @@ impl CatalogCache {
         stats: CatalogTableStatistics,
     ) {
         let key = tbl_key(catalog, id);
-        let mut cache = self.statistics.write();
-        self.maybe_evict(&mut cache);
-        cache.insert(key, CacheEntry::new(stats));
+        self.maybe_evict(&self.statistics, &self.stats_ring);
+        self.statistics.insert(key.clone(), CacheEntry::new(stats));
+        self.track_insert(&self.stats_ring, &key);
     }
 
     // ---- Maintenance ----
 
     pub fn clear(&self) {
-        self.namespaces.write().clear();
-        self.tables.write().clear();
-        self.indexes.write().clear();
-        self.statistics.write().clear();
+        self.namespaces.clear();
+        self.tables.clear();
+        self.indexes.clear();
+        self.statistics.clear();
         debug!("catalog cache cleared");
     }
 
     pub fn get_stats(&self) -> CacheStats {
-        self.stats.read().clone()
+        CacheStats {
+            namespace_hits: self.namespace_hits.load(AtomicOrdering::Relaxed),
+            namespace_misses: self.namespace_misses.load(AtomicOrdering::Relaxed),
+            table_hits: self.table_hits.load(AtomicOrdering::Relaxed),
+            table_misses: self.table_misses.load(AtomicOrdering::Relaxed),
+            index_hits: self.index_hits.load(AtomicOrdering::Relaxed),
+            index_misses: self.index_misses.load(AtomicOrdering::Relaxed),
+            stats_hits: self.stats_hits.load(AtomicOrdering::Relaxed),
+            stats_misses: self.stats_misses.load(AtomicOrdering::Relaxed),
+            evictions: self.evictions.load(AtomicOrdering::Relaxed),
+            invalidations: self.invalidations.load(AtomicOrdering::Relaxed),
+        }
     }
 
     pub fn size(&self) -> usize {
-        self.namespaces.read().len()
-            + self.tables.read().len()
-            + self.indexes.read().len()
-            + self.statistics.read().len()
+        self.namespaces.len() + self.tables.len() + self.indexes.len() + self.statistics.len()
     }
 
     pub fn evict_expired(&self) {
         let ttl = self.ttl;
         let mut evicted = 0usize;
         {
-            let mut c = self.namespaces.write();
-            let before = c.len();
-            c.retain(|_, v| !v.is_expired(ttl));
-            evicted += before - c.len();
+            let before = self.namespaces.len();
+            self.namespaces.retain(|_, v| !v.is_expired(ttl));
+            evicted += before - self.namespaces.len();
         }
         {
-            let mut c = self.tables.write();
-            let before = c.len();
-            c.retain(|_, v| !v.is_expired(ttl));
-            evicted += before - c.len();
+            let before = self.tables.len();
+            self.tables.retain(|_, v| !v.is_expired(ttl));
+            evicted += before - self.tables.len();
         }
         {
-            let mut c = self.indexes.write();
-            let before = c.len();
-            c.retain(|_, v| !v.is_expired(ttl));
-            evicted += before - c.len();
+            let before = self.indexes.len();
+            self.indexes.retain(|_, v| !v.is_expired(ttl));
+            evicted += before - self.indexes.len();
         }
         {
-            let mut c = self.statistics.write();
-            let before = c.len();
-            c.retain(|_, v| !v.is_expired(ttl));
-            evicted += before - c.len();
+            let before = self.statistics.len();
+            self.statistics.retain(|_, v| !v.is_expired(ttl));
+            evicted += before - self.statistics.len();
         }
         if evicted > 0 {
-            self.stats.write().evictions += evicted as u64;
+            self.evictions
+                .fetch_add(evicted as u64, AtomicOrdering::Relaxed);
         }
     }
 
-    fn maybe_evict<T>(&self, cache: &mut HashMap<String, CacheEntry<T>>) {
-        if cache.len() >= self.max_entries
-            && let Some(k) = cache
-                .iter()
-                .min_by_key(|(_, v)| v.last_accessed)
-                .map(|(k, _)| k.clone())
-        {
-            cache.remove(&k);
-            self.stats.write().evictions += 1;
+    /// Sampled eviction (TD-CAT-5): at capacity, evict the least-recently-
+    /// accessed entry among a bounded ring of the most recently inserted
+    /// keys for THIS map's family — O(ring) single-shard reads, replacing
+    /// the full-map `min_by_key` scan under the whole-map write lock. Victim
+    /// choice relaxes from exact LRU to insert-recency-biased sampled LRU
+    /// (a Redis-style approximation: an ancient cold entry can squat until
+    /// TTL expires it); TTL expiry semantics are untouched.
+    fn maybe_evict<T>(
+        &self,
+        cache: &DashMap<String, CacheEntry<T>>,
+        ring: &std::sync::Mutex<std::collections::VecDeque<String>>,
+    ) {
+        if cache.len() < self.max_entries {
+            return;
         }
+        let candidate: Option<String> = {
+            let mut ring = ring.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            // Drop ring entries that are no longer resident (invalidated or
+            // already evicted) while scanning for the coldest victim.
+            let mut victim: Option<(String, Instant)> = None;
+            ring.retain(|key| match cache.get(key) {
+                Some(entry) => {
+                    if victim
+                        .as_ref()
+                        .is_none_or(|(_, coldest)| entry.last_accessed < *coldest)
+                    {
+                        victim = Some((key.clone(), entry.last_accessed));
+                    }
+                    true
+                }
+                None => false,
+            });
+            victim.map(|(key, _)| key)
+        };
+        if let Some(key) = candidate
+            && cache.remove(&key).is_some()
+        {
+            self.evictions.fetch_add(1, AtomicOrdering::Relaxed);
+        }
+    }
+
+    /// Record an inserted key in the bounded eviction-sample ring for its family.
+    fn track_insert(&self, ring: &std::sync::Mutex<std::collections::VecDeque<String>>, key: &str) {
+        const RING_CAPACITY: usize = 64;
+        let mut ring = ring.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if ring.len() >= RING_CAPACITY {
+            ring.pop_front();
+        }
+        ring.push_back(key.to_string());
     }
 }
 
@@ -436,6 +525,54 @@ mod tests {
         assert!(cache.get_stats().invalidations >= 2);
     }
 
+    /// Concurrency smoke: 8 threads hammering mixed get/put/invalidate ops
+    /// must not deadlock, must leave consistent state, and must conserve
+    /// counters (hits + misses == total gets) — the atomic-counter invariant
+    /// the old second-RwLock stats design guaranteed implicitly. No timing
+    /// assertions (CI-flaky by design).
+    #[test]
+    fn concurrent_mixed_ops_conserve_counters_and_do_not_deadlock() {
+        use std::sync::Arc;
+
+        let cache = Arc::new(CatalogCache::new(64, 60));
+        let mut handles = Vec::new();
+        const PER_THREAD: usize = 5_000;
+
+        for t in 0..8usize {
+            let cache = Arc::clone(&cache);
+            handles.push(std::thread::spawn(move || {
+                let shared_id = TableIdentifier::new(vec!["db".into()], "shared");
+                let own_id = TableIdentifier::new(vec!["db".into()], format!("t{t}"));
+                for i in 0..PER_THREAD {
+                    // Shared key: contention path.
+                    let _ = cache.get_table("default", &shared_id);
+                    // Disjoint keys: shard-local paths.
+                    cache.put_table(
+                        "default",
+                        &own_id,
+                        CatalogTableSchema::new(format!("t{t}-{}", i % 8)),
+                    );
+                    let _ = cache.get_table("default", &own_id);
+                    if i % 1_000 == 0 {
+                        cache.invalidate_table_in_catalog("default", &own_id);
+                    }
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("worker thread must not panic");
+        }
+
+        let stats = cache.get_stats();
+        let total_gets = 8usize * PER_THREAD * 2;
+        let counted = (stats.table_hits + stats.table_misses) as usize;
+        assert_eq!(
+            counted, total_gets,
+            "hit+miss counters must equal the number of get_table calls"
+        );
+        assert!(stats.invalidations >= 8);
+    }
+
     #[test]
     fn cache_clear_expiration_and_lru_eviction_cover_all_cache_families() {
         let cache = CatalogCache::default_cache();
@@ -476,5 +613,43 @@ mod tests {
         assert!(bounded.get_table("default", &a).is_none());
         assert!(bounded.get_table("default", &b).is_some());
         assert_eq!(bounded.get_stats().evictions, 1);
+    }
+
+    /// Regression: a shared eviction-sample ring across families lets one
+    /// family's `maybe_evict` call purge another family's keys from the ring
+    /// (they're "not resident" in the map being checked), starving that
+    /// other family's own eviction. Interleave puts across all four families
+    /// at `max_entries == 1` each and assert every family stays at its cap —
+    /// under the pre-fix shared ring, the namespace map grew to 2 entries
+    /// here because the table family's evict check purged the namespace key
+    /// from the ring first.
+    #[test]
+    fn eviction_rings_are_independent_per_family_under_interleaved_traffic() {
+        let cache = CatalogCache::new(1, 60);
+        let id = TableIdentifier::new(vec!["db".into()], "t");
+
+        cache.put_namespace(
+            "main",
+            &["ns_a".into()],
+            CatalogNamespace::new(vec!["ns_a".into()]),
+        );
+        cache.put_table("default", &id, CatalogTableSchema::new("tbl_a"));
+        cache.put_table(
+            "default",
+            &TableIdentifier::new(vec!["db".into()], "t2"),
+            CatalogTableSchema::new("tbl_b"),
+        );
+        cache.put_namespace(
+            "main",
+            &["ns_b".into()],
+            CatalogNamespace::new(vec!["ns_b".into()]),
+        );
+
+        assert_eq!(
+            cache.namespaces.len(),
+            1,
+            "namespace family must stay bounded at max_entries regardless of table-family traffic"
+        );
+        assert_eq!(cache.tables.len(), 1, "table family must stay bounded");
     }
 }

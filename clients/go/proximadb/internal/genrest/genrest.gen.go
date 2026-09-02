@@ -16,6 +16,177 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for CatalogDimensionPolicy0.
+const (
+	Fixed CatalogDimensionPolicy0 = "fixed"
+)
+
+// Valid indicates whether the value is a known member of the CatalogDimensionPolicy0 enum.
+func (e CatalogDimensionPolicy0) Valid() bool {
+	switch e {
+	case Fixed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogDimensionPolicy1.
+const (
+	Discrete CatalogDimensionPolicy1 = "discrete"
+)
+
+// Valid indicates whether the value is a known member of the CatalogDimensionPolicy1 enum.
+func (e CatalogDimensionPolicy1) Valid() bool {
+	switch e {
+	case Discrete:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogLineageInputKind.
+const (
+	Artifact   CatalogLineageInputKind = "artifact"
+	Dataset    CatalogLineageInputKind = "dataset"
+	FeatureSet CatalogLineageInputKind = "feature_set"
+	Model      CatalogLineageInputKind = "model"
+)
+
+// Valid indicates whether the value is a known member of the CatalogLineageInputKind enum.
+func (e CatalogLineageInputKind) Valid() bool {
+	switch e {
+	case Artifact:
+		return true
+	case Dataset:
+		return true
+	case FeatureSet:
+		return true
+	case Model:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogModelAccess.
+const (
+	Gated      CatalogModelAccess = "gated"
+	Open       CatalogModelAccess = "open"
+	Unreviewed CatalogModelAccess = "unreviewed"
+)
+
+// Valid indicates whether the value is a known member of the CatalogModelAccess enum.
+func (e CatalogModelAccess) Valid() bool {
+	switch e {
+	case Gated:
+		return true
+	case Open:
+		return true
+	case Unreviewed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogModelDecisionKind.
+const (
+	Approved   CatalogModelDecisionKind = "approved"
+	Deprecated CatalogModelDecisionKind = "deprecated"
+	Rejected   CatalogModelDecisionKind = "rejected"
+)
+
+// Valid indicates whether the value is a known member of the CatalogModelDecisionKind enum.
+func (e CatalogModelDecisionKind) Valid() bool {
+	switch e {
+	case Approved:
+		return true
+	case Deprecated:
+		return true
+	case Rejected:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogModelRegistryMutation0Operation.
+const (
+	RegisterVersion CatalogModelRegistryMutation0Operation = "register_version"
+)
+
+// Valid indicates whether the value is a known member of the CatalogModelRegistryMutation0Operation enum.
+func (e CatalogModelRegistryMutation0Operation) Valid() bool {
+	switch e {
+	case RegisterVersion:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogModelRegistryMutation1Operation.
+const (
+	SetAlias CatalogModelRegistryMutation1Operation = "set_alias"
+)
+
+// Valid indicates whether the value is a known member of the CatalogModelRegistryMutation1Operation enum.
+func (e CatalogModelRegistryMutation1Operation) Valid() bool {
+	switch e {
+	case SetAlias:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogModelRegistryMutation2Operation.
+const (
+	AppendEvidence CatalogModelRegistryMutation2Operation = "append_evidence"
+)
+
+// Valid indicates whether the value is a known member of the CatalogModelRegistryMutation2Operation enum.
+func (e CatalogModelRegistryMutation2Operation) Valid() bool {
+	switch e {
+	case AppendEvidence:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogModelRegistryMutation3Operation.
+const (
+	RecordDecision CatalogModelRegistryMutation3Operation = "record_decision"
+)
+
+// Valid indicates whether the value is a known member of the CatalogModelRegistryMutation3Operation enum.
+func (e CatalogModelRegistryMutation3Operation) Valid() bool {
+	switch e {
+	case RecordDecision:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogModelRegistryMutation4Operation.
+const (
+	UpsertDeployment CatalogModelRegistryMutation4Operation = "upsert_deployment"
+)
+
+// Valid indicates whether the value is a known member of the CatalogModelRegistryMutation4Operation enum.
+func (e CatalogModelRegistryMutation4Operation) Valid() bool {
+	switch e {
+	case UpsertDeployment:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for QueryLanguage.
 const (
 	Aql       QueryLanguage = "aql"
@@ -35,6 +206,17 @@ func (e QueryLanguage) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// ApplyModelRegistryMutationRequest defines model for ApplyModelRegistryMutationRequest.
+type ApplyModelRegistryMutationRequest struct {
+	// ExpectedRevision Optimistic concurrency token returned by the previous read or mutation.
+	ExpectedRevision int64 `json:"expected_revision"`
+
+	// Mutation Command-shaped mutations preserve version/evidence/decision immutability at
+	// the persistence boundary. API adapters lower into these commands instead
+	// of replacing a whole registry document.
+	Mutation CatalogModelRegistryMutation `json:"mutation"`
 }
 
 // BatchCreateEdgesRequest Body for `POST /api/v2/graphs/{id}/edges/batch`.
@@ -85,13 +267,240 @@ type CapabilitiesResponse struct {
 	AdditionalProperties map[string]interface{}  `json:"-"`
 }
 
+// CatalogArtifactDescriptor Content-addressed reference to bytes held outside xCatalog.
+type CatalogArtifactDescriptor struct {
+	Digest    string `json:"digest"`
+	MediaType string `json:"media_type"`
+	SizeBytes int64  `json:"size_bytes"`
+	Uri       string `json:"uri"`
+}
+
+// CatalogDeploymentBinding Mutable serving intent that always resolves to an immutable version/digest.
+type CatalogDeploymentBinding struct {
+	ArtifactDigest string `json:"artifact_digest"`
+	Endpoint       string `json:"endpoint"`
+	Name           string `json:"name"`
+	Runtime        string `json:"runtime"`
+	UpdatedAtMs    int64  `json:"updated_at_ms"`
+	Version        int64  `json:"version"`
+}
+
+// CatalogDimensionPolicy defines model for CatalogDimensionPolicy.
+type CatalogDimensionPolicy struct {
+	union json.RawMessage
+}
+
+// CatalogDimensionPolicy0 defines model for CatalogDimensionPolicy.0.
+type CatalogDimensionPolicy0 string
+
+// CatalogDimensionPolicy1 defines model for CatalogDimensionPolicy.1.
+type CatalogDimensionPolicy1 string
+
+// CatalogDimensionPolicy2 defines model for CatalogDimensionPolicy.2.
+type CatalogDimensionPolicy2 struct {
+	Range CatalogDimensionRange `json:"range"`
+}
+
+// CatalogDimensionRange defines model for CatalogDimensionRange.
+type CatalogDimensionRange struct {
+	Minimum int32 `json:"minimum"`
+}
+
+// CatalogEmbeddingInputContract Exact rendered-input and tokenizer budget consumed by an embedding runtime.
+type CatalogEmbeddingInputContract struct {
+	DeclaredContextLimit  int32              `json:"declared_context_limit"`
+	DocumentParameters    *map[string]string `json:"document_parameters,omitempty"`
+	DocumentTemplate      string             `json:"document_template"`
+	EffectiveContextLimit int32              `json:"effective_context_limit"`
+	ModelRevision         string             `json:"model_revision"`
+	QueryParameters       *map[string]string `json:"query_parameters,omitempty"`
+	QueryTemplate         string             `json:"query_template"`
+	SpecialTokenCount     int32              `json:"special_token_count"`
+	TokenizerFingerprint  string             `json:"tokenizer_fingerprint"`
+	TokenizerId           string             `json:"tokenizer_id"`
+	TokenizerRevision     string             `json:"tokenizer_revision"`
+}
+
+// CatalogEmbeddingModelRegistry Registered embedding model: immutable versions plus separately mutable or
+// append-only lifecycle records.
+type CatalogEmbeddingModelRegistry struct {
+	Aliases     *map[string]int64                    `json:"aliases,omitempty"`
+	Decisions   *[]CatalogModelDecision              `json:"decisions,omitempty"`
+	Deployments *map[string]CatalogDeploymentBinding `json:"deployments,omitempty"`
+	Evidence    *[]CatalogEvaluationEvidence         `json:"evidence,omitempty"`
+	Name        string                               `json:"name"`
+
+	// Revision Optimistic concurrency token for catalog/API mutations. Old rows default
+	// to zero; every successful command increments it.
+	Revision      *int64                                   `json:"revision,omitempty"`
+	SchemaVersion int32                                    `json:"schema_version"`
+	Tags          *map[string]string                       `json:"tags,omitempty"`
+	Versions      *map[string]CatalogEmbeddingModelVersion `json:"versions,omitempty"`
+}
+
+// CatalogEmbeddingModelVersion Immutable executable contract for one registered model version.
+type CatalogEmbeddingModelVersion struct {
+	// Artifact Content-addressed reference to bytes held outside xCatalog.
+	Artifact    CatalogArtifactDescriptor `json:"artifact"`
+	CreatedAtMs int64                     `json:"created_at_ms"`
+
+	// Governance Supply-chain and runtime policy declared for an immutable model version.
+	// Approval decisions remain separate append-only audit records.
+	Governance *CatalogModelGovernance `json:"governance,omitempty"`
+
+	// Input Exact rendered-input and tokenizer budget consumed by an embedding runtime.
+	Input CatalogEmbeddingInputContract `json:"input"`
+
+	// Lineage MLMD/OpenLineage-shaped producer execution and its declared inputs.
+	Lineage         *CatalogModelLineage           `json:"lineage,omitempty"`
+	Output          CatalogEmbeddingOutputContract `json:"output"`
+	ProviderModelId string                         `json:"provider_model_id"`
+	SourceRunId     *string                        `json:"source_run_id,omitempty"`
+	Version         int64                          `json:"version"`
+}
+
+// CatalogEmbeddingOutputContract defines model for CatalogEmbeddingOutputContract.
+type CatalogEmbeddingOutputContract struct {
+	DimensionPolicy     CatalogDimensionPolicy `json:"dimension_policy"`
+	NativeDimension     int32                  `json:"native_dimension"`
+	Normalized          bool                   `json:"normalized"`
+	Pooling             string                 `json:"pooling"`
+	SupportedDimensions []int32                `json:"supported_dimensions"`
+}
+
+// CatalogEvaluationEvidence Append-only evaluation summary. Large row-level results remain external.
+type CatalogEvaluationEvidence struct {
+	CreatedAtMs   int64              `json:"created_at_ms"`
+	DatasetDigest string             `json:"dataset_digest"`
+	DatasetName   string             `json:"dataset_name"`
+	Evaluator     string             `json:"evaluator"`
+	EvidenceId    string             `json:"evidence_id"`
+	Metrics       map[string]float64 `json:"metrics"`
+	Version       int64              `json:"version"`
+}
+
+// CatalogLineageInput Digest-pinned input consumed by the execution that produced a model.
+type CatalogLineageInput struct {
+	Digest string                  `json:"digest"`
+	Kind   CatalogLineageInputKind `json:"kind"`
+	Name   string                  `json:"name"`
+}
+
+// CatalogLineageInputKind defines model for CatalogLineageInputKind.
+type CatalogLineageInputKind string
+
+// CatalogModelAccess defines model for CatalogModelAccess.
+type CatalogModelAccess string
+
+// CatalogModelAliasMutation defines model for CatalogModelAliasMutation.
+type CatalogModelAliasMutation struct {
+	Alias   string `json:"alias"`
+	Version int64  `json:"version"`
+}
+
+// CatalogModelDecision Append-only policy/audit decision, intentionally separate from evidence.
+type CatalogModelDecision struct {
+	CreatedAtMs int64                    `json:"created_at_ms"`
+	Decision    CatalogModelDecisionKind `json:"decision"`
+	DecisionId  string                   `json:"decision_id"`
+	EvidenceIds []string                 `json:"evidence_ids"`
+	Principal   string                   `json:"principal"`
+	Version     int64                    `json:"version"`
+}
+
+// CatalogModelDecisionKind defines model for CatalogModelDecisionKind.
+type CatalogModelDecisionKind string
+
+// CatalogModelGovernance Supply-chain and runtime policy declared for an immutable model version.
+// Approval decisions remain separate append-only audit records.
+type CatalogModelGovernance struct {
+	Access             *CatalogModelAccess `json:"access,omitempty"`
+	ApprovedRuntimes   *[]string           `json:"approved_runtimes,omitempty"`
+	LicenseId          *string             `json:"license_id,omitempty"`
+	RequiresRemoteCode *bool               `json:"requires_remote_code,omitempty"`
+}
+
+// CatalogModelLineage MLMD/OpenLineage-shaped producer execution and its declared inputs.
+type CatalogModelLineage struct {
+	CodeRevision        *string                `json:"code_revision,omitempty"`
+	Inputs              *[]CatalogLineageInput `json:"inputs,omitempty"`
+	ProducerExecutionId *string                `json:"producer_execution_id,omitempty"`
+}
+
+// CatalogModelRegistryMutation Command-shaped mutations preserve version/evidence/decision immutability at
+// the persistence boundary. API adapters lower into these commands instead
+// of replacing a whole registry document.
+type CatalogModelRegistryMutation struct {
+	union json.RawMessage
+}
+
+// CatalogModelRegistryMutation0 defines model for CatalogModelRegistryMutation.0.
+type CatalogModelRegistryMutation0 struct {
+	Operation CatalogModelRegistryMutation0Operation `json:"operation"`
+
+	// Payload Immutable executable contract for one registered model version.
+	Payload CatalogEmbeddingModelVersion `json:"payload"`
+}
+
+// CatalogModelRegistryMutation0Operation defines model for CatalogModelRegistryMutation.0.Operation.
+type CatalogModelRegistryMutation0Operation string
+
+// CatalogModelRegistryMutation1 defines model for CatalogModelRegistryMutation.1.
+type CatalogModelRegistryMutation1 struct {
+	Operation CatalogModelRegistryMutation1Operation `json:"operation"`
+	Payload   CatalogModelAliasMutation              `json:"payload"`
+}
+
+// CatalogModelRegistryMutation1Operation defines model for CatalogModelRegistryMutation.1.Operation.
+type CatalogModelRegistryMutation1Operation string
+
+// CatalogModelRegistryMutation2 defines model for CatalogModelRegistryMutation.2.
+type CatalogModelRegistryMutation2 struct {
+	Operation CatalogModelRegistryMutation2Operation `json:"operation"`
+
+	// Payload Append-only evaluation summary. Large row-level results remain external.
+	Payload CatalogEvaluationEvidence `json:"payload"`
+}
+
+// CatalogModelRegistryMutation2Operation defines model for CatalogModelRegistryMutation.2.Operation.
+type CatalogModelRegistryMutation2Operation string
+
+// CatalogModelRegistryMutation3 defines model for CatalogModelRegistryMutation.3.
+type CatalogModelRegistryMutation3 struct {
+	Operation CatalogModelRegistryMutation3Operation `json:"operation"`
+
+	// Payload Append-only policy/audit decision, intentionally separate from evidence.
+	Payload CatalogModelDecision `json:"payload"`
+}
+
+// CatalogModelRegistryMutation3Operation defines model for CatalogModelRegistryMutation.3.Operation.
+type CatalogModelRegistryMutation3Operation string
+
+// CatalogModelRegistryMutation4 defines model for CatalogModelRegistryMutation.4.
+type CatalogModelRegistryMutation4 struct {
+	Operation CatalogModelRegistryMutation4Operation `json:"operation"`
+
+	// Payload Mutable serving intent that always resolves to an immutable version/digest.
+	Payload CatalogDeploymentBinding `json:"payload"`
+}
+
+// CatalogModelRegistryMutation4Operation defines model for CatalogModelRegistryMutation.4.Operation.
+type CatalogModelRegistryMutation4Operation string
+
 // CollectionStatsV2 Collection statistics for v2 API
 type CollectionStatsV2 struct {
 	// IndexedFields Number of indexed fields
 	IndexedFields int32 `json:"indexed_fields"`
 
-	// RecordCount Total number of records
-	RecordCount int64 `json:"record_count"`
+	// RecordCount Total number of records, or `null` when the server does not know.
+	//
+	// `null` is a real answer here, not a gap. The counter is maintained by
+	// `MetadataStore::update_stats`, which the record write path does not call,
+	// so a collection that has never had stats written carries none. Reporting
+	// `0` in that case is a *confident wrong answer* — indistinguishable from a
+	// genuinely empty collection, and it cost one downstream project a false
+	// durability bug report before the cause was found (#1527).
+	RecordCount *int64 `json:"record_count,omitempty"`
 
 	// StorageSizeBytes Total storage size in bytes
 	StorageSizeBytes int64 `json:"storage_size_bytes"`
@@ -111,6 +520,12 @@ type CollectionV2Response struct {
 
 	// CollectionId Collection ID
 	CollectionId string `json:"collection_id"`
+
+	// ContentRevision Monotonic server-owned content revision for cache revalidation.
+	ContentRevision int64 `json:"content_revision"`
+
+	// ContentRevisionToken Opaque validator that also fences server restarts.
+	ContentRevisionToken string `json:"content_revision_token"`
 
 	// CreatedAt Creation timestamp
 	CreatedAt string `json:"created_at"`
@@ -300,6 +715,12 @@ type CreateGraphRequest struct {
 
 	// Name Optional human-readable name (defaults to graph_id).
 	Name *string `json:"name,omitempty"`
+}
+
+// CreateModelRegistryRequest defines model for CreateModelRegistryRequest.
+type CreateModelRegistryRequest struct {
+	// Name Tenant-local registry name. Must be one traversal-free catalog segment.
+	Name string `json:"name"`
 }
 
 // CreateNodeRequest Wrapped envelope: server expects `{"node": NodeInput}`.
@@ -788,6 +1209,22 @@ type ListGraphsResponse struct {
 	AdditionalProperties map[string]interface{}     `json:"-"`
 }
 
+// ListModelRegistriesResponse defines model for ListModelRegistriesResponse.
+type ListModelRegistriesResponse struct {
+	Registries []ModelRegistryRecordResponse `json:"registries"`
+}
+
+// ModelRegistryRecordResponse REST uses a decimal string for stable catalog IDs so JavaScript clients do
+// not lose precision. gRPC exposes the same value as `uint64`.
+type ModelRegistryRecordResponse struct {
+	AssetId string `json:"asset_id"`
+
+	// Registry Registered embedding model: immutable versions plus separately mutable or
+	// append-only lifecycle records.
+	Registry CatalogEmbeddingModelRegistry `json:"registry"`
+	TenantId string                        `json:"tenant_id"`
+}
+
 // NodeInput Node payload nested inside `CreateNodeRequest.node`. Matches
 // `RestNodeInput` in proximadb-api's graph handler.
 type NodeInput struct {
@@ -906,6 +1343,39 @@ type RecordV2Response struct {
 	Version *int64 `json:"version,omitempty"`
 }
 
+// ResolveModelAliasRequest defines model for ResolveModelAliasRequest.
+type ResolveModelAliasRequest struct {
+	Alias     string `json:"alias"`
+	Dimension int32  `json:"dimension"`
+
+	// RequireApproved Require the latest append-only decision to approve the selected version.
+	RequireApproved *bool `json:"require_approved,omitempty"`
+
+	// Runtime Runtime implementation that will execute the immutable contract.
+	Runtime *string `json:"runtime,omitempty"`
+}
+
+// ResolvedEmbeddingModelResponse defines model for ResolvedEmbeddingModelResponse.
+type ResolvedEmbeddingModelResponse struct {
+	AssetId        string `json:"asset_id"`
+	ContractSha256 string `json:"contract_sha256"`
+
+	// Model Immutable executable contract for one registered model version.
+	Model            CatalogEmbeddingModelVersion `json:"model"`
+	RegistryName     string                       `json:"registry_name"`
+	RegistryRevision int64                        `json:"registry_revision"`
+}
+
+// ResolvedModelBindingResponse defines model for ResolvedModelBindingResponse.
+type ResolvedModelBindingResponse struct {
+	ContractSha256 string                         `json:"contract_sha256"`
+	Dimension      int32                          `json:"dimension"`
+	Model          string                         `json:"model"`
+	ModelAssetId   string                         `json:"model_asset_id"`
+	ModelVersion   int64                          `json:"model_version"`
+	Snapshot       ResolvedEmbeddingModelResponse `json:"snapshot"`
+}
+
 // RestColumnDefinition Column definition for schema
 type RestColumnDefinition struct {
 	// DataType Data type
@@ -987,9 +1457,11 @@ type ScanRecordsRequest struct {
 // `next_cursor` signals end-of-scan. Each record matches the OpenAPI
 // `RecordResponse` schema (same shape used by `getRecord`).
 type ScanRecordsResponse struct {
-	NextCursor   *string            `json:"next_cursor,omitempty"`
-	Records      []RecordV2Response `json:"records"`
-	ScannedCount *int64             `json:"scanned_count,omitempty"`
+	ContentRevision      int64              `json:"content_revision"`
+	ContentRevisionToken string             `json:"content_revision_token"`
+	NextCursor           *string            `json:"next_cursor,omitempty"`
+	Records              []RecordV2Response `json:"records"`
+	ScannedCount         *int64             `json:"scanned_count,omitempty"`
 }
 
 // SchemaChange Description of a schema change
@@ -1649,6 +2121,36 @@ type HybridSearchParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// ListModelRegistriesParams defines parameters for ListModelRegistries.
+type ListModelRegistriesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CreateModelRegistryParams defines parameters for CreateModelRegistry.
+type CreateModelRegistryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetModelRegistryParams defines parameters for GetModelRegistry.
+type GetModelRegistryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ApplyModelRegistryMutationParams defines parameters for ApplyModelRegistryMutation.
+type ApplyModelRegistryMutationParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ResolveModelAliasParams defines parameters for ResolveModelAlias.
+type ResolveModelAliasParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // IngestLogJSONBody defines parameters for IngestLog.
 type IngestLogJSONBody map[string]interface{}
 
@@ -1762,6 +2264,15 @@ type HybridIndexJSONRequestBody HybridIndexJSONBody
 
 // HybridSearchJSONRequestBody defines body for HybridSearch for application/json ContentType.
 type HybridSearchJSONRequestBody HybridSearchJSONBody
+
+// CreateModelRegistryJSONRequestBody defines body for CreateModelRegistry for application/json ContentType.
+type CreateModelRegistryJSONRequestBody = CreateModelRegistryRequest
+
+// ApplyModelRegistryMutationJSONRequestBody defines body for ApplyModelRegistryMutation for application/json ContentType.
+type ApplyModelRegistryMutationJSONRequestBody = ApplyModelRegistryMutationRequest
+
+// ResolveModelAliasJSONRequestBody defines body for ResolveModelAlias for application/json ContentType.
+type ResolveModelAliasJSONRequestBody = ResolveModelAliasRequest
 
 // IngestLogJSONRequestBody defines body for IngestLog for application/json ContentType.
 type IngestLogJSONRequestBody IngestLogJSONBody
@@ -3257,6 +3768,234 @@ func (a HybridSearchJSONBody) MarshalJSON() ([]byte, error) {
 	return json.Marshal(object)
 }
 
+// AsCatalogDimensionPolicy0 returns the union data inside the CatalogDimensionPolicy as a CatalogDimensionPolicy0
+func (t CatalogDimensionPolicy) AsCatalogDimensionPolicy0() (CatalogDimensionPolicy0, error) {
+	var body CatalogDimensionPolicy0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCatalogDimensionPolicy0 overwrites any union data inside the CatalogDimensionPolicy as the provided CatalogDimensionPolicy0
+func (t *CatalogDimensionPolicy) FromCatalogDimensionPolicy0(v CatalogDimensionPolicy0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCatalogDimensionPolicy0 performs a merge with any union data inside the CatalogDimensionPolicy, using the provided CatalogDimensionPolicy0
+func (t *CatalogDimensionPolicy) MergeCatalogDimensionPolicy0(v CatalogDimensionPolicy0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCatalogDimensionPolicy1 returns the union data inside the CatalogDimensionPolicy as a CatalogDimensionPolicy1
+func (t CatalogDimensionPolicy) AsCatalogDimensionPolicy1() (CatalogDimensionPolicy1, error) {
+	var body CatalogDimensionPolicy1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCatalogDimensionPolicy1 overwrites any union data inside the CatalogDimensionPolicy as the provided CatalogDimensionPolicy1
+func (t *CatalogDimensionPolicy) FromCatalogDimensionPolicy1(v CatalogDimensionPolicy1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCatalogDimensionPolicy1 performs a merge with any union data inside the CatalogDimensionPolicy, using the provided CatalogDimensionPolicy1
+func (t *CatalogDimensionPolicy) MergeCatalogDimensionPolicy1(v CatalogDimensionPolicy1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCatalogDimensionPolicy2 returns the union data inside the CatalogDimensionPolicy as a CatalogDimensionPolicy2
+func (t CatalogDimensionPolicy) AsCatalogDimensionPolicy2() (CatalogDimensionPolicy2, error) {
+	var body CatalogDimensionPolicy2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCatalogDimensionPolicy2 overwrites any union data inside the CatalogDimensionPolicy as the provided CatalogDimensionPolicy2
+func (t *CatalogDimensionPolicy) FromCatalogDimensionPolicy2(v CatalogDimensionPolicy2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCatalogDimensionPolicy2 performs a merge with any union data inside the CatalogDimensionPolicy, using the provided CatalogDimensionPolicy2
+func (t *CatalogDimensionPolicy) MergeCatalogDimensionPolicy2(v CatalogDimensionPolicy2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t CatalogDimensionPolicy) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *CatalogDimensionPolicy) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsCatalogModelRegistryMutation0 returns the union data inside the CatalogModelRegistryMutation as a CatalogModelRegistryMutation0
+func (t CatalogModelRegistryMutation) AsCatalogModelRegistryMutation0() (CatalogModelRegistryMutation0, error) {
+	var body CatalogModelRegistryMutation0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCatalogModelRegistryMutation0 overwrites any union data inside the CatalogModelRegistryMutation as the provided CatalogModelRegistryMutation0
+func (t *CatalogModelRegistryMutation) FromCatalogModelRegistryMutation0(v CatalogModelRegistryMutation0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCatalogModelRegistryMutation0 performs a merge with any union data inside the CatalogModelRegistryMutation, using the provided CatalogModelRegistryMutation0
+func (t *CatalogModelRegistryMutation) MergeCatalogModelRegistryMutation0(v CatalogModelRegistryMutation0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCatalogModelRegistryMutation1 returns the union data inside the CatalogModelRegistryMutation as a CatalogModelRegistryMutation1
+func (t CatalogModelRegistryMutation) AsCatalogModelRegistryMutation1() (CatalogModelRegistryMutation1, error) {
+	var body CatalogModelRegistryMutation1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCatalogModelRegistryMutation1 overwrites any union data inside the CatalogModelRegistryMutation as the provided CatalogModelRegistryMutation1
+func (t *CatalogModelRegistryMutation) FromCatalogModelRegistryMutation1(v CatalogModelRegistryMutation1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCatalogModelRegistryMutation1 performs a merge with any union data inside the CatalogModelRegistryMutation, using the provided CatalogModelRegistryMutation1
+func (t *CatalogModelRegistryMutation) MergeCatalogModelRegistryMutation1(v CatalogModelRegistryMutation1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCatalogModelRegistryMutation2 returns the union data inside the CatalogModelRegistryMutation as a CatalogModelRegistryMutation2
+func (t CatalogModelRegistryMutation) AsCatalogModelRegistryMutation2() (CatalogModelRegistryMutation2, error) {
+	var body CatalogModelRegistryMutation2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCatalogModelRegistryMutation2 overwrites any union data inside the CatalogModelRegistryMutation as the provided CatalogModelRegistryMutation2
+func (t *CatalogModelRegistryMutation) FromCatalogModelRegistryMutation2(v CatalogModelRegistryMutation2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCatalogModelRegistryMutation2 performs a merge with any union data inside the CatalogModelRegistryMutation, using the provided CatalogModelRegistryMutation2
+func (t *CatalogModelRegistryMutation) MergeCatalogModelRegistryMutation2(v CatalogModelRegistryMutation2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCatalogModelRegistryMutation3 returns the union data inside the CatalogModelRegistryMutation as a CatalogModelRegistryMutation3
+func (t CatalogModelRegistryMutation) AsCatalogModelRegistryMutation3() (CatalogModelRegistryMutation3, error) {
+	var body CatalogModelRegistryMutation3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCatalogModelRegistryMutation3 overwrites any union data inside the CatalogModelRegistryMutation as the provided CatalogModelRegistryMutation3
+func (t *CatalogModelRegistryMutation) FromCatalogModelRegistryMutation3(v CatalogModelRegistryMutation3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCatalogModelRegistryMutation3 performs a merge with any union data inside the CatalogModelRegistryMutation, using the provided CatalogModelRegistryMutation3
+func (t *CatalogModelRegistryMutation) MergeCatalogModelRegistryMutation3(v CatalogModelRegistryMutation3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCatalogModelRegistryMutation4 returns the union data inside the CatalogModelRegistryMutation as a CatalogModelRegistryMutation4
+func (t CatalogModelRegistryMutation) AsCatalogModelRegistryMutation4() (CatalogModelRegistryMutation4, error) {
+	var body CatalogModelRegistryMutation4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCatalogModelRegistryMutation4 overwrites any union data inside the CatalogModelRegistryMutation as the provided CatalogModelRegistryMutation4
+func (t *CatalogModelRegistryMutation) FromCatalogModelRegistryMutation4(v CatalogModelRegistryMutation4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCatalogModelRegistryMutation4 performs a merge with any union data inside the CatalogModelRegistryMutation, using the provided CatalogModelRegistryMutation4
+func (t *CatalogModelRegistryMutation) MergeCatalogModelRegistryMutation4(v CatalogModelRegistryMutation4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t CatalogModelRegistryMutation) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *CatalogModelRegistryMutation) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
@@ -3522,13 +4261,12 @@ type ClientInterface interface {
 
 	// ScanRecordsWithBody Paginated scan of records in a collection.
 	//
-	// Returns the next page of records (TD-099 acceptance 2, live). The
-	// handler resolves the collection id, calls
-	// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-	// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-	// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-	// still deferred: `next_cursor` is always `None` today; callers bump
-	// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+	// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+	// Cursor-based pagination: pass the response's `next_cursor` back as
+	// `cursor` to fetch the next page; a `null` cursor means the scan is
+	// exhausted. Cursors are minted and validated against the caller-facing
+	// collection id in the URL path, expire after 24h (HTTP 410), and reject
+	// cross-collection reuse (HTTP 400).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -3537,13 +4275,12 @@ type ClientInterface interface {
 
 	// ScanRecords Paginated scan of records in a collection.
 	//
-	// Returns the next page of records (TD-099 acceptance 2, live). The
-	// handler resolves the collection id, calls
-	// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-	// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-	// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-	// still deferred: `next_cursor` is always `None` today; callers bump
-	// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+	// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+	// Cursor-based pagination: pass the response's `next_cursor` back as
+	// `cursor` to fetch the next page; a `null` cursor means the scan is
+	// exhausted. Cursors are minted and validated against the caller-facing
+	// collection id in the URL path, expire after 24h (HTTP 410), and reject
+	// cross-collection reuse (HTTP 400).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -3934,6 +4671,36 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v2/hybrid/search (the `HybridSearch` operationId).
 	HybridSearch(ctx context.Context, params *HybridSearchParams, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListModelRegistries performs a GET /api/v2/model-registries (the `ListModelRegistries` operationId) request.
+	ListModelRegistries(ctx context.Context, params *ListModelRegistriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateModelRegistryWithBody performs a POST /api/v2/model-registries (the `CreateModelRegistry` operationId) request,
+	// with any type of body and a specified content type.
+	CreateModelRegistryWithBody(ctx context.Context, params *CreateModelRegistryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateModelRegistry performs a POST /api/v2/model-registries (the `CreateModelRegistry` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CreateModelRegistry(ctx context.Context, params *CreateModelRegistryParams, body CreateModelRegistryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetModelRegistry performs a GET /api/v2/model-registries/{name} (the `GetModelRegistry` operationId) request.
+	GetModelRegistry(ctx context.Context, name string, params *GetModelRegistryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyModelRegistryMutationWithBody performs a POST /api/v2/model-registries/{name}/mutations (the `ApplyModelRegistryMutation` operationId) request,
+	// with any type of body and a specified content type.
+	ApplyModelRegistryMutationWithBody(ctx context.Context, name string, params *ApplyModelRegistryMutationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyModelRegistryMutation performs a POST /api/v2/model-registries/{name}/mutations (the `ApplyModelRegistryMutation` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ApplyModelRegistryMutation(ctx context.Context, name string, params *ApplyModelRegistryMutationParams, body ApplyModelRegistryMutationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveModelAliasWithBody performs a POST /api/v2/model-registries/{name}/resolve (the `ResolveModelAlias` operationId) request,
+	// with any type of body and a specified content type.
+	ResolveModelAliasWithBody(ctx context.Context, name string, params *ResolveModelAliasParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveModelAlias performs a POST /api/v2/model-registries/{name}/resolve (the `ResolveModelAlias` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ResolveModelAlias(ctx context.Context, name string, params *ResolveModelAliasParams, body ResolveModelAliasJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestLogWithBody Ingest a log entry.
 	//
@@ -4394,13 +5161,12 @@ func (c *Client) InsertRecords(ctx context.Context, collectionId string, params 
 
 // ScanRecordsWithBody Paginated scan of records in a collection.
 //
-// Returns the next page of records (TD-099 acceptance 2, live). The
-// handler resolves the collection id, calls
-// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-// still deferred: `next_cursor` is always `None` today; callers bump
-// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+// Cursor-based pagination: pass the response's `next_cursor` back as
+// `cursor` to fetch the next page; a `null` cursor means the scan is
+// exhausted. Cursors are minted and validated against the caller-facing
+// collection id in the URL path, expire after 24h (HTTP 410), and reject
+// cross-collection reuse (HTTP 400).
 //
 // Takes any type of body and a specified content type.
 //
@@ -4419,13 +5185,12 @@ func (c *Client) ScanRecordsWithBody(ctx context.Context, collectionId string, p
 
 // ScanRecords Paginated scan of records in a collection.
 //
-// Returns the next page of records (TD-099 acceptance 2, live). The
-// handler resolves the collection id, calls
-// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-// still deferred: `next_cursor` is always `None` today; callers bump
-// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+// Cursor-based pagination: pass the response's `next_cursor` back as
+// `cursor` to fetch the next page; a `null` cursor means the scan is
+// exhausted. Cursors are minted and validated against the caller-facing
+// collection id in the URL path, expire after 24h (HTTP 410), and reject
+// cross-collection reuse (HTTP 400).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -5207,6 +5972,116 @@ func (c *Client) HybridSearchWithBody(ctx context.Context, params *HybridSearchP
 // Corresponds with POST /api/v2/hybrid/search (the `HybridSearch` operationId).
 func (c *Client) HybridSearch(ctx context.Context, params *HybridSearchParams, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHybridSearchRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListModelRegistries performs a GET /api/v2/model-registries (the `ListModelRegistries` operationId) request.
+func (c *Client) ListModelRegistries(ctx context.Context, params *ListModelRegistriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListModelRegistriesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateModelRegistryWithBody performs a POST /api/v2/model-registries (the `CreateModelRegistry` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CreateModelRegistryWithBody(ctx context.Context, params *CreateModelRegistryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateModelRegistryRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateModelRegistry performs a POST /api/v2/model-registries (the `CreateModelRegistry` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CreateModelRegistry(ctx context.Context, params *CreateModelRegistryParams, body CreateModelRegistryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateModelRegistryRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetModelRegistry performs a GET /api/v2/model-registries/{name} (the `GetModelRegistry` operationId) request.
+func (c *Client) GetModelRegistry(ctx context.Context, name string, params *GetModelRegistryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetModelRegistryRequest(c.Server, name, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyModelRegistryMutationWithBody performs a POST /api/v2/model-registries/{name}/mutations (the `ApplyModelRegistryMutation` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ApplyModelRegistryMutationWithBody(ctx context.Context, name string, params *ApplyModelRegistryMutationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyModelRegistryMutationRequestWithBody(c.Server, name, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyModelRegistryMutation performs a POST /api/v2/model-registries/{name}/mutations (the `ApplyModelRegistryMutation` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ApplyModelRegistryMutation(ctx context.Context, name string, params *ApplyModelRegistryMutationParams, body ApplyModelRegistryMutationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyModelRegistryMutationRequest(c.Server, name, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolveModelAliasWithBody performs a POST /api/v2/model-registries/{name}/resolve (the `ResolveModelAlias` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ResolveModelAliasWithBody(ctx context.Context, name string, params *ResolveModelAliasParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveModelAliasRequestWithBody(c.Server, name, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolveModelAlias performs a POST /api/v2/model-registries/{name}/resolve (the `ResolveModelAlias` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ResolveModelAlias(ctx context.Context, name string, params *ResolveModelAliasParams, body ResolveModelAliasJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveModelAliasRequest(c.Server, name, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7596,6 +8471,276 @@ func NewHybridSearchRequestWithBody(server string, params *HybridSearchParams, c
 	return req, nil
 }
 
+// NewListModelRegistriesRequest constructs an http.Request for the ListModelRegistries method
+func NewListModelRegistriesRequest(server string, params *ListModelRegistriesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/model-registries")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewCreateModelRegistryRequest calls the generic CreateModelRegistry builder with application/json body
+func NewCreateModelRegistryRequest(server string, params *CreateModelRegistryParams, body CreateModelRegistryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateModelRegistryRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateModelRegistryRequestWithBody constructs an http.Request for the CreateModelRegistry method, with any body, and a specified content type
+func NewCreateModelRegistryRequestWithBody(server string, params *CreateModelRegistryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/model-registries")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetModelRegistryRequest constructs an http.Request for the GetModelRegistry method
+func NewGetModelRegistryRequest(server string, name string, params *GetModelRegistryParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/model-registries/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewApplyModelRegistryMutationRequest calls the generic ApplyModelRegistryMutation builder with application/json body
+func NewApplyModelRegistryMutationRequest(server string, name string, params *ApplyModelRegistryMutationParams, body ApplyModelRegistryMutationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyModelRegistryMutationRequestWithBody(server, name, params, "application/json", bodyReader)
+}
+
+// NewApplyModelRegistryMutationRequestWithBody constructs an http.Request for the ApplyModelRegistryMutation method, with any body, and a specified content type
+func NewApplyModelRegistryMutationRequestWithBody(server string, name string, params *ApplyModelRegistryMutationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/model-registries/%s/mutations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewResolveModelAliasRequest calls the generic ResolveModelAlias builder with application/json body
+func NewResolveModelAliasRequest(server string, name string, params *ResolveModelAliasParams, body ResolveModelAliasJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResolveModelAliasRequestWithBody(server, name, params, "application/json", bodyReader)
+}
+
+// NewResolveModelAliasRequestWithBody constructs an http.Request for the ResolveModelAlias method, with any body, and a specified content type
+func NewResolveModelAliasRequestWithBody(server string, name string, params *ResolveModelAliasParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/model-registries/%s/resolve", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewIngestLogRequest calls the generic IngestLog builder with application/json body
 func NewIngestLogRequest(server string, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8262,13 +9407,12 @@ type ClientWithResponsesInterface interface {
 
 	// ScanRecordsWithBodyWithResponse Paginated scan of records in a collection.
 	//
-	// Returns the next page of records (TD-099 acceptance 2, live). The
-	// handler resolves the collection id, calls
-	// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-	// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-	// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-	// still deferred: `next_cursor` is always `None` today; callers bump
-	// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+	// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+	// Cursor-based pagination: pass the response's `next_cursor` back as
+	// `cursor` to fetch the next page; a `null` cursor means the scan is
+	// exhausted. Cursors are minted and validated against the caller-facing
+	// collection id in the URL path, expire after 24h (HTTP 410), and reject
+	// cross-collection reuse (HTTP 400).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -8277,13 +9421,12 @@ type ClientWithResponsesInterface interface {
 
 	// ScanRecordsWithResponse Paginated scan of records in a collection.
 	//
-	// Returns the next page of records (TD-099 acceptance 2, live). The
-	// handler resolves the collection id, calls
-	// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-	// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-	// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-	// still deferred: `next_cursor` is always `None` today; callers bump
-	// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+	// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+	// Cursor-based pagination: pass the response's `next_cursor` back as
+	// `cursor` to fetch the next page; a `null` cursor means the scan is
+	// exhausted. Cursors are minted and validated against the caller-facing
+	// collection id in the URL path, expire after 24h (HTTP 410), and reject
+	// cross-collection reuse (HTTP 400).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -8696,6 +9839,46 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/hybrid/search (the `HybridSearch` operationId).
 	HybridSearchWithResponse(ctx context.Context, params *HybridSearchParams, body HybridSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*HybridSearchHTTPResp, error)
+
+	// ListModelRegistriesWithResponse performs a GET /api/v2/model-registries (the `ListModelRegistries` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListModelRegistriesWithResponse(ctx context.Context, params *ListModelRegistriesParams, reqEditors ...RequestEditorFn) (*ListModelRegistriesHTTPResp, error)
+
+	// CreateModelRegistryWithBodyWithResponse performs a POST /api/v2/model-registries (the `CreateModelRegistry` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateModelRegistryWithBodyWithResponse(ctx context.Context, params *CreateModelRegistryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateModelRegistryHTTPResp, error)
+
+	// CreateModelRegistryWithResponse performs a POST /api/v2/model-registries (the `CreateModelRegistry` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CreateModelRegistryWithResponse(ctx context.Context, params *CreateModelRegistryParams, body CreateModelRegistryJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateModelRegistryHTTPResp, error)
+
+	// GetModelRegistryWithResponse performs a GET /api/v2/model-registries/{name} (the `GetModelRegistry` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetModelRegistryWithResponse(ctx context.Context, name string, params *GetModelRegistryParams, reqEditors ...RequestEditorFn) (*GetModelRegistryHTTPResp, error)
+
+	// ApplyModelRegistryMutationWithBodyWithResponse performs a POST /api/v2/model-registries/{name}/mutations (the `ApplyModelRegistryMutation` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ApplyModelRegistryMutationWithBodyWithResponse(ctx context.Context, name string, params *ApplyModelRegistryMutationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyModelRegistryMutationHTTPResp, error)
+
+	// ApplyModelRegistryMutationWithResponse performs a POST /api/v2/model-registries/{name}/mutations (the `ApplyModelRegistryMutation` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ApplyModelRegistryMutationWithResponse(ctx context.Context, name string, params *ApplyModelRegistryMutationParams, body ApplyModelRegistryMutationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyModelRegistryMutationHTTPResp, error)
+
+	// ResolveModelAliasWithBodyWithResponse performs a POST /api/v2/model-registries/{name}/resolve (the `ResolveModelAlias` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ResolveModelAliasWithBodyWithResponse(ctx context.Context, name string, params *ResolveModelAliasParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolveModelAliasHTTPResp, error)
+
+	// ResolveModelAliasWithResponse performs a POST /api/v2/model-registries/{name}/resolve (the `ResolveModelAlias` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ResolveModelAliasWithResponse(ctx context.Context, name string, params *ResolveModelAliasParams, body ResolveModelAliasJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveModelAliasHTTPResp, error)
 
 	// IngestLogWithBodyWithResponse Ingest a log entry.
 	//
@@ -9369,6 +10552,10 @@ type ScanRecordsHTTPResp struct {
 	JSON400 *ErrorResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *ErrorResponse
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -9384,6 +10571,16 @@ func (r ScanRecordsHTTPResp) GetJSON400() *ErrorResponse {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ScanRecordsHTTPResp) GetJSON404() *ErrorResponse {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ScanRecordsHTTPResp) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r ScanRecordsHTTPResp) GetJSON410() *ErrorResponse {
+	return r.JSON410
 }
 
 // GetBody returns the raw response body bytes
@@ -10608,6 +11805,267 @@ func (r HybridSearchHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListModelRegistriesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ListModelRegistriesResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListModelRegistriesHTTPResp) GetJSON200() *ListModelRegistriesResponse {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListModelRegistriesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListModelRegistriesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListModelRegistriesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListModelRegistriesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateModelRegistryHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ModelRegistryRecordResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateModelRegistryHTTPResp) GetJSON200() *ModelRegistryRecordResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateModelRegistryHTTPResp) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateModelRegistryHTTPResp) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateModelRegistryHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateModelRegistryHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateModelRegistryHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateModelRegistryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetModelRegistryHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ModelRegistryRecordResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetModelRegistryHTTPResp) GetJSON200() *ModelRegistryRecordResponse {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetModelRegistryHTTPResp) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetModelRegistryHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetModelRegistryHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetModelRegistryHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetModelRegistryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApplyModelRegistryMutationHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ModelRegistryRecordResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApplyModelRegistryMutationHTTPResp) GetJSON200() *ModelRegistryRecordResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ApplyModelRegistryMutationHTTPResp) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ApplyModelRegistryMutationHTTPResp) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ApplyModelRegistryMutationHTTPResp) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r ApplyModelRegistryMutationHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyModelRegistryMutationHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyModelRegistryMutationHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApplyModelRegistryMutationHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResolveModelAliasHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ResolvedModelBindingResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResolveModelAliasHTTPResp) GetJSON200() *ResolvedModelBindingResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ResolveModelAliasHTTPResp) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ResolveModelAliasHTTPResp) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ResolveModelAliasHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResolveModelAliasHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResolveModelAliasHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResolveModelAliasHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type IngestLogHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11281,13 +12739,12 @@ func (c *ClientWithResponses) InsertRecordsWithResponse(ctx context.Context, col
 
 // ScanRecordsWithBodyWithResponse Paginated scan of records in a collection.
 //
-// Returns the next page of records (TD-099 acceptance 2, live). The
-// handler resolves the collection id, calls
-// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-// still deferred: `next_cursor` is always `None` today; callers bump
-// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+// Cursor-based pagination: pass the response's `next_cursor` back as
+// `cursor` to fetch the next page; a `null` cursor means the scan is
+// exhausted. Cursors are minted and validated against the caller-facing
+// collection id in the URL path, expire after 24h (HTTP 410), and reject
+// cross-collection reuse (HTTP 400).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -11302,13 +12759,12 @@ func (c *ClientWithResponses) ScanRecordsWithBodyWithResponse(ctx context.Contex
 
 // ScanRecordsWithResponse Paginated scan of records in a collection.
 //
-// Returns the next page of records (TD-099 acceptance 2, live). The
-// handler resolves the collection id, calls
-// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-// still deferred: `next_cursor` is always `None` today; callers bump
-// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+// Cursor-based pagination: pass the response's `next_cursor` back as
+// `cursor` to fetch the next page; a `null` cursor means the scan is
+// exhausted. Cursors are minted and validated against the caller-facing
+// collection id in the URL path, expire after 24h (HTTP 410), and reject
+// cross-collection reuse (HTTP 400).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -11962,6 +13418,94 @@ func (c *ClientWithResponses) HybridSearchWithResponse(ctx context.Context, para
 	return ParseHybridSearchHTTPResp(rsp)
 }
 
+// ListModelRegistriesWithResponse performs a GET /api/v2/model-registries (the `ListModelRegistries` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListModelRegistriesWithResponse(ctx context.Context, params *ListModelRegistriesParams, reqEditors ...RequestEditorFn) (*ListModelRegistriesHTTPResp, error) {
+	rsp, err := c.ListModelRegistries(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListModelRegistriesHTTPResp(rsp)
+}
+
+// CreateModelRegistryWithBodyWithResponse performs a POST /api/v2/model-registries (the `CreateModelRegistry` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateModelRegistryWithBodyWithResponse(ctx context.Context, params *CreateModelRegistryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateModelRegistryHTTPResp, error) {
+	rsp, err := c.CreateModelRegistryWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateModelRegistryHTTPResp(rsp)
+}
+
+// CreateModelRegistryWithResponse performs a POST /api/v2/model-registries (the `CreateModelRegistry` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateModelRegistryWithResponse(ctx context.Context, params *CreateModelRegistryParams, body CreateModelRegistryJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateModelRegistryHTTPResp, error) {
+	rsp, err := c.CreateModelRegistry(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateModelRegistryHTTPResp(rsp)
+}
+
+// GetModelRegistryWithResponse performs a GET /api/v2/model-registries/{name} (the `GetModelRegistry` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetModelRegistryWithResponse(ctx context.Context, name string, params *GetModelRegistryParams, reqEditors ...RequestEditorFn) (*GetModelRegistryHTTPResp, error) {
+	rsp, err := c.GetModelRegistry(ctx, name, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetModelRegistryHTTPResp(rsp)
+}
+
+// ApplyModelRegistryMutationWithBodyWithResponse performs a POST /api/v2/model-registries/{name}/mutations (the `ApplyModelRegistryMutation` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ApplyModelRegistryMutationWithBodyWithResponse(ctx context.Context, name string, params *ApplyModelRegistryMutationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyModelRegistryMutationHTTPResp, error) {
+	rsp, err := c.ApplyModelRegistryMutationWithBody(ctx, name, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyModelRegistryMutationHTTPResp(rsp)
+}
+
+// ApplyModelRegistryMutationWithResponse performs a POST /api/v2/model-registries/{name}/mutations (the `ApplyModelRegistryMutation` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ApplyModelRegistryMutationWithResponse(ctx context.Context, name string, params *ApplyModelRegistryMutationParams, body ApplyModelRegistryMutationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyModelRegistryMutationHTTPResp, error) {
+	rsp, err := c.ApplyModelRegistryMutation(ctx, name, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyModelRegistryMutationHTTPResp(rsp)
+}
+
+// ResolveModelAliasWithBodyWithResponse performs a POST /api/v2/model-registries/{name}/resolve (the `ResolveModelAlias` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ResolveModelAliasWithBodyWithResponse(ctx context.Context, name string, params *ResolveModelAliasParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolveModelAliasHTTPResp, error) {
+	rsp, err := c.ResolveModelAliasWithBody(ctx, name, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveModelAliasHTTPResp(rsp)
+}
+
+// ResolveModelAliasWithResponse performs a POST /api/v2/model-registries/{name}/resolve (the `ResolveModelAlias` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ResolveModelAliasWithResponse(ctx context.Context, name string, params *ResolveModelAliasParams, body ResolveModelAliasJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveModelAliasHTTPResp, error) {
+	rsp, err := c.ResolveModelAlias(ctx, name, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveModelAliasHTTPResp(rsp)
+}
+
 // IngestLogWithBodyWithResponse Ingest a log entry.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -12571,6 +14115,20 @@ func ParseScanRecordsHTTPResp(rsp *http.Response) (*ScanRecordsHTTPResp, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	}
 
@@ -13389,6 +14947,192 @@ func ParseHybridSearchHTTPResp(rsp *http.Response) (*HybridSearchHTTPResp, error
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListModelRegistriesHTTPResp parses an HTTP response from a ListModelRegistriesWithResponse call
+func ParseListModelRegistriesHTTPResp(rsp *http.Response) (*ListModelRegistriesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListModelRegistriesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListModelRegistriesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateModelRegistryHTTPResp parses an HTTP response from a CreateModelRegistryWithResponse call
+func ParseCreateModelRegistryHTTPResp(rsp *http.Response) (*CreateModelRegistryHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateModelRegistryHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ModelRegistryRecordResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetModelRegistryHTTPResp parses an HTTP response from a GetModelRegistryWithResponse call
+func ParseGetModelRegistryHTTPResp(rsp *http.Response) (*GetModelRegistryHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetModelRegistryHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ModelRegistryRecordResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApplyModelRegistryMutationHTTPResp parses an HTTP response from a ApplyModelRegistryMutationWithResponse call
+func ParseApplyModelRegistryMutationHTTPResp(rsp *http.Response) (*ApplyModelRegistryMutationHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyModelRegistryMutationHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ModelRegistryRecordResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResolveModelAliasHTTPResp parses an HTTP response from a ResolveModelAliasWithResponse call
+func ParseResolveModelAliasHTTPResp(rsp *http.Response) (*ResolveModelAliasHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResolveModelAliasHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ResolvedModelBindingResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 

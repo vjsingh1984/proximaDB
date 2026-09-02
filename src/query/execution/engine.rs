@@ -182,9 +182,10 @@ pub struct QueryExecutionContext {
     pub vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
     /// Optional graph read service for the cross-modal `graph_traverse` table function.
     pub graph_ops: Option<Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
-    /// Optional request tenant for engines that need tenant-scoped I/O, metrics,
-    /// or billing attribution.
-    pub tenant_id: Option<String>,
+    /// Canonical request identity for cross-modal reads. Consumers that need only
+    /// tenant scope derive it from this carrier; vector/ABAC boundaries retain the
+    /// subject, stable tenant key, and authentication class too.
+    pub identity: proximadb_runtime::OwnedPortIdentity,
     /// ADR-025 OLAP read-merge (relational cold path): when set, parquet-backed
     /// tables listed here are reconciled at scan time against the authoritative
     /// post-snapshot WAL delta (deletes/updates/inserts that landed after the

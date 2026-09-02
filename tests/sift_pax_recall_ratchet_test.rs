@@ -20,9 +20,10 @@
 //!   - `sift_query.fvecs`      (10 000 × 128)     — query set
 //!   - `sift_groundtruth.ivecs`(10 000 × 100)     — true neighbours (full 1M only)
 //!
-//! Download (qa-gate `sift-pax-recall` job or local):
+//! Download (qa-gate `sift-pax-recall` job or local; TEXMEX archive MD5
+//! `b23d1b3b2ee8469d819b61ca900ef0ed`):
 //! ```text
-//! curl -L -O https://huggingface.co/datasets/qbo-odp/sift1m/resolve/main/<file>
+//! curl -fL -O ftp://ftp.irisa.fr/local/texmex/corpus/sift.tar.gz
 //! ```
 //!
 //! Env knobs:
@@ -34,15 +35,25 @@
 //!   PROXIMADB_SIFT_COALESCED_BYTE_BUDGET optional bytes/query ceiling for the
 //!                                coalesced end-to-end eval (unset = report only)
 //!   PROXIMADB_RECALL_DATASET_REQUIRED fail instead of skip when corpus is absent
+//!   PROXIMADB_OBJECT_STORE_URL optional registered cloud-emulator/real-cloud
+//!                                base; unset keeps the paired cohort local
+//!   PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB / PROXIMADB_SURVIVOR_CACHE_BUDGET_MB
+//!                                explicit nonzero values opt the paired gate
+//!                                into those existing warm tiers; unset/0 keeps
+//!                                its controlled cache-disabled baseline
 //!
 //! nextest isolates each test in its own process, so the PAX env vars set here
 //! don't leak. `set_var` is `unsafe` (edition 2024).
 
 use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchParams};
+use proximadb::core::search::{BlockPruneConfig, BlockPruneMode, SearchMode, SearchParams};
+use proximadb::observability::io_trace::{
+    VectorAccessPath, VectorCachePolicy, VectorSearchIntent, VectorStorageScope,
+};
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, StorageAssignment, StorageEngine, VectorRecord,
 };
+use proximadb::query::route_cost_model::{VectorCacheOutcome, vector_access_shape};
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::engines::sst::segment_format::{
     CacheTier, SegmentInvariantsCache, drain_get_trace, rabitq_search_segment_coalesced,
@@ -56,7 +67,7 @@ use proximadb::storage::traits::{
 use proximadb_block_format::{RankMetric, VectorQuant};
 use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -67,6 +78,12 @@ const DIMENSION: usize = 128;
 const TOP_K: usize = 10;
 const BATCH_SIZE: usize = 20_000;
 const DEFAULT_QUERIES: usize = 1000;
+/// Bound the exact side of the paired access-path evidence across every SIFT
+/// scale. This yields 100 pairs at N=10k, 30 at N=100k, and 3 at N=1M: enough
+/// to cross the route-cost model's three-sample warmup without making the
+/// full-corpus recall ratchet pay an unbounded brute-force tax.
+const MAX_PAIRED_VECTOR_COMPARISONS: usize = 3_000_000;
+const MIN_PAIRED_SAMPLES: usize = 3;
 
 fn directory_file_bytes(path: &Path) -> std::io::Result<u64> {
     let mut bytes = 0u64;
@@ -154,6 +171,36 @@ fn dataset_required() -> bool {
         .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on"))
 }
 
+fn paired_storage_base(local_base: &Path, configured: Option<&str>, run_id: &str) -> String {
+    match configured {
+        Some(base) => {
+            let base = base.trim();
+            assert!(
+                !base.is_empty(),
+                "PROXIMADB_OBJECT_STORE_URL must be unset or a non-empty storage URL"
+            );
+            format!("{}/td-xmodal-4-paired/{run_id}", base.trim_end_matches('/'))
+        }
+        None => local_base.to_string_lossy().into_owned(),
+    }
+}
+
+fn explicit_cache_budget_bytes(configured: Option<&str>, gate: &str) -> Option<u64> {
+    let raw = configured?;
+    let mb = raw
+        .trim()
+        .parse::<u64>()
+        .unwrap_or_else(|_| panic!("{gate} must be an unsigned MiB value, got {raw:?}"));
+    if mb == 0 {
+        None
+    } else {
+        Some(
+            mb.checked_mul(1024 * 1024)
+                .unwrap_or_else(|| panic!("{gate} MiB value overflows bytes: {mb}")),
+        )
+    }
+}
+
 /// Squared L2 distance (order-preserving — fine for ranking).
 fn l2_sq(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
@@ -213,7 +260,7 @@ fn vid(i: u32) -> String {
     format!("v{i}")
 }
 
-fn collection(id: &str, temp_dir: &TempDir) -> Collection {
+fn collection(id: &str, base_location: String) -> Collection {
     Collection {
         id: id.to_string(),
         config: Some(CollectionConfig {
@@ -224,7 +271,7 @@ fn collection(id: &str, temp_dir: &TempDir) -> Collection {
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
-            base_location: temp_dir.path().to_str().unwrap().to_string(),
+            base_location,
             ..Default::default()
         }),
         ..Default::default()
@@ -266,12 +313,18 @@ async fn flush_batch(engine: &SstEngine, collection: &Collection, batch: Vec<Vec
     );
 }
 
-async fn search_topk(engine: &SstEngine, collection: &Collection, query: Vec<f32>) -> Vec<String> {
+async fn search_topk_with_mode(
+    engine: &SstEngine,
+    collection: &Collection,
+    query: Vec<f32>,
+    search_mode: SearchMode,
+) -> Vec<String> {
     let ctx = StorageQueryContext {
         search_params: Arc::new(SearchParams {
             query_vectors: Some(vec![query]),
             top_k: Some(TOP_K as u16),
             distance_metric: Some(DistanceMetric::Euclidean),
+            search_mode,
             block_prune: BlockPruneConfig {
                 radius_k: 0.0,
                 force_exact: false,
@@ -300,17 +353,188 @@ async fn search_topk(engine: &SstEngine, collection: &Collection, query: Vec<f32
         .collect()
 }
 
+async fn search_topk(engine: &SstEngine, collection: &Collection, query: Vec<f32>) -> Vec<String> {
+    search_topk_with_mode(engine, collection, query, SearchMode::default()).await
+}
+
+#[derive(Debug)]
+struct MeasuredSearch {
+    ids: Vec<String>,
+    elapsed_us: u64,
+    snapshot: proximadb::observability::io_trace::IoTraceSnapshot,
+}
+
+#[derive(Debug, Default)]
+struct OutcomeMeasurements {
+    elapsed_us: Vec<u64>,
+    get_ops: u64,
+    range_gets: u64,
+    bytes_read: u64,
+    compute_ms: u64,
+    footer_hits: u64,
+    footer_misses: u64,
+    survivor_l1_hits: u64,
+    survivor_l1_misses: u64,
+    l2_hits: u64,
+    l2_misses: u64,
+}
+
+impl OutcomeMeasurements {
+    fn latency_min_median_max(&self) -> (u64, u64, u64) {
+        let mut elapsed_us = self.elapsed_us.clone();
+        elapsed_us.sort_unstable();
+        (
+            elapsed_us.first().copied().unwrap_or_default(),
+            percentile_us(&elapsed_us, 50),
+            elapsed_us.last().copied().unwrap_or_default(),
+        )
+    }
+}
+
+fn record_outcome_measurement(
+    cohorts: &mut BTreeMap<&'static str, OutcomeMeasurements>,
+    elapsed_us: u64,
+    snapshot: &proximadb::observability::io_trace::IoTraceSnapshot,
+) {
+    let cohort = cohorts
+        .entry(VectorCacheOutcome::from_snapshot(snapshot).as_str())
+        .or_default();
+    cohort.elapsed_us.push(elapsed_us);
+    cohort.get_ops = cohort.get_ops.saturating_add(snapshot.get_ops);
+    cohort.range_gets = cohort.range_gets.saturating_add(snapshot.range_gets);
+    cohort.bytes_read = cohort.bytes_read.saturating_add(snapshot.bytes_read);
+    cohort.compute_ms = cohort
+        .compute_ms
+        .saturating_add(snapshot.total_compute_ms());
+    cohort.footer_hits = cohort.footer_hits.saturating_add(snapshot.footer_hits);
+    cohort.footer_misses = cohort.footer_misses.saturating_add(snapshot.footer_misses);
+    cohort.survivor_l1_hits = cohort
+        .survivor_l1_hits
+        .saturating_add(snapshot.survivor_l1_hits);
+    cohort.survivor_l1_misses = cohort
+        .survivor_l1_misses
+        .saturating_add(snapshot.survivor_l1_misses);
+    cohort.l2_hits = cohort.l2_hits.saturating_add(snapshot.l2_hits);
+    cohort.l2_misses = cohort.l2_misses.saturating_add(snapshot.l2_misses);
+}
+
+fn report_outcome_measurements(
+    arm: &str,
+    cohorts: &mut BTreeMap<&'static str, OutcomeMeasurements>,
+) {
+    for (outcome, cohort) in cohorts {
+        let samples = cohort.elapsed_us.len();
+        let denominator = samples as f64;
+        let (min_us, median_us, max_us) = cohort.latency_min_median_max();
+        eprintln!(
+            "SIFT {arm} cache-outcome evidence: outcome={outcome}, samples={samples}, \
+             latency min/median/max={min_us}/{median_us}/{max_us} us; \
+             GET/range-GET/bytes/compute-ms per sample=\
+             {:.2}/{:.2}/{:.0}/{:.2}; footer hit/miss={:.2}/{:.2}, \
+             survivor-L1 hit/miss={:.2}/{:.2}, L2 hit/miss={:.2}/{:.2}",
+            cohort.get_ops as f64 / denominator,
+            cohort.range_gets as f64 / denominator,
+            cohort.bytes_read as f64 / denominator,
+            cohort.compute_ms as f64 / denominator,
+            cohort.footer_hits as f64 / denominator,
+            cohort.footer_misses as f64 / denominator,
+            cohort.survivor_l1_hits as f64 / denominator,
+            cohort.survivor_l1_misses as f64 / denominator,
+            cohort.l2_hits as f64 / denominator,
+            cohort.l2_misses as f64 / denominator,
+        );
+    }
+}
+
+async fn measured_search(
+    engine: &SstEngine,
+    collection: &Collection,
+    query: Vec<f32>,
+    search_mode: SearchMode,
+) -> MeasuredSearch {
+    let started = Instant::now();
+    let (ids, snapshot) = proximadb::observability::io_trace::scope(async {
+        let ids = search_topk_with_mode(engine, collection, query, search_mode).await;
+        let snapshot = proximadb::observability::io_trace::snapshot()
+            .expect("io_trace scope active during measured vector search");
+        (ids, snapshot)
+    })
+    .await;
+    MeasuredSearch {
+        ids,
+        elapsed_us: started.elapsed().as_micros() as u64,
+        snapshot,
+    }
+}
+
+fn assert_single_vector_access(
+    measured: &MeasuredSearch,
+    expected_intent: VectorSearchIntent,
+    expected_path: VectorAccessPath,
+    expected_storage_scope: VectorStorageScope,
+    expected_cache_policy: VectorCachePolicy,
+) {
+    assert_eq!(
+        measured.snapshot.vector_accesses.len(),
+        1,
+        "each ratchet query must report one physical vector access"
+    );
+    let access = &measured.snapshot.vector_accesses[0];
+    assert_eq!(
+        access.requested_mode, expected_intent,
+        "ratchet caller intent must be explicit and attributable"
+    );
+    assert_eq!(
+        access.actual_path, expected_path,
+        "ratchet must exercise the requested physical access path"
+    );
+    assert_eq!(access.engine, "sst");
+    assert_eq!(access.dimensions, DIMENSION as u64);
+    assert_eq!(access.top_k, TOP_K as u64);
+    assert!(!access.has_filter);
+    assert_eq!(
+        access.storage_scope, expected_storage_scope,
+        "the SIFT fixture must attribute the scope derived from its storage URL"
+    );
+    assert_eq!(
+        access.cache_policy, expected_cache_policy,
+        "the SIFT fixture must stamp the cache policy visible before routing"
+    );
+}
+
 /// WS8 real-dataset ratchet: PAX RaBitQ→SQ8 cascade recall@10 on SIFT1M.
 #[tokio::test]
 async fn sift_pax_cascade_recall_at_10_ratchet() {
-    // PAX write-default stays OFF in prod; opt this collection in via env so `.pax`
-    // segments flush + RaBitQ-code (the cascade is the only path that can rank
-    // them). nextest isolates each test in its own process.
+    // Post-flip the RG layout is the write default; this arm pins the LEGACY
+    // block framing via the kill-switch so the A/B contrast stays measurable.
     unsafe {
         std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
         std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        // A paired exact/ANN cost sample is admissible only when the exact arm
+        // ranks authoritative inserted vectors, not lossy SQ8 reconstructions.
+        std::env::set_var("PROXIMADB_PAX_F32_TIER", "1");
+        std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "0");
     }
+    run_sift_ratchet("baseline").await;
+}
 
+/// TD-PAXRG-1 Phase G: the SAME ratchet with the row-group Region D layout
+/// ON (`PROXIMADB_PAX_WRITE_RG_LAYOUT=1`) — Regions A/B are byte-identical so
+/// recall must hold (read-path plumbing integrity at scale: footer-index
+/// ranged reads, RG zone pruning, OID-chunk top-k, Region C exact rerank).
+/// Also under f32 tier ⇒ the Region C hoist is exercised end-to-end.
+#[tokio::test]
+async fn sift_pax_cascade_recall_at_10_ratchet_rg_layout() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_F32_TIER", "1");
+        std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "1");
+    }
+    run_sift_ratchet("rg_layout").await;
+}
+
+async fn run_sift_ratchet(label: &str) {
     let base_path = match dataset_path("sift_base.fvecs") {
         Some(p) => p,
         None => {
@@ -350,8 +574,42 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         .unwrap_or(0.90);
 
     let temp_dir = TempDir::new().unwrap();
-    let collection = collection("sift_pax_ratchet", &temp_dir);
-    let engine = SstEngine::new().await.unwrap();
+    let object_store_url = std::env::var("PROXIMADB_OBJECT_STORE_URL").ok();
+    let storage_base = paired_storage_base(
+        temp_dir.path(),
+        object_store_url.as_deref(),
+        &uuid::Uuid::new_v4().simple().to_string(),
+    );
+    let expected_storage_scope = VectorStorageScope::from_storage_url(&storage_base);
+    assert_ne!(
+        expected_storage_scope,
+        VectorStorageScope::Unknown,
+        "paired SIFT evidence requires a known local or remote storage URL: {storage_base}"
+    );
+    let collection = collection(&format!("sift_pax_ratchet_{label}"), storage_base);
+    // Unset cache-budget gates preserve the controlled cache-free baseline.
+    // Explicit existing budgets opt this same harness into the corresponding
+    // route-time policy; no parallel benchmark or new env gate is needed.
+    let invariants_raw = std::env::var("PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB").ok();
+    let survivor_raw = std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB").ok();
+    let invariants_budget = explicit_cache_budget_bytes(
+        invariants_raw.as_deref(),
+        "PROXIMADB_SEGMENT_INVARIANTS_CACHE_MB",
+    );
+    let survivor_budget = explicit_cache_budget_bytes(
+        survivor_raw.as_deref(),
+        "PROXIMADB_SURVIVOR_CACHE_BUDGET_MB",
+    );
+    let expected_cache_policy =
+        VectorCachePolicy::from_tiers(invariants_budget.is_some(), survivor_budget.is_some());
+    let engine = SstEngine::new().await.unwrap().with_warm_tier_caches(
+        invariants_budget.map(|bytes| {
+            Arc::new(SegmentInvariantsCache::new(
+                usize::try_from(bytes).expect("invariants cache budget fits usize"),
+            ))
+        }),
+        survivor_budget.map(|bytes| Arc::new(SurvivorRangeCache::new(bytes))),
+    );
 
     // --- Load base (subset or full) ---------------------------------------------------
     eprintln!("loading base vectors ({})", {
@@ -394,6 +652,7 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
         }
     };
     let qcount = queries.len();
+    assert!(qcount > 0, "need at least one SIFT query");
 
     // --- Ground truth: filtered provided top-100 plus exact subset fallback ------------
     let gt_path = dataset_path("sift_groundtruth.ivecs");
@@ -412,16 +671,146 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     // before the query loop on the 1M run.
     drop(base);
 
-    // --- Search + recall --------------------------------------------------------------
+    // --- Search + recall + bounded exact/ANN paired evidence --------------------------
+    let paired_queries = qcount.min(
+        (MAX_PAIRED_VECTOR_COMPARISONS / n.max(1))
+            .max(MIN_PAIRED_SAMPLES)
+            .min(qcount),
+    );
     let mut recall_sum = 0.0f64;
     let mut measured = 0usize;
+    let mut exact_us = Vec::with_capacity(paired_queries);
+    let mut ann_us = Vec::with_capacity(paired_queries);
+    let mut exact_gets = 0u64;
+    let mut ann_gets = 0u64;
+    let mut exact_range_gets = 0u64;
+    let mut ann_range_gets = 0u64;
+    let mut exact_bytes = 0u64;
+    let mut ann_bytes = 0u64;
+    let mut exact_compute_ms = 0u64;
+    let mut ann_compute_ms = 0u64;
+    let mut comparable_regime_pairs: HashMap<String, usize> = HashMap::new();
+    let mut completed_outcome_pairs: BTreeMap<String, usize> = BTreeMap::new();
+    let mut exact_outcome_measurements = BTreeMap::new();
+    let mut ann_outcome_measurements = BTreeMap::new();
     for (qi, query) in queries.iter().enumerate() {
-        let got = search_topk(&engine, &collection, query.clone()).await;
-        if got.is_empty() {
+        let paired = qi < paired_queries;
+        let (ann, exact) = if paired && qi.is_multiple_of(2) {
+            let exact =
+                measured_search(&engine, &collection, query.clone(), SearchMode::Exact).await;
+            let ann = measured_search(
+                &engine,
+                &collection,
+                query.clone(),
+                SearchMode::Approximate { nprobe: None },
+            )
+            .await;
+            (ann, Some(exact))
+        } else if paired {
+            let ann = measured_search(
+                &engine,
+                &collection,
+                query.clone(),
+                SearchMode::Approximate { nprobe: None },
+            )
+            .await;
+            let exact =
+                measured_search(&engine, &collection, query.clone(), SearchMode::Exact).await;
+            (ann, Some(exact))
+        } else {
+            (
+                measured_search(
+                    &engine,
+                    &collection,
+                    query.clone(),
+                    SearchMode::Approximate { nprobe: None },
+                )
+                .await,
+                None,
+            )
+        };
+
+        assert_single_vector_access(
+            &ann,
+            VectorSearchIntent::Approximate,
+            VectorAccessPath::Ann,
+            expected_storage_scope,
+            expected_cache_policy,
+        );
+        if let Some(exact) = exact {
+            assert_single_vector_access(
+                &exact,
+                VectorSearchIntent::Exact,
+                VectorAccessPath::Exact,
+                expected_storage_scope,
+                expected_cache_policy,
+            );
+            let exact_shape = vector_access_shape(&exact.snapshot.vector_accesses[0]);
+            let ann_shape = vector_access_shape(&ann.snapshot.vector_accesses[0]);
+            let exact_cache = VectorCacheOutcome::from_snapshot(&exact.snapshot);
+            let ann_cache = VectorCacheOutcome::from_snapshot(&ann.snapshot);
+            record_outcome_measurement(
+                &mut exact_outcome_measurements,
+                exact.elapsed_us,
+                &exact.snapshot,
+            );
+            record_outcome_measurement(
+                &mut ann_outcome_measurements,
+                ann.elapsed_us,
+                &ann.snapshot,
+            );
+            *completed_outcome_pairs
+                .entry(format!(
+                    "exact={}/ann={}",
+                    exact_cache.as_str(),
+                    ann_cache.as_str()
+                ))
+                .or_default() += 1;
+            let known_scope = exact.snapshot.vector_accesses[0].storage_scope
+                != VectorStorageScope::Unknown
+                && ann.snapshot.vector_accesses[0].storage_scope != VectorStorageScope::Unknown;
+            if exact_shape == ann_shape
+                && exact_cache.is_admissible()
+                && ann_cache.is_admissible()
+                && known_scope
+            {
+                *comparable_regime_pairs.entry(exact_shape).or_default() += 1;
+            } else {
+                eprintln!(
+                    "  cohort mismatch query {qi}: exact={exact_shape}/outcome={}, \
+                     ANN={ann_shape}/outcome={}",
+                    exact_cache.as_str(),
+                    ann_cache.as_str()
+                );
+            }
+            let exact_ids: std::collections::HashSet<String> =
+                exact.ids.iter().take(TOP_K).cloned().collect();
+            assert_eq!(
+                exact_ids.intersection(&ground_truth[qi]).count(),
+                TOP_K,
+                "exact SIFT top-k must match the ground-truth set for query {qi}"
+            );
+            exact_us.push(exact.elapsed_us);
+            assert!(
+                exact.snapshot.get_ops > 0 && exact.snapshot.bytes_read > 0,
+                "exact PAX scan must report its whole-segment physical read"
+            );
+            exact_gets = exact_gets.saturating_add(exact.snapshot.get_ops);
+            exact_range_gets = exact_range_gets.saturating_add(exact.snapshot.range_gets);
+            exact_bytes = exact_bytes.saturating_add(exact.snapshot.bytes_read);
+            exact_compute_ms = exact_compute_ms.saturating_add(exact.snapshot.total_compute_ms());
+            ann_us.push(ann.elapsed_us);
+            ann_gets = ann_gets.saturating_add(ann.snapshot.get_ops);
+            ann_range_gets = ann_range_gets.saturating_add(ann.snapshot.range_gets);
+            ann_bytes = ann_bytes.saturating_add(ann.snapshot.bytes_read);
+            ann_compute_ms = ann_compute_ms.saturating_add(ann.snapshot.total_compute_ms());
+        }
+
+        if ann.ids.is_empty() {
             eprintln!("  warn: query {qi} returned no results");
             continue;
         }
-        let got_ids: std::collections::HashSet<String> = got.into_iter().take(TOP_K).collect();
+        let got_ids: std::collections::HashSet<String> = ann.ids.into_iter().take(TOP_K).collect();
         let gt_ids = &ground_truth[qi];
         let overlap = got_ids.intersection(gt_ids).count();
         recall_sum += overlap as f64 / TOP_K as f64;
@@ -430,8 +819,44 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
     assert!(measured > 0, "no queries succeeded — cannot report recall");
     let recall = recall_sum / measured as f64;
     eprintln!(
-        "SIFT PAX cascade recall@{TOP_K} = {recall:.4} over {measured} queries \
+        "SIFT PAX cascade recall@{TOP_K} [{label}] = {recall:.4} over {measured} queries \
          (N={n}, floor={floor}, brute-force-GT rows={brute_force_rows})",
+    );
+    exact_us.sort_unstable();
+    ann_us.sort_unstable();
+    let exact_p50_us = percentile_us(&exact_us, 50);
+    let exact_p95_us = percentile_us(&exact_us, 95);
+    let ann_p50_us = percentile_us(&ann_us, 50);
+    let ann_p95_us = percentile_us(&ann_us, 95);
+    eprintln!(
+        "SIFT paired exact/ANN evidence: pairs={paired_queries}, N={n}, dim={DIMENSION}, \
+         top_k={TOP_K}; exact p50/p95={exact_p50_us}/{exact_p95_us} us, \
+         ANN p50/p95={ann_p50_us}/{ann_p95_us} us; \
+         exact GET/range-GET/bytes/compute-ms per pair={:.2}/{:.2}/{:.0}/{:.2}, \
+         ANN GET/range-GET/bytes/compute-ms per pair={:.2}/{:.2}/{:.0}/{:.2}",
+        exact_gets as f64 / paired_queries as f64,
+        exact_range_gets as f64 / paired_queries as f64,
+        exact_bytes as f64 / paired_queries as f64,
+        exact_compute_ms as f64 / paired_queries as f64,
+        ann_gets as f64 / paired_queries as f64,
+        ann_range_gets as f64 / paired_queries as f64,
+        ann_bytes as f64 / paired_queries as f64,
+        ann_compute_ms as f64 / paired_queries as f64,
+    );
+    report_outcome_measurements("exact", &mut exact_outcome_measurements);
+    report_outcome_measurements("ANN", &mut ann_outcome_measurements);
+    let (admitted_regime, admitted_pairs) = comparable_regime_pairs
+        .iter()
+        .max_by_key(|(_, pairs)| **pairs)
+        .map(|(regime, pairs)| (regime.as_str(), *pairs))
+        .unwrap_or(("none", 0));
+    eprintln!("SIFT comparable regime cohort: regime={admitted_regime}, pairs={admitted_pairs}");
+    for (outcomes, pairs) in completed_outcome_pairs {
+        eprintln!("SIFT completed cache outcomes: {outcomes}, pairs={pairs}");
+    }
+    assert!(
+        admitted_pairs >= MIN_PAIRED_SAMPLES,
+        "exact/ANN evidence must contain at least {MIN_PAIRED_SAMPLES} pairs from the same known storage/cache policy with admissible arm outcomes; best cohort={admitted_regime} ({admitted_pairs})"
     );
     assert!(
         recall >= floor,
@@ -444,6 +869,85 @@ async fn sift_pax_cascade_recall_at_10_ratchet() {
 // ---------------------------------------------------------------------------
 // Loader unit tests — synthetic .fvecs/.ivecs round-trip (no dataset needed).
 // ---------------------------------------------------------------------------
+
+#[test]
+fn paired_storage_base_uses_local_fixture_when_object_store_is_unset() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    assert_eq!(
+        paired_storage_base(temp_dir.path(), None, "run-a"),
+        temp_dir.path().to_string_lossy()
+    );
+}
+
+#[test]
+fn paired_storage_base_isolates_remote_measurement_prefix() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let base = paired_storage_base(
+        temp_dir.path(),
+        Some("az://proximadb-test/vector-evidence/"),
+        "run-a",
+    );
+    assert_eq!(
+        base,
+        "az://proximadb-test/vector-evidence/td-xmodal-4-paired/run-a"
+    );
+    assert_eq!(
+        VectorStorageScope::from_storage_url(&base),
+        VectorStorageScope::Remote
+    );
+}
+
+#[test]
+fn paired_cache_policy_uses_existing_explicit_tier_budgets() {
+    let policy = |invariants, survivor| {
+        VectorCachePolicy::from_tiers(
+            explicit_cache_budget_bytes(invariants, "invariants").is_some(),
+            explicit_cache_budget_bytes(survivor, "survivor").is_some(),
+        )
+    };
+    assert_eq!(policy(None, None), VectorCachePolicy::Disabled);
+    assert_eq!(policy(Some("64"), None), VectorCachePolicy::InvariantsOnly);
+    assert_eq!(policy(None, Some("64")), VectorCachePolicy::SurvivorOnly);
+    assert_eq!(policy(Some("64"), Some("64")), VectorCachePolicy::Full);
+    assert_eq!(policy(Some("0"), Some("0")), VectorCachePolicy::Disabled);
+}
+
+#[test]
+fn cache_outcome_measurements_remain_stratified() {
+    let cold = proximadb::observability::io_trace::IoTraceSnapshot {
+        get_ops: 3,
+        range_gets: 2,
+        bytes_read: 30,
+        survivor_l1_misses: 4,
+        ..Default::default()
+    };
+    let mixed = proximadb::observability::io_trace::IoTraceSnapshot {
+        get_ops: 1,
+        range_gets: 1,
+        bytes_read: 10,
+        survivor_l1_hits: 5,
+        survivor_l1_misses: 1,
+        ..Default::default()
+    };
+    let mut cohorts = BTreeMap::new();
+
+    record_outcome_measurement(&mut cohorts, 300, &cold);
+    record_outcome_measurement(&mut cohorts, 200, &mixed);
+    record_outcome_measurement(&mut cohorts, 100, &cold);
+
+    let cold = cohorts.get("cold").expect("cold cohort");
+    assert_eq!(cold.elapsed_us, vec![300, 100]);
+    assert_eq!(cold.get_ops, 6);
+    assert_eq!(cold.bytes_read, 60);
+    assert_eq!(cold.survivor_l1_misses, 8);
+    assert_eq!(cold.latency_min_median_max(), (100, 100, 300));
+
+    let mixed = cohorts.get("mixed").expect("mixed cohort");
+    assert_eq!(mixed.elapsed_us, vec![200]);
+    assert_eq!(mixed.get_ops, 1);
+    assert_eq!(mixed.survivor_l1_hits, 5);
+    assert_eq!(mixed.survivor_l1_misses, 1);
+}
 
 #[test]
 fn fvecs_round_trip_parses_dim_and_values() {
@@ -581,31 +1085,37 @@ async fn sift_coalesced_rabitq_scan_rerank_eval() {
     // file, isolating the per-file "~1 RaBitQ GET" win from the PR2 GET-budget
     // compaction (the flush→compaction scheduler is unwired).
     let temp_dir = TempDir::new().unwrap();
-    let collection = collection("sift_coalesced_eval", &temp_dir);
+    let collection = collection(
+        "sift_coalesced_eval",
+        temp_dir.path().to_string_lossy().into_owned(),
+    );
     let engine = SstEngine::new().await.unwrap()
         .with_directory_cache(Arc::new(
             proximadb::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
-        ))
-        .with_segment_invariants_cache(Arc::new(
-            proximadb::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
-                64 * 1024 * 1024,
-            ),
         ));
     // ADR-065 Q3: opt-in ranged survivor/OID cache. Set
     // PROXIMADB_SURVIVOR_CACHE_BUDGET_MB (default unset → uncached baseline) to
     // measure the GET/bytes win on the repeated-query working set.
-    let engine = match std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
+    let survivor_cache = match std::env::var("PROXIMADB_SURVIVOR_CACHE_BUDGET_MB")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|b| *b > 0)
     {
-        Some(mb) => engine.with_survivor_cache(Arc::new(
+        Some(mb) => Some(Arc::new(
             proximadb::storage::engines::sst::survivor_range_cache::SurvivorRangeCache::new(
                 mb * 1024 * 1024,
             ),
         )),
-        None => engine,
+        None => None,
     };
+    let engine = engine.with_warm_tier_caches(
+        Some(Arc::new(
+            proximadb::storage::engines::sst::segment_format::SegmentInvariantsCache::new(
+                64 * 1024 * 1024,
+            ),
+        )),
+        survivor_cache,
+    );
     let batch: Vec<VectorRecord> = base
         .iter()
         .enumerate()
@@ -1401,5 +1911,216 @@ async fn sift_ivf2_coarse_probe_recall_ratchet() {
         std::env::remove_var("PROXIMADB_PAX_WRITE_A0_TRAIN");
         std::env::set_var("PROXIMADB_PAX_READ_COARSE_PROBE", "0");
         std::env::remove_var("PROXIMADB_TRACE_GETS");
+    }
+}
+
+// ============================================================================
+// TD-FPRUNE-1 flip evidence — the FILTERED leg (adversarial-review finding).
+//
+// Zero tests exercised the GATED DISPATCH before this: every filtered-cascade
+// test called `pax_filtered_row_allow` / `rabitq_search_segment_coalesced_allowed`
+// directly, bypassing the `search/mod.rs` gate, so a default-ON flip had no CI
+// coverage. This leg runs the real `search_vectors_unified` WITH a filter and
+// `PROXIMADB_PAX_FILTERED_CASCADE=1` (+ footer stats at write) and asserts:
+//   (a) filtered recall@10 vs FILTERED brute-force ground truth >= floor,
+//   (b) every returned id is in the filtered partition (predicate holds
+//       through the full dispatch + cascade allow-set stack),
+//   (c) every hit carries its metadata (the top-k rehydration — without it
+//       the cascade silently returns id+score only, downgrading the exact
+//       path's with-metadata response shape).
+// The unfiltered arms above and their `!has_filter` invariant are untouched.
+// ============================================================================
+
+const FILTERED_PARTITIONS: u32 = 8;
+
+fn partition_tag(i: u32) -> String {
+    format!("p{}", i % FILTERED_PARTITIONS)
+}
+
+async fn run_sift_filtered_cascade_ratchet() {
+    use proximadb::proto::proximadb_v1::sql_value;
+    let base_path = match dataset_path("sift_base.fvecs") {
+        Some(p) => p,
+        None => {
+            assert!(
+                !dataset_required(),
+                "required SIFT corpus is missing (PROXIMADB_RECALL_DATASET_REQUIRED=1)"
+            );
+            eprintln!("skipping filtered ratchet: no SIFT dataset");
+            return;
+        }
+    };
+    let floor = std::env::var("PROXIMADB_SIFT_RECALL_FLOOR")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.90);
+
+    let n_filter = std::env::var("PROXIMADB_SIFT_N")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10_000);
+    let max_queries = std::env::var("PROXIMADB_SIFT_QUERIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+
+    let engine = SstEngine::new().await.unwrap();
+    let tmp = TempDir::new().unwrap();
+    let storage_base = format!("file://{}", tmp.path().join("sift_filtered").display());
+    let collection = collection("sift_filtered_ratchet", storage_base);
+
+    // Ingest with a deterministic partition tag in metadata (→ record props).
+    let base = read_vec_records_f32(&base_path, Some(n_filter)).expect("read sift_base.fvecs");
+    let n = base.len();
+    let mut batch: Vec<VectorRecord> = Vec::with_capacity(BATCH_SIZE);
+    for (i, v) in base.iter().enumerate() {
+        let i = i as u32;
+        let mut r = vector_record(i, v.clone());
+        r.metadata.insert(
+            "partition".to_string(),
+            proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(sql_value::Value::StringValue(partition_tag(i))),
+            },
+        );
+        batch.push(r);
+        if batch.len() == BATCH_SIZE {
+            let b = std::mem::take(&mut batch);
+            flush_batch(&engine, &collection, b).await;
+        }
+    }
+    if !batch.is_empty() {
+        flush_batch(&engine, &collection, batch).await;
+    }
+    eprintln!("filtered ratchet: flushed {n} tagged base vectors");
+
+    let query_path = dataset_path("sift_query.fvecs").expect("query corpus");
+    let queries: Vec<Vec<f32>> =
+        read_vec_records_f32(&query_path, Some(max_queries)).expect("read sift_query.fvecs");
+
+    let mut recall_sum = 0.0f64;
+    let mut measured = 0usize;
+    for (qi, query) in queries.iter().enumerate() {
+        let p = partition_tag(qi as u32);
+        // Filtered brute-force GT: top-TOP_K among ONLY partition-p rows.
+        let mut candidates: Vec<(usize, f32)> = base
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| partition_tag(*i as u32) == p)
+            .map(|(i, v)| {
+                let d: f32 = v
+                    .iter()
+                    .zip(query.iter())
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum();
+                (i, d)
+            })
+            .collect();
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        let gt: Vec<String> = candidates
+            .iter()
+            .take(TOP_K)
+            .map(|(i, _)| vid(*i as u32))
+            .collect();
+
+        // The REAL dispatch, with the filter the gate keys on.
+        let ctx = StorageQueryContext {
+            search_params: Arc::new(SearchParams {
+                query_vectors: Some(vec![query.clone()]),
+                top_k: Some(TOP_K as u16),
+                distance_metric: Some(DistanceMetric::Euclidean),
+                search_mode: SearchMode::Approximate { nprobe: None },
+                filter_expression: Some(
+                    proximadb_filter_expression::FilterExpression::Comparison {
+                        field: "partition".to_string(),
+                        operator: proximadb_filter_expression::ComparisonOperator::Equals,
+                        value: serde_json::json!(p),
+                    },
+                ),
+                block_prune: BlockPruneConfig {
+                    radius_k: 0.0,
+                    force_exact: false,
+                    mode: BlockPruneMode::Ratio,
+                    ratio: 1.0,
+                    min_keep: 1,
+                    max_keep: 0,
+                    min_blocks_override: Some(0),
+                },
+                ..Default::default()
+            }),
+            collection: Arc::new(collection.clone()),
+            metadata: StorageQueryMetadata {
+                collection_id: collection.id.clone(),
+                ..Default::default()
+            },
+            user_context: None,
+            tenant_context: None,
+        };
+        let results = engine
+            .search_vectors_unified(&ctx)
+            .await
+            .expect("filtered search through the unified dispatch must succeed");
+        assert!(!results.is_empty(), "partition {p} must yield hits");
+
+        let gt_set: std::collections::HashSet<&str> = gt.iter().map(|s| s.as_str()).collect();
+        let mut hits_in_gt = 0usize;
+        for r in &results {
+            // (b) predicate: the hit's partition is the filtered one.
+            let idx: u32 =
+                r.id.trim_start_matches('v')
+                    .parse()
+                    .expect("hit id encodes its base index");
+            assert_eq!(
+                partition_tag(idx),
+                p,
+                "hit {} leaked across the filter boundary",
+                r.id
+            );
+            // (c) rehydration: metadata came back with the hit.
+            let tag = match r.metadata.get("partition") {
+                Some(proximadb_data_model::ProximaValue::String(s)) => s.as_str(),
+                other => panic!("partition metadata must rehydrate as a string, got {other:?}"),
+            };
+            assert_eq!(
+                tag, p,
+                "cascade hit must carry its rehydrated partition metadata"
+            );
+            if gt_set.contains(r.id.as_str()) {
+                hits_in_gt += 1;
+            }
+        }
+        recall_sum += hits_in_gt as f64 / TOP_K as f64;
+        measured += 1;
+    }
+    let recall = recall_sum / measured.max(1) as f64;
+    eprintln!(
+        "SIFT FILTERED cascade recall@10 = {recall:.4} over {measured} queries \
+         (N={n}, floor={floor}, partitions={FILTERED_PARTITIONS})"
+    );
+    assert!(
+        recall >= floor,
+        "filtered cascade recall {recall:.4} below floor {floor} — the default-ON \
+         flip is blocked until this holds"
+    );
+}
+
+/// The filtered leg of the ratchet — see the module comment above. Pins BOTH
+/// gates ON (the flip configuration) plus the same write geometry as the
+/// baseline arm; removes them at the end so the unfiltered arms are unaffected
+/// under nextest's process-per-test isolation and tolerate plain `cargo test`.
+#[tokio::test]
+async fn sift_pax_filtered_cascade_recall_ratchet() {
+    unsafe {
+        std::env::set_var("PROXIMADB_PAX_VECTOR_SEGMENTS", "1");
+        std::env::set_var("PROXIMADB_PAX_VECTOR_QUANT", "rabitq");
+        std::env::set_var("PROXIMADB_PAX_F32_TIER", "1");
+        std::env::set_var("PROXIMADB_PAX_WRITE_RG_LAYOUT", "0");
+        // The cascade gate is default-ON since the 2026-08-31 flip — this leg
+        // runs the shipped configuration; only footer stats (still default-OFF)
+        // is pinned so the write side carries the shred field map.
+        std::env::set_var("PROXIMADB_PAX_FOOTER_STATS", "1");
+    }
+    run_sift_filtered_cascade_ratchet().await;
+    unsafe {
+        std::env::remove_var("PROXIMADB_PAX_FOOTER_STATS");
     }
 }

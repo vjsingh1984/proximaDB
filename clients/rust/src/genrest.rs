@@ -44,6 +44,42 @@ pub mod types {
             }
         }
     }
+    ///`ApplyModelRegistryMutationRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "expected_revision",
+    ///    "mutation"
+    ///  ],
+    ///  "properties": {
+    ///    "expected_revision": {
+    ///      "description": "Optimistic concurrency token returned by the previous read or mutation.",
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "mutation": {
+    ///      "$ref": "#/components/schemas/CatalogModelRegistryMutation"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ApplyModelRegistryMutationRequest {
+        ///Optimistic concurrency token returned by the previous read or mutation.
+        pub expected_revision: i64,
+        pub mutation: CatalogModelRegistryMutation,
+    }
+    impl ApplyModelRegistryMutationRequest {
+        pub fn builder() -> builder::ApplyModelRegistryMutationRequest {
+            Default::default()
+        }
+    }
     ///`BatchCreateEdgesGraphId`
     ///
     /// <details><summary>JSON schema</summary>
@@ -494,6 +530,1213 @@ pub mod types {
             Default::default()
         }
     }
+    ///Content-addressed reference to bytes held outside xCatalog.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Content-addressed reference to bytes held outside xCatalog.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "digest",
+    ///    "media_type",
+    ///    "size_bytes",
+    ///    "uri"
+    ///  ],
+    ///  "properties": {
+    ///    "digest": {
+    ///      "type": "string"
+    ///    },
+    ///    "media_type": {
+    ///      "type": "string"
+    ///    },
+    ///    "size_bytes": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "uri": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogArtifactDescriptor {
+        pub digest: ::std::string::String,
+        pub media_type: ::std::string::String,
+        pub size_bytes: i64,
+        pub uri: ::std::string::String,
+    }
+    impl CatalogArtifactDescriptor {
+        pub fn builder() -> builder::CatalogArtifactDescriptor {
+            Default::default()
+        }
+    }
+    ///Mutable serving intent that always resolves to an immutable version/digest.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Mutable serving intent that always resolves to an immutable version/digest.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "artifact_digest",
+    ///    "endpoint",
+    ///    "name",
+    ///    "runtime",
+    ///    "updated_at_ms",
+    ///    "version"
+    ///  ],
+    ///  "properties": {
+    ///    "artifact_digest": {
+    ///      "type": "string"
+    ///    },
+    ///    "endpoint": {
+    ///      "type": "string"
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    },
+    ///    "runtime": {
+    ///      "type": "string"
+    ///    },
+    ///    "updated_at_ms": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "version": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogDeploymentBinding {
+        pub artifact_digest: ::std::string::String,
+        pub endpoint: ::std::string::String,
+        pub name: ::std::string::String,
+        pub runtime: ::std::string::String,
+        pub updated_at_ms: i64,
+        pub version: i64,
+    }
+    impl CatalogDeploymentBinding {
+        pub fn builder() -> builder::CatalogDeploymentBinding {
+            Default::default()
+        }
+    }
+    ///`CatalogDimensionPolicy`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "oneOf": [
+    ///    {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "fixed"
+    ///      ]
+    ///    },
+    ///    {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "discrete"
+    ///      ]
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "range"
+    ///      ],
+    ///      "properties": {
+    ///        "range": {
+    ///          "$ref": "#/components/schemas/CatalogDimensionRange"
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub enum CatalogDimensionPolicy {
+        #[serde(rename = "fixed")]
+        Fixed,
+        #[serde(rename = "discrete")]
+        Discrete,
+        #[serde(rename = "range")]
+        Range(CatalogDimensionRange),
+    }
+    impl ::std::convert::From<CatalogDimensionRange> for CatalogDimensionPolicy {
+        fn from(value: CatalogDimensionRange) -> Self {
+            Self::Range(value)
+        }
+    }
+    ///`CatalogDimensionRange`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "minimum"
+    ///  ],
+    ///  "properties": {
+    ///    "minimum": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogDimensionRange {
+        pub minimum: i32,
+    }
+    impl CatalogDimensionRange {
+        pub fn builder() -> builder::CatalogDimensionRange {
+            Default::default()
+        }
+    }
+    ///Exact rendered-input and tokenizer budget consumed by an embedding runtime.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Exact rendered-input and tokenizer budget consumed by an embedding runtime.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "declared_context_limit",
+    ///    "document_template",
+    ///    "effective_context_limit",
+    ///    "model_revision",
+    ///    "query_template",
+    ///    "special_token_count",
+    ///    "tokenizer_fingerprint",
+    ///    "tokenizer_id",
+    ///    "tokenizer_revision"
+    ///  ],
+    ///  "properties": {
+    ///    "declared_context_limit": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "document_parameters": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "document_template": {
+    ///      "type": "string"
+    ///    },
+    ///    "effective_context_limit": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "model_revision": {
+    ///      "type": "string"
+    ///    },
+    ///    "query_parameters": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "query_template": {
+    ///      "type": "string"
+    ///    },
+    ///    "special_token_count": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "tokenizer_fingerprint": {
+    ///      "type": "string"
+    ///    },
+    ///    "tokenizer_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "tokenizer_revision": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogEmbeddingInputContract {
+        pub declared_context_limit: i32,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub document_parameters:
+            ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        pub document_template: ::std::string::String,
+        pub effective_context_limit: i32,
+        pub model_revision: ::std::string::String,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub query_parameters:
+            ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        pub query_template: ::std::string::String,
+        pub special_token_count: i32,
+        pub tokenizer_fingerprint: ::std::string::String,
+        pub tokenizer_id: ::std::string::String,
+        pub tokenizer_revision: ::std::string::String,
+    }
+    impl CatalogEmbeddingInputContract {
+        pub fn builder() -> builder::CatalogEmbeddingInputContract {
+            Default::default()
+        }
+    }
+    /// Registered embedding model: immutable versions plus separately mutable or
+    /// append-only lifecycle records.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Registered embedding model: immutable versions plus separately mutable or\nappend-only lifecycle records.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name",
+    ///    "schema_version"
+    ///  ],
+    ///  "properties": {
+    ///    "aliases": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "integer",
+    ///        "format": "int64",
+    ///        "minimum": 0.0
+    ///      }
+    ///    },
+    ///    "decisions": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CatalogModelDecision"
+    ///      }
+    ///    },
+    ///    "deployments": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "$ref": "#/components/schemas/CatalogDeploymentBinding"
+    ///      }
+    ///    },
+    ///    "evidence": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CatalogEvaluationEvidence"
+    ///      }
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    },
+    ///    "revision": {
+    ///      "description": "Optimistic concurrency token for catalog/API mutations. Old rows default\nto zero; every successful command increments it.",
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "schema_version": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "tags": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "versions": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "$ref": "#/components/schemas/CatalogEmbeddingModelVersion"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogEmbeddingModelRegistry {
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub aliases: ::std::collections::HashMap<::std::string::String, i64>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub decisions: ::std::vec::Vec<CatalogModelDecision>,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub deployments:
+            ::std::collections::HashMap<::std::string::String, CatalogDeploymentBinding>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub evidence: ::std::vec::Vec<CatalogEvaluationEvidence>,
+        pub name: ::std::string::String,
+        /// Optimistic concurrency token for catalog/API mutations. Old rows default
+        /// to zero; every successful command increments it.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub revision: ::std::option::Option<i64>,
+        pub schema_version: i32,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub tags: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub versions:
+            ::std::collections::HashMap<::std::string::String, CatalogEmbeddingModelVersion>,
+    }
+    impl CatalogEmbeddingModelRegistry {
+        pub fn builder() -> builder::CatalogEmbeddingModelRegistry {
+            Default::default()
+        }
+    }
+    ///Immutable executable contract for one registered model version.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Immutable executable contract for one registered model version.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "artifact",
+    ///    "created_at_ms",
+    ///    "input",
+    ///    "output",
+    ///    "provider_model_id",
+    ///    "version"
+    ///  ],
+    ///  "properties": {
+    ///    "artifact": {
+    ///      "$ref": "#/components/schemas/CatalogArtifactDescriptor"
+    ///    },
+    ///    "created_at_ms": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "governance": {
+    ///      "$ref": "#/components/schemas/CatalogModelGovernance"
+    ///    },
+    ///    "input": {
+    ///      "$ref": "#/components/schemas/CatalogEmbeddingInputContract"
+    ///    },
+    ///    "lineage": {
+    ///      "$ref": "#/components/schemas/CatalogModelLineage"
+    ///    },
+    ///    "output": {
+    ///      "$ref": "#/components/schemas/CatalogEmbeddingOutputContract"
+    ///    },
+    ///    "provider_model_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "source_run_id": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "version": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogEmbeddingModelVersion {
+        pub artifact: CatalogArtifactDescriptor,
+        pub created_at_ms: i64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub governance: ::std::option::Option<CatalogModelGovernance>,
+        pub input: CatalogEmbeddingInputContract,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub lineage: ::std::option::Option<CatalogModelLineage>,
+        pub output: CatalogEmbeddingOutputContract,
+        pub provider_model_id: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_run_id: ::std::option::Option<::std::string::String>,
+        pub version: i64,
+    }
+    impl CatalogEmbeddingModelVersion {
+        pub fn builder() -> builder::CatalogEmbeddingModelVersion {
+            Default::default()
+        }
+    }
+    ///`CatalogEmbeddingOutputContract`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "dimension_policy",
+    ///    "native_dimension",
+    ///    "normalized",
+    ///    "pooling",
+    ///    "supported_dimensions"
+    ///  ],
+    ///  "properties": {
+    ///    "dimension_policy": {
+    ///      "$ref": "#/components/schemas/CatalogDimensionPolicy"
+    ///    },
+    ///    "native_dimension": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "normalized": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "pooling": {
+    ///      "type": "string"
+    ///    },
+    ///    "supported_dimensions": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "integer",
+    ///        "format": "int32",
+    ///        "minimum": 0.0
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogEmbeddingOutputContract {
+        pub dimension_policy: CatalogDimensionPolicy,
+        pub native_dimension: i32,
+        pub normalized: bool,
+        pub pooling: ::std::string::String,
+        pub supported_dimensions: ::std::vec::Vec<i32>,
+    }
+    impl CatalogEmbeddingOutputContract {
+        pub fn builder() -> builder::CatalogEmbeddingOutputContract {
+            Default::default()
+        }
+    }
+    ///Append-only evaluation summary. Large row-level results remain external.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Append-only evaluation summary. Large row-level results remain external.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "created_at_ms",
+    ///    "dataset_digest",
+    ///    "dataset_name",
+    ///    "evaluator",
+    ///    "evidence_id",
+    ///    "metrics",
+    ///    "version"
+    ///  ],
+    ///  "properties": {
+    ///    "created_at_ms": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "dataset_digest": {
+    ///      "type": "string"
+    ///    },
+    ///    "dataset_name": {
+    ///      "type": "string"
+    ///    },
+    ///    "evaluator": {
+    ///      "type": "string"
+    ///    },
+    ///    "evidence_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "metrics": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "number",
+    ///        "format": "double"
+    ///      }
+    ///    },
+    ///    "version": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogEvaluationEvidence {
+        pub created_at_ms: i64,
+        pub dataset_digest: ::std::string::String,
+        pub dataset_name: ::std::string::String,
+        pub evaluator: ::std::string::String,
+        pub evidence_id: ::std::string::String,
+        pub metrics: ::std::collections::HashMap<::std::string::String, f64>,
+        pub version: i64,
+    }
+    impl CatalogEvaluationEvidence {
+        pub fn builder() -> builder::CatalogEvaluationEvidence {
+            Default::default()
+        }
+    }
+    ///Digest-pinned input consumed by the execution that produced a model.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Digest-pinned input consumed by the execution that produced a model.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "digest",
+    ///    "kind",
+    ///    "name"
+    ///  ],
+    ///  "properties": {
+    ///    "digest": {
+    ///      "type": "string"
+    ///    },
+    ///    "kind": {
+    ///      "$ref": "#/components/schemas/CatalogLineageInputKind"
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogLineageInput {
+        pub digest: ::std::string::String,
+        pub kind: CatalogLineageInputKind,
+        pub name: ::std::string::String,
+    }
+    impl CatalogLineageInput {
+        pub fn builder() -> builder::CatalogLineageInput {
+            Default::default()
+        }
+    }
+    ///`CatalogLineageInputKind`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "dataset",
+    ///    "feature_set",
+    ///    "model",
+    ///    "artifact"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum CatalogLineageInputKind {
+        #[serde(rename = "dataset")]
+        Dataset,
+        #[serde(rename = "feature_set")]
+        FeatureSet,
+        #[serde(rename = "model")]
+        Model,
+        #[serde(rename = "artifact")]
+        Artifact,
+    }
+    impl ::std::fmt::Display for CatalogLineageInputKind {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Dataset => f.write_str("dataset"),
+                Self::FeatureSet => f.write_str("feature_set"),
+                Self::Model => f.write_str("model"),
+                Self::Artifact => f.write_str("artifact"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for CatalogLineageInputKind {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "dataset" => Ok(Self::Dataset),
+                "feature_set" => Ok(Self::FeatureSet),
+                "model" => Ok(Self::Model),
+                "artifact" => Ok(Self::Artifact),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for CatalogLineageInputKind {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for CatalogLineageInputKind {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for CatalogLineageInputKind {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`CatalogModelAccess`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "open",
+    ///    "gated",
+    ///    "unreviewed"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum CatalogModelAccess {
+        #[serde(rename = "open")]
+        Open,
+        #[serde(rename = "gated")]
+        Gated,
+        #[serde(rename = "unreviewed")]
+        Unreviewed,
+    }
+    impl ::std::fmt::Display for CatalogModelAccess {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Open => f.write_str("open"),
+                Self::Gated => f.write_str("gated"),
+                Self::Unreviewed => f.write_str("unreviewed"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for CatalogModelAccess {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "open" => Ok(Self::Open),
+                "gated" => Ok(Self::Gated),
+                "unreviewed" => Ok(Self::Unreviewed),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for CatalogModelAccess {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for CatalogModelAccess {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for CatalogModelAccess {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`CatalogModelAliasMutation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "alias",
+    ///    "version"
+    ///  ],
+    ///  "properties": {
+    ///    "alias": {
+    ///      "type": "string"
+    ///    },
+    ///    "version": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogModelAliasMutation {
+        pub alias: ::std::string::String,
+        pub version: i64,
+    }
+    impl CatalogModelAliasMutation {
+        pub fn builder() -> builder::CatalogModelAliasMutation {
+            Default::default()
+        }
+    }
+    ///Append-only policy/audit decision, intentionally separate from evidence.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Append-only policy/audit decision, intentionally separate from evidence.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "created_at_ms",
+    ///    "decision",
+    ///    "decision_id",
+    ///    "evidence_ids",
+    ///    "principal",
+    ///    "version"
+    ///  ],
+    ///  "properties": {
+    ///    "created_at_ms": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "decision": {
+    ///      "$ref": "#/components/schemas/CatalogModelDecisionKind"
+    ///    },
+    ///    "decision_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "evidence_ids": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "principal": {
+    ///      "type": "string"
+    ///    },
+    ///    "version": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogModelDecision {
+        pub created_at_ms: i64,
+        pub decision: CatalogModelDecisionKind,
+        pub decision_id: ::std::string::String,
+        pub evidence_ids: ::std::vec::Vec<::std::string::String>,
+        pub principal: ::std::string::String,
+        pub version: i64,
+    }
+    impl CatalogModelDecision {
+        pub fn builder() -> builder::CatalogModelDecision {
+            Default::default()
+        }
+    }
+    ///`CatalogModelDecisionKind`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "approved",
+    ///    "rejected",
+    ///    "deprecated"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum CatalogModelDecisionKind {
+        #[serde(rename = "approved")]
+        Approved,
+        #[serde(rename = "rejected")]
+        Rejected,
+        #[serde(rename = "deprecated")]
+        Deprecated,
+    }
+    impl ::std::fmt::Display for CatalogModelDecisionKind {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Approved => f.write_str("approved"),
+                Self::Rejected => f.write_str("rejected"),
+                Self::Deprecated => f.write_str("deprecated"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for CatalogModelDecisionKind {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "approved" => Ok(Self::Approved),
+                "rejected" => Ok(Self::Rejected),
+                "deprecated" => Ok(Self::Deprecated),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for CatalogModelDecisionKind {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for CatalogModelDecisionKind {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for CatalogModelDecisionKind {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    /// Supply-chain and runtime policy declared for an immutable model version.
+    /// Approval decisions remain separate append-only audit records.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Supply-chain and runtime policy declared for an immutable model version.\nApproval decisions remain separate append-only audit records.",
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "access": {
+    ///      "$ref": "#/components/schemas/CatalogModelAccess"
+    ///    },
+    ///    "approved_runtimes": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      },
+    ///      "uniqueItems": true
+    ///    },
+    ///    "license_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "requires_remote_code": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogModelGovernance {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub access: ::std::option::Option<CatalogModelAccess>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub approved_runtimes: ::std::option::Option<Vec<::std::string::String>>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub license_id: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub requires_remote_code: ::std::option::Option<bool>,
+    }
+    impl ::std::default::Default for CatalogModelGovernance {
+        fn default() -> Self {
+            Self {
+                access: Default::default(),
+                approved_runtimes: Default::default(),
+                license_id: Default::default(),
+                requires_remote_code: Default::default(),
+            }
+        }
+    }
+    impl CatalogModelGovernance {
+        pub fn builder() -> builder::CatalogModelGovernance {
+            Default::default()
+        }
+    }
+    ///MLMD/OpenLineage-shaped producer execution and its declared inputs.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "MLMD/OpenLineage-shaped producer execution and its declared inputs.",
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "code_revision": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "inputs": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CatalogLineageInput"
+    ///      }
+    ///    },
+    ///    "producer_execution_id": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogModelLineage {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub code_revision: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub inputs: ::std::vec::Vec<CatalogLineageInput>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub producer_execution_id: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::default::Default for CatalogModelLineage {
+        fn default() -> Self {
+            Self {
+                code_revision: Default::default(),
+                inputs: Default::default(),
+                producer_execution_id: Default::default(),
+            }
+        }
+    }
+    impl CatalogModelLineage {
+        pub fn builder() -> builder::CatalogModelLineage {
+            Default::default()
+        }
+    }
+    /// Command-shaped mutations preserve version/evidence/decision immutability at
+    /// the persistence boundary. API adapters lower into these commands instead
+    /// of replacing a whole registry document.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Command-shaped mutations preserve version/evidence/decision immutability at\nthe persistence boundary. API adapters lower into these commands instead\nof replacing a whole registry document.",
+    ///  "oneOf": [
+    ///    {
+    ///      "title": "RegisterModelVersionMutation",
+    ///      "type": "object",
+    ///      "required": [
+    ///        "operation",
+    ///        "payload"
+    ///      ],
+    ///      "properties": {
+    ///        "operation": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "register_version"
+    ///          ]
+    ///        },
+    ///        "payload": {
+    ///          "$ref": "#/components/schemas/CatalogEmbeddingModelVersion"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "operation",
+    ///        "payload"
+    ///      ],
+    ///      "properties": {
+    ///        "operation": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "set_alias"
+    ///          ]
+    ///        },
+    ///        "payload": {
+    ///          "$ref": "#/components/schemas/CatalogModelAliasMutation"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "title": "AppendModelEvidenceMutation",
+    ///      "type": "object",
+    ///      "required": [
+    ///        "operation",
+    ///        "payload"
+    ///      ],
+    ///      "properties": {
+    ///        "operation": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "append_evidence"
+    ///          ]
+    ///        },
+    ///        "payload": {
+    ///          "$ref": "#/components/schemas/CatalogEvaluationEvidence"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "title": "RecordModelDecisionMutation",
+    ///      "type": "object",
+    ///      "required": [
+    ///        "operation",
+    ///        "payload"
+    ///      ],
+    ///      "properties": {
+    ///        "operation": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "record_decision"
+    ///          ]
+    ///        },
+    ///        "payload": {
+    ///          "$ref": "#/components/schemas/CatalogModelDecision"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "title": "UpsertModelDeploymentMutation",
+    ///      "type": "object",
+    ///      "required": [
+    ///        "operation",
+    ///        "payload"
+    ///      ],
+    ///      "properties": {
+    ///        "operation": {
+    ///          "type": "string",
+    ///          "enum": [
+    ///            "upsert_deployment"
+    ///          ]
+    ///        },
+    ///        "payload": {
+    ///          "$ref": "#/components/schemas/CatalogDeploymentBinding"
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    #[serde(tag = "operation", content = "payload")]
+    pub enum CatalogModelRegistryMutation {
+        ///RegisterModelVersionMutation
+        #[serde(rename = "register_version")]
+        RegisterVersion(CatalogEmbeddingModelVersion),
+        #[serde(rename = "set_alias")]
+        SetAlias(CatalogModelAliasMutation),
+        ///AppendModelEvidenceMutation
+        #[serde(rename = "append_evidence")]
+        AppendEvidence(CatalogEvaluationEvidence),
+        ///RecordModelDecisionMutation
+        #[serde(rename = "record_decision")]
+        RecordDecision(CatalogModelDecision),
+        ///UpsertModelDeploymentMutation
+        #[serde(rename = "upsert_deployment")]
+        UpsertDeployment(CatalogDeploymentBinding),
+    }
+    impl ::std::convert::From<CatalogEmbeddingModelVersion> for CatalogModelRegistryMutation {
+        fn from(value: CatalogEmbeddingModelVersion) -> Self {
+            Self::RegisterVersion(value)
+        }
+    }
+    impl ::std::convert::From<CatalogModelAliasMutation> for CatalogModelRegistryMutation {
+        fn from(value: CatalogModelAliasMutation) -> Self {
+            Self::SetAlias(value)
+        }
+    }
+    impl ::std::convert::From<CatalogEvaluationEvidence> for CatalogModelRegistryMutation {
+        fn from(value: CatalogEvaluationEvidence) -> Self {
+            Self::AppendEvidence(value)
+        }
+    }
+    impl ::std::convert::From<CatalogModelDecision> for CatalogModelRegistryMutation {
+        fn from(value: CatalogModelDecision) -> Self {
+            Self::RecordDecision(value)
+        }
+    }
+    impl ::std::convert::From<CatalogDeploymentBinding> for CatalogModelRegistryMutation {
+        fn from(value: CatalogDeploymentBinding) -> Self {
+            Self::UpsertDeployment(value)
+        }
+    }
     ///Collection statistics for v2 API
     ///
     /// <details><summary>JSON schema</summary>
@@ -504,7 +1747,6 @@ pub mod types {
     ///  "type": "object",
     ///  "required": [
     ///    "indexed_fields",
-    ///    "record_count",
     ///    "storage_size_bytes",
     ///    "text_field_count"
     ///  ],
@@ -516,8 +1758,11 @@ pub mod types {
     ///      "minimum": 0.0
     ///    },
     ///    "record_count": {
-    ///      "description": "Total number of records",
-    ///      "type": "integer",
+    ///      "description": "Total number of records, or `null` when the server does not know.\n\n`null` is a real answer here, not a gap. The counter is maintained by\n`MetadataStore::update_stats`, which the record write path does not call,\nso a collection that has never had stats written carries none. Reporting\n`0` in that case is a *confident wrong answer* — indistinguishable from a\ngenuinely empty collection, and it cost one downstream project a false\ndurability bug report before the cause was found (#1527).",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
     ///      "format": "int64",
     ///      "minimum": 0.0
     ///    },
@@ -541,8 +1786,16 @@ pub mod types {
     pub struct CollectionStatsV2 {
         ///Number of indexed fields
         pub indexed_fields: i32,
-        ///Total number of records
-        pub record_count: i64,
+        /// Total number of records, or `null` when the server does not know.
+        ///
+        /// `null` is a real answer here, not a gap. The counter is maintained by
+        /// `MetadataStore::update_stats`, which the record write path does not call,
+        /// so a collection that has never had stats written carries none. Reporting
+        /// `0` in that case is a *confident wrong answer* — indistinguishable from a
+        /// genuinely empty collection, and it cost one downstream project a false
+        /// durability bug report before the cause was found (#1527).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub record_count: ::std::option::Option<i64>,
         ///Total storage size in bytes
         pub storage_size_bytes: i64,
         ///Number of TEXT fields with dedicated storage
@@ -563,6 +1816,8 @@ pub mod types {
     ///  "type": "object",
     ///  "required": [
     ///    "collection_id",
+    ///    "content_revision",
+    ///    "content_revision_token",
     ///    "created_at",
     ///    "dimension",
     ///    "distance_metric",
@@ -582,6 +1837,16 @@ pub mod types {
     ///    },
     ///    "collection_id": {
     ///      "description": "Collection ID",
+    ///      "type": "string"
+    ///    },
+    ///    "content_revision": {
+    ///      "description": "Monotonic server-owned content revision for cache revalidation.",
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "content_revision_token": {
+    ///      "description": "Opaque validator that also fences server restarts.",
     ///      "type": "string"
     ///    },
     ///    "created_at": {
@@ -648,6 +1913,10 @@ pub mod types {
         pub canonical_embedding_precision: ::std::option::Option<::std::string::String>,
         ///Collection ID
         pub collection_id: ::std::string::String,
+        ///Monotonic server-owned content revision for cache revalidation.
+        pub content_revision: i64,
+        ///Opaque validator that also fences server restarts.
+        pub content_revision_token: ::std::string::String,
         ///Creation timestamp
         pub created_at: ::std::string::String,
         ///Vector dimension
@@ -1284,6 +2553,35 @@ pub mod types {
                 .map_err(|e: self::error::ConversionError| {
                     <D::Error as ::serde::de::Error>::custom(e.to_string())
                 })
+        }
+    }
+    ///`CreateModelRegistryRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name"
+    ///  ],
+    ///  "properties": {
+    ///    "name": {
+    ///      "description": "Tenant-local registry name. Must be one traversal-free catalog segment.",
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CreateModelRegistryRequest {
+        ///Tenant-local registry name. Must be one traversal-free catalog segment.
+        pub name: ::std::string::String,
+    }
+    impl CreateModelRegistryRequest {
+        pub fn builder() -> builder::CreateModelRegistryRequest {
+            Default::default()
         }
     }
     ///`CreateNodeGraphId`
@@ -4253,6 +5551,75 @@ pub mod types {
             Default::default()
         }
     }
+    ///`ListModelRegistriesResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "registries"
+    ///  ],
+    ///  "properties": {
+    ///    "registries": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/ModelRegistryRecordResponse"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ListModelRegistriesResponse {
+        pub registries: ::std::vec::Vec<ModelRegistryRecordResponse>,
+    }
+    impl ListModelRegistriesResponse {
+        pub fn builder() -> builder::ListModelRegistriesResponse {
+            Default::default()
+        }
+    }
+    /// REST uses a decimal string for stable catalog IDs so JavaScript clients do
+    /// not lose precision. gRPC exposes the same value as `uint64`.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "REST uses a decimal string for stable catalog IDs so JavaScript clients do\nnot lose precision. gRPC exposes the same value as `uint64`.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "asset_id",
+    ///    "registry",
+    ///    "tenant_id"
+    ///  ],
+    ///  "properties": {
+    ///    "asset_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "registry": {
+    ///      "$ref": "#/components/schemas/CatalogEmbeddingModelRegistry"
+    ///    },
+    ///    "tenant_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ModelRegistryRecordResponse {
+        pub asset_id: ::std::string::String,
+        pub registry: CatalogEmbeddingModelRegistry,
+        pub tenant_id: ::std::string::String,
+    }
+    impl ModelRegistryRecordResponse {
+        pub fn builder() -> builder::ModelRegistryRecordResponse {
+            Default::default()
+        }
+    }
     /// Node payload nested inside `CreateNodeRequest.node`. Matches
     /// `RestNodeInput` in proximadb-api's graph handler.
     ///
@@ -5000,6 +6367,162 @@ pub mod types {
             Default::default()
         }
     }
+    ///`ResolveModelAliasRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "alias",
+    ///    "dimension"
+    ///  ],
+    ///  "properties": {
+    ///    "alias": {
+    ///      "type": "string"
+    ///    },
+    ///    "dimension": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "require_approved": {
+    ///      "description": "Require the latest append-only decision to approve the selected version.",
+    ///      "type": "boolean"
+    ///    },
+    ///    "runtime": {
+    ///      "description": "Runtime implementation that will execute the immutable contract.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ResolveModelAliasRequest {
+        pub alias: ::std::string::String,
+        pub dimension: i32,
+        ///Require the latest append-only decision to approve the selected version.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub require_approved: ::std::option::Option<bool>,
+        ///Runtime implementation that will execute the immutable contract.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub runtime: ::std::option::Option<::std::string::String>,
+    }
+    impl ResolveModelAliasRequest {
+        pub fn builder() -> builder::ResolveModelAliasRequest {
+            Default::default()
+        }
+    }
+    ///`ResolvedEmbeddingModelResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "asset_id",
+    ///    "contract_sha256",
+    ///    "model",
+    ///    "registry_name",
+    ///    "registry_revision"
+    ///  ],
+    ///  "properties": {
+    ///    "asset_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "contract_sha256": {
+    ///      "type": "string"
+    ///    },
+    ///    "model": {
+    ///      "$ref": "#/components/schemas/CatalogEmbeddingModelVersion"
+    ///    },
+    ///    "registry_name": {
+    ///      "type": "string"
+    ///    },
+    ///    "registry_revision": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ResolvedEmbeddingModelResponse {
+        pub asset_id: ::std::string::String,
+        pub contract_sha256: ::std::string::String,
+        pub model: CatalogEmbeddingModelVersion,
+        pub registry_name: ::std::string::String,
+        pub registry_revision: i64,
+    }
+    impl ResolvedEmbeddingModelResponse {
+        pub fn builder() -> builder::ResolvedEmbeddingModelResponse {
+            Default::default()
+        }
+    }
+    ///`ResolvedModelBindingResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "contract_sha256",
+    ///    "dimension",
+    ///    "model",
+    ///    "model_asset_id",
+    ///    "model_version",
+    ///    "snapshot"
+    ///  ],
+    ///  "properties": {
+    ///    "contract_sha256": {
+    ///      "type": "string"
+    ///    },
+    ///    "dimension": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "model": {
+    ///      "type": "string"
+    ///    },
+    ///    "model_asset_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "model_version": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "snapshot": {
+    ///      "$ref": "#/components/schemas/ResolvedEmbeddingModelResponse"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ResolvedModelBindingResponse {
+        pub contract_sha256: ::std::string::String,
+        pub dimension: i32,
+        pub model: ::std::string::String,
+        pub model_asset_id: ::std::string::String,
+        pub model_version: i64,
+        pub snapshot: ResolvedEmbeddingModelResponse,
+    }
+    impl ResolvedModelBindingResponse {
+        pub fn builder() -> builder::ResolvedModelBindingResponse {
+            Default::default()
+        }
+    }
     ///Column definition for schema
     ///
     /// <details><summary>JSON schema</summary>
@@ -5235,9 +6758,19 @@ pub mod types {
     ///  "description": "Response shape for `scanRecords`. Empty `records` + null\n`next_cursor` signals end-of-scan. Each record matches the OpenAPI\n`RecordResponse` schema (same shape used by `getRecord`).",
     ///  "type": "object",
     ///  "required": [
+    ///    "content_revision",
+    ///    "content_revision_token",
     ///    "records"
     ///  ],
     ///  "properties": {
+    ///    "content_revision": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "content_revision_token": {
+    ///      "type": "string"
+    ///    },
     ///    "next_cursor": {
     ///      "type": [
     ///        "string",
@@ -5264,6 +6797,8 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct ScanRecordsResponse {
+        pub content_revision: i64,
+        pub content_revision_token: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub next_cursor: ::std::option::Option<::std::string::String>,
         pub records: ::std::vec::Vec<RecordV2Response>,
@@ -5549,6 +7084,211 @@ pub mod types {
     }
     impl SearchEntitiesResponse {
         pub fn builder() -> builder::SearchEntitiesResponse {
+            Default::default()
+        }
+    }
+    /// One SQL statement executed through the shared SQL authority.
+    ///
+    /// Parameter binding is intentionally not advertised yet: the relational
+    /// execution port currently has no typed binding contract. Callers must not be
+    /// offered a field that an adapter would silently ignore or interpolate.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "One SQL statement executed through the shared SQL authority.\n\nParameter binding is intentionally not advertised yet: the relational\nexecution port currently has no typed binding contract. Callers must not be\noffered a field that an adapter would silently ignore or interpolate.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "collection": {
+    ///      "description": "Optional collection context used by vector/graph SQL extensions.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "query": {
+    ///      "type": "string",
+    ///      "maxLength": 1048576,
+    ///      "minLength": 1
+    ///    },
+    ///    "timeout_ms": {
+    ///      "description": "Per-request deadline. Defaults to 30 seconds and is capped at 5 minutes.",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64",
+    ///      "maximum": 300000.0,
+    ///      "minimum": 1.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct SqlRequest {
+        ///Optional collection context used by vector/graph SQL extensions.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub collection: ::std::option::Option<::std::string::String>,
+        pub query: SqlRequestQuery,
+        ///Per-request deadline. Defaults to 30 seconds and is capped at 5 minutes.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub timeout_ms: ::std::option::Option<::std::num::NonZeroU64>,
+    }
+    impl SqlRequest {
+        pub fn builder() -> builder::SqlRequest {
+            Default::default()
+        }
+    }
+    ///`SqlRequestQuery`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "maxLength": 1048576,
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct SqlRequestQuery(::std::string::String);
+    impl ::std::ops::Deref for SqlRequestQuery {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<SqlRequestQuery> for ::std::string::String {
+        fn from(value: SqlRequestQuery) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for SqlRequestQuery {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() > 1048576usize {
+                return Err("longer than 1048576 characters".into());
+            }
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for SqlRequestQuery {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for SqlRequestQuery {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for SqlRequestQuery {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for SqlRequestQuery {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    /// Stable JSON envelope for SQL reads and writes.
+    ///
+    /// For reads, `rows_returned` is the row count. For DDL/DML, the shared SQL
+    /// authority reports the affected count in `rows_returned` and `rows` is empty.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Stable JSON envelope for SQL reads and writes.\n\nFor reads, `rows_returned` is the row count. For DDL/DML, the shared SQL\nauthority reports the affected count in `rows_returned` and `rows` is empty.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "column_types",
+    ///    "columns",
+    ///    "execution_time_ms",
+    ///    "request_id",
+    ///    "rows",
+    ///    "rows_returned",
+    ///    "rows_scanned"
+    ///  ],
+    ///  "properties": {
+    ///    "column_types": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "columns": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "execution_time_ms": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "request_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "rows": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object"
+    ///      }
+    ///    },
+    ///    "rows_returned": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "rows_scanned": {
+    ///      "type": "integer",
+    ///      "format": "int64",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct SqlResponse {
+        pub column_types: ::std::vec::Vec<::std::string::String>,
+        pub columns: ::std::vec::Vec<::std::string::String>,
+        pub execution_time_ms: i64,
+        pub request_id: ::std::string::String,
+        pub rows: ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+        pub rows_returned: i64,
+        pub rows_scanned: i64,
+    }
+    impl SqlResponse {
+        pub fn builder() -> builder::SqlResponse {
             Default::default()
         }
     }
@@ -6453,6 +8193,65 @@ pub mod types {
     /// Types for composing complex structures.
     pub mod builder {
         #[derive(Clone, Debug)]
+        pub struct ApplyModelRegistryMutationRequest {
+            expected_revision: ::std::result::Result<i64, ::std::string::String>,
+            mutation:
+                ::std::result::Result<super::CatalogModelRegistryMutation, ::std::string::String>,
+        }
+        impl ::std::default::Default for ApplyModelRegistryMutationRequest {
+            fn default() -> Self {
+                Self {
+                    expected_revision: Err("no value supplied for expected_revision".to_string()),
+                    mutation: Err("no value supplied for mutation".to_string()),
+                }
+            }
+        }
+        impl ApplyModelRegistryMutationRequest {
+            pub fn expected_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.expected_revision = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for expected_revision: {e}")
+                });
+                self
+            }
+            pub fn mutation<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogModelRegistryMutation>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.mutation = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for mutation: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ApplyModelRegistryMutationRequest>
+            for super::ApplyModelRegistryMutationRequest
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ApplyModelRegistryMutationRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    expected_revision: value.expected_revision?,
+                    mutation: value.mutation?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ApplyModelRegistryMutationRequest>
+            for ApplyModelRegistryMutationRequest
+        {
+            fn from(value: super::ApplyModelRegistryMutationRequest) -> Self {
+                Self {
+                    expected_revision: Ok(value.expected_revision),
+                    mutation: Ok(value.mutation),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct BatchCreateEdgesRequest {
             edges: ::std::result::Result<::std::vec::Vec<super::EdgeInput>, ::std::string::String>,
         }
@@ -6872,9 +8671,1428 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct CatalogArtifactDescriptor {
+            digest: ::std::result::Result<::std::string::String, ::std::string::String>,
+            media_type: ::std::result::Result<::std::string::String, ::std::string::String>,
+            size_bytes: ::std::result::Result<i64, ::std::string::String>,
+            uri: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogArtifactDescriptor {
+            fn default() -> Self {
+                Self {
+                    digest: Err("no value supplied for digest".to_string()),
+                    media_type: Err("no value supplied for media_type".to_string()),
+                    size_bytes: Err("no value supplied for size_bytes".to_string()),
+                    uri: Err("no value supplied for uri".to_string()),
+                }
+            }
+        }
+        impl CatalogArtifactDescriptor {
+            pub fn digest<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.digest = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for digest: {e}"));
+                self
+            }
+            pub fn media_type<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.media_type = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for media_type: {e}"));
+                self
+            }
+            pub fn size_bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.size_bytes = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for size_bytes: {e}"));
+                self
+            }
+            pub fn uri<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.uri = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for uri: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogArtifactDescriptor> for super::CatalogArtifactDescriptor {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogArtifactDescriptor,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    digest: value.digest?,
+                    media_type: value.media_type?,
+                    size_bytes: value.size_bytes?,
+                    uri: value.uri?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogArtifactDescriptor> for CatalogArtifactDescriptor {
+            fn from(value: super::CatalogArtifactDescriptor) -> Self {
+                Self {
+                    digest: Ok(value.digest),
+                    media_type: Ok(value.media_type),
+                    size_bytes: Ok(value.size_bytes),
+                    uri: Ok(value.uri),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogDeploymentBinding {
+            artifact_digest: ::std::result::Result<::std::string::String, ::std::string::String>,
+            endpoint: ::std::result::Result<::std::string::String, ::std::string::String>,
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+            runtime: ::std::result::Result<::std::string::String, ::std::string::String>,
+            updated_at_ms: ::std::result::Result<i64, ::std::string::String>,
+            version: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogDeploymentBinding {
+            fn default() -> Self {
+                Self {
+                    artifact_digest: Err("no value supplied for artifact_digest".to_string()),
+                    endpoint: Err("no value supplied for endpoint".to_string()),
+                    name: Err("no value supplied for name".to_string()),
+                    runtime: Err("no value supplied for runtime".to_string()),
+                    updated_at_ms: Err("no value supplied for updated_at_ms".to_string()),
+                    version: Err("no value supplied for version".to_string()),
+                }
+            }
+        }
+        impl CatalogDeploymentBinding {
+            pub fn artifact_digest<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.artifact_digest = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for artifact_digest: {e}")
+                });
+                self
+            }
+            pub fn endpoint<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.endpoint = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for endpoint: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn runtime<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.runtime = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for runtime: {e}"));
+                self
+            }
+            pub fn updated_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.updated_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for updated_at_ms: {e}"));
+                self
+            }
+            pub fn version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for version: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogDeploymentBinding> for super::CatalogDeploymentBinding {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogDeploymentBinding,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    artifact_digest: value.artifact_digest?,
+                    endpoint: value.endpoint?,
+                    name: value.name?,
+                    runtime: value.runtime?,
+                    updated_at_ms: value.updated_at_ms?,
+                    version: value.version?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogDeploymentBinding> for CatalogDeploymentBinding {
+            fn from(value: super::CatalogDeploymentBinding) -> Self {
+                Self {
+                    artifact_digest: Ok(value.artifact_digest),
+                    endpoint: Ok(value.endpoint),
+                    name: Ok(value.name),
+                    runtime: Ok(value.runtime),
+                    updated_at_ms: Ok(value.updated_at_ms),
+                    version: Ok(value.version),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogDimensionRange {
+            minimum: ::std::result::Result<i32, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogDimensionRange {
+            fn default() -> Self {
+                Self {
+                    minimum: Err("no value supplied for minimum".to_string()),
+                }
+            }
+        }
+        impl CatalogDimensionRange {
+            pub fn minimum<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.minimum = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for minimum: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogDimensionRange> for super::CatalogDimensionRange {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogDimensionRange,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    minimum: value.minimum?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogDimensionRange> for CatalogDimensionRange {
+            fn from(value: super::CatalogDimensionRange) -> Self {
+                Self {
+                    minimum: Ok(value.minimum),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogEmbeddingInputContract {
+            declared_context_limit: ::std::result::Result<i32, ::std::string::String>,
+            document_parameters: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            document_template: ::std::result::Result<::std::string::String, ::std::string::String>,
+            effective_context_limit: ::std::result::Result<i32, ::std::string::String>,
+            model_revision: ::std::result::Result<::std::string::String, ::std::string::String>,
+            query_parameters: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            query_template: ::std::result::Result<::std::string::String, ::std::string::String>,
+            special_token_count: ::std::result::Result<i32, ::std::string::String>,
+            tokenizer_fingerprint:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
+            tokenizer_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            tokenizer_revision: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogEmbeddingInputContract {
+            fn default() -> Self {
+                Self {
+                    declared_context_limit: Err(
+                        "no value supplied for declared_context_limit".to_string()
+                    ),
+                    document_parameters: Ok(Default::default()),
+                    document_template: Err("no value supplied for document_template".to_string()),
+                    effective_context_limit: Err(
+                        "no value supplied for effective_context_limit".to_string()
+                    ),
+                    model_revision: Err("no value supplied for model_revision".to_string()),
+                    query_parameters: Ok(Default::default()),
+                    query_template: Err("no value supplied for query_template".to_string()),
+                    special_token_count: Err(
+                        "no value supplied for special_token_count".to_string()
+                    ),
+                    tokenizer_fingerprint: Err(
+                        "no value supplied for tokenizer_fingerprint".to_string()
+                    ),
+                    tokenizer_id: Err("no value supplied for tokenizer_id".to_string()),
+                    tokenizer_revision: Err("no value supplied for tokenizer_revision".to_string()),
+                }
+            }
+        }
+        impl CatalogEmbeddingInputContract {
+            pub fn declared_context_limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.declared_context_limit = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for declared_context_limit: {e}")
+                });
+                self
+            }
+            pub fn document_parameters<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document_parameters = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for document_parameters: {e}")
+                });
+                self
+            }
+            pub fn document_template<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document_template = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for document_template: {e}")
+                });
+                self
+            }
+            pub fn effective_context_limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.effective_context_limit = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for effective_context_limit: {e}")
+                });
+                self
+            }
+            pub fn model_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.model_revision = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for model_revision: {e}")
+                });
+                self
+            }
+            pub fn query_parameters<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_parameters = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for query_parameters: {e}")
+                });
+                self
+            }
+            pub fn query_template<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_template = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for query_template: {e}")
+                });
+                self
+            }
+            pub fn special_token_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.special_token_count = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for special_token_count: {e}")
+                });
+                self
+            }
+            pub fn tokenizer_fingerprint<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tokenizer_fingerprint = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for tokenizer_fingerprint: {e}")
+                });
+                self
+            }
+            pub fn tokenizer_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tokenizer_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tokenizer_id: {e}"));
+                self
+            }
+            pub fn tokenizer_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tokenizer_revision = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for tokenizer_revision: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogEmbeddingInputContract>
+            for super::CatalogEmbeddingInputContract
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogEmbeddingInputContract,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    declared_context_limit: value.declared_context_limit?,
+                    document_parameters: value.document_parameters?,
+                    document_template: value.document_template?,
+                    effective_context_limit: value.effective_context_limit?,
+                    model_revision: value.model_revision?,
+                    query_parameters: value.query_parameters?,
+                    query_template: value.query_template?,
+                    special_token_count: value.special_token_count?,
+                    tokenizer_fingerprint: value.tokenizer_fingerprint?,
+                    tokenizer_id: value.tokenizer_id?,
+                    tokenizer_revision: value.tokenizer_revision?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogEmbeddingInputContract> for CatalogEmbeddingInputContract {
+            fn from(value: super::CatalogEmbeddingInputContract) -> Self {
+                Self {
+                    declared_context_limit: Ok(value.declared_context_limit),
+                    document_parameters: Ok(value.document_parameters),
+                    document_template: Ok(value.document_template),
+                    effective_context_limit: Ok(value.effective_context_limit),
+                    model_revision: Ok(value.model_revision),
+                    query_parameters: Ok(value.query_parameters),
+                    query_template: Ok(value.query_template),
+                    special_token_count: Ok(value.special_token_count),
+                    tokenizer_fingerprint: Ok(value.tokenizer_fingerprint),
+                    tokenizer_id: Ok(value.tokenizer_id),
+                    tokenizer_revision: Ok(value.tokenizer_revision),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogEmbeddingModelRegistry {
+            aliases: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, i64>,
+                ::std::string::String,
+            >,
+            decisions: ::std::result::Result<
+                ::std::vec::Vec<super::CatalogModelDecision>,
+                ::std::string::String,
+            >,
+            deployments: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, super::CatalogDeploymentBinding>,
+                ::std::string::String,
+            >,
+            evidence: ::std::result::Result<
+                ::std::vec::Vec<super::CatalogEvaluationEvidence>,
+                ::std::string::String,
+            >,
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+            revision: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            schema_version: ::std::result::Result<i32, ::std::string::String>,
+            tags: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            versions: ::std::result::Result<
+                ::std::collections::HashMap<
+                    ::std::string::String,
+                    super::CatalogEmbeddingModelVersion,
+                >,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for CatalogEmbeddingModelRegistry {
+            fn default() -> Self {
+                Self {
+                    aliases: Ok(Default::default()),
+                    decisions: Ok(Default::default()),
+                    deployments: Ok(Default::default()),
+                    evidence: Ok(Default::default()),
+                    name: Err("no value supplied for name".to_string()),
+                    revision: Ok(Default::default()),
+                    schema_version: Err("no value supplied for schema_version".to_string()),
+                    tags: Ok(Default::default()),
+                    versions: Ok(Default::default()),
+                }
+            }
+        }
+        impl CatalogEmbeddingModelRegistry {
+            pub fn aliases<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::collections::HashMap<::std::string::String, i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.aliases = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for aliases: {e}"));
+                self
+            }
+            pub fn decisions<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CatalogModelDecision>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.decisions = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for decisions: {e}"));
+                self
+            }
+            pub fn deployments<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<
+                            ::std::string::String,
+                            super::CatalogDeploymentBinding,
+                        >,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.deployments = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for deployments: {e}"));
+                self
+            }
+            pub fn evidence<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CatalogEvaluationEvidence>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.evidence = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for evidence: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.revision = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for revision: {e}"));
+                self
+            }
+            pub fn schema_version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.schema_version = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for schema_version: {e}")
+                });
+                self
+            }
+            pub fn tags<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tags = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tags: {e}"));
+                self
+            }
+            pub fn versions<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<
+                            ::std::string::String,
+                            super::CatalogEmbeddingModelVersion,
+                        >,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.versions = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for versions: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogEmbeddingModelRegistry>
+            for super::CatalogEmbeddingModelRegistry
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogEmbeddingModelRegistry,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    aliases: value.aliases?,
+                    decisions: value.decisions?,
+                    deployments: value.deployments?,
+                    evidence: value.evidence?,
+                    name: value.name?,
+                    revision: value.revision?,
+                    schema_version: value.schema_version?,
+                    tags: value.tags?,
+                    versions: value.versions?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogEmbeddingModelRegistry> for CatalogEmbeddingModelRegistry {
+            fn from(value: super::CatalogEmbeddingModelRegistry) -> Self {
+                Self {
+                    aliases: Ok(value.aliases),
+                    decisions: Ok(value.decisions),
+                    deployments: Ok(value.deployments),
+                    evidence: Ok(value.evidence),
+                    name: Ok(value.name),
+                    revision: Ok(value.revision),
+                    schema_version: Ok(value.schema_version),
+                    tags: Ok(value.tags),
+                    versions: Ok(value.versions),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogEmbeddingModelVersion {
+            artifact:
+                ::std::result::Result<super::CatalogArtifactDescriptor, ::std::string::String>,
+            created_at_ms: ::std::result::Result<i64, ::std::string::String>,
+            governance: ::std::result::Result<
+                ::std::option::Option<super::CatalogModelGovernance>,
+                ::std::string::String,
+            >,
+            input:
+                ::std::result::Result<super::CatalogEmbeddingInputContract, ::std::string::String>,
+            lineage: ::std::result::Result<
+                ::std::option::Option<super::CatalogModelLineage>,
+                ::std::string::String,
+            >,
+            output:
+                ::std::result::Result<super::CatalogEmbeddingOutputContract, ::std::string::String>,
+            provider_model_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            source_run_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            version: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogEmbeddingModelVersion {
+            fn default() -> Self {
+                Self {
+                    artifact: Err("no value supplied for artifact".to_string()),
+                    created_at_ms: Err("no value supplied for created_at_ms".to_string()),
+                    governance: Ok(Default::default()),
+                    input: Err("no value supplied for input".to_string()),
+                    lineage: Ok(Default::default()),
+                    output: Err("no value supplied for output".to_string()),
+                    provider_model_id: Err("no value supplied for provider_model_id".to_string()),
+                    source_run_id: Ok(Default::default()),
+                    version: Err("no value supplied for version".to_string()),
+                }
+            }
+        }
+        impl CatalogEmbeddingModelVersion {
+            pub fn artifact<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogArtifactDescriptor>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.artifact = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for artifact: {e}"));
+                self
+            }
+            pub fn created_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.created_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for created_at_ms: {e}"));
+                self
+            }
+            pub fn governance<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::CatalogModelGovernance>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.governance = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for governance: {e}"));
+                self
+            }
+            pub fn input<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogEmbeddingInputContract>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.input = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for input: {e}"));
+                self
+            }
+            pub fn lineage<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::CatalogModelLineage>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.lineage = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for lineage: {e}"));
+                self
+            }
+            pub fn output<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogEmbeddingOutputContract>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.output = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for output: {e}"));
+                self
+            }
+            pub fn provider_model_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.provider_model_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for provider_model_id: {e}")
+                });
+                self
+            }
+            pub fn source_run_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_run_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source_run_id: {e}"));
+                self
+            }
+            pub fn version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for version: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogEmbeddingModelVersion> for super::CatalogEmbeddingModelVersion {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogEmbeddingModelVersion,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    artifact: value.artifact?,
+                    created_at_ms: value.created_at_ms?,
+                    governance: value.governance?,
+                    input: value.input?,
+                    lineage: value.lineage?,
+                    output: value.output?,
+                    provider_model_id: value.provider_model_id?,
+                    source_run_id: value.source_run_id?,
+                    version: value.version?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogEmbeddingModelVersion> for CatalogEmbeddingModelVersion {
+            fn from(value: super::CatalogEmbeddingModelVersion) -> Self {
+                Self {
+                    artifact: Ok(value.artifact),
+                    created_at_ms: Ok(value.created_at_ms),
+                    governance: Ok(value.governance),
+                    input: Ok(value.input),
+                    lineage: Ok(value.lineage),
+                    output: Ok(value.output),
+                    provider_model_id: Ok(value.provider_model_id),
+                    source_run_id: Ok(value.source_run_id),
+                    version: Ok(value.version),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogEmbeddingOutputContract {
+            dimension_policy:
+                ::std::result::Result<super::CatalogDimensionPolicy, ::std::string::String>,
+            native_dimension: ::std::result::Result<i32, ::std::string::String>,
+            normalized: ::std::result::Result<bool, ::std::string::String>,
+            pooling: ::std::result::Result<::std::string::String, ::std::string::String>,
+            supported_dimensions:
+                ::std::result::Result<::std::vec::Vec<i32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogEmbeddingOutputContract {
+            fn default() -> Self {
+                Self {
+                    dimension_policy: Err("no value supplied for dimension_policy".to_string()),
+                    native_dimension: Err("no value supplied for native_dimension".to_string()),
+                    normalized: Err("no value supplied for normalized".to_string()),
+                    pooling: Err("no value supplied for pooling".to_string()),
+                    supported_dimensions: Err(
+                        "no value supplied for supported_dimensions".to_string()
+                    ),
+                }
+            }
+        }
+        impl CatalogEmbeddingOutputContract {
+            pub fn dimension_policy<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogDimensionPolicy>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dimension_policy = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for dimension_policy: {e}")
+                });
+                self
+            }
+            pub fn native_dimension<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.native_dimension = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for native_dimension: {e}")
+                });
+                self
+            }
+            pub fn normalized<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.normalized = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for normalized: {e}"));
+                self
+            }
+            pub fn pooling<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.pooling = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for pooling: {e}"));
+                self
+            }
+            pub fn supported_dimensions<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.supported_dimensions = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for supported_dimensions: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogEmbeddingOutputContract>
+            for super::CatalogEmbeddingOutputContract
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogEmbeddingOutputContract,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    dimension_policy: value.dimension_policy?,
+                    native_dimension: value.native_dimension?,
+                    normalized: value.normalized?,
+                    pooling: value.pooling?,
+                    supported_dimensions: value.supported_dimensions?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogEmbeddingOutputContract>
+            for CatalogEmbeddingOutputContract
+        {
+            fn from(value: super::CatalogEmbeddingOutputContract) -> Self {
+                Self {
+                    dimension_policy: Ok(value.dimension_policy),
+                    native_dimension: Ok(value.native_dimension),
+                    normalized: Ok(value.normalized),
+                    pooling: Ok(value.pooling),
+                    supported_dimensions: Ok(value.supported_dimensions),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogEvaluationEvidence {
+            created_at_ms: ::std::result::Result<i64, ::std::string::String>,
+            dataset_digest: ::std::result::Result<::std::string::String, ::std::string::String>,
+            dataset_name: ::std::result::Result<::std::string::String, ::std::string::String>,
+            evaluator: ::std::result::Result<::std::string::String, ::std::string::String>,
+            evidence_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            metrics: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, f64>,
+                ::std::string::String,
+            >,
+            version: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogEvaluationEvidence {
+            fn default() -> Self {
+                Self {
+                    created_at_ms: Err("no value supplied for created_at_ms".to_string()),
+                    dataset_digest: Err("no value supplied for dataset_digest".to_string()),
+                    dataset_name: Err("no value supplied for dataset_name".to_string()),
+                    evaluator: Err("no value supplied for evaluator".to_string()),
+                    evidence_id: Err("no value supplied for evidence_id".to_string()),
+                    metrics: Err("no value supplied for metrics".to_string()),
+                    version: Err("no value supplied for version".to_string()),
+                }
+            }
+        }
+        impl CatalogEvaluationEvidence {
+            pub fn created_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.created_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for created_at_ms: {e}"));
+                self
+            }
+            pub fn dataset_digest<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dataset_digest = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for dataset_digest: {e}")
+                });
+                self
+            }
+            pub fn dataset_name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dataset_name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for dataset_name: {e}"));
+                self
+            }
+            pub fn evaluator<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.evaluator = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for evaluator: {e}"));
+                self
+            }
+            pub fn evidence_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.evidence_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for evidence_id: {e}"));
+                self
+            }
+            pub fn metrics<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::collections::HashMap<::std::string::String, f64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metrics = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metrics: {e}"));
+                self
+            }
+            pub fn version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for version: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogEvaluationEvidence> for super::CatalogEvaluationEvidence {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogEvaluationEvidence,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    created_at_ms: value.created_at_ms?,
+                    dataset_digest: value.dataset_digest?,
+                    dataset_name: value.dataset_name?,
+                    evaluator: value.evaluator?,
+                    evidence_id: value.evidence_id?,
+                    metrics: value.metrics?,
+                    version: value.version?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogEvaluationEvidence> for CatalogEvaluationEvidence {
+            fn from(value: super::CatalogEvaluationEvidence) -> Self {
+                Self {
+                    created_at_ms: Ok(value.created_at_ms),
+                    dataset_digest: Ok(value.dataset_digest),
+                    dataset_name: Ok(value.dataset_name),
+                    evaluator: Ok(value.evaluator),
+                    evidence_id: Ok(value.evidence_id),
+                    metrics: Ok(value.metrics),
+                    version: Ok(value.version),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogLineageInput {
+            digest: ::std::result::Result<::std::string::String, ::std::string::String>,
+            kind: ::std::result::Result<super::CatalogLineageInputKind, ::std::string::String>,
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogLineageInput {
+            fn default() -> Self {
+                Self {
+                    digest: Err("no value supplied for digest".to_string()),
+                    kind: Err("no value supplied for kind".to_string()),
+                    name: Err("no value supplied for name".to_string()),
+                }
+            }
+        }
+        impl CatalogLineageInput {
+            pub fn digest<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.digest = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for digest: {e}"));
+                self
+            }
+            pub fn kind<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogLineageInputKind>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.kind = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for kind: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogLineageInput> for super::CatalogLineageInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogLineageInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    digest: value.digest?,
+                    kind: value.kind?,
+                    name: value.name?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogLineageInput> for CatalogLineageInput {
+            fn from(value: super::CatalogLineageInput) -> Self {
+                Self {
+                    digest: Ok(value.digest),
+                    kind: Ok(value.kind),
+                    name: Ok(value.name),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogModelAliasMutation {
+            alias: ::std::result::Result<::std::string::String, ::std::string::String>,
+            version: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogModelAliasMutation {
+            fn default() -> Self {
+                Self {
+                    alias: Err("no value supplied for alias".to_string()),
+                    version: Err("no value supplied for version".to_string()),
+                }
+            }
+        }
+        impl CatalogModelAliasMutation {
+            pub fn alias<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.alias = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for alias: {e}"));
+                self
+            }
+            pub fn version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for version: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogModelAliasMutation> for super::CatalogModelAliasMutation {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogModelAliasMutation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    alias: value.alias?,
+                    version: value.version?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogModelAliasMutation> for CatalogModelAliasMutation {
+            fn from(value: super::CatalogModelAliasMutation) -> Self {
+                Self {
+                    alias: Ok(value.alias),
+                    version: Ok(value.version),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogModelDecision {
+            created_at_ms: ::std::result::Result<i64, ::std::string::String>,
+            decision: ::std::result::Result<super::CatalogModelDecisionKind, ::std::string::String>,
+            decision_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            evidence_ids: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            principal: ::std::result::Result<::std::string::String, ::std::string::String>,
+            version: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogModelDecision {
+            fn default() -> Self {
+                Self {
+                    created_at_ms: Err("no value supplied for created_at_ms".to_string()),
+                    decision: Err("no value supplied for decision".to_string()),
+                    decision_id: Err("no value supplied for decision_id".to_string()),
+                    evidence_ids: Err("no value supplied for evidence_ids".to_string()),
+                    principal: Err("no value supplied for principal".to_string()),
+                    version: Err("no value supplied for version".to_string()),
+                }
+            }
+        }
+        impl CatalogModelDecision {
+            pub fn created_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.created_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for created_at_ms: {e}"));
+                self
+            }
+            pub fn decision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogModelDecisionKind>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.decision = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for decision: {e}"));
+                self
+            }
+            pub fn decision_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.decision_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for decision_id: {e}"));
+                self
+            }
+            pub fn evidence_ids<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.evidence_ids = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for evidence_ids: {e}"));
+                self
+            }
+            pub fn principal<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.principal = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for principal: {e}"));
+                self
+            }
+            pub fn version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for version: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogModelDecision> for super::CatalogModelDecision {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogModelDecision,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    created_at_ms: value.created_at_ms?,
+                    decision: value.decision?,
+                    decision_id: value.decision_id?,
+                    evidence_ids: value.evidence_ids?,
+                    principal: value.principal?,
+                    version: value.version?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogModelDecision> for CatalogModelDecision {
+            fn from(value: super::CatalogModelDecision) -> Self {
+                Self {
+                    created_at_ms: Ok(value.created_at_ms),
+                    decision: Ok(value.decision),
+                    decision_id: Ok(value.decision_id),
+                    evidence_ids: Ok(value.evidence_ids),
+                    principal: Ok(value.principal),
+                    version: Ok(value.version),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogModelGovernance {
+            access: ::std::result::Result<
+                ::std::option::Option<super::CatalogModelAccess>,
+                ::std::string::String,
+            >,
+            approved_runtimes: ::std::result::Result<
+                ::std::option::Option<Vec<::std::string::String>>,
+                ::std::string::String,
+            >,
+            license_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            requires_remote_code:
+                ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        }
+        impl ::std::default::Default for CatalogModelGovernance {
+            fn default() -> Self {
+                Self {
+                    access: Ok(Default::default()),
+                    approved_runtimes: Ok(Default::default()),
+                    license_id: Ok(Default::default()),
+                    requires_remote_code: Ok(Default::default()),
+                }
+            }
+        }
+        impl CatalogModelGovernance {
+            pub fn access<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::CatalogModelAccess>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.access = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for access: {e}"));
+                self
+            }
+            pub fn approved_runtimes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<Vec<::std::string::String>>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.approved_runtimes = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for approved_runtimes: {e}")
+                });
+                self
+            }
+            pub fn license_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.license_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for license_id: {e}"));
+                self
+            }
+            pub fn requires_remote_code<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.requires_remote_code = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for requires_remote_code: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogModelGovernance> for super::CatalogModelGovernance {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogModelGovernance,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    access: value.access?,
+                    approved_runtimes: value.approved_runtimes?,
+                    license_id: value.license_id?,
+                    requires_remote_code: value.requires_remote_code?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogModelGovernance> for CatalogModelGovernance {
+            fn from(value: super::CatalogModelGovernance) -> Self {
+                Self {
+                    access: Ok(value.access),
+                    approved_runtimes: Ok(value.approved_runtimes),
+                    license_id: Ok(value.license_id),
+                    requires_remote_code: Ok(value.requires_remote_code),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogModelLineage {
+            code_revision: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            inputs: ::std::result::Result<
+                ::std::vec::Vec<super::CatalogLineageInput>,
+                ::std::string::String,
+            >,
+            producer_execution_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for CatalogModelLineage {
+            fn default() -> Self {
+                Self {
+                    code_revision: Ok(Default::default()),
+                    inputs: Ok(Default::default()),
+                    producer_execution_id: Ok(Default::default()),
+                }
+            }
+        }
+        impl CatalogModelLineage {
+            pub fn code_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.code_revision = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for code_revision: {e}"));
+                self
+            }
+            pub fn inputs<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CatalogLineageInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.inputs = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for inputs: {e}"));
+                self
+            }
+            pub fn producer_execution_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.producer_execution_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for producer_execution_id: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogModelLineage> for super::CatalogModelLineage {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogModelLineage,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    code_revision: value.code_revision?,
+                    inputs: value.inputs?,
+                    producer_execution_id: value.producer_execution_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogModelLineage> for CatalogModelLineage {
+            fn from(value: super::CatalogModelLineage) -> Self {
+                Self {
+                    code_revision: Ok(value.code_revision),
+                    inputs: Ok(value.inputs),
+                    producer_execution_id: Ok(value.producer_execution_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct CollectionStatsV2 {
             indexed_fields: ::std::result::Result<i32, ::std::string::String>,
-            record_count: ::std::result::Result<i64, ::std::string::String>,
+            record_count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
             storage_size_bytes: ::std::result::Result<i64, ::std::string::String>,
             text_field_count: ::std::result::Result<i32, ::std::string::String>,
         }
@@ -6882,7 +10100,7 @@ pub mod types {
             fn default() -> Self {
                 Self {
                     indexed_fields: Err("no value supplied for indexed_fields".to_string()),
-                    record_count: Err("no value supplied for record_count".to_string()),
+                    record_count: Ok(Default::default()),
                     storage_size_bytes: Err("no value supplied for storage_size_bytes".to_string()),
                     text_field_count: Err("no value supplied for text_field_count".to_string()),
                 }
@@ -6901,7 +10119,7 @@ pub mod types {
             }
             pub fn record_count<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<i64>,
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
                 T::Error: ::std::fmt::Display,
             {
                 self.record_count = value
@@ -6960,6 +10178,9 @@ pub mod types {
                 ::std::string::String,
             >,
             collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            content_revision: ::std::result::Result<i64, ::std::string::String>,
+            content_revision_token:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
             created_at: ::std::result::Result<::std::string::String, ::std::string::String>,
             dimension: ::std::result::Result<i32, ::std::string::String>,
             distance_metric: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -6989,6 +10210,10 @@ pub mod types {
                 Self {
                     canonical_embedding_precision: Ok(Default::default()),
                     collection_id: Err("no value supplied for collection_id".to_string()),
+                    content_revision: Err("no value supplied for content_revision".to_string()),
+                    content_revision_token: Err(
+                        "no value supplied for content_revision_token".to_string()
+                    ),
                     created_at: Err("no value supplied for created_at".to_string()),
                     dimension: Err("no value supplied for dimension".to_string()),
                     distance_metric: Err("no value supplied for distance_metric".to_string()),
@@ -7026,6 +10251,26 @@ pub mod types {
                 self.collection_id = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn content_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.content_revision = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for content_revision: {e}")
+                });
+                self
+            }
+            pub fn content_revision_token<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.content_revision_token = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for content_revision_token: {e}")
+                });
                 self
             }
             pub fn created_at<T>(mut self, value: T) -> Self
@@ -7147,6 +10392,8 @@ pub mod types {
                 Ok(Self {
                     canonical_embedding_precision: value.canonical_embedding_precision?,
                     collection_id: value.collection_id?,
+                    content_revision: value.content_revision?,
+                    content_revision_token: value.content_revision_token?,
                     created_at: value.created_at?,
                     dimension: value.dimension?,
                     distance_metric: value.distance_metric?,
@@ -7166,6 +10413,8 @@ pub mod types {
                 Self {
                     canonical_embedding_precision: Ok(value.canonical_embedding_precision),
                     collection_id: Ok(value.collection_id),
+                    content_revision: Ok(value.content_revision),
+                    content_revision_token: Ok(value.content_revision_token),
                     created_at: Ok(value.created_at),
                     dimension: Ok(value.dimension),
                     distance_metric: Ok(value.distance_metric),
@@ -7757,6 +11006,44 @@ pub mod types {
                 Self {
                     description: Ok(value.description),
                     graph_id: Ok(value.graph_id),
+                    name: Ok(value.name),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CreateModelRegistryRequest {
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for CreateModelRegistryRequest {
+            fn default() -> Self {
+                Self {
+                    name: Err("no value supplied for name".to_string()),
+                }
+            }
+        }
+        impl CreateModelRegistryRequest {
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CreateModelRegistryRequest> for super::CreateModelRegistryRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CreateModelRegistryRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self { name: value.name? })
+            }
+        }
+        impl ::std::convert::From<super::CreateModelRegistryRequest> for CreateModelRegistryRequest {
+            fn from(value: super::CreateModelRegistryRequest) -> Self {
+                Self {
                     name: Ok(value.name),
                 }
             }
@@ -11236,6 +14523,118 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct ListModelRegistriesResponse {
+            registries: ::std::result::Result<
+                ::std::vec::Vec<super::ModelRegistryRecordResponse>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for ListModelRegistriesResponse {
+            fn default() -> Self {
+                Self {
+                    registries: Err("no value supplied for registries".to_string()),
+                }
+            }
+        }
+        impl ListModelRegistriesResponse {
+            pub fn registries<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::ModelRegistryRecordResponse>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.registries = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for registries: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ListModelRegistriesResponse> for super::ListModelRegistriesResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ListModelRegistriesResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    registries: value.registries?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ListModelRegistriesResponse> for ListModelRegistriesResponse {
+            fn from(value: super::ListModelRegistriesResponse) -> Self {
+                Self {
+                    registries: Ok(value.registries),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct ModelRegistryRecordResponse {
+            asset_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            registry:
+                ::std::result::Result<super::CatalogEmbeddingModelRegistry, ::std::string::String>,
+            tenant_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for ModelRegistryRecordResponse {
+            fn default() -> Self {
+                Self {
+                    asset_id: Err("no value supplied for asset_id".to_string()),
+                    registry: Err("no value supplied for registry".to_string()),
+                    tenant_id: Err("no value supplied for tenant_id".to_string()),
+                }
+            }
+        }
+        impl ModelRegistryRecordResponse {
+            pub fn asset_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.asset_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for asset_id: {e}"));
+                self
+            }
+            pub fn registry<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogEmbeddingModelRegistry>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.registry = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for registry: {e}"));
+                self
+            }
+            pub fn tenant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ModelRegistryRecordResponse> for super::ModelRegistryRecordResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ModelRegistryRecordResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    asset_id: value.asset_id?,
+                    registry: value.registry?,
+                    tenant_id: value.tenant_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ModelRegistryRecordResponse> for ModelRegistryRecordResponse {
+            fn from(value: super::ModelRegistryRecordResponse) -> Self {
+                Self {
+                    asset_id: Ok(value.asset_id),
+                    registry: Ok(value.registry),
+                    tenant_id: Ok(value.tenant_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct NodeInput {
             embedding: ::std::result::Result<
                 ::std::option::Option<super::EmbeddingInput>,
@@ -11976,6 +15375,304 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct ResolveModelAliasRequest {
+            alias: ::std::result::Result<::std::string::String, ::std::string::String>,
+            dimension: ::std::result::Result<i32, ::std::string::String>,
+            require_approved:
+                ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            runtime: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for ResolveModelAliasRequest {
+            fn default() -> Self {
+                Self {
+                    alias: Err("no value supplied for alias".to_string()),
+                    dimension: Err("no value supplied for dimension".to_string()),
+                    require_approved: Ok(Default::default()),
+                    runtime: Ok(Default::default()),
+                }
+            }
+        }
+        impl ResolveModelAliasRequest {
+            pub fn alias<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.alias = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for alias: {e}"));
+                self
+            }
+            pub fn dimension<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dimension = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for dimension: {e}"));
+                self
+            }
+            pub fn require_approved<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.require_approved = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for require_approved: {e}")
+                });
+                self
+            }
+            pub fn runtime<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.runtime = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for runtime: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ResolveModelAliasRequest> for super::ResolveModelAliasRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ResolveModelAliasRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    alias: value.alias?,
+                    dimension: value.dimension?,
+                    require_approved: value.require_approved?,
+                    runtime: value.runtime?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ResolveModelAliasRequest> for ResolveModelAliasRequest {
+            fn from(value: super::ResolveModelAliasRequest) -> Self {
+                Self {
+                    alias: Ok(value.alias),
+                    dimension: Ok(value.dimension),
+                    require_approved: Ok(value.require_approved),
+                    runtime: Ok(value.runtime),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct ResolvedEmbeddingModelResponse {
+            asset_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            contract_sha256: ::std::result::Result<::std::string::String, ::std::string::String>,
+            model:
+                ::std::result::Result<super::CatalogEmbeddingModelVersion, ::std::string::String>,
+            registry_name: ::std::result::Result<::std::string::String, ::std::string::String>,
+            registry_revision: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for ResolvedEmbeddingModelResponse {
+            fn default() -> Self {
+                Self {
+                    asset_id: Err("no value supplied for asset_id".to_string()),
+                    contract_sha256: Err("no value supplied for contract_sha256".to_string()),
+                    model: Err("no value supplied for model".to_string()),
+                    registry_name: Err("no value supplied for registry_name".to_string()),
+                    registry_revision: Err("no value supplied for registry_revision".to_string()),
+                }
+            }
+        }
+        impl ResolvedEmbeddingModelResponse {
+            pub fn asset_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.asset_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for asset_id: {e}"));
+                self
+            }
+            pub fn contract_sha256<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.contract_sha256 = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for contract_sha256: {e}")
+                });
+                self
+            }
+            pub fn model<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CatalogEmbeddingModelVersion>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.model = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for model: {e}"));
+                self
+            }
+            pub fn registry_name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.registry_name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for registry_name: {e}"));
+                self
+            }
+            pub fn registry_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.registry_revision = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for registry_revision: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ResolvedEmbeddingModelResponse>
+            for super::ResolvedEmbeddingModelResponse
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ResolvedEmbeddingModelResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    asset_id: value.asset_id?,
+                    contract_sha256: value.contract_sha256?,
+                    model: value.model?,
+                    registry_name: value.registry_name?,
+                    registry_revision: value.registry_revision?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ResolvedEmbeddingModelResponse>
+            for ResolvedEmbeddingModelResponse
+        {
+            fn from(value: super::ResolvedEmbeddingModelResponse) -> Self {
+                Self {
+                    asset_id: Ok(value.asset_id),
+                    contract_sha256: Ok(value.contract_sha256),
+                    model: Ok(value.model),
+                    registry_name: Ok(value.registry_name),
+                    registry_revision: Ok(value.registry_revision),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct ResolvedModelBindingResponse {
+            contract_sha256: ::std::result::Result<::std::string::String, ::std::string::String>,
+            dimension: ::std::result::Result<i32, ::std::string::String>,
+            model: ::std::result::Result<::std::string::String, ::std::string::String>,
+            model_asset_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            model_version: ::std::result::Result<i64, ::std::string::String>,
+            snapshot:
+                ::std::result::Result<super::ResolvedEmbeddingModelResponse, ::std::string::String>,
+        }
+        impl ::std::default::Default for ResolvedModelBindingResponse {
+            fn default() -> Self {
+                Self {
+                    contract_sha256: Err("no value supplied for contract_sha256".to_string()),
+                    dimension: Err("no value supplied for dimension".to_string()),
+                    model: Err("no value supplied for model".to_string()),
+                    model_asset_id: Err("no value supplied for model_asset_id".to_string()),
+                    model_version: Err("no value supplied for model_version".to_string()),
+                    snapshot: Err("no value supplied for snapshot".to_string()),
+                }
+            }
+        }
+        impl ResolvedModelBindingResponse {
+            pub fn contract_sha256<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.contract_sha256 = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for contract_sha256: {e}")
+                });
+                self
+            }
+            pub fn dimension<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dimension = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for dimension: {e}"));
+                self
+            }
+            pub fn model<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.model = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for model: {e}"));
+                self
+            }
+            pub fn model_asset_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.model_asset_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for model_asset_id: {e}")
+                });
+                self
+            }
+            pub fn model_version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.model_version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for model_version: {e}"));
+                self
+            }
+            pub fn snapshot<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::ResolvedEmbeddingModelResponse>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.snapshot = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for snapshot: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ResolvedModelBindingResponse> for super::ResolvedModelBindingResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ResolvedModelBindingResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    contract_sha256: value.contract_sha256?,
+                    dimension: value.dimension?,
+                    model: value.model?,
+                    model_asset_id: value.model_asset_id?,
+                    model_version: value.model_version?,
+                    snapshot: value.snapshot?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ResolvedModelBindingResponse> for ResolvedModelBindingResponse {
+            fn from(value: super::ResolvedModelBindingResponse) -> Self {
+                Self {
+                    contract_sha256: Ok(value.contract_sha256),
+                    dimension: Ok(value.dimension),
+                    model: Ok(value.model),
+                    model_asset_id: Ok(value.model_asset_id),
+                    model_version: Ok(value.model_version),
+                    snapshot: Ok(value.snapshot),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct RestColumnDefinition {
             data_type: ::std::result::Result<::std::string::String, ::std::string::String>,
             filterable: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
@@ -12233,6 +15930,9 @@ pub mod types {
         }
         #[derive(Clone, Debug)]
         pub struct ScanRecordsResponse {
+            content_revision: ::std::result::Result<i64, ::std::string::String>,
+            content_revision_token:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
             next_cursor: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
@@ -12246,6 +15946,10 @@ pub mod types {
         impl ::std::default::Default for ScanRecordsResponse {
             fn default() -> Self {
                 Self {
+                    content_revision: Err("no value supplied for content_revision".to_string()),
+                    content_revision_token: Err(
+                        "no value supplied for content_revision_token".to_string()
+                    ),
                     next_cursor: Ok(Default::default()),
                     records: Err("no value supplied for records".to_string()),
                     scanned_count: Ok(Default::default()),
@@ -12253,6 +15957,26 @@ pub mod types {
             }
         }
         impl ScanRecordsResponse {
+            pub fn content_revision<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.content_revision = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for content_revision: {e}")
+                });
+                self
+            }
+            pub fn content_revision_token<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.content_revision_token = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for content_revision_token: {e}")
+                });
+                self
+            }
             pub fn next_cursor<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -12290,6 +16014,8 @@ pub mod types {
                 value: ScanRecordsResponse,
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
+                    content_revision: value.content_revision?,
+                    content_revision_token: value.content_revision_token?,
                     next_cursor: value.next_cursor?,
                     records: value.records?,
                     scanned_count: value.scanned_count?,
@@ -12299,6 +16025,8 @@ pub mod types {
         impl ::std::convert::From<super::ScanRecordsResponse> for ScanRecordsResponse {
             fn from(value: super::ScanRecordsResponse) -> Self {
                 Self {
+                    content_revision: Ok(value.content_revision),
+                    content_revision_token: Ok(value.content_revision_token),
                     next_cursor: Ok(value.next_cursor),
                     records: Ok(value.records),
                     scanned_count: Ok(value.scanned_count),
@@ -12708,6 +16436,217 @@ pub mod types {
                 Self {
                     results: Ok(value.results),
                     total: Ok(value.total),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct SqlRequest {
+            collection: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            query: ::std::result::Result<super::SqlRequestQuery, ::std::string::String>,
+            timeout_ms: ::std::result::Result<
+                ::std::option::Option<::std::num::NonZeroU64>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for SqlRequest {
+            fn default() -> Self {
+                Self {
+                    collection: Ok(Default::default()),
+                    query: Err("no value supplied for query".to_string()),
+                    timeout_ms: Ok(Default::default()),
+                }
+            }
+        }
+        impl SqlRequest {
+            pub fn collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection: {e}"));
+                self
+            }
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::SqlRequestQuery>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+            pub fn timeout_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::num::NonZeroU64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.timeout_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for timeout_ms: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<SqlRequest> for super::SqlRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: SqlRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection: value.collection?,
+                    query: value.query?,
+                    timeout_ms: value.timeout_ms?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::SqlRequest> for SqlRequest {
+            fn from(value: super::SqlRequest) -> Self {
+                Self {
+                    collection: Ok(value.collection),
+                    query: Ok(value.query),
+                    timeout_ms: Ok(value.timeout_ms),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct SqlResponse {
+            column_types: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            columns: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            execution_time_ms: ::std::result::Result<i64, ::std::string::String>,
+            request_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            rows: ::std::result::Result<
+                ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+                ::std::string::String,
+            >,
+            rows_returned: ::std::result::Result<i64, ::std::string::String>,
+            rows_scanned: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for SqlResponse {
+            fn default() -> Self {
+                Self {
+                    column_types: Err("no value supplied for column_types".to_string()),
+                    columns: Err("no value supplied for columns".to_string()),
+                    execution_time_ms: Err("no value supplied for execution_time_ms".to_string()),
+                    request_id: Err("no value supplied for request_id".to_string()),
+                    rows: Err("no value supplied for rows".to_string()),
+                    rows_returned: Err("no value supplied for rows_returned".to_string()),
+                    rows_scanned: Err("no value supplied for rows_scanned".to_string()),
+                }
+            }
+        }
+        impl SqlResponse {
+            pub fn column_types<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.column_types = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for column_types: {e}"));
+                self
+            }
+            pub fn columns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.columns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for columns: {e}"));
+                self
+            }
+            pub fn execution_time_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.execution_time_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for execution_time_ms: {e}")
+                });
+                self
+            }
+            pub fn request_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.request_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for request_id: {e}"));
+                self
+            }
+            pub fn rows<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::vec::Vec<
+                            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                        >,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rows = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rows: {e}"));
+                self
+            }
+            pub fn rows_returned<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rows_returned = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rows_returned: {e}"));
+                self
+            }
+            pub fn rows_scanned<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rows_scanned = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rows_scanned: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<SqlResponse> for super::SqlResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: SqlResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    column_types: value.column_types?,
+                    columns: value.columns?,
+                    execution_time_ms: value.execution_time_ms?,
+                    request_id: value.request_id?,
+                    rows: value.rows?,
+                    rows_returned: value.rows_returned?,
+                    rows_scanned: value.rows_scanned?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::SqlResponse> for SqlResponse {
+            fn from(value: super::SqlResponse) -> Self {
+                Self {
+                    column_types: Ok(value.column_types),
+                    columns: Ok(value.columns),
+                    execution_time_ms: Ok(value.execution_time_ms),
+                    request_id: Ok(value.request_id),
+                    rows: Ok(value.rows),
+                    rows_returned: Ok(value.rows_returned),
+                    rows_scanned: Ok(value.rows_scanned),
                 }
             }
         }
@@ -14225,13 +18164,12 @@ impl Client {
     }
     /// Paginated scan of records in a collection
     ///
-    /// Returns the next page of records (TD-099 acceptance 2, live). The
-    /// handler resolves the collection id, calls
-    /// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-    /// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-    /// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-    /// still deferred: `next_cursor` is always `None` today; callers bump
-    /// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+    /// Returns the next page of records (TD-099 acceptance 2 + 3, live).
+    /// Cursor-based pagination: pass the response's `next_cursor` back as
+    /// `cursor` to fetch the next page; a `null` cursor means the scan is
+    /// exhausted. Cursors are minted and validated against the caller-facing
+    /// collection id in the URL path, expire after 24h (HTTP 410), and reject
+    /// cross-collection reuse (HTTP 400).
     ///
     /// Sends a `POST` request to `/api/v2/collections/{collection_id}/records/scan`
     ///
@@ -14791,6 +18729,83 @@ impl Client {
     pub fn hybrid_search(&self) -> builder::HybridSearch<'_> {
         builder::HybridSearch::new(self)
     }
+    /// Sends a `GET` request to `/api/v2/model-registries`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_model_registries()
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_model_registries(&self) -> builder::ListModelRegistries<'_> {
+        builder::ListModelRegistries::new(self)
+    }
+    /// Sends a `POST` request to `/api/v2/model-registries`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.create_model_registry()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn create_model_registry(&self) -> builder::CreateModelRegistry<'_> {
+        builder::CreateModelRegistry::new(self)
+    }
+    /// Sends a `GET` request to `/api/v2/model-registries/{name}`
+    ///
+    /// Arguments:
+    /// - `name`: Tenant-local registry name.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_model_registry()
+    /// .name(name)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_model_registry(&self) -> builder::GetModelRegistry<'_> {
+        builder::GetModelRegistry::new(self)
+    }
+    /// Sends a `POST` request to `/api/v2/model-registries/{name}/mutations`
+    ///
+    /// Arguments:
+    /// - `name`: Tenant-local registry name.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.apply_model_registry_mutation()
+    /// .name(name)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn apply_model_registry_mutation(&self) -> builder::ApplyModelRegistryMutation<'_> {
+        builder::ApplyModelRegistryMutation::new(self)
+    }
+    /// Sends a `POST` request to `/api/v2/model-registries/{name}/resolve`
+    ///
+    /// Arguments:
+    /// - `name`: Tenant-local registry name.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.resolve_model_alias()
+    /// .name(name)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn resolve_model_alias(&self) -> builder::ResolveModelAlias<'_> {
+        builder::ResolveModelAlias::new(self)
+    }
     /// Ingest a log entry
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs`
@@ -14833,9 +18848,10 @@ impl Client {
     ///
     /// The canonical unified query surface: UQL (unified multi-modal), federated SQL
     /// extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
-    /// pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
-    /// pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
-    /// only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+    /// UQL/AQL are non-SQL languages that pgwire and `/api/v2/sql` cannot serve, so
+    /// this endpoint remains their canonical home. Authenticated programmatic SQL
+    /// is available through both gRPC `ExecuteQuery` and `/api/v2/sql`; neither is a
+    /// replacement for this UQL/federated surface.
     ///
     /// Sends a `POST` request to `/api/v2/query`
     ///
@@ -14868,6 +18884,27 @@ impl Client {
     /// ```
     pub fn explain_query(&self) -> builder::ExplainQuery<'_> {
         builder::ExplainQuery::new(self)
+    }
+    /// Execute one authenticated SQL statement
+    ///
+    /// The required foundation identity is inserted by the root tenant middleware
+    /// after authentication. A router mounted without that middleware fails closed
+    /// at extraction instead of constructing an anonymous authorization carrier.
+    ///
+    /// Sends a `POST` request to `/api/v2/sql`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.execute_sql()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn execute_sql(&self) -> builder::ExecuteSql<'_> {
+        builder::ExecuteSql::new(self)
     }
     /// Get server health
     ///
@@ -16155,6 +20192,12 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                409u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                410u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -18656,6 +22699,506 @@ pub mod builder {
             }
         }
     }
+    /// Builder for [`Client::list_model_registries`]
+    ///
+    /// [`Client::list_model_registries`]: super::Client::list_model_registries
+    #[derive(Debug, Clone)]
+    pub struct ListModelRegistries<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListModelRegistries<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/model-registries`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ListModelRegistriesResponse>, Error<()>> {
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/model-registries", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_model_registries",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::create_model_registry`]
+    ///
+    /// [`Client::create_model_registry`]: super::Client::create_model_registry
+    #[derive(Debug, Clone)]
+    pub struct CreateModelRegistry<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::CreateModelRegistryRequest, String>,
+    }
+    impl<'a> CreateModelRegistry<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::CreateModelRegistryRequest>,
+            <V as std::convert::TryInto<types::CreateModelRegistryRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `CreateModelRegistryRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::CreateModelRegistryRequest,
+                ) -> types::builder::CreateModelRegistryRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/model-registries`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ModelRegistryRecordResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::CreateModelRegistryRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/model-registries", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "create_model_registry",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                409u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_model_registry`]
+    ///
+    /// [`Client::get_model_registry`]: super::Client::get_model_registry
+    #[derive(Debug, Clone)]
+    pub struct GetModelRegistry<'a> {
+        client: &'a super::Client,
+        name: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetModelRegistry<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                name: Err("name was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn name<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.name = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for name failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/model-registries/{name}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ModelRegistryRecordResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                name,
+                x_tenant_id,
+            } = self;
+            let name = name.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/model-registries/{}",
+                client.baseurl,
+                encode_path(&name.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_model_registry",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::apply_model_registry_mutation`]
+    ///
+    /// [`Client::apply_model_registry_mutation`]: super::Client::apply_model_registry_mutation
+    #[derive(Debug, Clone)]
+    pub struct ApplyModelRegistryMutation<'a> {
+        client: &'a super::Client,
+        name: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::ApplyModelRegistryMutationRequest, String>,
+    }
+    impl<'a> ApplyModelRegistryMutation<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                name: Err("name was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn name<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.name = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for name failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::ApplyModelRegistryMutationRequest>,
+            <V as std::convert::TryInto<types::ApplyModelRegistryMutationRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `ApplyModelRegistryMutationRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::ApplyModelRegistryMutationRequest,
+                )
+                    -> types::builder::ApplyModelRegistryMutationRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/model-registries/{name}/mutations`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ModelRegistryRecordResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                name,
+                x_tenant_id,
+                body,
+            } = self;
+            let name = name.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::ApplyModelRegistryMutationRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/model-registries/{}/mutations",
+                client.baseurl,
+                encode_path(&name.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "apply_model_registry_mutation",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                409u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::resolve_model_alias`]
+    ///
+    /// [`Client::resolve_model_alias`]: super::Client::resolve_model_alias
+    #[derive(Debug, Clone)]
+    pub struct ResolveModelAlias<'a> {
+        client: &'a super::Client,
+        name: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::ResolveModelAliasRequest, String>,
+    }
+    impl<'a> ResolveModelAlias<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                name: Err("name was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn name<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.name = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for name failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::ResolveModelAliasRequest>,
+            <V as std::convert::TryInto<types::ResolveModelAliasRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `ResolveModelAliasRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::ResolveModelAliasRequest,
+                ) -> types::builder::ResolveModelAliasRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/model-registries/{name}/resolve`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ResolvedModelBindingResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                name,
+                x_tenant_id,
+                body,
+            } = self;
+            let name = name.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::ResolveModelAliasRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/model-registries/{}/resolve",
+                client.baseurl,
+                encode_path(&name.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "resolve_model_alias",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
     /// Builder for [`Client::ingest_log`]
     ///
     /// [`Client::ingest_log`]: super::Client::ingest_log
@@ -19042,6 +23585,108 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::execute_sql`]
+    ///
+    /// [`Client::execute_sql`]: super::Client::execute_sql
+    #[derive(Debug, Clone)]
+    pub struct ExecuteSql<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::SqlRequest, String>,
+    }
+    impl<'a> ExecuteSql<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::SqlRequest>,
+            <V as std::convert::TryInto<types::SqlRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `SqlRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::SqlRequest) -> types::builder::SqlRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/sql`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::SqlResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::SqlRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/sql", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "execute_sql",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                408u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                409u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

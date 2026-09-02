@@ -27,17 +27,17 @@ serde_json.workspace = true
 # Cluster-core subsystem (TD-DECOMP-5, moved from root src/cluster/).
 chrono.workspace = true
 proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
+proximadb-vector-query = { path = "../../query/proximadb-vector-query" }
 proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-records = { path = "../../foundation/proximadb-records" }
 proximadb-tenant = { path = "../../foundation/proximadb-tenant" }
 proximadb-config = { path = "../../foundation/proximadb-config" }
-# TD-XMODAL-4 S2: the v2 native search result + filter types (foundation) so the
+# TD-XMODAL-4 S2: the v2 native search result type (foundation) so the
 # VectorOpsPort can expose `unified_search_native` — the single canonical vector
 # kernel shared by the pgvector `<->` operator and the `vector_search` UDTF.
 proximadb-search-types = { path = "../../foundation/proximadb-search-types" }
-proximadb-filter-expression = { path = "../../foundation/proximadb-filter-expression" }
 proximadb-proto.workspace = true
 serde = { workspace = true, features = ["derive"] }
 num_cpus = "1.16"

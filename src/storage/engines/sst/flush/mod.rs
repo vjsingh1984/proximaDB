@@ -342,7 +342,8 @@ impl SstEngine {
         let l0_count = files
             .iter()
             .filter(|path| {
-                path.rsplit('/')
+                path.url
+                    .rsplit('/')
                     .next()
                     .is_some_and(|name| name.starts_with("L0_"))
             })
@@ -531,7 +532,8 @@ impl SstEngine {
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
                 use crate::storage::engines::sst::segment_format::{
-                    write_pax_segment_full, write_pax_segment_full_with_cache_seed,
+                    write_pax_segment_full_with_cache_seed_and_layout,
+                    write_pax_segment_full_with_layout,
                 };
                 // Local write path from the staged write (uploaded on finalize
                 // when the staging URL is remote).
@@ -577,8 +579,16 @@ impl SstEngine {
                     .map(|cfg| cfg.tags.as_slice())
                     .unwrap_or(&[]);
                 let rerank_quant = resolve_pax_rerank_quant(rerank_tags);
+                // TD-PAXRG-1: row-group Region D — per-collection
+                // `pax_rg_layout` tag > env `PROXIMADB_PAX_WRITE_RG_LAYOUT` >
+                // default OFF. No-ops for non-RaBitQ-coalesced writes.
+                let rg_layout = resolve_pax_rg_layout(rerank_tags);
+                // TD-FPRUNE-1 M1: shred declared filterable tags into typed
+                // user-columns at flush so footer-resident filter pruning fires
+                // (empty spec ⇒ byte-identical to the non-shredded write).
+                let shred_spec = resolve_flush_shred_spec(params.collection_config.as_ref());
                 let meta = if cache_on_write.includes_invariants() {
-                    let write = write_pax_segment_full_with_cache_seed(
+                    let write = write_pax_segment_full_with_cache_seed_and_layout(
                         std::path::Path::new(staging_path),
                         &records,
                         collection_id,
@@ -587,13 +597,15 @@ impl SstEngine {
                         rerank_quant,
                         f32_tier,
                         target_block,
+                        rg_layout,
                         cache_on_write.includes_survivors(),
+                        &shred_spec,
                     )
                     .context("Failed to write PAX vector segment")?;
                     pax_cache_seed = write.cache_seed;
                     write.meta
                 } else {
-                    write_pax_segment_full(
+                    write_pax_segment_full_with_layout(
                         std::path::Path::new(staging_path),
                         &records,
                         collection_id,
@@ -602,6 +614,8 @@ impl SstEngine {
                         rerank_quant,
                         f32_tier,
                         target_block,
+                        rg_layout,
+                        &shred_spec,
                     )
                     .context("Failed to write PAX vector segment")?
                 };
@@ -619,7 +633,7 @@ impl SstEngine {
         // Promote the locally staged bytes to the (possibly remote) staging URL
         // so the atomic commit has a real file to move.
         let _staged_bytes = staged
-            .finalize(self.filesystem())
+            .finalize(&self.filesystem_port())
             .await
             .context("Failed to upload staged segment to the staging URL")?;
 
@@ -900,6 +914,16 @@ impl SstEngine {
                             collection_dir,
                             l0_threshold,
                             precision_hint,
+                            // TD-PAXRG-1: per-collection `pax_rg_layout` tag >
+                            // env > default (resolved at the enqueue seam where
+                            // the collection config is in scope).
+                            params
+                                .collection_config
+                                .as_ref()
+                                .and_then(|c| c.config.as_ref())
+                                .map(|cfg| cfg.tags.as_slice())
+                                .and_then(pax_rg_layout_tag)
+                                .or_else(|| Some(resolve_pax_rg_layout(&[]))),
                         )
                         .await
                 }
@@ -1068,12 +1092,12 @@ impl SstEngine {
             .unwrap_or(32)
             .saturating_mul(1024 * 1024);
         for path in &files {
-            if !path.ends_with(".pax") {
+            if !path.url.ends_with(".pax") {
                 continue;
             }
-            if let Ok(true) = self.segment_is_untrained(path, min_bytes).await {
+            if let Ok(true) = self.segment_is_untrained(&path.url, min_bytes).await {
                 tracing::info!(
-                    segment = %path,
+                    segment = %path.url,
                     "TD-COMPACT-5: untrained L0 segment above size floor — arming training compaction"
                 );
                 return Ok(Some(1));
@@ -1086,7 +1110,7 @@ impl SstEngine {
     /// big enough to be worth a training pass? One stat + one 72-byte read.
     async fn segment_is_untrained(&self, path: &str, min_bytes: u64) -> Result<bool> {
         use proximadb_storage_common::segment_layout::{
-            SEG_HEADER_PREFIX_V3_LEN, SEG_LAYOUT_VERSION_TWO_LEVEL, SegmentHeaderPrefix,
+            SEG_HEADER_PREFIX_LEN, SegmentHeaderPrefix,
         };
         let fs = self.filesystem().get_filesystem(path)?;
         let meta = fs.metadata(path).await?;
@@ -1094,10 +1118,10 @@ impl SstEngine {
             return Ok(false);
         }
         let header_bytes = fs
-            .read_range(path, 0, (SEG_HEADER_PREFIX_V3_LEN as u64).min(meta.size))
+            .read_range(path, 0, (SEG_HEADER_PREFIX_LEN as u64).min(meta.size))
             .await?;
         Ok(match SegmentHeaderPrefix::parse(&header_bytes) {
-            Ok(h) => h.layout_version != SEG_LAYOUT_VERSION_TWO_LEVEL || h.a0_len == 0,
+            Ok(h) => h.a0_len == 0,
             // Not a coalesced segment (legacy layout) — training does not
             // apply; leave it to the count arm.
             Err(_) => false,
@@ -1371,6 +1395,32 @@ fn pax_f32_tier_tag(config: &crate::proto::proximadb_v1::CollectionConfig) -> Op
 /// Precedence: per-collection `pax_f32_tier` tag > env `PROXIMADB_PAX_F32_TIER` >
 /// default OFF. The tier is read lazily (exact final rerank / `include_vectors`),
 /// so the only always-paid cost is the storage bytes — not scan/egress.
+/// Tag prefix encoding the per-collection row-group Region D layout switch
+/// (TD-PAXRG-1). Values: `on`, `off`.
+const PAX_RG_LAYOUT_TAG_PREFIX: &str = "pax_rg_layout:";
+
+/// Read the per-collection `pax_rg_layout:on|off` tag from a tag list.
+fn pax_rg_layout_tag(tags: &[String]) -> Option<bool> {
+    for tag in tags {
+        if let Some(rest) = tag.strip_prefix(PAX_RG_LAYOUT_TAG_PREFIX) {
+            return match rest.trim().to_ascii_lowercase().as_str() {
+                "on" | "true" | "yes" | "1" => Some(true),
+                "off" | "false" | "no" | "0" => Some(false),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
+/// Resolve the row-group Region D write switch. Precedence: per-collection
+/// `pax_rg_layout` tag > env `PROXIMADB_PAX_WRITE_RG_LAYOUT` > default OFF.
+/// Only effective for RaBitQ-coalesced writes (Regions A/B are the premise).
+pub(crate) fn resolve_pax_rg_layout(tags: &[String]) -> bool {
+    let per_collection = pax_rg_layout_tag(tags);
+    per_collection.unwrap_or_else(crate::storage::engines::sst::segment_format::rg_layout_enabled)
+}
+
 fn resolve_pax_f32_tier(
     collection_config: Option<&crate::proto::proximadb_v1::Collection>,
 ) -> bool {
@@ -1379,6 +1429,41 @@ fn resolve_pax_f32_tier(
         .and_then(|c| c.config.as_ref())
         .and_then(pax_f32_tier_tag);
     per_collection.unwrap_or_else(|| env_truthy("PROXIMADB_PAX_F32_TIER"))
+}
+
+/// TD-FPRUNE-1 (M1): build the P-Shred spec for the SST flush from the in-scope
+/// collection config, so declared filterable tags are materialized as typed
+/// user-columns (min/max + bloom + the self-describing footer field-map) —
+/// making footer-resident filter pruning fire end-to-end for vector collections.
+///
+/// This reconstructs the SAME `(prop_name, col_id)` pairs the catalog schema
+/// assigns (`collection_mapping::catalog_schema_from_collection`): `col_id =
+/// 100 + idx` over `config.filterable_columns` (skipping empties), gated on
+/// `enable_proxima_record == Some(true)`. It reads the proto config directly
+/// (no `CatalogTableSchema` at the flush site) — and the read path resolves via
+/// the segment's SELF-DESCRIBING footer field-map, so any consistent id works;
+/// matching the catalog assignment is just tidy. Empty spec (non-document
+/// collection, or no filterable columns) ⇒ byte-identical, mixed-read-safe.
+fn resolve_flush_shred_spec(
+    collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+) -> Vec<(String, i32)> {
+    let Some(config) = collection_config.and_then(|c| c.config.as_ref()) else {
+        return Vec::new();
+    };
+    if config.enable_proxima_record != Some(true) {
+        return Vec::new();
+    }
+    let spec: Vec<(String, i32)> = config
+        .filterable_columns
+        .iter()
+        .enumerate()
+        .filter(|(_, col)| !col.name.is_empty())
+        .map(|(idx, col)| (col.name.clone(), 100 + idx as i32))
+        .collect();
+    if !spec.is_empty() {
+        tracing::debug!("TD-FPRUNE-1 M1: flush shred spec = {:?}", spec);
+    }
+    spec
 }
 
 /// Tag prefix encoding the per-collection tier-2 rerank quant strategy.
@@ -1573,6 +1658,49 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use proximadb_distance_kernel::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
+
+    // TD-FPRUNE-1 M1: the flush-side shred spec reconstructs the SAME
+    // `(name, 100+idx)` pairs the catalog schema assigns, gated on
+    // `enable_proxima_record`. This is what makes footer filter-pruning fire for
+    // vector collections (the write path previously shredded nothing).
+    #[test]
+    fn resolve_flush_shred_spec_from_filterable_columns() {
+        use crate::proto::proximadb_v1::{Collection, CollectionConfig, FilterableColumnSpec};
+        let col = |name: &str| FilterableColumnSpec {
+            name: name.to_string(),
+            ..Default::default()
+        };
+        let mk = |enable: Option<bool>, cols: Vec<FilterableColumnSpec>| Collection {
+            config: Some(CollectionConfig {
+                filterable_columns: cols,
+                enable_proxima_record: enable,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // enable_proxima_record + two filterable columns → (name, 100+idx).
+        let c = mk(Some(true), vec![col("partition"), col("lang")]);
+        assert_eq!(
+            resolve_flush_shred_spec(Some(&c)),
+            vec![("partition".to_string(), 100), ("lang".to_string(), 101)]
+        );
+        // Empty column names are skipped but still advance the index (mirrors
+        // catalog_schema_from_collection's enumerate-then-skip).
+        let c = mk(Some(true), vec![col(""), col("lang")]);
+        assert_eq!(
+            resolve_flush_shred_spec(Some(&c)),
+            vec![("lang".to_string(), 101)]
+        );
+        // Not a document collection ⇒ no shredding (byte-identical write).
+        assert!(
+            resolve_flush_shred_spec(Some(&mk(Some(false), vec![col("partition")]))).is_empty()
+        );
+        assert!(resolve_flush_shred_spec(Some(&mk(None, vec![col("partition")]))).is_empty());
+        // No config / no collection ⇒ empty.
+        assert!(resolve_flush_shred_spec(Some(&Collection::default())).is_empty());
+        assert!(resolve_flush_shred_spec(None).is_empty());
+    }
 
     #[tokio::test]
     async fn test_sort_vectors_for_sstable_encoding() {
@@ -2269,5 +2397,39 @@ mod tests {
         // and rejected at the parser: the tag only accepts sq8/fp16/f32).
         let tags_bad = ["pax_rerank_quant:rabitq".to_string()];
         assert_eq!(resolve_pax_rerank_quant(&tags_bad), VectorQuant::Sq8);
+    }
+
+    /// TD-PAXRG-1 (post-flip): the row-group Region D resolver — default ON,
+    /// `PROXIMADB_PAX_WRITE_RG_LAYOUT=0` kill-switch, per-collection
+    /// `pax_rg_layout:on|off` tag outranks the env, and an unrecognized tag
+    /// value falls through to the env.
+    #[test]
+    fn resolve_pax_rg_layout_default_and_precedence() {
+        use crate::storage::engines::sst::segment_format::rg_layout_enabled;
+        const ENV: &str = "PROXIMADB_PAX_WRITE_RG_LAYOUT";
+
+        // Default ON (flipped 2026-08-28 on the TD-PAXRG-1 Phase-G evidence).
+        unsafe { std::env::remove_var(ENV) };
+        assert!(resolve_pax_rg_layout(&[]));
+
+        // Kill-switch.
+        unsafe { std::env::set_var(ENV, "0") };
+        assert!(!resolve_pax_rg_layout(&[]));
+
+        // Per-collection tag outranks the env — including ON against env OFF.
+        let tags_on = ["pax_rg_layout:on".to_string()];
+        assert!(resolve_pax_rg_layout(&tags_on));
+        let tags_off = ["pax_rg_layout:off".to_string()];
+        assert!(!resolve_pax_rg_layout(&tags_off));
+
+        // Unrecognized tag value falls through to the kill-switch env.
+        let tags_bad = ["pax_rg_layout:maybe".to_string()];
+        assert!(!resolve_pax_rg_layout(&tags_bad));
+
+        // And with the env removed the default-ON holds.
+        unsafe { std::env::remove_var(ENV) };
+        assert!(resolve_pax_rg_layout(&tags_on));
+        assert!(resolve_pax_rg_layout(&[]));
+        assert!(rg_layout_enabled());
     }
 }

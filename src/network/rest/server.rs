@@ -495,16 +495,34 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
-        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
-        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
-        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
-        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
-        // temporarily re-enable v1 during migration.
-        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
-        base_router = base_router.layer(middleware::from_fn_with_state(
-            rest_v1_compat,
-            crate::network::middleware::v1_sunset::v1_sunset_middleware,
-        ));
+        // TD-V1SUNSET-1 RESOLVED (2026-08-29): the v1_sunset middleware is
+        // REMOVED. /api/v1/* now falls to `not_found_fallback`, which answers
+        // 404 + the exact /api/v2 replacement endpoint + docs link via
+        // `v1_replacement_for` — the migration signal survives; only the
+        // machine-readable Deprecation/Sunset headers are gone. Closure
+        // evidence: every known client accounted for (SDKs + AnvaiOps — no
+        // ProximaDB v1 calls, no REST_V1_COMPAT opt-ins), and /api/v1 has
+        // been 410-by-default since #814 (2026-07-09).
+
+        // TD-RATE-1: mount the REST request limiter, default OFF — the gate
+        // being unset adds NO layer, so the default deployment is unchanged.
+        // Keyed on the TD-TENANT-4 observed client address; `/health*` is
+        // exempt (the middleware checks `limit_health_endpoints`, false by
+        // default). Positioned beside the v1-sunset layer, i.e. inside the
+        // auth/tenant layers: floods are counted after authentication, which
+        // keeps per-IP accounting aligned with the authenticated principal.
+        if let Some(limiter) =
+            crate::network::middleware::rate_limit::rest_rate_limit_state_from_env()
+        {
+            tracing::info!(
+                rpm_env = crate::network::middleware::rate_limit::REST_RATE_LIMIT_RPM_ENV,
+                "REST request rate limiting enabled (TD-RATE-1)"
+            );
+            base_router = base_router.layer(middleware::from_fn_with_state(
+                limiter,
+                crate::network::middleware::rate_limit::rate_limit_middleware,
+            ));
+        }
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
@@ -841,16 +859,34 @@ impl RestServer {
         let state_for_v2 = state.clone();
         let mut base_router = create_router(state.clone());
 
-        // ADR-049 M0-c / TD-V1SUNSET-1 step 1: the deprecated /api/v1/*
-        // surface is gated behind PROXIMADB_REST_V1_COMPAT (now OFF by default).
-        // /api/v1/* is answered with 410 Gone + RFC 8594 deprecation headers;
-        // /api/v2/* is never affected. Set PROXIMADB_REST_V1_COMPAT=1 to
-        // temporarily re-enable v1 during migration.
-        let rest_v1_compat = crate::network::middleware::v1_sunset::rest_v1_compat_enabled();
-        base_router = base_router.layer(middleware::from_fn_with_state(
-            rest_v1_compat,
-            crate::network::middleware::v1_sunset::v1_sunset_middleware,
-        ));
+        // TD-V1SUNSET-1 RESOLVED (2026-08-29): the v1_sunset middleware is
+        // REMOVED. /api/v1/* now falls to `not_found_fallback`, which answers
+        // 404 + the exact /api/v2 replacement endpoint + docs link via
+        // `v1_replacement_for` — the migration signal survives; only the
+        // machine-readable Deprecation/Sunset headers are gone. Closure
+        // evidence: every known client accounted for (SDKs + AnvaiOps — no
+        // ProximaDB v1 calls, no REST_V1_COMPAT opt-ins), and /api/v1 has
+        // been 410-by-default since #814 (2026-07-09).
+
+        // TD-RATE-1: mount the REST request limiter, default OFF — the gate
+        // being unset adds NO layer, so the default deployment is unchanged.
+        // Keyed on the TD-TENANT-4 observed client address; `/health*` is
+        // exempt (the middleware checks `limit_health_endpoints`, false by
+        // default). Positioned beside the v1-sunset layer, i.e. inside the
+        // auth/tenant layers: floods are counted after authentication, which
+        // keeps per-IP accounting aligned with the authenticated principal.
+        if let Some(limiter) =
+            crate::network::middleware::rate_limit::rest_rate_limit_state_from_env()
+        {
+            tracing::info!(
+                rpm_env = crate::network::middleware::rate_limit::REST_RATE_LIMIT_RPM_ENV,
+                "REST request rate limiting enabled (TD-RATE-1)"
+            );
+            base_router = base_router.layer(middleware::from_fn_with_state(
+                limiter,
+                crate::network::middleware::rate_limit::rate_limit_middleware,
+            ));
+        }
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
@@ -995,8 +1031,12 @@ impl RestServer {
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to load TLS certificates: {}", e))?;
 
+            // TD-TENANT-4: observe the real peer address (see start_plaintext).
             axum_server::bind_rustls(self.bind_addr, rustls_config)
-                .serve(self.router.into_make_service())
+                .serve(
+                    self.router
+                        .into_make_service_with_connect_info::<SocketAddr>(),
+                )
                 .await
                 .map_err(|e| anyhow::anyhow!("TLS server error: {}", e))?;
 
@@ -1068,8 +1108,12 @@ impl RestServer {
         tracing::info!("mTLS server configured - client certificates will be verified against CA");
         tracing::info!("Note: Client certificate info will be available in request extensions");
 
+        // TD-TENANT-4: observe the real peer address (see start_plaintext).
         axum_server::bind_rustls(self.bind_addr, rustls_config)
-            .serve(self.router.into_make_service())
+            .serve(
+                self.router
+                    .into_make_service_with_connect_info::<SocketAddr>(),
+            )
             .await
             .map_err(|e| anyhow::anyhow!("mTLS server error: {}", e))?;
 
@@ -1088,10 +1132,21 @@ impl RestServer {
                 );
                 Self::log_endpoints(&self.bind_addr, false);
                 // axum 0.8 serves any `Listener`; tokio's UnixListener qualifies.
+                // TD-TENANT-4: deliberately NOT `_with_connect_info::<SocketAddr>`
+                // — a Unix socket has no `SocketAddr`, so demanding one here
+                // would not compile. A UDS peer is on the same host by
+                // construction and classifies as local, which is correct rather
+                // than a fallback.
                 let listener = crate::network::uds::bind_unix_listener(&uds_path).map_err(|e| {
                     anyhow::anyhow!("REST UDS bind failed at {}: {}", uds_path.display(), e)
                 })?;
-                axum::serve(listener, self.router.into_make_service()).await?;
+                // Mark the surface instead, so a UDS request resolves as
+                // `LocalSocket` rather than `Unobserved` — the latter must keep
+                // meaning "ConnectInfo was not wired here".
+                let router = self.router.layer(axum::Extension(
+                    proximadb_network_middleware::client_addr::LocalSocketPeer,
+                ));
+                axum::serve(listener, router.into_make_service()).await?;
                 return Ok(());
             }
             #[cfg(not(unix))]
@@ -1108,8 +1163,15 @@ impl RestServer {
         Self::log_endpoints(&self.bind_addr, false);
 
         // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+        // TD-TENANT-4: `_with_connect_info` supplies the real peer address so
+        // the edge classifies an OBSERVED client instead of a header claim.
         let listener = tokio::net::TcpListener::bind(&self.bind_addr).await?;
-        axum::serve(listener, self.router.into_make_service()).await?;
+        axum::serve(
+            listener,
+            self.router
+                .into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
 
         Ok(())
     }
@@ -1214,6 +1276,28 @@ fn v1_replacement_for(path: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TD-V1SUNSET-1 successor contract (the middleware is REMOVED): a
+    /// removed /api/v1 path must fall to `not_found_fallback` and answer 404
+    /// **with the /api/v2 replacement named in the body**. This is what makes
+    /// the removal non-silent — the migration signal survives the middleware.
+    /// Negative-controllable: without `v1_replacement_for`, the body carries
+    /// only "No route for ..." and this test fails.
+    #[tokio::test]
+    async fn removed_v1_paths_404_with_the_v2_replacement_named() {
+        let resp =
+            not_found_fallback("/api/v1/collections".parse::<axum::http::Uri>().unwrap()).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body).to_string();
+        assert!(
+            text.contains("/api/v2"),
+            "404 body must name the v2 replacement, got: {text}"
+        );
+    }
+
     use axum::body::Body;
     use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
@@ -1237,6 +1321,7 @@ mod tests {
                 user_id: "user1".to_string(),
                 tenant_id: None,
                 permissions: vec!["read".to_string()],
+                roles: vec![],
                 created_at: None,
                 expires_at: None,
                 rate_limit_per_minute: None,
@@ -1270,6 +1355,7 @@ mod tests {
                     azure_ad: None,
                 },
                 mtls: MtlsConfig::default(),
+                oidc: None,
                 audit_fail_closed: false,
             },
             rbac: RBACConfig::default(),

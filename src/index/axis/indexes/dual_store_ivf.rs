@@ -28,6 +28,7 @@ use tracing::info;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::core::search::bounded_queue::TopKHeap;
 use crate::index::axis::types::IndexAlgorithm;
 use crate::index::axis::utils::ConcurrentIdMapping;
 use crate::infrastructure::adaptive_structures::{
@@ -431,23 +432,52 @@ impl CentroidStore {
         n: usize,
         distance_compute: &UnifiedDistanceCompute,
     ) -> Vec<(usize, f32)> {
-        let mut distances: Vec<(usize, f32)> = self
-            .centroids
-            .iter()
-            .enumerate()
-            .map(|(idx, centroid)| {
-                let dist = distance_compute.calculate_distance(
-                    vector,
-                    centroid,
-                    &DistanceMetric::Euclidean,
-                );
-                (idx, dist.rank_value)
-            })
-            .collect();
+        if n == 0 {
+            return Vec::new();
+        }
 
-        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        distances.truncate(n);
-        distances
+        // Bounded top-k instead of a full sort of all centroids. The index
+        // tiebreak reproduces the previous stable sort's order (lower cluster
+        // index first among equal distances) exactly.
+        struct CentroidDistance {
+            dist: f32,
+            idx: usize,
+        }
+        impl Eq for CentroidDistance {}
+        impl PartialEq for CentroidDistance {
+            fn eq(&self, other: &Self) -> bool {
+                self.cmp(other) == std::cmp::Ordering::Equal
+            }
+        }
+        impl Ord for CentroidDistance {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                other
+                    .dist
+                    .partial_cmp(&self.dist)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| other.idx.cmp(&self.idx))
+            }
+        }
+        impl PartialOrd for CentroidDistance {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        let mut heap = TopKHeap::with_capacity(n);
+        for (idx, centroid) in self.centroids.iter().enumerate() {
+            let dist =
+                distance_compute.calculate_distance(vector, centroid, &DistanceMetric::Euclidean);
+            heap.try_push(CentroidDistance {
+                dist: dist.rank_value,
+                idx,
+            });
+        }
+
+        heap.into_sorted_desc()
+            .into_iter()
+            .map(|c| (c.idx, c.dist))
+            .collect()
     }
 
     fn memory_usage_bytes(&self) -> usize {
@@ -1271,6 +1301,34 @@ impl UnifiedIvfIndex {
                 self.store.get(key).map(|v| v.clone())
             }
 
+            fn try_mutate_sync(
+                &self,
+                key: &K,
+                f: &mut (dyn FnMut(&mut V) + Send + '_),
+            ) -> Option<bool> {
+                // In-place update under the DashMap shard guard — no clone.
+                let mut mutated = false;
+                if let Some(mut entry) = self.store.get_mut(key) {
+                    f(entry.value_mut());
+                    mutated = true;
+                }
+                Some(mutated)
+            }
+
+            fn try_with_value_sync(
+                &self,
+                key: &K,
+                f: &mut (dyn FnMut(&V) + Send + '_),
+            ) -> Option<bool> {
+                // Visit under the DashMap shard guard — no value clone.
+                let mut present = false;
+                if let Some(entry) = self.store.get(key) {
+                    f(entry.value());
+                    present = true;
+                }
+                Some(present)
+            }
+
             async fn remove(&self, key: &K) -> Option<V> {
                 self.store.remove(key).map(|(_, v)| v)
             }
@@ -1460,40 +1518,62 @@ impl UnifiedIvfIndex {
             );
         }
 
-        // Update posting list
+        // Update posting list.
+        //
+        // Mutate IN PLACE when the backing store supports it: the old
+        // get → modify → insert path deep-cloned the whole posting list (the
+        // inline `Vec<Vec<f32>>` holds up to 1000 vectors) on every add, so
+        // building a cluster of C vectors cost O(C²·dim) copies.
         let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
-
-        // Get or create posting list
-        let mut posting_list = match self.posting_lists.get(&key).await {
-            Some(list) => list,
-            None => TieredPostingList {
-                cluster_id,
-                vector_ids: Vec::new(),
-                vectors: Some(Vec::new()),
-                quantized_vectors: None,
-                last_access: 0,
-                access_count: 0,
-            },
+        let internal = self.id_mapping.register(id.clone())?;
+        let mut apply_to_list = |list: &mut TieredPostingList| {
+            list.vector_ids.push(internal);
+            // If vectors are stored in posting list (for small clusters)
+            if let Some(ref mut vectors) = list.vectors {
+                if vectors.len() < 1000 {
+                    // Keep small clusters in posting list
+                    vectors.push(vector.clone());
+                } else {
+                    // Large clusters: store vectors separately
+                    list.vectors = None;
+                }
+            }
         };
-
-        // Add vector ID to posting list
-        posting_list
-            .vector_ids
-            .push(self.id_mapping.register(id.clone())?);
-
-        // If vectors are stored in posting list (for small clusters)
-        if let Some(ref mut vectors) = posting_list.vectors {
-            if vectors.len() < 1000 {
-                // Keep small clusters in posting list
-                vectors.push(vector.clone());
-            } else {
-                // Large clusters: store vectors separately
-                posting_list.vectors = None;
+        match self.posting_lists.try_mutate_sync(&key, &mut apply_to_list) {
+            Some(true) => {}
+            Some(false) => {
+                // First vector in this cluster. NOTE: the absent-key race
+                // window here is the same last-writer-wins window the old
+                // get→None→insert path had — no behavior change.
+                let mut posting_list = TieredPostingList {
+                    cluster_id,
+                    vector_ids: Vec::new(),
+                    vectors: Some(Vec::new()),
+                    quantized_vectors: None,
+                    last_access: 0,
+                    access_count: 0,
+                };
+                apply_to_list(&mut posting_list);
+                self.posting_lists.insert(key, posting_list).await?;
+            }
+            None => {
+                // Async-backed store (Moka cache): fall back to the
+                // clone-preserving get → modify → insert path.
+                let mut posting_list = match self.posting_lists.get(&key).await {
+                    Some(list) => list,
+                    None => TieredPostingList {
+                        cluster_id,
+                        vector_ids: Vec::new(),
+                        vectors: Some(Vec::new()),
+                        quantized_vectors: None,
+                        last_access: 0,
+                        access_count: 0,
+                    },
+                };
+                apply_to_list(&mut posting_list);
+                self.posting_lists.insert(key, posting_list).await?;
             }
         }
-
-        // Update posting list
-        self.posting_lists.insert(key, posting_list).await?;
 
         // Store vector separately (for efficient random access)
         let _vector_key = PartitionedKey::new(self.collection_id.clone(), id.clone());
@@ -1590,49 +1670,118 @@ impl UnifiedIvfIndex {
         // the score the IVF posting-list scan computes matches the
         // metric the exact path uses for ground truth.
         let metric = self.config.distance_metric;
-        let mut candidates = Vec::new();
 
+        // Candidate entry for bounded top-k. "Better" ranks Greater = smaller
+        // distance first; `seq` (the global scan order) breaks ties so the
+        // output matches the previous stable `sort_by` + `truncate(k)`
+        // byte-for-byte (stable sort preserved scan order among ties).
+        struct ScanCandidate {
+            distance: f32,
+            internal_id: usize,
+            seq: u64,
+        }
+        impl Eq for ScanCandidate {}
+        impl PartialEq for ScanCandidate {
+            fn eq(&self, other: &Self) -> bool {
+                self.cmp(other) == std::cmp::Ordering::Equal
+            }
+        }
+        impl Ord for ScanCandidate {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                other
+                    .distance
+                    .partial_cmp(&self.distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| other.seq.cmp(&self.seq))
+            }
+        }
+        impl PartialOrd for ScanCandidate {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        // Phase A — collect the probed clusters' internal ids. Visits happen
+        // under the store guard (no clone of the inline `Vec<Vec<f32>>`, up
+        // to 1000×dim floats per probe with the old `get`); awaits are only
+        // possible on the async-store fallback, BEFORE any collection guard
+        // is taken (the guard is a std RwLock read guard and must never be
+        // held across an await — the future would become !Send).
+        let mut per_cluster_ids: Vec<Vec<usize>> = Vec::with_capacity(nearest_clusters.len());
         for (cluster_id, _centroid_dist) in nearest_clusters {
             let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
+            let mut internal_ids: Vec<usize> = Vec::new();
+            let mut collect_ids = |list: &TieredPostingList| {
+                internal_ids.extend_from_slice(&list.vector_ids);
+            };
+            let visited = match self
+                .posting_lists
+                .try_with_value_sync(&key, &mut collect_ids)
+            {
+                Some(present) => present,
+                // Async-backed store (Moka): fall back to the cloning get.
+                None => match self.posting_lists.get(&key).await {
+                    Some(list) => {
+                        collect_ids(&list);
+                        true
+                    }
+                    None => false,
+                },
+            };
+            if visited {
+                per_cluster_ids.push(internal_ids);
+            }
+        }
 
-            // This access may promote the posting list to memory
-            if let Some(posting_list) = self.posting_lists.get(&key).await {
-                // Search within posting list
-                for internal_id in &posting_list.vector_ids {
+        // Phase B — score everything under ONE hoisted per-collection lookup
+        // and read guard (the binary path already hoists this; the old path
+        // re-acquired it PER CANDIDATE). No awaits inside.
+        let mut top_k = TopKHeap::with_capacity(k);
+        let mut seq: u64 = 0;
+        if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
+            let collection = collection_entry
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+            for internal_ids in per_cluster_ids {
+                for internal_id in internal_ids {
                     // TD-147: resolve compact internal id → external String
-                    let vector_id = match self.id_mapping.external(*internal_id) {
+                    let vector_id = match self.id_mapping.external(internal_id) {
                         Some(id) => id,
                         None => continue,
                     };
-                    // Get vector from zero-overhead collection
-                    if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
-                        let collection = collection_entry
-                            .read()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        if let Some(view) = collection.get(&vector_id)
-                            && let Some(vector_data) = view.as_f32()
-                        {
-                            // SimilarityResult.rank_value carries
-                            // lower-better distance for every metric
-                            // (DotProduct is already negated by
-                            // `SimilarityResult::new`), so the sort
-                            // below by ascending rank_value yields
-                            // correct nearest-first ordering across
-                            // all metrics.
-                            let distance = self
-                                .distance_compute
-                                .calculate_distance(query, vector_data, &metric)
-                                .rank_value;
-                            candidates.push((vector_id.clone(), distance));
-                        }
+                    if let Some(view) = collection.get(&vector_id)
+                        && let Some(vector_data) = view.as_f32()
+                    {
+                        // SimilarityResult.rank_value carries
+                        // lower-better distance for every metric
+                        // (DotProduct is already negated by
+                        // `SimilarityResult::new`), so ordering by
+                        // ascending rank_value yields correct
+                        // nearest-first ordering across all metrics.
+                        let distance = self
+                            .distance_compute
+                            .calculate_distance(query, vector_data, &metric)
+                            .rank_value;
+                        seq += 1;
+                        top_k.try_push(ScanCandidate {
+                            distance,
+                            internal_id,
+                            seq,
+                        });
                     }
                 }
             }
         }
 
-        // Step 5: Sort and return top-k
-        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        candidates.truncate(k);
+        // Phase C — resolve external ids for the final top-k only (k String
+        // allocations instead of one per scanned candidate).
+        let mut candidates: Vec<(String, f32)> = Vec::with_capacity(top_k.len());
+        for candidate in top_k.into_sorted_desc() {
+            if let Some(external_id) = self.id_mapping.external(candidate.internal_id) {
+                candidates.push((external_id, candidate.distance));
+            }
+        }
 
         Ok(candidates)
     }
@@ -1643,22 +1792,32 @@ impl UnifiedIvfIndex {
             return;
         }
 
+        // Correlation entries retained per cluster. The score is the constant
+        // 0.9 and `prefetch_correlated_clusters` prefetches idempotently, so
+        // dedup + a hard cap change no observable behavior while keeping this
+        // accumulator from growing without bound over the index lifetime
+        // (it previously gained O(nprobe²) entries per query, never pruned).
+        const MAX_CORRELATION_ENTRIES: usize = 64;
+
         // Update correlation matrix
         for (i, cluster_item_i) in clusters.iter().enumerate() {
             for cluster_item_j in clusters.iter().skip(i + 1) {
                 let cluster_i = cluster_item_i.0;
                 let cluster_j = cluster_item_j.0;
 
-                // Update correlation score
-                self.access_correlations
-                    .entry(cluster_i)
-                    .or_default()
-                    .push((cluster_j, 0.9)); // Decay over time
-
-                self.access_correlations
-                    .entry(cluster_j)
-                    .or_default()
-                    .push((cluster_i, 0.9));
+                for (from, to) in [(cluster_i, cluster_j), (cluster_j, cluster_i)] {
+                    let mut entry = self.access_correlations.entry(from).or_default();
+                    let correlations = entry.value_mut();
+                    // Dedup on insert: a pair is either recorded or not — the
+                    // old path appended a duplicate entry per query.
+                    if correlations.iter().any(|(c, _)| *c == to) {
+                        continue;
+                    }
+                    if correlations.len() >= MAX_CORRELATION_ENTRIES {
+                        correlations.remove(0);
+                    }
+                    correlations.push((to, 0.9)); // Decay over time
+                }
             }
         }
     }
@@ -2011,16 +2170,39 @@ impl UnifiedIvfIndex {
             let centroid = &self.centroids.centroids[*cluster_id];
             let bq = BinaryCode::from_rotated_residual(query, centroid, &self.rotation_signs);
             let key = PartitionedKey::new(self.collection_id.clone(), *cluster_id);
-            if let Some(posting_list) = self.posting_lists.get(&key).await {
-                for internal_id in &posting_list.vector_ids {
-                    // TD-147: resolve compact internal id → external String
-                    let vector_id = match self.id_mapping.external(*internal_id) {
-                        Some(id) => id,
-                        None => continue,
-                    };
-                    if let Some(code) = self.binary_codes.get(&vector_id) {
-                        coarse.push((vector_id.clone(), bq.hamming(&code), *centroid_dist));
+            // Visit the posting list under the store guard — no clone of the
+            // inline `Vec<Vec<f32>>` (up to 1000×dim floats per probe with
+            // the old `get`). The external-id resolution below is required
+            // here (`binary_codes` is keyed by external id).
+            let mut internal_ids: Vec<usize> = Vec::new();
+            let mut collect_ids = |list: &TieredPostingList| {
+                internal_ids.extend_from_slice(&list.vector_ids);
+            };
+            let visited = match self
+                .posting_lists
+                .try_with_value_sync(&key, &mut collect_ids)
+            {
+                Some(present) => present,
+                // Async-backed store (Moka): fall back to the cloning get.
+                None => match self.posting_lists.get(&key).await {
+                    Some(list) => {
+                        collect_ids(&list);
+                        true
                     }
+                    None => false,
+                },
+            };
+            if !visited {
+                continue;
+            }
+            for internal_id in internal_ids {
+                // TD-147: resolve compact internal id → external String
+                let vector_id = match self.id_mapping.external(internal_id) {
+                    Some(id) => id,
+                    None => continue,
+                };
+                if let Some(code) = self.binary_codes.get(&vector_id) {
+                    coarse.push((vector_id.clone(), bq.hamming(&code), *centroid_dist));
                 }
             }
         }
@@ -2832,6 +3014,7 @@ impl UnifiedIvfIndex {
 mod tests {
     use super::{IvfClusteringMethod, PartitionedKey};
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::core::search::bounded_queue::TopKHeap;
     use crate::index::axis::*;
 
     #[test]

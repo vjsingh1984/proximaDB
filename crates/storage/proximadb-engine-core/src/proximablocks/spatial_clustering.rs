@@ -1022,6 +1022,158 @@ where
     (blocks, index_entries)
 }
 
+/// TD-IVF-3 / TD-IVF-5: conditioning of the *deep* PCA components.
+///
+/// Components are extracted by power iteration with deflation. `power_iteration`
+/// always starts from the same deterministic seed vector, so once repeated
+/// deflation drives the residual matrix toward zero it stops returning a
+/// meaningful direction and instead re-returns near-duplicates of directions
+/// already extracted. A duplicate of an *early* component is worse than noise:
+/// it double-counts a high-variance direction, distorting the projected metric
+/// that ranks coarse cells.
+///
+/// Onset is **corpus-dependent**. Measured on the real corpora (20k sampled
+/// rows, our extractor, width 128):
+///
+/// ```text
+///   corpus          worst |dot| within 32   first near-duplicate
+///   128-d BIGANN    0.110                   (2, 111)  |dot| 0.964
+///   384-d BGE       0.080                   none within 128
+///   768-d BGE       0.062                   none within 128
+/// ```
+///
+/// and on deterministic synthetic spectra (dim=96):
+///
+/// ```text
+///   0.90^j  -> (2, 42)   0.994      0.97^j       -> none within 96
+///   0.95^j  -> (2, 59)   0.987      1/sqrt(j+1)  -> none within 96
+/// ```
+///
+/// So the permitted floor width of 64 carries margin on every corpus measured,
+/// while an adversarial fast-decaying spectrum would breach it. End-to-end recall
+/// cannot detect any of this — the rerank tier absorbs a few bad directions —
+/// which is why it needs a direct assertion rather than a bed. See TD-IVF-5.
+#[cfg(test)]
+mod deep_component_conditioning_tests {
+    use super::IncrementalPCA;
+
+    /// Deterministic corpus whose component `j` has standard deviation
+    /// `decay(j)`. No RNG crate, no thread state: identical every run.
+    fn corpus(rows: usize, dim: usize, decay: impl Fn(usize) -> f64) -> Vec<Vec<f32>> {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = || {
+            // xorshift64*
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            let value = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+            ((value >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        };
+        (0..rows)
+            .map(|_| (0..dim).map(|j| (next() * decay(j)) as f32).collect())
+            .collect()
+    }
+
+    fn components_for(corpus: &[Vec<f32>], dim: usize, width: usize) -> Vec<Vec<f64>> {
+        let mut pca = IncrementalPCA::new(dim, width);
+        for sample in corpus {
+            pca.add_sample(sample);
+        }
+        pca.finalize();
+        pca.components()
+            .expect("finalized PCA must expose components")
+            .to_vec()
+    }
+
+    /// Largest |dot| over all distinct component pairs, with the pair.
+    fn worst_pair(components: &[Vec<f64>]) -> (usize, usize, f64) {
+        let mut worst = (0usize, 0usize, 0f64);
+        for b in 1..components.len() {
+            for a in 0..b {
+                let dot = components[a]
+                    .iter()
+                    .zip(&components[b])
+                    .map(|(x, y)| x * y)
+                    .sum::<f64>()
+                    .abs();
+                if dot > worst.2 {
+                    worst = (a, b, dot);
+                }
+            }
+        }
+        worst
+    }
+
+    /// The shipped-width guard. No two components may be near-duplicates out to
+    /// the width the floor is allowed to reach, across spectra spanning fast
+    /// geometric decay to slow power-law decay.
+    ///
+    /// This is a *regression* guard, not a proof of good conditioning: mild
+    /// non-orthogonality (|dot| ~ 0.02-0.06) is expected from 20 power
+    /// iterations and is benign. What must never happen is a component that has
+    /// collapsed onto another, which is the failure documented above.
+    #[test]
+    fn no_duplicate_components_within_the_permitted_floor_for_realistic_spectra() {
+        const DIM: usize = 96;
+        const WIDTH: usize = 64; // == IVF_NCOMP_FLOOR_CEILING
+        // Decay rates spanning the range real embedding spectra occupy. The
+        // adversarial 0.90^j case is deliberately excluded here and asserted
+        // separately below: it breaches this width by construction, and no
+        // measured corpus resembles it.
+        for (name, rate) in [("0.97^j", 0.97f64), ("0.98^j", 0.98), ("0.99^j", 0.99)] {
+            let data = corpus(4_000, DIM, |j| rate.powi(j as i32));
+            let (a, b, dot) = worst_pair(&components_for(&data, DIM, WIDTH));
+            assert!(
+                dot < 0.5,
+                "{name}: components {a} and {b} have |dot| = {dot:.4} within the \
+                 permitted floor width {WIDTH} -- deflation has collapsed one onto \
+                 the other (TD-IVF-5)"
+            );
+        }
+        let data = corpus(4_000, DIM, |j| 1.0 / ((j + 1) as f64).sqrt());
+        let (a, b, dot) = worst_pair(&components_for(&data, DIM, WIDTH));
+        assert!(dot < 0.5, "1/sqrt: components {a} and {b} |dot| = {dot:.4}");
+    }
+
+    /// Components are unit-norm at every depth: a component that has collapsed
+    /// toward zero would consume a coordinate in every centroid comparison and
+    /// every A0 byte while contributing no separation.
+    #[test]
+    fn components_are_unit_norm() {
+        const DIM: usize = 96;
+        let data = corpus(4_000, DIM, |j| 0.95f64.powi(j as i32));
+        for (j, component) in components_for(&data, DIM, 64).iter().enumerate() {
+            let norm = component.iter().map(|v| v * v).sum::<f64>().sqrt();
+            assert!(
+                (norm - 1.0).abs() < 1e-3,
+                "component {j} has norm {norm:.6}, expected unit norm"
+            );
+        }
+    }
+
+    /// Pins the defect itself, so TD-IVF-5 is backed by an executing assertion
+    /// rather than a prose claim, and so a future fix to the extractor makes this
+    /// test fail loudly and get deleted along with the bound it documents.
+    ///
+    /// Uses the adversarial `0.90^j` spectrum, which degenerates at component 42
+    /// — *inside* the permitted floor width. No measured corpus decays that
+    /// fast (the worst real case, 128-d BIGANN, first duplicates at 111), which
+    /// is why the ceiling sits at 64 rather than below 42. That gap is the
+    /// margin TD-IVF-5 is asking to remove.
+    #[test]
+    fn deflation_degenerates_on_an_adversarially_fast_spectrum() {
+        const DIM: usize = 96;
+        let data = corpus(4_000, DIM, |j| 0.90f64.powi(j as i32));
+        let (_, b, dot) = worst_pair(&components_for(&data, DIM, DIM));
+        assert!(
+            dot > 0.5,
+            "expected the known deflation degeneracy (TD-IVF-5); got worst |dot| \
+             = {dot:.4} at component {b}. If the extractor was fixed, delete this \
+             test and revisit IVF_NCOMP_FLOOR_CEILING."
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

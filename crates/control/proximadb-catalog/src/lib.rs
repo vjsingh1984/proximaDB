@@ -46,17 +46,21 @@ pub mod manager;
 pub use manager::{CatalogFilesystemResolver, CatalogManager, TableOpLockRegistry};
 /// Typed MLOps/model-registry facet for the unified xCatalog object model.
 pub mod mlops;
+/// Tenant-scoped model-registry lifecycle application service shared by API adapters.
+pub mod model_registry_service;
 // Catalog federation (Slice 3) — unified view across internal + external
 // catalogs, moved from root src/catalog/federation (now that CatalogManager is
 // in this crate).
-pub mod federation;
 // Collection-level DR / CRR engine contract (P1 of
 // COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc).
 pub mod collection_dr_policy;
 // Global corpus-version registry + store trait (relocated from the root crate's
 // src/catalog so storage-side consumers like compaction can depend on it downward).
 pub mod corpus_version;
-pub use corpus_version::CorpusVersionRegistry;
+pub use corpus_version::{
+    ContentRevisionSnapshot, CorpusVersionDomain, CorpusVersionRegistry,
+    DEFAULT_CORPUS_VERSION_TENANT, process_content_revision_incarnation,
+};
 // Customer-facing DR policy mutation surface (S14 of the same contract).
 pub mod dr_policy_store;
 // DR reconciler decision logic (P3a of the same contract).
@@ -69,11 +73,12 @@ pub mod dr_restore;
 pub mod embedding_precision_policy;
 #[cfg(feature = "aws")]
 pub mod glue;
-pub mod hive;
 pub mod iceberg;
 // Iceberg REST catalog service + PAX segment registry (moved from the root
 // `src/catalog` — they follow `CatalogManager` into this crate now that the
 // `ObjectStoreBridge` contract and `SegmentMeta` live at or below this layer).
+#[cfg(test)]
+mod authority_seal_tests;
 pub mod iceberg_rest_service;
 pub mod id_allocator;
 pub mod native;
@@ -2199,6 +2204,68 @@ impl CatalogHealth {
 // Catalog trait
 // ---------------------------------------------------------------------------
 
+/// TD-CAT-7: the **identity half** of a catalog, split out so the contract is
+/// *honourable*.
+///
+/// `Catalog` used to demand identity minting from HTTP shims (Unity, Polaris)
+/// and external metastores (Hive, Iceberg, Glue) that structurally cannot
+/// provide it — they own no allocator. That is precisely why every identity
+/// method acquired a silent `Ok(None)` default, and why "a catalog that does
+/// not mint identity" became a *representable state*: an implementation that
+/// implemented nothing still compiled and answered successfully.
+///
+/// Identity is not bookkeeping — **authorization depends on it** (relational
+/// ABAC gates on `stable_namespace_id` AND `object_id`). So the obligations
+/// live here instead, where **every method is required**: a backend that claims
+/// authority cannot forget one, because the compiler will not let it.
+///
+/// External/federated catalogs simply do not implement this trait and leave
+/// [`Catalog::identity_authority`] at its `None` default — an honest "I am not
+/// an identity authority", distinguishable from "I am, and I minted nothing".
+#[async_trait::async_trait]
+pub trait CatalogAuthority: Send + Sync {
+    /// ADR-031 allocator unification: the highest persisted `object_id` across
+    /// all catalog objects. `None` means *nothing has been minted yet* — the
+    /// startup floor-raise treats that as "start at 1", which is only sound
+    /// because it can no longer also mean "this backend has no allocator".
+    async fn max_object_id(&self) -> anyhow::Result<Option<u64>>;
+
+    /// Reserve the next `object_id` from this authority's sequence. An
+    /// authority always can, so this returns `u64`, not `Option<u64>`.
+    async fn allocate_object_id(&self) -> anyhow::Result<u64>;
+
+    /// ADR-031 Phase 4c: pre-mint the typed identity triple
+    /// `(account_u32, namespace_u16, collection_u32)` before storage-dir
+    /// creation. `None` here retains its one legitimate meaning: **no account
+    /// was supplied**. Idempotent with the later `create_table`.
+    async fn mint_collection_typed_identity(
+        &self,
+        account: &str,
+        namespace_key: &str,
+    ) -> anyhow::Result<Option<(u32, u16, u32)>>;
+
+    /// Lookup-or-mint the durable account stable id. `None` only for an
+    /// empty/absent account.
+    async fn account_id_u32(&self, account: &str) -> anyhow::Result<Option<u32>>;
+
+    /// Sync, read-only account lookup for the request-hot resolver — no mint,
+    /// no I/O. `None` when unminted (fail-closed deny).
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32>;
+
+    /// Resolve a table by its stable `object_id` — the inverse of
+    /// `get_table(...).object_id`. `None` when no table carries that id.
+    async fn get_table_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<TableIdentifier>>;
+
+    /// Namespace analogue of [`Self::get_table_by_object_id`].
+    async fn get_namespace_by_object_id(
+        &self,
+        object_id: u64,
+    ) -> anyhow::Result<Option<Vec<String>>>;
+}
+
 /// Core catalog trait — every ProximaDB catalog backend implements this.
 ///
 /// The trait uses only types from this crate (`proximadb-catalog`) so
@@ -2208,6 +2275,18 @@ impl CatalogHealth {
 pub trait Catalog: Send + Sync {
     fn name(&self) -> &str;
     fn catalog_type(&self) -> &str;
+
+    /// TD-CAT-7 capability probe: the identity authority behind this catalog,
+    /// or `None` when it has none (external/federated metastore).
+    ///
+    /// This is the distinction whose absence let identity vanish silently — a
+    /// caller could not tell `None because this backend cannot mint` from
+    /// `None because the backend that can, didn't`. Every identity default
+    /// below now delegates through here, so an authority answers with its own
+    /// implementation or not at all.
+    fn identity_authority(&self) -> Option<&dyn CatalogAuthority> {
+        None
+    }
 
     // Namespace operations
     async fn create_namespace(
@@ -2245,16 +2324,20 @@ pub trait Catalog: Send + Sync {
     /// this to compose a `CollectionIdentity` for the typed object-store path.
     /// Default `None` — only the native catalog mints; federated/external
     /// catalogs have no typed identity (legacy paths).
-    async fn account_id_u32(&self, _account: &str) -> anyhow::Result<Option<u32>> {
-        Ok(None)
+    async fn account_id_u32(&self, account: &str) -> anyhow::Result<Option<u32>> {
+        match self.identity_authority() {
+            Some(authority) => authority.account_id_u32(account).await,
+            None => Ok(None),
+        }
     }
     /// TD-TENANT-1 item 3: SYNC lookup of the account u32 — no mint, no I/O.
     /// For the request-hot `TenantStableIdResolver` (which is sync). Returns the
     /// already-minted u32 for an account/tenant string, or `None` when unminted
     /// (fail-closed deny). Default `None` — only the native catalog has a
     /// registry; federated/external catalogs stay `None` (legacy-safe).
-    fn account_id_u32_lookup(&self, _account: &str) -> Option<u32> {
-        None
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        self.identity_authority()
+            .and_then(|authority| authority.account_id_u32_lookup(account))
     }
     /// ADR-031 allocator unification: the highest persisted `object_id` across
     /// all tables (from the durable `object_name_index`). The root startup path
@@ -2263,7 +2346,23 @@ pub trait Catalog: Send + Sync {
     /// legacy (pre-unification) `schema.object_id` → no oid-index corruption.
     /// Default `None` (federated catalogs have no native object_ids).
     async fn max_object_id(&self) -> anyhow::Result<Option<u64>> {
-        Ok(None)
+        match self.identity_authority() {
+            Some(authority) => authority.max_object_id().await,
+            None => Ok(None),
+        }
+    }
+    /// Reserve the next `object_id` from this catalog's authoritative sequence.
+    ///
+    /// Lifecycle services that must expose an id before creating the catalog
+    /// object use this instead of maintaining a second allocator. The later
+    /// `create_table` call adopts the reserved id and raises (but does not
+    /// advance past) the same sequence. `None` means this catalog has no native
+    /// object-id authority; callers may use a compatibility allocator.
+    async fn allocate_object_id(&self) -> anyhow::Result<Option<u64>> {
+        match self.identity_authority() {
+            Some(authority) => authority.allocate_object_id().await.map(Some),
+            None => Ok(None),
+        }
     }
     /// ADR-031 Phase 4c: pre-mint the typed identity triple
     /// `(account_u32, namespace_u16, collection_u32)` for a collection being
@@ -2274,10 +2373,17 @@ pub trait Catalog: Send + Sync {
     /// via the shared `resolve_typed_triple`). Default `None`.
     async fn mint_collection_typed_identity(
         &self,
-        _account: &str,
-        _namespace_key: &str,
+        account: &str,
+        namespace_key: &str,
     ) -> anyhow::Result<Option<(u32, u16, u32)>> {
-        Ok(None)
+        match self.identity_authority() {
+            Some(authority) => {
+                authority
+                    .mint_collection_typed_identity(account, namespace_key)
+                    .await
+            }
+            None => Ok(None),
+        }
     }
     async fn update_namespace_properties(
         &self,
@@ -2287,11 +2393,55 @@ pub trait Catalog: Send + Sync {
     ) -> anyhow::Result<()>;
 
     // Table operations
-    async fn create_table(
+    /// Backends implement table creation **here**; [`Self::create_table`] is the
+    /// sealed wrapper callers use.
+    ///
+    /// TD-CAT-7: minting must be *unforgettable*, not merely implemented. The
+    /// gap was hand-fixed on one backend at a time three times over, and each
+    /// fix left the next instance alive — so the post-condition lives in one
+    /// place every backend necessarily passes through. Overriding
+    /// `create_table` would route around it; `scripts/check_catalog_seal.py`
+    /// (in `make work-commit-check`) fails the build if any impl does.
+    async fn create_table_inner(
         &self,
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
     ) -> anyhow::Result<CatalogTableSchema>;
+
+    /// Create a table, then enforce the identity post-condition.
+    ///
+    /// An identity **authority** that returns a table with no `object_id` has
+    /// silently produced a row that authorization cannot key on. That must fail
+    /// loudly at the write, not surface later as an empty introspection column
+    /// or a policy that matches nothing. Non-authorities (federated catalogs)
+    /// are exempt — they never claimed to mint.
+    ///
+    /// This is a **post**-condition, and deliberately not a rollback: the id is
+    /// minted inside `create_table_inner`, so there is nothing to check before
+    /// the write. If it fires, the row may already be persisted and the caller
+    /// still sees an error — a visible, operator-recoverable inconsistency,
+    /// which is strictly better than the silent one it replaces. For a correct
+    /// authority it is unreachable.
+    ///
+    /// **Do not override.**
+    async fn create_table(
+        &self,
+        identifier: &TableIdentifier,
+        schema: CatalogTableSchema,
+    ) -> anyhow::Result<CatalogTableSchema> {
+        let created = self.create_table_inner(identifier, schema).await?;
+        if self.identity_authority().is_some() && created.object_id.is_none() {
+            anyhow::bail!(
+                "TD-CAT-7: catalog '{}' ({}) is an identity authority but created table {:?} \
+                 with no object_id; authorization keys on it, so the row must not be committed \
+                 without one",
+                self.name(),
+                self.catalog_type(),
+                identifier,
+            );
+        }
+        Ok(created)
+    }
 
     async fn drop_table(&self, identifier: &TableIdentifier, purge: bool) -> anyhow::Result<bool>;
     async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>>;
@@ -2342,8 +2492,10 @@ pub trait Catalog: Send + Sync {
         &self,
         object_id: u64,
     ) -> anyhow::Result<Option<TableIdentifier>> {
-        let _ = object_id;
-        Ok(None)
+        match self.identity_authority() {
+            Some(authority) => authority.get_table_by_object_id(object_id).await,
+            None => Ok(None),
+        }
     }
 
     /// Resolve a namespace's levels from its stable catalog `object_id`
@@ -2354,8 +2506,10 @@ pub trait Catalog: Send + Sync {
         &self,
         object_id: u64,
     ) -> anyhow::Result<Option<Vec<String>>> {
-        let _ = object_id;
-        Ok(None)
+        match self.identity_authority() {
+            Some(authority) => authority.get_namespace_by_object_id(object_id).await,
+            None => Ok(None),
+        }
     }
 
     /// Resolve a collection's pinned embedding binding to one immutable,

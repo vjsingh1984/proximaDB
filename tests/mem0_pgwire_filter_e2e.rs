@@ -9,18 +9,9 @@
 //!   ORDER BY embedding <-> '[...]' LIMIT k
 //! ```
 //!
-//! Before TD-100 this path passed `None` as the metadata filter, so the WHERE
-//! clause was ignored and *all* top-k rows came back. After TD-100 the WHERE
-//! predicate is parsed into a `FilterExpression` and pushed into
-//! `unified_search_native`.
-//!
-//! Scope note: strict row-level filtering also depends on the pgwire INSERT
-//! path exposing `payload` keys as searchable metadata (tracked separately as
-//! the v2-INSERT metadata gap). This test asserts the transport + parse +
-//! filter-pushdown plumbing: the filtered query executes over the wire and
-//! never returns *more* rows than the unfiltered query. The deterministic
-//! correctness of the WHERE→FilterExpression conversion itself is covered by
-//! the unit tests in `src/network/postgres/protocol.rs`.
+//! The PostgreSQL AST lowerer must push the predicate into the canonical native
+//! search and return exactly the matching IDs. Zero-row success is a failure:
+//! setup, projection, and filter semantics are all part of this boundary.
 
 use std::net::TcpListener;
 use std::time::Duration;
@@ -66,6 +57,7 @@ impl PgwireTestServer {
             url: format!("file://{}", tmp_data.path().display()),
             ..Default::default()
         }];
+        config.storage.metadata_url = format!("file://{}/metadata", tmp_data.path().display());
         config.storage.wal_config.write_buffer_directory =
             format!("file://{}/wal", tmp_data.path().display());
 
@@ -142,11 +134,12 @@ async fn pgwire_vector_search_honours_where_metadata_filter() {
     };
 
     let table = "mem_filter";
-    let _ = client
+    client
         .simple_query(&format!(
             "CREATE TABLE {table} (id VARCHAR PRIMARY KEY, embedding VECTOR({dim}), payload JSONB)"
         ))
-        .await;
+        .await
+        .expect("create mem0 table");
 
     // Two facts, one decision.
     for (id, mtype, seed) in [
@@ -155,13 +148,14 @@ async fn pgwire_vector_search_honours_where_metadata_filter() {
         ("m3", "decision", 0.90f32),
     ] {
         let payload = serde_json::json!({"type": mtype, "content": id});
-        let _ = client
+        client
             .simple_query(&format!(
                 "INSERT INTO {table} (id, embedding, payload) VALUES ('{id}', '{}'::vector, '{}'::jsonb)",
                 vec_lit(seed),
                 payload
             ))
-            .await;
+            .await
+            .unwrap_or_else(|error| panic!("insert {id}: {error}"));
     }
     sleep(Duration::from_millis(200)).await;
 
@@ -174,33 +168,59 @@ async fn pgwire_vector_search_honours_where_metadata_filter() {
         "SELECT id, payload FROM {table} ORDER BY embedding <-> '{q_vec}'::vector LIMIT 10"
     );
 
-    // The pgwire vector-search path speaks the SIMPLE query protocol (the
-    // extended/prepared path returns UnexpectedMessage), matching how the
-    // other pgwire e2e fixtures drive it.
-    fn count_rows(msgs: &[tokio_postgres::SimpleQueryMessage]) -> usize {
+    // Exercise the simple-query result encoder here; the extended/prepared
+    // protocol has its own bound-parameter parity fixture.
+    fn projected_rows(
+        msgs: &[tokio_postgres::SimpleQueryMessage],
+    ) -> std::collections::HashMap<String, serde_json::Value> {
         msgs.iter()
-            .filter(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_)))
-            .count()
+            .filter_map(|message| match message {
+                tokio_postgres::SimpleQueryMessage::Row(row) => Some((
+                    row.get("id").expect("projected id").to_string(),
+                    serde_json::from_str(row.get("payload").expect("projected payload"))
+                        .expect("payload is JSONB"),
+                )),
+                _ => None,
+            })
+            .collect()
     }
 
-    // The filtered query must execute over the wire without error.
-    let filtered_rows = count_rows(
+    let filtered_rows = projected_rows(
         &client
             .simple_query(&filtered)
             .await
             .expect("filtered vector search executes"),
     );
-    let unfiltered_rows = count_rows(
+    let unfiltered_rows = projected_rows(
         &client
             .simple_query(&unfiltered)
             .await
             .expect("unfiltered vector search executes"),
     );
 
-    // Plumbing invariant: the metadata-filtered query never returns MORE rows
-    // than the unfiltered query (it pushed a predicate, not nothing).
-    assert!(
-        filtered_rows <= unfiltered_rows,
-        "filtered ({filtered_rows}) must be <= unfiltered ({unfiltered_rows})"
+    assert_eq!(
+        filtered_rows
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>(),
+        ["m1", "m2"].into_iter().map(str::to_string).collect(),
+        "metadata predicate must return exactly the fact records"
     );
+    assert_eq!(
+        unfiltered_rows
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>(),
+        ["m1", "m2", "m3"].into_iter().map(str::to_string).collect(),
+        "unfiltered Strong search must see all inserted records"
+    );
+    for (id, payload) in &filtered_rows {
+        assert_eq!(payload["type"], "fact", "filtered payload for {id}");
+        assert_eq!(
+            payload["content"],
+            id.as_str(),
+            "projected payload for {id}"
+        );
+    }
+    assert_eq!(unfiltered_rows["m3"]["type"], "decision");
 }

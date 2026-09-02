@@ -28,8 +28,9 @@ use crate::services::catalog_snapshot_store::{
 };
 use proximadb_catalog::schema::{apply_evolution, validate_schema};
 use proximadb_catalog::{
-    Catalog, CatalogIndex, CatalogNamespace, CatalogPrimaryPod, CatalogSchemaEvolution,
-    CatalogStorageLayout, CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
+    Catalog, CatalogIndex, CatalogMlopsAssetExt, CatalogNamespace, CatalogPrimaryPod,
+    CatalogSchemaEvolution, CatalogStorageLayout, CatalogTableSchema, CatalogTableStatistics,
+    TableIdentifier,
 };
 
 use crate::services::record_store::TableWalAppender;
@@ -114,6 +115,16 @@ pub struct SystemCatalog {
     /// `object_id`, so re-issuing one after a restart would grant a NEW table
     /// the permissions of a DEAD one.
     object_id_floor: AtomicU64,
+    /// Next globally unique catalog object id (table/column/index). Recovered
+    /// from durable schemas at boot; starts at one because zero is reserved.
+    object_floor: AtomicU64,
+    /// Next stable namespace/collection ids. The typed ids are narrower than
+    /// object ids, so u64 floors let allocation detect exhaustion before casts.
+    namespace_floor: AtomicU64,
+    collection_floor: AtomicU64,
+    /// Stable namespace id per (account, logical namespace). Durable schemas
+    /// are the authority; this map is rebuilt from them after replay.
+    namespace_ids: parking_lot::RwLock<HashMap<(String, String), u16>>,
     appender: Arc<dyn TableWalAppender>,
     /// Serializes the durable-append → in-RAM-apply pair so concurrent DDL can
     /// never interleave such that a lower-LSN mutation applies after a higher
@@ -158,6 +169,8 @@ impl SystemCatalog {
         state: SystemCatalogState,
         appender: Arc<dyn TableWalAppender>,
     ) -> Self {
+        let (object_floor, namespace_floor, collection_floor, namespace_ids) =
+            Self::identity_allocator_seed(&state);
         let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
         let object_id_floor = state.max_object_id().map_or(1, |id| id + 1);
         Self {
@@ -166,6 +179,10 @@ impl SystemCatalog {
             state: Arc::new(state),
             account_floor: AtomicU64::new(account_floor),
             object_id_floor: AtomicU64::new(object_id_floor),
+            object_floor: AtomicU64::new(object_floor),
+            namespace_floor: AtomicU64::new(namespace_floor),
+            collection_floor: AtomicU64::new(collection_floor),
+            namespace_ids: parking_lot::RwLock::new(namespace_ids),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: None,
@@ -187,6 +204,124 @@ impl SystemCatalog {
     /// The plane this catalog serves.
     pub fn role(&self) -> &proximadb_catalog::CatalogRole {
         &self.role
+    }
+
+    /// Recover every transient identity allocator from the durable table
+    /// schemas folded into `state`. Skipped ids are harmless; reuse is not.
+    fn identity_allocator_seed(
+        state: &SystemCatalogState,
+    ) -> (u64, u64, u64, HashMap<(String, String), u16>) {
+        let object_floor = state.max_object_id().map_or(1, |id| id.saturating_add(1));
+        let mut namespace_floor = 1_u64;
+        let mut collection_floor = 1_u64;
+        let mut namespace_ids = HashMap::new();
+        for (identifier, schema) in state.table_entries() {
+            if let Some(namespace_id) = schema.stable_namespace_id {
+                namespace_floor = namespace_floor.max(u64::from(namespace_id) + 1);
+                if let Some(account) = state
+                    .get_namespace(&identifier.namespace)
+                    .and_then(|namespace| namespace.tenant_id)
+                {
+                    namespace_ids.insert((account, identifier.namespace.join(".")), namespace_id);
+                }
+            }
+            if let Some(collection_id) = schema.stable_collection_id {
+                collection_floor = collection_floor.max(u64::from(collection_id) + 1);
+            }
+        }
+        (
+            object_floor,
+            namespace_floor,
+            collection_floor,
+            namespace_ids,
+        )
+    }
+
+    fn mint_object_id(&self, existing: Option<u64>) -> Result<u64> {
+        match existing {
+            Some(id) if id > 0 => {
+                let next = id
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow!("catalog object id space exhausted"))?;
+                self.object_floor.fetch_max(next, Ordering::SeqCst);
+                Ok(id)
+            }
+            Some(_) => Err(anyhow!("catalog object id zero is reserved")),
+            None => self.allocate_bounded(&self.object_floor, u64::MAX, "catalog object"),
+        }
+    }
+
+    fn allocate_bounded(&self, floor: &AtomicU64, max: u64, label: &str) -> Result<u64> {
+        floor
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |id| {
+                (id > 0 && id <= max).then(|| id.checked_add(1)).flatten()
+            })
+            .map_err(|_| anyhow!("{label} id space exhausted"))
+    }
+
+    async fn resolve_typed_triple(
+        &self,
+        account: &str,
+        namespace_key: &str,
+        existing_namespace: Option<u16>,
+        existing_collection: Option<u32>,
+    ) -> Result<Option<(u32, u16, u32)>> {
+        // TD-CAT-7: both `Catalog` and `CatalogAuthority` expose this now (the
+        // former delegates to the latter), so name the authority explicitly.
+        let Some(account_id) =
+            proximadb_catalog::CatalogAuthority::account_id_u32(self, account).await?
+        else {
+            return Ok(None);
+        };
+        let key = (account.to_string(), namespace_key.to_string());
+        let namespace_id = if let Some(id) = existing_namespace {
+            self.namespace_floor
+                .fetch_max(u64::from(id) + 1, Ordering::SeqCst);
+            let mut registry = self.namespace_ids.write();
+            match registry.get(&key) {
+                Some(current) if *current != id => {
+                    return Err(anyhow!(
+                        "stable namespace identity mismatch for '{}': {} != {}",
+                        namespace_key,
+                        current,
+                        id
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    registry.insert(key, id);
+                }
+            }
+            id
+        } else if let Some(id) = self.namespace_ids.read().get(&key).copied() {
+            id
+        } else {
+            let mut registry = self.namespace_ids.write();
+            if let Some(id) = registry.get(&key).copied() {
+                id
+            } else {
+                let id = self.allocate_bounded(
+                    &self.namespace_floor,
+                    u64::from(u16::MAX),
+                    "stable namespace",
+                )? as u16;
+                registry.insert(key, id);
+                id
+            }
+        };
+        let collection_id = match existing_collection {
+            Some(id) => {
+                self.collection_floor
+                    .fetch_max(u64::from(id) + 1, Ordering::SeqCst);
+                id
+            }
+            None => self.allocate_bounded(
+                &self.collection_floor,
+                u64::from(u32::MAX),
+                "stable collection",
+            )? as u32,
+        };
+        Ok(Some((account_id, namespace_id, collection_id)))
     }
 
     /// Open (or create) the catalog WAL at `wal_path`, restore the in-RAM
@@ -300,6 +435,8 @@ impl SystemCatalog {
             .filter(|n| *n > 0)
             .unwrap_or(DEFAULT_SNAPSHOT_THRESHOLD);
 
+        let (object_floor, namespace_floor, collection_floor, namespace_ids) =
+            Self::identity_allocator_seed(&state);
         let account_floor = state.max_account_id().map_or(1, |id| u64::from(id) + 1);
         let object_id_floor = state.max_object_id().map_or(1, |id| id + 1);
         Ok(Self {
@@ -308,6 +445,10 @@ impl SystemCatalog {
             state: Arc::new(state),
             account_floor: AtomicU64::new(account_floor),
             object_id_floor: AtomicU64::new(object_id_floor),
+            object_floor: AtomicU64::new(object_floor),
+            namespace_floor: AtomicU64::new(namespace_floor),
+            collection_floor: AtomicU64::new(collection_floor),
+            namespace_ids: parking_lot::RwLock::new(namespace_ids),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: Some(SnapshotConfig {
@@ -540,6 +681,24 @@ impl SystemCatalog {
             self.account_floor
                 .fetch_max(u64::from(max) + 1, Ordering::SeqCst);
         }
+        if let Some(max) = self.state.max_object_id() {
+            let next = max
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("catalog object-id space exhausted at {max}"))?;
+            self.object_id_floor.fetch_max(next, Ordering::SeqCst);
+        }
+        // The adopted authority may also carry object/typed ids minted by the
+        // publisher after this pod booted. Re-seed every transient allocator and
+        // replace the namespace map while the catalog write lock is held, so a
+        // same-generation reload cannot later reuse an adopted id.
+        let (object_floor, namespace_floor, collection_floor, namespace_ids) =
+            Self::identity_allocator_seed(&self.state);
+        self.object_floor.fetch_max(object_floor, Ordering::SeqCst);
+        self.namespace_floor
+            .fetch_max(namespace_floor, Ordering::SeqCst);
+        self.collection_floor
+            .fetch_max(collection_floor, Ordering::SeqCst);
+        *self.namespace_ids.write() = namespace_ids;
         self.loaded_version.store(read.version, Ordering::SeqCst);
         self.loaded_generation
             .store(read.generation, Ordering::SeqCst);
@@ -652,6 +811,19 @@ impl SystemCatalog {
         // a tenant scope. Mirrors NativeCatalog::create_namespace_inner.
         ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
         ns.tenant_id = tenant_id;
+        // TD-CAT-9: the stable catalog object_id, minted from the ONE
+        // system-wide sequence that mints table object_ids (ADR-031
+        // reconciliation amendment 1 — one sequence, not per-type). The default
+        // backend had been the only internal catalog leaving this `None` while
+        // reporting the same `catalog_type` as `NativeCatalog`, which does mint.
+        //
+        // Legacy namespaces persisted before this keep `object_id: None` and are
+        // deliberately NOT backfilled: this catalog's state is derived from the
+        // WAL, so an in-RAM backfill would be non-durable and would re-mint a
+        // DIFFERENT id on every restart — churn plus a collision risk, which is
+        // worse than the absence. `max_object_id` folds whatever ids exist, so
+        // old and new coexist safely (mixed-read-safe, mandate #8).
+        ns.object_id = Some(self.mint_object_id(None)?);
         self.commit(CatalogDelta::UpsertNamespace {
             namespace: Box::new(ns.clone()),
         })
@@ -660,23 +832,129 @@ impl SystemCatalog {
     }
 }
 
-impl SystemCatalog {
-    /// Adopt a caller-supplied `object_id` (raising the floor past it) or
-    /// allocate the next one. Mirrors `NativeCatalog::mint_object_id` so the two
-    /// implementations cannot drift on identity semantics.
-    fn mint_object_id(&self, existing: Option<u64>) -> u64 {
-        match existing {
-            Some(id) => {
-                self.object_id_floor.fetch_max(id + 1, Ordering::SeqCst);
-                id
-            }
-            None => self.object_id_floor.fetch_add(1, Ordering::SeqCst),
+/// TD-CAT-7: `SystemCatalog` is the DEFAULT backend and the production identity
+/// authority — it owns the WAL-backed allocator and the account registry. Every
+/// method below is required by the trait, so the silent `Ok(None)` inheritance
+/// that left relational ABAC structurally inert (TD-AUTHZ-2) cannot recur here.
+// Referenced by full path, deliberately NOT imported — see the identical note on
+// `NativeCatalog`: both traits declare these names, so importing this one makes
+// every concrete-type call site ambiguous.
+#[async_trait]
+impl proximadb_catalog::CatalogAuthority for SystemCatalog {
+    async fn max_object_id(&self) -> Result<Option<u64>> {
+        Ok(self.state.max_object_id())
+    }
+    async fn allocate_object_id(&self) -> Result<u64> {
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' is read-only; object ids must be allocated on the owning pod",
+                self.name
+            ));
         }
+        // Reserve from the exact sequence create_table uses. The later create
+        // adopts this caller-supplied id, so collection lifecycle cannot race a
+        // relational DDL path through an independent process-global allocator.
+        self.mint_object_id(None)
+    }
+    async fn mint_collection_typed_identity(
+        &self,
+        account: &str,
+        namespace_key: &str,
+    ) -> Result<Option<(u32, u16, u32)>> {
+        let account = account.trim();
+        if account.is_empty() {
+            return Ok(None);
+        }
+        self.resolve_typed_triple(account, namespace_key, None, None)
+            .await
+    }
+    /// Mint-or-return the durable tenant/account stable id through the same
+    /// canonical WAL as every other SystemCatalog mutation. This is the normal
+    /// server path (SystemCatalog is the default backend), so inheriting the
+    /// trait's `None` implementation would leave ABAC silently unkeyed.
+    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
+        let account = account.trim();
+        if account.is_empty() {
+            return Ok(None);
+        }
+        if let Some(id) = self.state.account_id_u32(account) {
+            if self
+                .snapshot
+                .as_ref()
+                .is_some_and(|cfg| cfg.store.requires_snapshot_on_commit())
+                && self.commits_since_snapshot.load(Ordering::SeqCst) > 0
+                && !self.read_only.load(Ordering::SeqCst)
+            {
+                let _guard = self.write_lock.lock().await;
+                self.publish_pending_snapshot_locked().await?;
+                // A fencing reload can replace the state while repairing the
+                // publication, so never return the pre-lock value blindly.
+                return Ok(self.state.account_id_u32(account));
+            }
+            return Ok(Some(id));
+        }
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "tenant '{account}' has no stable id and system catalog '{}' is read-only; \
+                 mint it on the owning pod",
+                self.name
+            ));
+        }
+
+        // Check + allocate + durable append are one writer critical section.
+        // Without the second check, concurrent first requests could return two
+        // different policy keys for the same tenant.
+        let _guard = self.write_lock.lock().await;
+        if let Some(id) = self.state.account_id_u32(account) {
+            self.publish_pending_snapshot_locked().await?;
+            if self.read_only.load(Ordering::SeqCst) {
+                return Ok(self.state.account_id_u32(account));
+            }
+            return Ok(Some(id));
+        }
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "tenant '{account}' has no stable id and system catalog '{}' became read-only; \
+                 mint it on the owning pod",
+                self.name
+            ));
+        }
+        let next = self.account_floor.fetch_add(1, Ordering::SeqCst);
+        let stable_id = u32::try_from(next)
+            .map_err(|_| anyhow!("tenant stable-id space exhausted at {next}"))?;
+        self.commit_batch_locked(vec![CatalogDelta::UpsertAccount {
+            account: account.to_string(),
+            stable_id,
+        }])
+        .await?;
+        Ok(Some(stable_id))
+    }
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        let account = account.trim();
+        if account.is_empty() {
+            return None;
+        }
+        self.state.account_id_u32(account)
+    }
+    async fn get_table_by_object_id(&self, object_id: u64) -> Result<Option<TableIdentifier>> {
+        Ok(self.state.get_table_by_object_id(object_id))
+    }
+    async fn get_namespace_by_object_id(&self, object_id: u64) -> Result<Option<Vec<String>>> {
+        // TD-CAT-7: this override did not exist before the split — `SystemCatalog`
+        // is the DEFAULT backend and had been silently inheriting the trait's
+        // `Ok(None)`, so a namespace object_id resolved to "not found" rather
+        // than to its namespace. No production caller had noticed yet; the
+        // compiler now requires an answer, which is the point of the split.
+        Ok(self.state.get_namespace_by_object_id(object_id))
     }
 }
 
 #[async_trait]
 impl Catalog for SystemCatalog {
+    fn identity_authority(&self) -> Option<&dyn proximadb_catalog::CatalogAuthority> {
+        Some(self)
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -749,76 +1027,6 @@ impl Catalog for SystemCatalog {
             .ok_or_else(|| anyhow!("Namespace '{}' not found", namespace.join(".")))
     }
 
-    /// Mint-or-return the durable tenant/account stable id through the same
-    /// canonical WAL as every other SystemCatalog mutation. This is the normal
-    /// server path (SystemCatalog is the default backend), so inheriting the
-    /// trait's `None` implementation would leave ABAC silently unkeyed.
-    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
-        let account = account.trim();
-        if account.is_empty() {
-            return Ok(None);
-        }
-        if let Some(id) = self.state.account_id_u32(account) {
-            if self
-                .snapshot
-                .as_ref()
-                .is_some_and(|cfg| cfg.store.requires_snapshot_on_commit())
-                && self.commits_since_snapshot.load(Ordering::SeqCst) > 0
-                && !self.read_only.load(Ordering::SeqCst)
-            {
-                let _guard = self.write_lock.lock().await;
-                self.publish_pending_snapshot_locked().await?;
-                // A fencing reload can replace the state while repairing the
-                // publication, so never return the pre-lock value blindly.
-                return Ok(self.state.account_id_u32(account));
-            }
-            return Ok(Some(id));
-        }
-        if self.read_only.load(Ordering::SeqCst) {
-            return Err(anyhow!(
-                "tenant '{account}' has no stable id and system catalog '{}' is read-only; \
-                 mint it on the owning pod",
-                self.name
-            ));
-        }
-
-        // Check + allocate + durable append are one writer critical section.
-        // Without the second check, concurrent first requests could return two
-        // different policy keys for the same tenant.
-        let _guard = self.write_lock.lock().await;
-        if let Some(id) = self.state.account_id_u32(account) {
-            self.publish_pending_snapshot_locked().await?;
-            if self.read_only.load(Ordering::SeqCst) {
-                return Ok(self.state.account_id_u32(account));
-            }
-            return Ok(Some(id));
-        }
-        if self.read_only.load(Ordering::SeqCst) {
-            return Err(anyhow!(
-                "tenant '{account}' has no stable id and system catalog '{}' became read-only; \
-                 mint it on the owning pod",
-                self.name
-            ));
-        }
-        let next = self.account_floor.fetch_add(1, Ordering::SeqCst);
-        let stable_id = u32::try_from(next)
-            .map_err(|_| anyhow!("tenant stable-id space exhausted at {next}"))?;
-        self.commit_batch_locked(vec![CatalogDelta::UpsertAccount {
-            account: account.to_string(),
-            stable_id,
-        }])
-        .await?;
-        Ok(Some(stable_id))
-    }
-
-    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
-        let account = account.trim();
-        if account.is_empty() {
-            return None;
-        }
-        self.state.account_id_u32(account)
-    }
-
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
@@ -844,11 +1052,13 @@ impl Catalog for SystemCatalog {
 
     // ── Table operations ──────────────────────────────────────────────────
 
-    async fn create_table(
+    async fn create_table_inner(
         &self,
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
     ) -> Result<CatalogTableSchema> {
+        let mut schema = schema;
+        proximadb_catalog::schema::normalize_identity(&mut schema);
         validate_schema(&schema)?;
         // TD-AUTHZ-2: mint object ids. ADOPT-or-allocate, matching
         // `NativeCatalog::mint_object_id`: a caller-supplied id is KEPT and
@@ -860,13 +1070,22 @@ impl Catalog for SystemCatalog {
         // SQL-created table, and the relational ABAC path denies on absent ids
         // (dml/mod.rs:1466) — so relational policy bindings and grants could
         // never take effect at all.
-        let mut schema = schema;
-        schema.object_id = Some(self.mint_object_id(schema.object_id));
+        schema.object_id = Some(self.mint_object_id(schema.object_id)?);
         for column in &mut schema.columns {
-            column.object_id = Some(self.mint_object_id(column.object_id));
+            column.object_id = Some(self.mint_object_id(column.object_id)?);
         }
         for index in &mut schema.indexes {
-            index.object_id = Some(self.mint_object_id(index.object_id));
+            index.object_id = Some(self.mint_object_id(index.object_id)?);
+        }
+        let table_object_id = schema
+            .object_id
+            .ok_or_else(|| anyhow!("system catalog failed to mint a table object id"))?;
+        if let Some(existing) = self.state.get_table_by_object_id(table_object_id)
+            && existing != *identifier
+        {
+            return Err(anyhow!(
+                "object id {table_object_id} is already assigned to table '{existing}'"
+            ));
         }
         if !self.state.namespace_exists(&identifier.namespace) {
             return Err(anyhow!(
@@ -876,6 +1095,35 @@ impl Catalog for SystemCatalog {
         }
         if self.state.table_exists(identifier) {
             return Err(anyhow!("Table '{}' already exists", identifier));
+        }
+        schema.object_id = Some(self.mint_object_id(schema.object_id)?);
+        for column in &mut schema.columns {
+            column.object_id = Some(self.mint_object_id(column.object_id)?);
+        }
+        for index in &mut schema.indexes {
+            index.object_id = Some(self.mint_object_id(index.object_id)?);
+        }
+        let namespace = self
+            .state
+            .get_namespace(&identifier.namespace)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Namespace '{}' does not exist",
+                    identifier.namespace.join(".")
+                )
+            })?;
+        if let Some(account) = namespace.tenant_id.as_deref()
+            && let Some((_account_id, namespace_id, collection_id)) = self
+                .resolve_typed_triple(
+                    account,
+                    &identifier.namespace.join("."),
+                    schema.stable_namespace_id,
+                    schema.stable_collection_id,
+                )
+                .await?
+        {
+            schema.stable_namespace_id = Some(namespace_id);
+            schema.stable_collection_id = Some(collection_id);
         }
         self.commit(CatalogDelta::UpsertTable {
             identifier: identifier.clone(),
@@ -979,6 +1227,7 @@ impl Catalog for SystemCatalog {
         identifier: &TableIdentifier,
         index: CatalogIndex,
     ) -> Result<CatalogIndex> {
+        let mut index = index;
         let mut schema = self.require_table(identifier)?;
         if schema.indexes.iter().any(|i| i.name == index.name) {
             return Err(anyhow!(
@@ -996,6 +1245,7 @@ impl Catalog for SystemCatalog {
                 ));
             }
         }
+        index.object_id = Some(self.mint_object_id(index.object_id)?);
         schema.indexes.push(index.clone());
         schema.updated_at_ms = now_millis();
         self.commit(CatalogDelta::UpsertTable {
@@ -1083,6 +1333,50 @@ impl Catalog for SystemCatalog {
         Ok(schema)
     }
 
+    async fn apply_model_registry_mutation(
+        &self,
+        identifier: &TableIdentifier,
+        expected_revision: u64,
+        mutation: proximadb_catalog::mlops::CatalogModelRegistryMutation,
+    ) -> Result<CatalogTableSchema> {
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' is read-only (a follower replica or superseded by a newer \
+                 pod); route model registry mutation to the owning pod",
+                self.name
+            ));
+        }
+
+        // The read, revision check, mutation, durable append, and in-RAM apply
+        // form one compare-and-swap critical section. Taking the lock only for
+        // the final write would allow two callers with the same expected
+        // revision to both pass validation and overwrite one another.
+        let _guard = self.write_lock.lock().await;
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' became read-only; route model registry mutation to the \
+                 owning pod",
+                self.name
+            ));
+        }
+        let mut schema = self.require_table(identifier)?;
+        let mut asset = schema
+            .mlops_asset_as_typed()?
+            .ok_or_else(|| anyhow!("Catalog object '{}' is not an MLOps asset", identifier))?;
+        asset
+            .apply_model_mutation(expected_revision, mutation)
+            .map_err(anyhow::Error::new)?;
+        asset.validate().map_err(anyhow::Error::new)?;
+        schema.set_mlops_asset_typed(asset);
+        schema.updated_at_ms = now_millis();
+        self.commit_batch_locked(vec![CatalogDelta::UpsertTable {
+            identifier: identifier.clone(),
+            schema: Box::new(schema.clone()),
+        }])
+        .await?;
+        Ok(schema)
+    }
+
     /// Take a final snapshot on graceful shutdown so the next restart replays an
     /// empty WAL tail. Best-effort: a failed checkpoint is not fatal to close
     /// (the durable WAL alone still recovers correctly).
@@ -1097,7 +1391,12 @@ impl Catalog for SystemCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_catalog::{CatalogColumn, CatalogIndexType};
+    use proximadb_catalog::mlops::{
+        CatalogMlopsAsset, CatalogModelRegistryMutation, CatalogModelUsePolicy,
+    };
+    use proximadb_catalog::{
+        CatalogColumn, CatalogEmbeddingConfig, CatalogIndexType, CatalogMlopsAssetExt,
+    };
     use proximadb_data_model::ProximaType;
 
     async fn catalog(dir: &std::path::Path) -> SystemCatalog {
@@ -1115,6 +1414,125 @@ mod tests {
             .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
             .with_column(CatalogColumn::new(2, "body", ProximaType::String))
             .with_primary_key(vec!["id".to_string()])
+    }
+
+    fn model_schema() -> Result<CatalogTableSchema> {
+        let asset: CatalogMlopsAsset = serde_json::from_str(include_str!(
+            "../../clients/python/tests/fixtures/embedding_model_xcatalog_asset.json"
+        ))?;
+        CatalogTableSchema::new("search-embedding").with_mlops_asset(asset)
+    }
+
+    /// TD-CAT-7: the DEFAULT backend must declare itself an identity authority.
+    /// The probe is what lets a caller tell "this catalog cannot mint" from
+    /// "the catalog that can, didn't" — the conflation that left relational
+    /// ABAC structurally inert (TD-AUTHZ-2) without anything failing.
+    #[tokio::test]
+    async fn system_catalog_declares_itself_an_identity_authority() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cat = catalog(dir.path()).await;
+        assert!(
+            cat.identity_authority().is_some(),
+            "SystemCatalog owns the WAL-backed allocator and the account registry"
+        );
+        Ok(())
+    }
+
+    /// TD-CAT-9: the default backend now mints a namespace `object_id` from the
+    /// same system-wide sequence as tables — `NativeCatalog` always did, and the
+    /// two report the same `catalog_type`, so the divergence was a trap for the
+    /// first consumer to key on it.
+    #[tokio::test]
+    async fn namespaces_carry_a_minted_object_id() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cat = catalog(dir.path()).await;
+        let levels = nslevels(&["cat9_ns"]);
+        let created = cat.create_namespace(&levels, HashMap::new()).await?;
+        let object_id = created
+            .object_id
+            .expect("an identity authority mints a namespace object_id");
+
+        assert_eq!(
+            cat.get_namespace_by_object_id(object_id).await?,
+            Some(levels),
+            "the reverse lookup must resolve an id this catalog itself minted"
+        );
+        assert_eq!(
+            cat.get_namespace_by_object_id(object_id + 9_999).await?,
+            None,
+            "an unknown id is still None — the honest one"
+        );
+        Ok(())
+    }
+
+    /// TD-CAT-9: the sibling of `object_ids_are_never_reissued_across_a_restart`
+    /// (TD-AUTHZ-2, below) for **namespace** ids — the half that test cannot
+    /// reach, because it only ever mints tables.
+    ///
+    /// Minting namespace ids without folding them into the recovery floor is
+    /// strictly worse than not minting at all: the floor would recover from
+    /// tables only, land *below* a live namespace's id, and hand it to the next
+    /// object. Object ids key policy bindings and grants, so that is a new table
+    /// inheriting a dead namespace's permissions.
+    ///
+    /// The ordering is load-bearing — the LAST id minted before the restart is a
+    /// namespace's. Neuter the namespace fold in
+    /// `SystemCatalogState::max_object_id` and this fails; with the namespace
+    /// created before the table it would pass either way, which is the shape of
+    /// a test that proves nothing.
+    #[tokio::test]
+    async fn namespace_object_ids_are_never_reissued_across_a_restart() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+
+        let last_ns_object_id = {
+            let cat = SystemCatalog::open("default", &wal).await?;
+            let first = nslevels(&["cat9_a"]);
+            cat.create_namespace(&first, HashMap::new()).await?;
+            cat.create_table(&TableIdentifier::new(first, "t"), vec_schema("t"))
+                .await?;
+            // Minted last, so it holds the persisted high-water mark.
+            cat.create_namespace(&nslevels(&["cat9_b"]), HashMap::new())
+                .await?
+                .object_id
+                .expect("namespace object_id")
+        };
+
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        let fresh = reopened
+            .create_table(
+                &TableIdentifier::new(nslevels(&["cat9_a"]), "t2"),
+                vec_schema("t2"),
+            )
+            .await?
+            .object_id
+            .expect("table object_id");
+
+        assert!(
+            fresh > last_ns_object_id,
+            "object id {fresh} was re-issued at or below the persisted namespace id \
+             {last_ns_object_id}; the recovery floor does not fold namespace ids"
+        );
+        Ok(())
+    }
+
+    /// TD-CAT-7 post-condition, end to end on the real backend: a table created
+    /// through the sealed `create_table` carries the id authorization keys on.
+    #[tokio::test]
+    async fn created_tables_always_carry_an_object_id() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cat = catalog(dir.path()).await;
+        let levels = nslevels(&["cat7_oid"]);
+        cat.create_namespace(&levels, HashMap::new()).await?;
+
+        let created = cat
+            .create_table(&TableIdentifier::new(levels, "t"), vec_schema("t"))
+            .await?;
+        assert!(
+            created.object_id.is_some(),
+            "the sealed create_table must not return an unminted row"
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -1252,6 +1670,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn model_asset_id_resolution_and_mutation_survive_system_catalog_restart() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+        let namespace = nslevels(&["tenant-a", "mlops"]);
+        let identifier = TableIdentifier::new(namespace.clone(), "search-embedding");
+
+        let asset_id = {
+            let cat = SystemCatalog::open("default", &wal).await?;
+            cat.create_namespace(&namespace, HashMap::new()).await?;
+            let created = cat.create_table(&identifier, model_schema()?).await?;
+            let asset_id = created.object_id.context("model asset id")?;
+            assert_eq!(
+                cat.get_table_by_object_id(asset_id).await?,
+                Some(identifier.clone())
+            );
+
+            cat.apply_model_registry_mutation(
+                &identifier,
+                0,
+                CatalogModelRegistryMutation::set_alias("champion", 1),
+            )
+            .await?;
+            asset_id
+        };
+
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        assert_eq!(
+            reopened.get_table_by_object_id(asset_id).await?,
+            Some(identifier.clone()),
+            "stable asset lookup must be rebuilt from the WAL"
+        );
+        let schema = reopened.get_table(&identifier).await?;
+        let CatalogMlopsAsset::EmbeddingModel(registry) = schema
+            .mlops_asset_as_typed()?
+            .context("typed MLOps asset")?;
+        assert_eq!(registry.revision, 1);
+        assert_eq!(registry.resolve_alias("champion")?.version, 1);
+
+        let model = registry.version(1)?;
+        let binding = CatalogEmbeddingConfig::pinned(
+            "search-embedding",
+            768,
+            asset_id,
+            1,
+            model.contract_sha256()?,
+        )?;
+        let resolved = reopened
+            .resolve_embedding_model_binding(&binding, &CatalogModelUsePolicy::registration_only())
+            .await?;
+        assert_eq!(resolved.asset_id, asset_id);
+        assert_eq!(resolved.model.version, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn model_registry_revision_is_an_atomic_compare_and_swap_on_system_catalog() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let namespace = nslevels(&["tenant-a", "mlops"]);
+        let identifier = TableIdentifier::new(namespace.clone(), "search-embedding");
+        let cat = Arc::new(catalog(dir.path()).await);
+        cat.create_namespace(&namespace, HashMap::new()).await?;
+        cat.create_table(&identifier, model_schema()?).await?;
+
+        let left = cat.apply_model_registry_mutation(
+            &identifier,
+            0,
+            CatalogModelRegistryMutation::set_alias("left", 1),
+        );
+        let right = cat.apply_model_registry_mutation(
+            &identifier,
+            0,
+            CatalogModelRegistryMutation::set_alias("right", 1),
+        );
+        let (left, right) = tokio::join!(left, right);
+        assert_ne!(
+            left.is_ok(),
+            right.is_ok(),
+            "exactly one stale writer must win"
+        );
+
+        let schema = cat.get_table(&identifier).await?;
+        let CatalogMlopsAsset::EmbeddingModel(registry) = schema
+            .mlops_asset_as_typed()?
+            .context("typed MLOps asset")?;
+        assert_eq!(registry.revision, 1);
+        assert_eq!(registry.aliases.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn concurrent_first_mint_returns_one_id_for_one_tenant() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let cat = Arc::new(catalog(dir.path()).await);
@@ -1260,6 +1769,50 @@ mod tests {
         let right = right?;
         assert_eq!(left, right);
         assert_eq!(cat.account_id_u32_lookup("acme"), left);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tenant_tables_receive_durable_total_object_and_typed_identity() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+        let namespace = nslevels(&["acme", "default"]);
+        let first = TableIdentifier::new(namespace.clone(), "orders");
+        let second = TableIdentifier::new(namespace.clone(), "customers");
+
+        let cat = SystemCatalog::open("default", &wal).await?;
+        cat.create_namespace_for_tenant(&namespace, HashMap::new(), Some("acme"))
+            .await?;
+        let orders = cat.create_table(&first, vec_schema("orders")).await?;
+        let customers = cat.create_table(&second, vec_schema("customers")).await?;
+
+        assert!(orders.object_id.is_some());
+        assert!(
+            orders
+                .columns
+                .iter()
+                .all(|column| column.object_id.is_some())
+        );
+        assert_eq!(orders.stable_namespace_id, customers.stable_namespace_id);
+        assert!(orders.stable_namespace_id.is_some());
+        assert_ne!(orders.stable_collection_id, customers.stable_collection_id);
+        let prior_max_object = cat.max_object_id().await?.expect("object ids minted");
+        let stable_namespace = orders.stable_namespace_id;
+        let prior_collection = customers.stable_collection_id.expect("typed collection id");
+        drop(cat);
+
+        let reopened = SystemCatalog::open("default", &wal).await?;
+        let third = TableIdentifier::new(namespace, "invoices");
+        let invoices = reopened
+            .create_table(&third, vec_schema("invoices"))
+            .await?;
+        assert_eq!(invoices.stable_namespace_id, stable_namespace);
+        assert!(
+            invoices
+                .stable_collection_id
+                .is_some_and(|id| id > prior_collection)
+        );
+        assert!(invoices.object_id.is_some_and(|id| id > prior_max_object));
         Ok(())
     }
 

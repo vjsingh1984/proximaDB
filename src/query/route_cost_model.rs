@@ -42,7 +42,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use arc_swap::ArcSwap;
 
-use crate::observability::io_trace::IoTraceSnapshot;
+use crate::observability::io_trace::{IoTraceSnapshot, VectorAccessTrace, VectorCachePolicy};
 use crate::query::compute_scheduler::{QueryShape, backend_label};
 use crate::query::table_write_plan::ComputeBackend;
 
@@ -61,6 +61,9 @@ pub fn install_route_cost_observer() {
             GLOBAL_ROUTE_COST_MODEL.observe_by_label(shape_class, backend_label, snap);
         },
     )));
+    crate::observability::io_trace::set_vector_access_observer(Some(Box::new(|snap| {
+        observe_vector_access_snapshot(&GLOBAL_ROUTE_COST_MODEL, snap);
+    })));
     // Flag-gated live override (default OFF). PROXIMADB_ROUTE_COST_OVERRIDE is
     // either the original global bool ("1"/"true" → every class) or, for the
     // TD-EXEC-2 staged go-live, a comma-separated list of shape-class prefixes
@@ -74,6 +77,122 @@ pub fn install_route_cost_observer() {
         tracing::info!("route cost model: live override enabled with scope {scope:?}");
     }
     GLOBAL_ROUTE_COST_MODEL.set_override_scope(scope);
+}
+
+/// Query-local cache outcome for a completed vector access. This is observed
+/// evidence, not a pre-execution prediction: it may partition learned cells,
+/// but must not be treated as a route-time cache promise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VectorCacheOutcome {
+    Cold,
+    Warm,
+    Mixed,
+    /// The instrumented read path issued physical reads without consulting a
+    /// traced cache. This is a known uncached regime, not missing evidence.
+    Bypass,
+    Unknown,
+}
+
+impl VectorCacheOutcome {
+    pub fn from_snapshot(snap: &IoTraceSnapshot) -> Self {
+        let hits = snap
+            .footer_hits
+            .saturating_add(snap.survivor_l1_hits)
+            .saturating_add(snap.l2_hits);
+        let misses = snap
+            .footer_misses
+            .saturating_add(snap.survivor_l1_misses)
+            .saturating_add(snap.l2_misses);
+
+        // Physical I/O is authoritative. Lower-tier misses followed by an L1
+        // or L2 hit are still warm when no object-store GET escaped the cache;
+        // any cache hit plus a physical GET is mixed. With io-trace compiled
+        // out, absence of cache counters is missing evidence — UNLESS the
+        // route-time policy declares the regime uncached: `Disabled` is stamped
+        // always-on from the real engine cache handles, so physical GETs under
+        // a Disabled policy are a KNOWN uncached regime (bypass) regardless of
+        // whether the probe counters were compiled in.
+        if snap.get_ops == 0 && hits > 0 {
+            Self::Warm
+        } else if snap.get_ops > 0 && hits > 0 {
+            Self::Mixed
+        } else if snap.get_ops > 0 && misses > 0 {
+            Self::Cold
+        } else if snap.get_ops > 0
+            && (Self::policy_declares_uncached(snap) || cfg!(feature = "io-trace"))
+        {
+            Self::Bypass
+        } else {
+            Self::Unknown
+        }
+    }
+
+    /// True when every recorded access ran under an explicitly `Disabled`
+    /// cache policy — route-time evidence that no cache tier exists to be
+    /// consulted, independent of the `io-trace` feature.
+    fn policy_declares_uncached(snap: &IoTraceSnapshot) -> bool {
+        !snap.vector_accesses.is_empty()
+            && snap
+                .vector_accesses
+                .iter()
+                .all(|a| a.cache_policy == VectorCachePolicy::Disabled)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cold => "cold",
+            Self::Warm => "warm",
+            Self::Mixed => "mixed",
+            Self::Bypass => "bypass",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Whether the cache regime is sufficiently observed to partition an
+    /// admission cohort. Unknown remains durable but cannot authorize routing.
+    pub fn is_admissible(self) -> bool {
+        self != Self::Unknown
+    }
+}
+
+/// Exact, unbucketed physical geometry for one vector access-path cost cell.
+/// The engine, physical storage locality, and route-time cache policy belong in
+/// the shape so the same identity can be constructed before execution. Caller
+/// intent and completed cache outcome are durable evidence but not cell
+/// dimensions: either would prevent a truthful exact-vs-ANN comparison.
+pub fn vector_access_shape(access: &VectorAccessTrace) -> String {
+    format!(
+        "vector/engine={}/dim={}/k={}/filter={}/storage={}/cache_policy={}",
+        access.engine,
+        access.dimensions,
+        access.top_k,
+        if access.has_filter { "yes" } else { "no" },
+        access.storage_scope.as_str(),
+        access.cache_policy.as_str(),
+    )
+}
+
+/// Fold a completed vector query into the shared measured-cost cell store.
+/// Aggregate I/O/compute cannot be apportioned truthfully across multiple
+/// vector operators, so multi-access queries remain durable evidence but are
+/// excluded from online learning until operator-local costs exist.
+fn observe_vector_access_snapshot(model: &RouteCostModel, snap: &IoTraceSnapshot) -> bool {
+    let [access] = snap.vector_accesses.as_slice() else {
+        return false;
+    };
+    let cache_outcome = VectorCacheOutcome::from_snapshot(snap);
+    if access.storage_scope == crate::observability::io_trace::VectorStorageScope::Unknown
+        || !access.cache_policy.is_admissible()
+        || !cache_outcome.is_admissible()
+    {
+        return false;
+    }
+    model.observe_by_label(
+        &vector_access_shape(access),
+        access.actual_path.as_str(),
+        snap,
+    );
+    true
 }
 
 // ── Override scope: global bool → per-shape-class staged go-live (D4) ───────
@@ -157,7 +276,7 @@ impl OverrideScope {
 /// consult table is re-derived on load. Bumping this invalidates older files
 /// (they load nothing and the model re-learns), so a format change is never
 /// mis-read.
-const COST_MODEL_PERSIST_VERSION: u32 = 1;
+const COST_MODEL_PERSIST_VERSION: u32 = 2;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PersistedCostModel {
@@ -502,14 +621,14 @@ impl Default for CostWeights {
 /// terms are added.
 #[derive(Debug, Clone, Copy, Default)]
 struct CostQuantities {
-    range_gets: f64,
+    get_ops: f64,
     bytes_read: f64,
     egress_bytes: f64,
     bytes_written: f64,
     compute_ms: f64,
     // Diagnostic observability (ADR-056 AQE-S2): the runtime-filter skip ratio
     // + the wait-outcome ratio. NOT in `score` (pruning already reduced
-    // `range_gets`/`bytes_read` — scoring these double-counts). Recorded per
+    // `get_ops`/`bytes_read` — scoring these double-counts). Recorded per
     // (shape-class, backend) so promotion/demotion gates + AQE-S4 (build/probe
     // swap) can read them.
     splits_total: f64,
@@ -522,7 +641,7 @@ struct CostQuantities {
 impl CostQuantities {
     fn from_snapshot(snap: &IoTraceSnapshot) -> Self {
         Self {
-            range_gets: snap.range_gets as f64,
+            get_ops: snap.get_ops as f64,
             bytes_read: snap.bytes_read as f64,
             egress_bytes: snap.egress_bytes as f64,
             bytes_written: snap.bytes_written as f64,
@@ -539,7 +658,7 @@ impl CostQuantities {
 /// One (shape-class, backend) cell: EWMA means of the cost-bearing quantities.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct Cell {
-    range_gets: f64,
+    get_ops: f64,
     bytes_read: f64,
     egress_bytes: f64,
     bytes_written: f64,
@@ -555,7 +674,7 @@ struct Cell {
 impl Cell {
     fn fold(&mut self, alpha: f64, q: CostQuantities) {
         if self.samples == 0 {
-            self.range_gets = q.range_gets;
+            self.get_ops = q.get_ops;
             self.bytes_read = q.bytes_read;
             self.egress_bytes = q.egress_bytes;
             self.bytes_written = q.bytes_written;
@@ -567,7 +686,7 @@ impl Cell {
             self.runtime_filter_wait_ms = q.runtime_filter_wait_ms;
         } else {
             let blend = |old: f64, new: f64| alpha * new + (1.0 - alpha) * old;
-            self.range_gets = blend(self.range_gets, q.range_gets);
+            self.get_ops = blend(self.get_ops, q.get_ops);
             self.bytes_read = blend(self.bytes_read, q.bytes_read);
             self.egress_bytes = blend(self.egress_bytes, q.egress_bytes);
             self.bytes_written = blend(self.bytes_written, q.bytes_written);
@@ -586,7 +705,7 @@ impl Cell {
 
     fn quantities(&self) -> CostQuantities {
         CostQuantities {
-            range_gets: self.range_gets,
+            get_ops: self.get_ops,
             bytes_read: self.bytes_read,
             egress_bytes: self.egress_bytes,
             bytes_written: self.bytes_written,
@@ -605,7 +724,7 @@ impl Cell {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RouteCost {
     pub samples: u64,
-    pub range_gets: f64,
+    pub get_ops: f64,
     pub bytes_read: f64,
     /// EWMA cross-region / internet egress bytes (KEU) — zero on the free same-region path.
     pub egress_bytes: f64,
@@ -662,8 +781,8 @@ pub struct BackendChoice {
     pub score: f64,
     /// EWMA sample count at bake time.
     pub samples: u64,
-    /// Predicted ranged-GET count — the TD-170 hard round-trip-budget term.
-    pub range_gets: f64,
+    /// Predicted physical GET count — the TD-170 hard round-trip-budget term.
+    pub get_ops: f64,
 }
 
 /// Per-shape-class pre-baked recommendation: everything the lock-free consult
@@ -672,7 +791,7 @@ pub struct BackendChoice {
 #[derive(Debug, Clone)]
 pub struct ClassRecommendation {
     /// Every freshness-safe candidate with ANY history, cheapest-first. Carries
-    /// score/samples/range_gets so the consult can apply BOTH the soft
+    /// score/samples/get_ops so the consult can apply BOTH the soft
     /// `min_advantage` gate and the hard `rtt_budget` gate from frozen data.
     ranked: Vec<BackendChoice>,
     /// The least-sampled freshness-safe candidate still under `min_samples` (the
@@ -829,7 +948,7 @@ pub struct RouteCostModel {
     /// freshness-safe candidate is sampled (~1 in `exploration_interval`).
     explore_tick: AtomicU64,
     exploration_interval: u64,
-    /// TD-170 / ADR-034 P7: a HARD per-query round-trip (predicted `range_gets`)
+    /// TD-170 / ADR-034 P7: a HARD per-query round-trip (predicted `get_ops`)
     /// budget. `None` = disabled (default). When set, the override fires
     /// regardless of the soft `min_advantage` byte-cost gate if the static choice
     /// exceeds the budget and a freshness-safe candidate is within it — because
@@ -883,7 +1002,7 @@ impl RouteCostModel {
         }
     }
 
-    /// Set the hard round-trip budget (predicted `range_gets`); `None` disables it
+    /// Set the hard round-trip budget (predicted `get_ops`); `None` disables it
     /// (the default). Builder form for tests; production reads
     /// `PROXIMADB_ROUTE_RTT_BUDGET` at construction.
     pub fn with_rtt_budget(mut self, budget: Option<f64>) -> Self {
@@ -961,7 +1080,7 @@ impl RouteCostModel {
     /// footer-cache hit shows up as fewer GETs / fewer bytes in the trace.
     fn score(&self, q: CostQuantities) -> f64 {
         let mib = |bytes: f64| bytes / (1024.0 * 1024.0);
-        self.weights.per_get * q.range_gets
+        self.weights.per_get * q.get_ops
             + self.weights.per_mib_read * mib(q.bytes_read)
             + self.weights.per_mib_egress * mib(q.egress_bytes)
             + self.weights.per_mib_written * mib(q.bytes_written)
@@ -1034,7 +1153,14 @@ impl RouteCostModel {
 
     /// Current learned estimate for one (shape-class, backend), if any history.
     pub fn estimate(&self, shape_class: &str, backend: &ComputeBackend) -> Option<RouteCost> {
-        let key = (shape_class.to_string(), backend_label(backend));
+        self.estimate_by_label(shape_class, &backend_label(backend))
+    }
+
+    /// Current learned estimate for an arbitrary bounded access-path label.
+    /// Vector exact/ANN observations share the same persistence and EWMA
+    /// machinery without becoming peer `ComputeBackend` variants.
+    pub fn estimate_by_label(&self, shape_class: &str, route_label: &str) -> Option<RouteCost> {
+        let key = (shape_class.to_string(), route_label.to_string());
         let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
         let c = cells.get(&key)?;
         if c.samples == 0 {
@@ -1042,7 +1168,7 @@ impl RouteCostModel {
         }
         Some(RouteCost {
             samples: c.samples,
-            range_gets: c.range_gets,
+            get_ops: c.get_ops,
             bytes_read: c.bytes_read,
             egress_bytes: c.egress_bytes,
             bytes_written: c.bytes_written,
@@ -1063,7 +1189,7 @@ impl RouteCostModel {
     }
 
     /// Like [`recommend`] but, when `max_rtt` is `Some`, only considers candidates
-    /// whose predicted `range_gets` is within that round-trip budget (TD-170 hard
+    /// whose predicted `get_ops` is within that round-trip budget (TD-170 hard
     /// admission filter) — used to pick the cheapest *within-budget* backend.
     fn recommend_filtered(
         &self,
@@ -1076,7 +1202,7 @@ impl RouteCostModel {
             .filter_map(|b| {
                 self.estimate(shape_class, b)
                     .filter(|c| c.samples >= self.min_samples)
-                    .filter(|c| max_rtt.is_none_or(|budget| c.range_gets <= budget))
+                    .filter(|c| max_rtt.is_none_or(|budget| c.get_ops <= budget))
                     .map(|c| (b.clone(), c))
             })
             .collect();
@@ -1130,7 +1256,7 @@ impl RouteCostModel {
         // the budget: a backend over the round-trip budget loses even when it moves
         // fewer bytes (latency = depth × RTT), regardless of `min_advantage`.
         if let Some(budget) = self.rtt_budget
-            && static_cost.range_gets > budget
+            && static_cost.get_ops > budget
             && let Some(within) = self.recommend_filtered(shape_class, candidates, Some(budget))
             && backend_label(&within.backend) != backend_label(static_backend)
         {
@@ -1262,7 +1388,7 @@ impl RouteCostModel {
                         backend,
                         score: self.score(cell.quantities()),
                         samples: cell.samples,
-                        range_gets: cell.range_gets,
+                        get_ops: cell.get_ops,
                     })
                 })
                 .collect();
@@ -1307,6 +1433,243 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vector_cost_cells_use_route_time_cache_policy_not_completed_outcome() {
+        use crate::observability::io_trace::{
+            VectorAccessPath, VectorCachePolicy, VectorSearchIntent, VectorStorageScope,
+        };
+
+        let enabled = VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: VectorSearchIntent::Exact,
+            actual_path: VectorAccessPath::Exact,
+            storage_scope: VectorStorageScope::Remote,
+            cache_policy: VectorCachePolicy::Full,
+        };
+        let cold = IoTraceSnapshot {
+            get_ops: 1,
+            footer_misses: 2,
+            l2_misses: 2,
+            ..Default::default()
+        };
+        let warm = IoTraceSnapshot {
+            footer_hits: 2,
+            l2_hits: 2,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            vector_access_shape(&enabled),
+            "vector/engine=sst/dim=384/k=10/filter=no/storage=remote/cache_policy=full"
+        );
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&cold),
+            VectorCacheOutcome::Cold
+        );
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&warm),
+            VectorCacheOutcome::Warm
+        );
+
+        let ann = VectorAccessTrace {
+            requested_mode: VectorSearchIntent::Approximate,
+            actual_path: VectorAccessPath::Ann,
+            ..enabled.clone()
+        };
+        assert_eq!(
+            vector_access_shape(&enabled),
+            vector_access_shape(&ann),
+            "caller intent and completed access path must not split the paired cell"
+        );
+        let model = RouteCostModel::new();
+        assert!(observe_vector_access_snapshot(
+            &model,
+            &IoTraceSnapshot {
+                vector_accesses: vec![enabled.clone()],
+                ..cold.clone()
+            }
+        ));
+        assert!(observe_vector_access_snapshot(
+            &model,
+            &IoTraceSnapshot {
+                vector_accesses: vec![ann],
+                ..warm.clone()
+            }
+        ));
+        let shape = vector_access_shape(&enabled);
+        assert!(model.estimate_by_label(&shape, "exact").is_some());
+        assert!(model.estimate_by_label(&shape, "ann").is_some());
+
+        let disabled = VectorAccessTrace {
+            cache_policy: VectorCachePolicy::Disabled,
+            ..enabled.clone()
+        };
+        assert_ne!(
+            vector_access_shape(&disabled),
+            vector_access_shape(&enabled),
+            "route-time cache policies must not train one pooled cell"
+        );
+    }
+
+    #[test]
+    fn vector_cache_outcome_uses_physical_io_as_authority() {
+        let warm = IoTraceSnapshot {
+            survivor_l1_hits: 2,
+            survivor_l1_misses: 1,
+            l2_misses: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&warm),
+            VectorCacheOutcome::Warm
+        );
+
+        let mixed = IoTraceSnapshot {
+            get_ops: 1,
+            survivor_l1_hits: 1,
+            survivor_l1_misses: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&mixed),
+            VectorCacheOutcome::Mixed
+        );
+
+        let cold = IoTraceSnapshot {
+            get_ops: 1,
+            survivor_l1_misses: 1,
+            l2_misses: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&cold),
+            VectorCacheOutcome::Cold
+        );
+
+        let no_activity = IoTraceSnapshot::default();
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&no_activity),
+            VectorCacheOutcome::Unknown
+        );
+
+        let uncached_read = IoTraceSnapshot {
+            get_ops: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&uncached_read),
+            if cfg!(feature = "io-trace") {
+                VectorCacheOutcome::Bypass
+            } else {
+                VectorCacheOutcome::Unknown
+            }
+        );
+    }
+
+    /// TD-PAXRG-1 closeout: a `Disabled` route-time cache policy is stamped
+    /// always-on from the real engine cache handles — physical GETs under it
+    /// are a KNOWN uncached regime, so the outcome is `Bypass`
+    /// feature-independently (previously feature-off builds reported
+    /// `unknown`, which made every cache-free paired-cost cohort inadmissible).
+    #[test]
+    fn disabled_policy_with_gets_is_bypass() {
+        use crate::observability::io_trace::{
+            VectorAccessPath, VectorCachePolicy, VectorSearchIntent, VectorStorageScope,
+        };
+
+        let access = |policy: VectorCachePolicy| VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 128,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: VectorSearchIntent::Approximate,
+            actual_path: VectorAccessPath::Ann,
+            storage_scope: VectorStorageScope::Local,
+            cache_policy: policy,
+        };
+
+        // Disabled policy + physical GETs ⇒ Bypass, with and without io-trace.
+        let disabled = IoTraceSnapshot {
+            vector_accesses: vec![access(VectorCachePolicy::Disabled)],
+            get_ops: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&disabled),
+            VectorCacheOutcome::Bypass
+        );
+
+        // Multi-access: Disabled everywhere ⇒ still a known uncached regime.
+        let disabled_multi = IoTraceSnapshot {
+            vector_accesses: vec![
+                access(VectorCachePolicy::Disabled),
+                access(VectorCachePolicy::Disabled),
+            ],
+            get_ops: 3,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&disabled_multi),
+            VectorCacheOutcome::Bypass
+        );
+
+        // One Unknown-policy access ⇒ policy evidence incomplete ⇒ the
+        // feature-off build stays Unknown (fail-closed preserved).
+        let mixed_policy = IoTraceSnapshot {
+            vector_accesses: vec![
+                access(VectorCachePolicy::Disabled),
+                access(VectorCachePolicy::Unknown),
+            ],
+            get_ops: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            VectorCacheOutcome::from_snapshot(&mixed_policy),
+            if cfg!(feature = "io-trace") {
+                VectorCacheOutcome::Bypass
+            } else {
+                VectorCacheOutcome::Unknown
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_vector_route_dimensions_or_outcome_do_not_train_cost_model() {
+        use crate::observability::io_trace::{
+            VectorAccessPath, VectorCachePolicy, VectorSearchIntent,
+        };
+
+        let model = RouteCostModel::new();
+        let unknown_policy = IoTraceSnapshot {
+            vector_accesses: vec![VectorAccessTrace {
+                engine: "sst".to_string(),
+                dimensions: 384,
+                top_k: 10,
+                has_filter: false,
+                requested_mode: VectorSearchIntent::Exact,
+                actual_path: VectorAccessPath::Exact,
+                storage_scope: crate::observability::io_trace::VectorStorageScope::Local,
+                cache_policy: VectorCachePolicy::Unknown,
+            }],
+            get_ops: 1,
+            ..Default::default()
+        };
+
+        assert!(!observe_vector_access_snapshot(&model, &unknown_policy));
+        let unknown_outcome = IoTraceSnapshot {
+            vector_accesses: vec![VectorAccessTrace {
+                cache_policy: VectorCachePolicy::Disabled,
+                ..unknown_policy.vector_accesses[0].clone()
+            }],
+            ..Default::default()
+        };
+        assert!(!observe_vector_access_snapshot(&model, &unknown_outcome));
+        assert!(model.learned_cell_keys().is_empty());
+    }
+
+    #[test]
     fn persist_load_round_trip_warms_a_fresh_model() {
         let m = RouteCostModel::new();
         // Learn two cells from measured snapshots (typed observe so the backend
@@ -1337,7 +1700,7 @@ mod tests {
         let est = fresh
             .estimate("olap/parquet/large", &ComputeBackend::DataFusionLocal)
             .expect("warmed estimate");
-        assert_eq!(est.range_gets, 12.0);
+        assert_eq!(est.get_ops, 12.0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1353,9 +1716,9 @@ mod tests {
         );
     }
 
-    fn snap(range_gets: u64, bytes_read: u64, compute_ms: u64) -> IoTraceSnapshot {
+    fn snap(get_ops: u64, bytes_read: u64, compute_ms: u64) -> IoTraceSnapshot {
         let mut s = IoTraceSnapshot {
-            range_gets,
+            get_ops,
             bytes_read,
             ..Default::default()
         };
@@ -1382,6 +1745,24 @@ mod tests {
         assert_eq!(q.runtime_filter_arrived, 4.0);
         assert_eq!(q.runtime_filter_timed_out, 1.0);
         assert_eq!(q.runtime_filter_wait_ms, 4_200.0);
+    }
+
+    #[test]
+    fn whole_object_get_is_a_cost_bearing_round_trip() {
+        let model = RouteCostModel::new().with_min_samples(1);
+        let snapshot = IoTraceSnapshot {
+            get_ops: 1,
+            bytes_read: 1 << 20,
+            ..Default::default()
+        };
+        model.observe("vector/sst/exact", &ComputeBackend::Native, &snapshot);
+
+        let estimate = model
+            .estimate("vector/sst/exact", &ComputeBackend::Native)
+            .expect("whole-object read creates a learned cell");
+        let weights = CostWeights::default();
+        assert_eq!(estimate.get_ops, 1.0);
+        assert!((estimate.score - (weights.per_get + weights.per_mib_read)).abs() < 1e-6);
     }
 
     #[test]
@@ -1687,7 +2068,7 @@ mod tests {
         // Identical in every term except egress, so the score delta isolates it.
         let same_region = snap(4, 8 << 20, 0);
         let cross_region = IoTraceSnapshot {
-            range_gets: 4,
+            get_ops: 4,
             bytes_read: 8 << 20,
             egress_bytes: 8 << 20,
             ..Default::default()
@@ -1724,7 +2105,7 @@ mod tests {
         // read-only routes, active once a route induces writes).
         let m = RouteCostModel::new().with_min_samples(1);
         let written = IoTraceSnapshot {
-            range_gets: 0,
+            get_ops: 0,
             bytes_written: 2 << 20,
             ..Default::default()
         };
@@ -1747,7 +2128,7 @@ mod tests {
             .expect("history");
         assert_eq!(est.samples, 10);
         // EWMA of a constant series converges to that constant.
-        assert!((est.range_gets - 2.0).abs() < 1e-6);
+        assert!((est.get_ops - 2.0).abs() < 1e-6);
         assert!(est.score > 0.0);
     }
 
@@ -1761,7 +2142,55 @@ mod tests {
             .estimate("olap/parquet", &ComputeBackend::DataFusionLocal)
             .expect("label-keyed observation is visible to typed estimate");
         assert_eq!(by_label.samples, 1);
-        assert!((by_label.range_gets - 4.0).abs() < 1e-6);
+        assert!((by_label.get_ops - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vector_access_cost_cells_admit_only_unambiguous_single_operator_queries() {
+        use crate::observability::io_trace::{
+            VectorAccessPath, VectorAccessTrace, VectorCachePolicy, VectorSearchIntent,
+        };
+
+        let access = VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: VectorSearchIntent::Adaptive,
+            actual_path: VectorAccessPath::Exact,
+            storage_scope: crate::observability::io_trace::VectorStorageScope::Local,
+            cache_policy: VectorCachePolicy::Disabled,
+        };
+        let model = RouteCostModel::new();
+        let single = IoTraceSnapshot {
+            get_ops: 2,
+            bytes_read: 8 << 20,
+            footer_misses: 1,
+            vector_accesses: vec![access.clone()],
+            ..Default::default()
+        };
+        assert!(observe_vector_access_snapshot(&model, &single));
+        let shape = vector_access_shape(&access);
+        let estimate = model
+            .estimate_by_label(&shape, "exact")
+            .expect("single access is attributable");
+        assert_eq!(estimate.samples, 1);
+        assert_eq!(estimate.get_ops, 2.0);
+
+        let ambiguous = IoTraceSnapshot {
+            get_ops: 99,
+            vector_accesses: vec![access.clone(), access],
+            ..Default::default()
+        };
+        assert!(!observe_vector_access_snapshot(&model, &ambiguous));
+        assert_eq!(
+            model
+                .estimate_by_label(&shape, "exact")
+                .expect("original cell remains")
+                .samples,
+            1,
+            "aggregate query cost must not be assigned to either of two operators"
+        );
     }
 
     #[test]

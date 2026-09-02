@@ -12,6 +12,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from string import Formatter
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -132,6 +133,52 @@ class InputRenderer:
             separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class ChunkContextRenderer:
+    """Render per-source context into every model input without changing spans.
+
+    The context value is read from chunk-call metadata. An absent or blank value
+    is an explicit no-op, which lets one corpus mix titled and untitled sources
+    without manufacturing empty labels. Only ``context`` and ``text`` fields
+    are accepted so the sealed template cannot depend on ambient state.
+    """
+
+    metadata_key: str
+    template: str = "{context}\n\n{text}"
+
+    def __post_init__(self) -> None:
+        if not self.metadata_key.strip():
+            raise ValueError("metadata_key is required")
+        fields: list[str] = []
+        for _literal, field_name, format_spec, conversion in Formatter().parse(
+            self.template
+        ):
+            if field_name is not None:
+                fields.append(field_name)
+            if format_spec or conversion:
+                raise ValueError("context template does not allow format modifiers")
+        if fields.count("context") != 1 or fields.count("text") != 1:
+            raise ValueError(
+                "context template must contain exactly one {context} and one {text}"
+            )
+        if set(fields) != {"context", "text"}:
+            raise ValueError("context template contains an unsupported field")
+
+    def render(self, text: str, metadata: dict[str, Any] | None) -> str:
+        value = (metadata or {}).get(self.metadata_key, "")
+        if not isinstance(value, str):
+            raise ValueError(
+                f"chunk context metadata {self.metadata_key!r} must be a string"
+            )
+        context = value.strip()
+        if not context:
+            return text
+        return self.template.format(context=context, text=text)
+
+    def to_manifest(self) -> dict[str, str]:
+        return {"metadata_key": self.metadata_key, "template": self.template}
 
 
 @dataclass(frozen=True)
@@ -258,22 +305,36 @@ class CompositeInputContract:
         return min(contract.effective_context_limit for contract in self.contracts)
 
     def counts(self, text: str, role: InputRole) -> dict[str, int]:
-        return {
-            contract.model_id: contract.count(text, role) for contract in self.contracts
-        }
+        shared: dict[tuple[str, str], int] = {}
+        counts: dict[str, int] = {}
+        for contract in self.contracts:
+            rendered = contract.render(text, role)
+            key = (contract.counter.fingerprint, rendered)
+            count = shared.get(key)
+            if count is None:
+                count = contract.counter.count(rendered)
+                shared[key] = count
+            counts[contract.model_id] = count
+        return counts
 
     def fits(self, text: str, role: InputRole, target_tokens: int) -> bool:
+        counts = self.counts(text, role)
         return all(
-            contract.count(text, role)
+            counts[contract.model_id]
             <= min(target_tokens, contract.effective_context_limit)
             for contract in self.contracts
         )
 
     def validate(self, text: str, role: InputRole) -> dict[str, int]:
-        return {
-            contract.model_id: contract.validate(text, role)
-            for contract in self.contracts
-        }
+        counts = self.counts(text, role)
+        for contract in self.contracts:
+            count = counts[contract.model_id]
+            if count > contract.effective_context_limit:
+                raise ValueError(
+                    f"{contract.model_id} {role.value} input has {count} tokens, "
+                    f"exceeding the effective limit {contract.effective_context_limit}"
+                )
+        return counts
 
     def to_manifest(self) -> dict[str, Any]:
         payload = {

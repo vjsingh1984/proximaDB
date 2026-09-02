@@ -228,13 +228,12 @@ export interface paths {
         put?: never;
         /**
          * Paginated scan of records in a collection.
-         * @description Returns the next page of records (TD-099 acceptance 2, live). The
-         *     handler resolves the collection id, calls
-         *     `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
-         *     `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
-         *     `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
-         *     still deferred: `next_cursor` is always `None` today; callers bump
-         *     `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+         * @description Returns the next page of records (TD-099 acceptance 2 + 3, live).
+         *     Cursor-based pagination: pass the response's `next_cursor` back as
+         *     `cursor` to fetch the next page; a `null` cursor means the scan is
+         *     exhausted. Cursors are minted and validated against the caller-facing
+         *     collection id in the URL path, expire after 24h (HTTP 410), and reject
+         *     cross-collection reuse (HTTP 400).
          */
         post: operations["scanRecords"];
         delete?: never;
@@ -670,6 +669,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/model-registries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listModelRegistries"];
+        put?: never;
+        post: operations["createModelRegistry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/model-registries/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getModelRegistry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/model-registries/{name}/mutations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["applyModelRegistryMutation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/model-registries/{name}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveModelAlias"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/observability/namespaces/{namespace}/logs": {
         parameters: {
             query?: never;
@@ -827,6 +890,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ApplyModelRegistryMutationRequest: {
+            /**
+             * Format: int64
+             * @description Optimistic concurrency token returned by the previous read or mutation.
+             */
+            expected_revision: number;
+            /** @description Command-shaped mutation; whole-registry replacement is intentionally unsupported. */
+            mutation: components["schemas"]["CatalogModelRegistryMutation"];
+        };
         /** @description Body for `POST /api/v2/graphs/{id}/edges/batch`. */
         BatchCreateEdgesRequest: {
             edges: components["schemas"]["EdgeInput"][];
@@ -872,6 +944,188 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description Content-addressed reference to bytes held outside xCatalog. */
+        CatalogArtifactDescriptor: {
+            digest: string;
+            media_type: string;
+            /** Format: int64 */
+            size_bytes: number;
+            uri: string;
+        };
+        /** @description Mutable serving intent that always resolves to an immutable version/digest. */
+        CatalogDeploymentBinding: {
+            artifact_digest: string;
+            endpoint: string;
+            name: string;
+            runtime: string;
+            /** Format: int64 */
+            updated_at_ms: number;
+            /** Format: int64 */
+            version: number;
+        };
+        CatalogDimensionPolicy: "fixed" | "discrete" | {
+            range: components["schemas"]["CatalogDimensionRange"];
+        };
+        CatalogDimensionRange: {
+            /** Format: int32 */
+            minimum: number;
+        };
+        /** @description Exact rendered-input and tokenizer budget consumed by an embedding runtime. */
+        CatalogEmbeddingInputContract: {
+            /** Format: int32 */
+            declared_context_limit: number;
+            document_parameters?: {
+                [key: string]: string;
+            };
+            document_template: string;
+            /** Format: int32 */
+            effective_context_limit: number;
+            model_revision: string;
+            query_parameters?: {
+                [key: string]: string;
+            };
+            query_template: string;
+            /** Format: int32 */
+            special_token_count: number;
+            tokenizer_fingerprint: string;
+            tokenizer_id: string;
+            tokenizer_revision: string;
+        };
+        /**
+         * @description Registered embedding model: immutable versions plus separately mutable or
+         *     append-only lifecycle records.
+         */
+        CatalogEmbeddingModelRegistry: {
+            aliases?: {
+                [key: string]: number;
+            };
+            decisions?: components["schemas"]["CatalogModelDecision"][];
+            deployments?: {
+                [key: string]: components["schemas"]["CatalogDeploymentBinding"];
+            };
+            evidence?: components["schemas"]["CatalogEvaluationEvidence"][];
+            name: string;
+            /**
+             * Format: int64
+             * @description Optimistic concurrency token for catalog/API mutations. Old rows default
+             *     to zero; every successful command increments it.
+             */
+            revision?: number;
+            /** Format: int32 */
+            schema_version: number;
+            tags?: {
+                [key: string]: string;
+            };
+            versions?: {
+                [key: string]: components["schemas"]["CatalogEmbeddingModelVersion"];
+            };
+        };
+        /** @description Immutable executable contract for one registered model version. */
+        CatalogEmbeddingModelVersion: {
+            artifact: components["schemas"]["CatalogArtifactDescriptor"];
+            /** Format: int64 */
+            created_at_ms: number;
+            governance?: components["schemas"]["CatalogModelGovernance"];
+            input: components["schemas"]["CatalogEmbeddingInputContract"];
+            lineage?: components["schemas"]["CatalogModelLineage"];
+            output: components["schemas"]["CatalogEmbeddingOutputContract"];
+            provider_model_id: string;
+            source_run_id?: string | null;
+            /** Format: int64 */
+            version: number;
+        };
+        CatalogEmbeddingOutputContract: {
+            dimension_policy: components["schemas"]["CatalogDimensionPolicy"];
+            /** Format: int32 */
+            native_dimension: number;
+            normalized: boolean;
+            pooling: string;
+            supported_dimensions: number[];
+        };
+        /** @description Append-only evaluation summary. Large row-level results remain external. */
+        CatalogEvaluationEvidence: {
+            /** Format: int64 */
+            created_at_ms: number;
+            dataset_digest: string;
+            dataset_name: string;
+            evaluator: string;
+            evidence_id: string;
+            metrics: {
+                [key: string]: number;
+            };
+            /** Format: int64 */
+            version: number;
+        };
+        /** @description Digest-pinned input consumed by the execution that produced a model. */
+        CatalogLineageInput: {
+            digest: string;
+            kind: components["schemas"]["CatalogLineageInputKind"];
+            name: string;
+        };
+        /** @enum {string} */
+        CatalogLineageInputKind: "dataset" | "feature_set" | "model" | "artifact";
+        /** @enum {string} */
+        CatalogModelAccess: "open" | "gated" | "unreviewed";
+        CatalogModelAliasMutation: {
+            alias: string;
+            /** Format: int64 */
+            version: number;
+        };
+        /** @description Append-only policy/audit decision, intentionally separate from evidence. */
+        CatalogModelDecision: {
+            /** Format: int64 */
+            created_at_ms: number;
+            decision: components["schemas"]["CatalogModelDecisionKind"];
+            decision_id: string;
+            evidence_ids: string[];
+            principal: string;
+            /** Format: int64 */
+            version: number;
+        };
+        /** @enum {string} */
+        CatalogModelDecisionKind: "approved" | "rejected" | "deprecated";
+        /**
+         * @description Supply-chain and runtime policy declared for an immutable model version.
+         *     Approval decisions remain separate append-only audit records.
+         */
+        CatalogModelGovernance: {
+            access?: components["schemas"]["CatalogModelAccess"];
+            approved_runtimes?: string[];
+            license_id?: string;
+            requires_remote_code?: boolean;
+        };
+        /** @description MLMD/OpenLineage-shaped producer execution and its declared inputs. */
+        CatalogModelLineage: {
+            code_revision?: string | null;
+            inputs?: components["schemas"]["CatalogLineageInput"][];
+            producer_execution_id?: string | null;
+        };
+        /**
+         * @description Command-shaped mutations preserve version/evidence/decision immutability at
+         *     the persistence boundary. API adapters lower into these commands instead
+         *     of replacing a whole registry document.
+         */
+        CatalogModelRegistryMutation: {
+            /** @enum {string} */
+            operation: "register_version";
+            payload: components["schemas"]["CatalogEmbeddingModelVersion"];
+        } | {
+            /** @enum {string} */
+            operation: "set_alias";
+            payload: components["schemas"]["CatalogModelAliasMutation"];
+        } | {
+            /** @enum {string} */
+            operation: "append_evidence";
+            payload: components["schemas"]["CatalogEvaluationEvidence"];
+        } | {
+            /** @enum {string} */
+            operation: "record_decision";
+            payload: components["schemas"]["CatalogModelDecision"];
+        } | {
+            /** @enum {string} */
+            operation: "upsert_deployment";
+            payload: components["schemas"]["CatalogDeploymentBinding"];
+        };
         /** @description Collection statistics for v2 API */
         CollectionStatsV2: {
             /**
@@ -881,9 +1135,16 @@ export interface components {
             indexed_fields: number;
             /**
              * Format: int64
-             * @description Total number of records
+             * @description Total number of records, or `null` when the server does not know.
+             *
+             *     `null` is a real answer here, not a gap. The counter is maintained by
+             *     `MetadataStore::update_stats`, which the record write path does not call,
+             *     so a collection that has never had stats written carries none. Reporting
+             *     `0` in that case is a *confident wrong answer* — indistinguishable from a
+             *     genuinely empty collection, and it cost one downstream project a false
+             *     durability bug report before the cause was found (#1527).
              */
-            record_count: number;
+            record_count?: number | null;
             /**
              * Format: int64
              * @description Total storage size in bytes
@@ -907,6 +1168,13 @@ export interface components {
             canonical_embedding_precision?: string | null;
             /** @description Collection ID */
             collection_id: string;
+            /**
+             * Format: int64
+             * @description Monotonic server-owned content revision for cache revalidation.
+             */
+            content_revision: number;
+            /** @description Opaque validator that also fences server restarts. */
+            content_revision_token: string;
             /** @description Creation timestamp */
             created_at: string;
             /**
@@ -1074,6 +1342,10 @@ export interface components {
             graph_id: string;
             /** @description Optional human-readable name (defaults to graph_id). */
             name?: string | null;
+        };
+        CreateModelRegistryRequest: {
+            /** @description Tenant-local registry name. Must be one traversal-free catalog segment. */
+            name: string;
         };
         /** @description Wrapped envelope: server expects `{"node": NodeInput}`. */
         CreateNodeRequest: {
@@ -1557,6 +1829,18 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        ListModelRegistriesResponse: {
+            registries: components["schemas"]["ModelRegistryRecordResponse"][];
+        };
+        /**
+         * @description REST uses a decimal string for stable catalog IDs so JavaScript clients do
+         *     not lose precision. gRPC exposes the same value as `uint64`.
+         */
+        ModelRegistryRecordResponse: {
+            asset_id: string;
+            registry: components["schemas"]["CatalogEmbeddingModelRegistry"];
+            tenant_id: string;
+        };
         /**
          * @description Node payload nested inside `CreateNodeRequest.node`. Matches
          *     `RestNodeInput` in proximadb-api's graph handler.
@@ -1685,6 +1969,33 @@ export interface components {
              */
             version?: number | null;
         };
+        ResolveModelAliasRequest: {
+            alias: string;
+            /** Format: int32 */
+            dimension: number;
+            /** @description Require the latest append-only decision to approve the selected version. */
+            require_approved?: boolean;
+            /** @description Runtime implementation that will execute the immutable contract. */
+            runtime?: string | null;
+        };
+        ResolvedEmbeddingModelResponse: {
+            asset_id: string;
+            contract_sha256: string;
+            model: components["schemas"]["CatalogEmbeddingModelVersion"];
+            registry_name: string;
+            /** Format: int64 */
+            registry_revision: number;
+        };
+        ResolvedModelBindingResponse: {
+            contract_sha256: string;
+            /** Format: int32 */
+            dimension: number;
+            model: string;
+            model_asset_id: string;
+            /** Format: int64 */
+            model_version: number;
+            snapshot: components["schemas"]["ResolvedEmbeddingModelResponse"];
+        };
         /** @description Column definition for schema */
         RestColumnDefinition: {
             /**
@@ -1785,6 +2096,9 @@ export interface components {
          *     `RecordResponse` schema (same shape used by `getRecord`).
          */
         ScanRecordsResponse: {
+            /** Format: int64 */
+            content_revision: number;
+            content_revision_token: string;
             next_cursor?: string | null;
             records: components["schemas"]["RecordV2Response"][];
             /** Format: int64 */
@@ -2637,7 +2951,7 @@ export interface operations {
                     "application/json": components["schemas"]["ScanRecordsResponse"];
                 };
             };
-            /** @description Invalid request. */
+            /** @description Invalid request (including a cursor minted for a different collection). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2648,6 +2962,24 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Collection changed during the scan; restart pagination. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Cursor expired (older than 24h); restart the scan. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3456,6 +3788,214 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    listModelRegistries: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tenant-scoped registries in deterministic name order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListModelRegistriesResponse"];
+                };
+            };
+        };
+    };
+    createModelRegistry: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateModelRegistryRequest"];
+            };
+        };
+        responses: {
+            /** @description Created model registry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelRegistryRecordResponse"];
+                };
+            };
+            /** @description Invalid registry name. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Registry already exists. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getModelRegistry: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                /** @description Tenant-local registry name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Model registry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelRegistryRecordResponse"];
+                };
+            };
+            /** @description Registry not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    applyModelRegistryMutation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                /** @description Tenant-local registry name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyModelRegistryMutationRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated registry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelRegistryRecordResponse"];
+                };
+            };
+            /** @description Invalid lifecycle command. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Registry not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Revision conflict. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resolveModelAlias: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                /** @description Tenant-local registry name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveModelAliasRequest"];
+            };
+        };
+        responses: {
+            /** @description Immutable version and digest binding. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolvedModelBindingResponse"];
+                };
+            };
+            /** @description Alias, dimension, runtime, or approval policy rejected. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Registry not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     ingestLog: {

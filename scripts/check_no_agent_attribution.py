@@ -35,9 +35,14 @@ FORBIDDEN_PATTERNS = [
      '"Generated with <agent>" tagline'),
     (re.compile(r"🤖"),
      "robot emoji (agent-generated marker)"),
-    (re.compile(r"(?:authored|written|created|generated|produced)\s+by\s+(?:claude|codex|gemini|copilot|chatgpt|anthropic|openai)", re.I),
+    (re.compile(r"(?:authored|written|created|generated|produced|reviewed)\s+by\s+(?:claude|codex|gemini|copilot|chatgpt|anthropic|openai)", re.I),
      '"<verb> by <agent>" attribution'),
-    (re.compile(r"\b(?:claude|gemini)\s+(?:opus|sonnet|haiku|code|pro|flash|\d)", re.I),
+    (re.compile(
+        r"^\s*(?:[-*_>]+\s*)?(?:claude|gemini)\s+"
+        r"(?:opus|sonnet|haiku|code|pro|flash|\d)"
+        r"(?:\s+\d+(?:\.\d+)*)?\s*[.!]?\s*$",
+        re.I | re.M,
+    ),
      "agent model/product signature (e.g. 'Claude Opus', 'Claude Code')"),
     (re.compile(r"noreply@anthropic\.com|noreply@openai\.com|@users\.noreply\.github\.com.*(?:claude|copilot)", re.I),
      "agent no-reply email trailer"),

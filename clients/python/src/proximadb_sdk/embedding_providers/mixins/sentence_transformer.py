@@ -57,17 +57,18 @@ class SentenceTransformerMixin:
         """
         try:
             from sentence_transformers import SentenceTransformer
-        except ImportError:
+        except ImportError as exc:
             raise ImportError(
                 "sentence-transformers is required for this provider. "
                 "Install with: pip install sentence-transformers"
-            )
+            ) from exc
 
         device = resolve_device(self.config.device)
         backend = self.config.backend
         prompts = self.config.extra.get("prompts")
         revision = self.config.model.revision
         truncate_dim = self.config.extra.get("truncate_dim")
+        local_files_only = bool(self.config.extra.get("local_files_only", False))
 
         cache = ModelCache()
         # Device + backend + prompts participate in identity: two providers that
@@ -75,7 +76,8 @@ class SentenceTransformerMixin:
         cache_key = (
             f"st_{self.config.model.name}_{self.config.trust_remote_code}"
             f"_{device}_{backend}_{revision}_{truncate_dim}_"
-            f"{json.dumps(prompts, sort_keys=True) if prompts else None}"
+            f"{json.dumps(prompts, sort_keys=True) if prompts else None}_"
+            f"{local_files_only}"
         )
 
         def loader():
@@ -89,6 +91,7 @@ class SentenceTransformerMixin:
                 "device": device,
                 "trust_remote_code": self.config.trust_remote_code,
                 "cache_folder": self.config.cache_dir,
+                "local_files_only": local_files_only,
             }
             if backend is not None:
                 kwargs["backend"] = backend
@@ -101,10 +104,11 @@ class SentenceTransformerMixin:
             try:
                 model = SentenceTransformer(self.config.model.name, **kwargs)
             except TypeError as exc:
-                if revision is not None or truncate_dim is not None:
+                if revision is not None or truncate_dim is not None or local_files_only:
                     raise TypeError(
                         "the installed sentence-transformers version cannot honor "
-                        "the requested revision/truncate_dim; upgrade the dependency"
+                        "the requested revision/truncate_dim/local_files_only; "
+                        "upgrade the dependency"
                     ) from exc
                 # Older sentence-transformers without backend/prompts kwargs:
                 # retry with the universally-supported subset.
@@ -178,9 +182,11 @@ class SentenceTransformerMixin:
             query_template = "{text}"
 
         configured_dimension = self.get_dimension()
-        dimension_getter = getattr(
-            self._model, "get_sentence_embedding_dimension", None
-        )
+        dimension_getter = getattr(self._model, "get_embedding_dimension", None)
+        if not callable(dimension_getter):
+            dimension_getter = getattr(
+                self._model, "get_sentence_embedding_dimension", None
+            )
         runtime_dimension = dimension_getter() if callable(dimension_getter) else None
         if runtime_dimension is not None and runtime_dimension != configured_dimension:
             raise ValueError(
@@ -212,6 +218,27 @@ class SentenceTransformerMixin:
             document_encode_parameters=metadata.document_encode_parameters,
             query_encode_parameters=metadata.query_encode_parameters,
         )
+
+    def get_runtime_info(self) -> dict[str, str | None]:
+        """Return the actual loaded inference runtime for artifact provenance."""
+        self.ensure_initialized()
+        backend_getter = getattr(self._model, "get_backend", None)
+        backend = backend_getter() if callable(backend_getter) else self.config.backend
+        device = getattr(self._model, "device", None)
+        dtype = getattr(self._model, "dtype", None)
+
+        def normalized(value):
+            if value is None:
+                return None
+            rendered = str(value)
+            return rendered.removeprefix("torch.")
+
+        return {
+            "backend": normalized(backend) or "torch",
+            "compute_dtype": normalized(dtype),
+            "device": normalized(device) or "unresolved",
+            "requested_device": self.config.device,
+        }
 
     def _encode_with_prompt(self, texts: list[str], prompt_name: str) -> np.ndarray:
         """Encode using a registered native ST prompt, falling back to a plain
