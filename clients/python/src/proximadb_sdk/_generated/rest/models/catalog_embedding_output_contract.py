@@ -34,7 +34,11 @@ class CatalogEmbeddingOutputContract:
     """
 
     native_dimension: int
-    dimension_policy: CatalogDimensionPolicyType0 | CatalogDimensionPolicyType1 | CatalogDimensionPolicyType2
+    dimension_policy: (
+        CatalogDimensionPolicyType0
+        | CatalogDimensionPolicyType1
+        | CatalogDimensionPolicyType2
+    )
     supported_dimensions: list[int]
     normalized: bool
     pooling: str

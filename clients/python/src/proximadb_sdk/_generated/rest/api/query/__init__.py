@@ -3,4 +3,4 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
-""" Contains endpoint functions for accessing the API """
+"""Contains endpoint functions for accessing the API"""
