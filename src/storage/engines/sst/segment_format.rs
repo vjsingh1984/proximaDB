@@ -4431,9 +4431,24 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             .is_some_and(|s| s.as_ref().is_some_and(|stats| stats.oid_chunk_len > 0))
     });
     if v4_chunk_fetch {
-        // TD-PAXRG-1 Phase D: per-RG OID-chunk fetch — the footer's stats
-        // payload addresses each RG's chunk; decode via decode_str_chunk.
-        for (&bi, locals) in &block_rows {
+        // TD-PAXRG-1 Phase D + TD-RDSTRAT-13 PR-B 2b: per-RG OID-chunk fetch,
+        // WAVED — the chunks were previously fetched strictly sequentially
+        // (up to ~top-k serial GETs; on object stores that is ~top-k × RTT).
+        // Same peek·batch·feed discipline as the legacy whole-block tail:
+        // classify via the side-effect-free peek, ONE bounded wave for the
+        // true-cold chunks (D4 bound: min(INFLIGHT,N) × chunk_len ≤ small —
+        // chunks are ~tens of bytes per row), then feed pre-fetched bytes
+        // through the SAME get_or_fetch seam so cache semantics, LRU and
+        // counters stay byte-identical; serial fallback on wave Err.
+        struct ChunkDesc {
+            start: u64,
+            range_len: u64,
+            row_count: usize,
+            encoding_id: u8,
+            is_lz4: bool,
+        }
+        let mut chunk_descs: Vec<ChunkDesc> = Vec::with_capacity(block_rows.len());
+        for &bi in block_rows.keys() {
             let b = footer.blocks.get(bi).ok_or_else(|| {
                 anyhow::anyhow!("coalesced scan OID chunk block {bi} is missing from footer")
             })?;
@@ -4458,39 +4473,157 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             let start = b.offset.checked_add(relative_start).ok_or_else(|| {
                 anyhow::anyhow!("coalesced scan OID chunk absolute offset overflows for block {bi}")
             })?;
+            chunk_descs.push(ChunkDesc {
+                start,
+                range_len,
+                row_count: b.row_count as usize,
+                encoding_id: stats.oid_encoding_id,
+                is_lz4: stats.oid_is_lz4,
+            });
+        }
+
+        enum ChunkSlot {
+            SiteServed,
+            Cold(usize),
+        }
+        let mut chunk_slots: Vec<ChunkSlot> = Vec::with_capacity(chunk_descs.len());
+        let mut chunk_cold_ranges: Vec<std::ops::Range<u64>> = Vec::new();
+        for (desc_i, (_bi, _locals)) in block_rows.iter().enumerate() {
+            let desc = &chunk_descs[desc_i];
+            match survivor_cache {
+                Some(sc)
+                    if sc
+                        .peek_memory_exact(CacheKind::Other, path, desc.start, desc.range_len)
+                        .await
+                        .is_some() =>
+                {
+                    chunk_slots.push(ChunkSlot::SiteServed);
+                }
+                _ => {
+                    chunk_slots.push(ChunkSlot::Cold(chunk_cold_ranges.len()));
+                    chunk_cold_ranges.push(desc.start..desc.start + desc.range_len);
+                }
+            }
+            let _ = desc_i;
+        }
+        let mut chunk_cold_bytes: Vec<Option<Vec<u8>>> = vec![None; chunk_cold_ranges.len()];
+        if !chunk_cold_ranges.is_empty() {
+            let batched = match fs
+                .read_ranges_prefetch(path, chunk_cold_ranges.clone())
+                .await
+            {
+                Ok(bufs) => bufs,
+                Err(_) => {
+                    // Defensive fallback to the sequential baseline shape.
+                    let mut seq = Vec::with_capacity(chunk_cold_ranges.len());
+                    for range in &chunk_cold_ranges {
+                        let b = fs
+                            .read_range(path, range.start, range.end - range.start)
+                            .await
+                            .map_err(|err| {
+                                anyhow::anyhow!("coalesced scan OID-chunk fallback {path}: {err}")
+                            })?;
+                        seq.push(b);
+                    }
+                    seq
+                }
+            };
+            // Metrics parity: one record per physical GET, at batch time.
+            for ((range, buf), slot) in chunk_cold_ranges
+                .iter()
+                .zip(batched)
+                .zip(chunk_cold_bytes.iter_mut())
+            {
+                record_get_physical(CacheTier::ResultPayload, range.end - range.start, trace_on);
+                *slot = Some(buf);
+            }
+            crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
+        }
+
+        for (desc_i, (bi, locals)) in block_rows.iter().enumerate() {
+            let desc = &chunk_descs[desc_i];
+            let pre = match &chunk_slots[desc_i] {
+                ChunkSlot::Cold(i) => Some(chunk_cold_bytes[*i].take().ok_or_else(|| {
+                    anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: cold chunk {i} missing")
+                })?),
+                ChunkSlot::SiteServed => None,
+            };
             // ADR-065 Q3: same read-through cache class as the legacy OID path.
             let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
-                sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
-                    let b = fs.read_range(path, start, range_len).await?;
-                    record_get_physical(CacheTier::ResultPayload, range_len, trace_on);
-                    Ok(b)
-                })
-                .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}"))?
+                match pre {
+                    Some(mut pre) => sc
+                        .get_or_fetch(
+                            CacheKind::Other,
+                            path,
+                            desc.start,
+                            desc.range_len,
+                            || async {
+                                Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
+                                    std::mem::take(&mut pre),
+                                )
+                            },
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}")
+                        })?,
+                    None => {
+                        // SiteServed (or a peek/consume race): the original
+                        // baseline loader — records fire iff it truly runs.
+                        sc.get_or_fetch(
+                            CacheKind::Other,
+                            path,
+                            desc.start,
+                            desc.range_len,
+                            || async move {
+                                let b = fs.read_range(path, desc.start, desc.range_len).await?;
+                                record_get_physical(
+                                    CacheTier::ResultPayload,
+                                    desc.range_len,
+                                    trace_on,
+                                );
+                                Ok(b)
+                            },
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}")
+                        })?
+                    }
+                }
             } else {
-                let b = fs
-                    .read_range(path, start, range_len)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}"))?;
-                record_get_physical(CacheTier::ResultPayload, range_len, trace_on);
-                Arc::from(b)
+                match pre {
+                    Some(b) => Arc::from(b),
+                    None => {
+                        let b = fs
+                            .read_range(path, desc.start, desc.range_len)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}")
+                            })?;
+                        record_get_physical(CacheTier::ResultPayload, desc.range_len, trace_on);
+                        Arc::from(b)
+                    }
+                }
             };
-            if buf.len() as u64 != range_len {
+            if buf.len() as u64 != desc.range_len {
                 anyhow::bail!(
-                    "coalesced scan OID chunk fetch {path} block {bi} returned {} bytes, expected {range_len}",
-                    buf.len()
+                    "coalesced scan OID chunk fetch {path} block {bi} returned {} bytes, expected {}",
+                    buf.len(),
+                    desc.range_len
                 );
             }
             let oids = proximadb_block_format::decode_str_chunk_checked(
                 &buf,
-                stats.oid_encoding_id,
-                stats.oid_is_lz4,
-                b.row_count as usize,
+                desc.encoding_id,
+                desc.is_lz4,
+                desc.row_count,
             )
             .map_err(|err| {
                 anyhow::anyhow!("coalesced scan OID chunk decode {path} block {bi}: {err}")
             })?;
             for &local in locals {
+                let bi = *bi;
                 let oid = oids
                     .get(local)
                     .and_then(Option::as_ref)
