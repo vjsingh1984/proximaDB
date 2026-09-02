@@ -5,9 +5,14 @@
 //!
 //! # Features
 //!
-//! - `client` (default) - HTTP/REST client for remote connections
-//! - `embedded` - In-process database mode (requires linking to proximadb)
-//! - `full` - Both client and embedded modes
+//! - `client` (default) - HTTP/REST client for remote connections. This is the
+//!   only mode available from crates.io.
+//! - `embedded` - In-process database mode. **Workspace-local only**: it links
+//!   the ProximaDB engine monolith, which is not published to crates.io, so
+//!   the feature compiles only from a proximaDB workspace checkout
+//!   (`clients/rust`), and only under `cargo test`/examples (the engine
+//!   crates are dev-dependencies).
+//! - `full` - `client` + `embedded`; same workspace-local constraint.
 //!
 //! # Quick Start - Client Mode
 //!
