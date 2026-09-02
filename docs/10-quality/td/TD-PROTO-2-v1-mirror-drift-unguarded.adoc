@@ -1,0 +1,74 @@
+// Copyright (C) 2026 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= TD-PROTO-2: the hand-maintained v1 Rust mirror can drift from v1 .proto — and already has
+:toc: macro
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — filed 2026-09-01 from the #1724 adversarial review
+| Severity | Medium — silent field/variant loss on binary decode; no guard exists
+| Component | `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs` vs `proto/proximadb/v1/*.proto`
+| Pillar | CORRECTNESS / TOOLING
+|===
+
+toc::[]
+
+== Problem
+
+The v1 proto package is NOT generated: `build.rs` regenerates only the
+self-contained `proximadb.v2` package, and `proximadb.v1.rs` is hand-maintained
+(the comment in build.rs says this is deliberate, to protect hand-maintained
+serde impls on v1 types). Nothing in CI compiles the v1 `.proto` files against
+the Rust mirror:
+
+* `make proto-check` = `cargo check -p proximadb-proto` + Python contract
+  tests — it checks the mirror *compiles*, not that it *matches* the `.proto`.
+* The descriptor-byte-equality drift gate pairs only protos that have
+  committed generated stubs — v1 has none.
+
+Consequence: a field added to a v1 `.proto` but not to the mirror decodes
+(binary wire) to `None`/default silently; a field added to the mirror but not
+the proto is dead code. Both directions are invisible to every gate.
+
+== Live instance (found by the #1724 fresh-agent review)
+
+`proto/proximadb/v1/catalog.proto` declares `OltpCatalogConfig oltp = 17` in
+the `CatalogConfig` oneof (fields 10-16 + 17) — while the hand-maintained
+mirror's oneof covers tags 10-16 only and has no `OltpCatalogConfig` struct at
+all. A binary-wire catalog config carrying field 17 decodes to
+`config: None` today. (The live REST ingest path is JSON/serde, where the
+mirror's serde derives are the authority, so the practical blast radius is a
+binary-gRPC future — but that is exactly the direction the v2 push is going.)
+
+The same review also corrected a mechanism claim this family had been making:
+removing an enum value does NOT make prost reject the value on binary decode
+(the `catalog_type` field is a raw `i32`; unknown values pass through), and
+reserving a oneof field does NOT error on decode (unknown tags are skipped and
+retained). Rejection for the retired Hive arm happens at the JSON/serde
+boundary (unknown-variant hard error) — comments in
+`proximadb.v1.rs` now say so.
+
+== Candidate fix (pick one, measure maintainability first)
+
+1. **Round-trip conformance test**: a small test that, when `protoc` is
+   available, parses `proto/proximadb/v1/*.proto` descriptors and asserts the
+   mirror's `#[prost]` tags/field names per message match (mirror→proto
+   direction catches invented fields; proto→mirror direction catches missing
+   ones). Skipped gracefully when protoc is absent (mirrors the v2 regen
+   gate's env pattern).
+2. **Generate the structural half**: keep hand-maintained serde, but generate
+   the prost structure from the `.proto` into a check-in file and diff it in
+   CI against the mirror's prost-derive surface (heavier; only if (1)
+   proves insufficient).
+
+== Not in scope
+
+The v2 package already has both generation (`PROXIMADB_PROTO_REGEN=1`) and the
+descriptor drift gate; TD-PROTO-1 (Python stub drift) is the stub-side analog.
+
+== Related
+
+* #1724 (Hive arm retirement — whose review surfaced this)
+* TD-CAT-8 (Hive adapter retirement), TD-CAT-7.4 (OltpCatalog gating —
+  owner context for the `oltp = 17` field)

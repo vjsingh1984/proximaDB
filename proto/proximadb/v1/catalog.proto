@@ -5,7 +5,6 @@
 // - AWS Glue: AWS Glue Data Catalog integration
 // - Unity: Databricks Unity Catalog integration
 // - Polaris: Apache Polaris (Iceberg REST Catalog)
-// - Hive: Apache Hive Metastore (Thrift)
 // - Iceberg: Generic Iceberg catalog (REST, JDBC, Hadoop)
 //
 // Design Principles:
@@ -36,7 +35,7 @@ enum CatalogType {
   CATALOG_TYPE_GLUE = 2;        // AWS Glue Data Catalog
   CATALOG_TYPE_UNITY = 3;       // Databricks Unity Catalog
   CATALOG_TYPE_POLARIS = 4;     // Apache Polaris (Iceberg REST)
-  CATALOG_TYPE_HIVE = 5;        // Apache Hive Metastore
+  reserved 5; // RETIRED TD-CAT-8 (2026-08-20): CATALOG_TYPE_HIVE (never worked; was a mock)
   CATALOG_TYPE_ICEBERG_REST = 6;// Generic Iceberg REST Catalog
   CATALOG_TYPE_ICEBERG_JDBC = 7;// Iceberg JDBC Catalog
   CATALOG_TYPE_ICEBERG_HADOOP = 8; // Iceberg Hadoop Catalog
@@ -72,11 +71,14 @@ message CatalogConfig {
     GlueCatalogConfig glue = 11;
     UnityCatalogConfig unity = 12;
     PolarisCatalogConfig polaris = 13;
-    HiveCatalogConfig hive = 14;
+    // RETIRED TD-CAT-8 (2026-08-20): field 14 (HiveCatalogConfig) - never worked; was a mock
     IcebergCatalogConfig iceberg = 15;
     DeltaCatalogConfig delta = 16;
     OltpCatalogConfig oltp = 17;      // OLTP backend (postgres/mysql/sqlite)
   }
+
+  // Field reservations (TD-CAT-8: retired Hive catalog)
+  reserved 14; // HiveCatalogConfig (was a mock, never connected to metastore)
 
   // Common settings
   bool read_only = 20;                // Prevent DDL operations
@@ -121,15 +123,7 @@ message PolarisCatalogConfig {
   string scope = 5;                   // OAuth2 scope
 }
 
-// Apache Hive Metastore
-message HiveCatalogConfig {
-  string thrift_uri = 1;              // thrift://host:9083
-  string kerberos_principal = 2;      // Kerberos principal (optional)
-  string kerberos_keytab = 3;         // Keytab file path
-  string database = 4;                // Default database
-  bool use_ssl = 5;                   // Enable TLS
-}
-
+// RETIRED TD-CAT-8 (2026-08-20): HiveCatalogConfig message (never worked; was a mock)
 // Generic Iceberg Catalog (REST, JDBC, Hadoop)
 message IcebergCatalogConfig {
   string catalog_impl = 1;            // Catalog implementation class

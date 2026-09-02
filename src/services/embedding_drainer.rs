@@ -649,13 +649,17 @@ fn build_external_embedding_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_catalog::Catalog;
     use proximadb_embedding::config::{ByoAuth, EmbeddingConfig};
     use proximadb_embedding::scheduler::EmbedSchedulerConfig;
     use proximadb_queue::{Message, QueueConfig, TopicConfig};
     use std::collections::HashMap;
     use std::io::{Read, Write};
+    use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::sync::Mutex;
+
+    use crate::testing::InMemoryTestCatalog;
 
     #[derive(Default)]
     struct RecordingSink {
@@ -1158,8 +1162,9 @@ mod tests {
     async fn drainer_stamps_target_precision_from_resolver() {
         use proximadb_catalog::cache::CatalogCache;
         use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-        use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
-        use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
+        use proximadb_catalog::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
+        use std::collections::HashMap;
+        use tokio::sync::RwLock;
 
         ensure_embedding_singleton();
         let tmp = TempDir::new().expect("tempdir");
@@ -1179,15 +1184,7 @@ mod tests {
 
         // Stand up an in-memory catalog with one fp16 collection.
         let cache = Arc::new(CatalogCache::new(1000, 60));
-        let cat: Arc<OltpCatalog> = Arc::new(
-            OltpCatalog::new(
-                "drainer-test",
-                OltpCatalogConfig::sqlite("sqlite::memory:"),
-                cache.clone(),
-            )
-            .await
-            .unwrap(),
-        );
+        let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new("drainer-test".to_string()));
         cat.create_namespace(&["default".to_string()], HashMap::new())
             .await
             .unwrap();
