@@ -213,7 +213,6 @@ impl<'a> CollectionBuilder<'a> {
         }
     }
 
-
     /// Set the vector dimension (required)
     pub fn dimension(mut self, dim: u32) -> Self {
         self.dimension = Some(dim);
@@ -302,7 +301,6 @@ impl<'a> CollectionBuilder<'a> {
         let _response: CreateCollectionResponse = client.post(&url, &request).await?;
         Ok(())
     }
-
 }
 
 /// Handle to a collection for fluent operations
@@ -334,7 +332,6 @@ impl<'a> CollectionHandle<'a> {
         }
     }
 
-
     /// Get the collection name
     pub fn name(&self) -> &str {
         &self.name
@@ -345,7 +342,6 @@ impl<'a> CollectionHandle<'a> {
     pub fn search(&self) -> SearchBuilder<'a> {
         SearchBuilder::new_client(self.client.expect("Client reference required"), &self.name)
     }
-
 
     /// Start building an insert operation
     pub fn insert(&self) -> InsertBuilder<'a> {
@@ -484,7 +480,6 @@ impl<'a> UpdateBuilder<'a> {
         }
     }
 
-
     /// Set a new vector
     pub fn vector(mut self, vector: &[f32]) -> Self {
         self.vector = Some(vector.to_vec());
@@ -540,7 +535,6 @@ impl<'a> UpdateBuilder<'a> {
         let _response: InsertResponse = client.post(&url, &request).await?;
         Ok(())
     }
-
 }
 
 /// Collection information
@@ -646,7 +640,6 @@ impl<'a> InsertBuilder<'a> {
             records: Vec::new(),
         }
     }
-
 
     /// Add a single vector with ID
     pub fn id(self, id: impl Into<String>) -> InsertBuilderWithId<'a> {
@@ -781,7 +774,6 @@ impl<'a> InsertBuilderWithId<'a> {
         self.builder.execute_internal().await?;
         Ok(())
     }
-
 }
 
 /// Insert builder for batch operations
@@ -815,7 +807,6 @@ impl<'a> InsertBuilderBatch<'a> {
         let response = self.builder.execute_internal().await?;
         Ok(response.inserted_count)
     }
-
 }
 
 // Request/Response types for HTTP API

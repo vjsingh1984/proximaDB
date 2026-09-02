@@ -218,7 +218,6 @@ pub mod graph;
 pub mod collection;
 pub mod search;
 
-
 // Re-exports for convenient access
 pub use error::{
     CollectionError, ConfigError, EmbeddedError, NetworkError, ProximaError, Result, SearchError,
@@ -254,7 +253,6 @@ pub use graph::{
     TraversalDirection, TraversalResult,
 };
 
-
 /// Version of the ProximaDB SDK
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -263,7 +261,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn connect(url: impl Into<String>) -> Result<ProximaClient> {
     ProximaClient::connect(url)
 }
-
 
 #[cfg(test)]
 mod tests {

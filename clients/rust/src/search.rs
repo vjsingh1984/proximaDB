@@ -141,7 +141,6 @@ impl<'a> SearchBuilder<'a> {
         }
     }
 
-
     /// Set the query vector
     pub fn vector(mut self, vector: &[f32]) -> Self {
         self.vector = Some(vector.to_vec());
@@ -407,7 +406,6 @@ impl<'a> SearchBuilder<'a> {
 
         Ok(results)
     }
-
 }
 
 /// A single search result
