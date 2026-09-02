@@ -207,7 +207,7 @@ anyhow = "1.0"
 # dep at the workspace level. Same pin as the root `[dependencies]`
 # entry.
 sqlparser = { version = "0.59", features = ["visitor"] }
-arrow = { version = "59", features = ["prettyprint"] }
+arrow = { version = "59", features = ["prettyprint", "ffi"] }
 arrow-array = { version = "59", default-features = false }
 # Workspace-level so the root crate and `proximadb-embedded` resolve the SAME
 # datafusion. The embedded Python binding passes `SessionContext`/`DataFrame`
@@ -616,7 +616,7 @@ rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
 parquet = { version = "59", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
 # Arrow dependencies matching parquet v57
-arrow = { version = "59", features = ["prettyprint"] }
+arrow = { version = "59", features = ["prettyprint", "ffi"] }
 arrow-array = { version = "59", default-features = false }
 arrow-buffer = { version = "59", default-features = false }
 arrow-schema = { version = "59", default-features = false }

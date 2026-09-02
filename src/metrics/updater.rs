@@ -170,9 +170,10 @@ pub enum MetricsUpdate {
     ColumnStats {
         collection_id: String,
         column_name: String,
-        // Boxed: FilterableColumnStats dwarfs the other payloads (~300 B vs
-        // ~100 B), which tripped clippy::large_enum_variant once dependency
-        // sizes shifted; the box keeps the enum at pointer size.
+        // Boxed: FilterableColumnStats is the largest payload by far
+        // (~300 B vs ~100 B for the next-largest variant), which trips
+        // clippy::large_enum_variant's 3× ratio; the box keeps the enum
+        // at pointer size.
         stats: Box<FilterableColumnStats>,
     },
 }

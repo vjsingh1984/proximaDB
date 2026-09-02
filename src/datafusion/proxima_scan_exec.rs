@@ -371,14 +371,18 @@ impl ExecutionPlan for ProximaScanExec {
         vec![] // Leaf node - no children
     }
 
-    // DataFusion 55 split this out of `children()`: visit this node's physical
-    // expression roots. Filters here are logical `Expr`s evaluated at scan
-    // time, not `PhysicalExpr` children, so nothing to visit.
+    // DataFusion 55 split this out of `children()`: report this node's
+    // physical expression roots. The absorbed TD-OLAP-3 join runtime filters
+    // (`dynamic_filters`) MUST be reported: `HashJoinExec::execute` detects
+    // consumers via `plan_contains_expression_id`, which walks these roots —
+    // omitting them makes the join skip the dynamic filter entirely (no
+    // bounds published, never marked complete) and this scan then waits out
+    // its full runtime-filter budget per partition while pruning nothing.
     fn apply_expressions(
         &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DFResult<TreeNodeRecursion>,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DFResult<TreeNodeRecursion>,
     ) -> DFResult<TreeNodeRecursion> {
-        Ok(TreeNodeRecursion::Continue)
+        datafusion::physical_plan::apply_expression_roots(&self.dynamic_filters, f)
     }
 
     fn with_new_children(
