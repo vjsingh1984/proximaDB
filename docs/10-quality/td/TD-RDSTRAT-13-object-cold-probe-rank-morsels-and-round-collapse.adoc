@@ -238,3 +238,21 @@ assertion — passed against MinIO with the fix binary, verifying TD-COMPACT-13'
 the real S3 path. Deployment note: the suite requires the registry-documented
 `PROXIMADB_S3_ENDPOINT`/`PROXIMADB_S3_FORCE_PATH_STYLE` gates for the engine AND
 `AWS_ALLOW_HTTP=true` for the system-catalog's object_store client (plain HTTP).
+
+== Chooser A/B (Mac → dataserver2 MinIO @ 5.5 ms RTT, same binary, one env flip)
+
+|===
+|Arm |p50 |GETs/q |bytes/q |region-B |region-D |rehydrate |cascade
+|OFF (fixed 8 MiB policy) |4271.0 |20.05 |62.1 MB |263.4 ms |15.2 ms |186.9 ms |462.9 ms
+|ON (16 MiB knee enumerated) |4193.7 |20.05 |62.1 MB |255.6 ms |16.2 ms |146.1 ms |413.8 ms
+|===
+
+Recall .9864 both; same 1-segment/30-cell bed. Verdict: **chooser ON is a modest
+tail win (rehydrate −22%, cascade −10.6%, p50 −1.8%) at zero GET/byte cost — but the 16 MiB
+GET knee does NOT bind on the S3/MinIO 8 MiB baseline at this geometry**: GETs/q are unchanged
+(the knee's 10.08→7.66 GET gain was measured on Azure's 4 MiB planner). The knee lever therefore
+applies to the **Azure default target** (raise 4 → the measured 16 MiB knee = −24% GETs at
+recall parity, per TD-SEARCH-3's own sweep) — a separate Azure-side change with the wire
+evidence already committed. The chooser default flip for object stores is evidence-backed as a
+modest, free tail win; the Region-A probe-cell GETs (11/q — the dominant GET population) are
+untouched by range caps by design (each cell is a distinct byte range).
