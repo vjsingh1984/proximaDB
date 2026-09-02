@@ -3,7 +3,7 @@
 use super::AzureADConfig;
 #[cfg(test)]
 use super::types::{EnterpriseUserContext, SSOToken, SSOValidationResult};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 /// Clean Azure AD integration
 pub struct AzureADIntegration {

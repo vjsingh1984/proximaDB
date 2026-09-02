@@ -78,7 +78,7 @@ impl SSOIntegrationManager {
                 aws.validate_token(sso_token).await?
             }
             SSOProvider::AzureAD => {
-                let _azure = self
+                let azure = self
                     .azure_integration
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Azure AD not configured"))?;
