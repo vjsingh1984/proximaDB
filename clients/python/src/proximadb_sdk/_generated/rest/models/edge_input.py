@@ -26,18 +26,18 @@ class EdgeInput:
     `RestEdgeInput` in proximadb-api's graph handler.
 
         Attributes:
-            edge_type (str):
-            from_node_id (str):
             id (str):
+            from_node_id (str):
             to_node_id (str):
+            edge_type (str):
             properties (EdgeInputProperties | Unset):
             weight (float | None | Unset):
     """
 
-    edge_type: str
-    from_node_id: str
     id: str
+    from_node_id: str
     to_node_id: str
+    edge_type: str
     properties: EdgeInputProperties | Unset = UNSET
     weight: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -45,13 +45,13 @@ class EdgeInput:
     def to_dict(self) -> dict[str, Any]:
         from ..models.edge_input_properties import EdgeInputProperties
 
-        edge_type = self.edge_type
+        id = self.id
 
         from_node_id = self.from_node_id
 
-        id = self.id
-
         to_node_id = self.to_node_id
+
+        edge_type = self.edge_type
 
         properties: dict[str, Any] | Unset = UNSET
         if not isinstance(self.properties, Unset):
@@ -67,10 +67,10 @@ class EdgeInput:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "edge_type": edge_type,
-                "from_node_id": from_node_id,
                 "id": id,
+                "from_node_id": from_node_id,
                 "to_node_id": to_node_id,
+                "edge_type": edge_type,
             }
         )
         if properties is not UNSET:
@@ -85,13 +85,13 @@ class EdgeInput:
         from ..models.edge_input_properties import EdgeInputProperties
 
         d = dict(src_dict)
-        edge_type = d.pop("edge_type")
+        id = d.pop("id")
 
         from_node_id = d.pop("from_node_id")
 
-        id = d.pop("id")
-
         to_node_id = d.pop("to_node_id")
+
+        edge_type = d.pop("edge_type")
 
         _properties = d.pop("properties", UNSET)
         properties: EdgeInputProperties | Unset
@@ -110,10 +110,10 @@ class EdgeInput:
         weight = _parse_weight(d.pop("weight", UNSET))
 
         edge_input = cls(
-            edge_type=edge_type,
-            from_node_id=from_node_id,
             id=id,
+            from_node_id=from_node_id,
             to_node_id=to_node_id,
+            edge_type=edge_type,
             properties=properties,
             weight=weight,
         )

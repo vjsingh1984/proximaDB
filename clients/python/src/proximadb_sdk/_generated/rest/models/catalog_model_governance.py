@@ -23,48 +23,50 @@ class CatalogModelGovernance:
     Approval decisions remain separate append-only audit records.
 
         Attributes:
-            access (CatalogModelAccess | Unset):
-            approved_runtimes (list[str] | Unset):
             license_id (str | Unset):
+            access (CatalogModelAccess | Unset):
             requires_remote_code (bool | Unset):
+            approved_runtimes (list[str] | Unset):
     """
 
-    access: CatalogModelAccess | Unset = UNSET
-    approved_runtimes: list[str] | Unset = UNSET
     license_id: str | Unset = UNSET
+    access: CatalogModelAccess | Unset = UNSET
     requires_remote_code: bool | Unset = UNSET
+    approved_runtimes: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        license_id = self.license_id
+
         access: str | Unset = UNSET
         if not isinstance(self.access, Unset):
             access = self.access.value
+
+        requires_remote_code = self.requires_remote_code
 
         approved_runtimes: list[str] | Unset = UNSET
         if not isinstance(self.approved_runtimes, Unset):
             approved_runtimes = self.approved_runtimes
 
-        license_id = self.license_id
-
-        requires_remote_code = self.requires_remote_code
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if access is not UNSET:
-            field_dict["access"] = access
-        if approved_runtimes is not UNSET:
-            field_dict["approved_runtimes"] = approved_runtimes
         if license_id is not UNSET:
             field_dict["license_id"] = license_id
+        if access is not UNSET:
+            field_dict["access"] = access
         if requires_remote_code is not UNSET:
             field_dict["requires_remote_code"] = requires_remote_code
+        if approved_runtimes is not UNSET:
+            field_dict["approved_runtimes"] = approved_runtimes
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        license_id = d.pop("license_id", UNSET)
+
         _access = d.pop("access", UNSET)
         access: CatalogModelAccess | Unset
         if isinstance(_access, Unset):
@@ -72,17 +74,15 @@ class CatalogModelGovernance:
         else:
             access = CatalogModelAccess(_access)
 
-        approved_runtimes = cast(list[str], d.pop("approved_runtimes", UNSET))
-
-        license_id = d.pop("license_id", UNSET)
-
         requires_remote_code = d.pop("requires_remote_code", UNSET)
 
+        approved_runtimes = cast(list[str], d.pop("approved_runtimes", UNSET))
+
         catalog_model_governance = cls(
-            access=access,
-            approved_runtimes=approved_runtimes,
             license_id=license_id,
+            access=access,
             requires_remote_code=requires_remote_code,
+            approved_runtimes=approved_runtimes,
         )
 
         catalog_model_governance.additional_properties = d

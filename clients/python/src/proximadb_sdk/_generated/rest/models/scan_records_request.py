@@ -24,19 +24,19 @@ class ScanRecordsRequest:
         Attributes:
             cursor (None | str | Unset): Opaque continuation token returned as `next_cursor` from a
                 prior page. Omit / null to start from the beginning.
+            limit (int | None | Unset): Max records to return in this page. Server enforces upper bound.
             filter_ (Any | Unset): Metadata filter applied (before the limit) to the scanned page.
                 Accepts either the typed list form `[{field,op,value}]` (mirrors
                 `searchRecords.filters`) or a simple equality map `{field: value}`.
-            include_text (bool | None | Unset):
             include_vector (bool | None | Unset):
-            limit (int | None | Unset): Max records to return in this page. Server enforces upper bound.
+            include_text (bool | None | Unset):
     """
 
     cursor: None | str | Unset = UNSET
-    filter_: Any | Unset = UNSET
-    include_text: bool | None | Unset = UNSET
-    include_vector: bool | None | Unset = UNSET
     limit: int | None | Unset = UNSET
+    filter_: Any | Unset = UNSET
+    include_vector: bool | None | Unset = UNSET
+    include_text: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,13 +46,13 @@ class ScanRecordsRequest:
         else:
             cursor = self.cursor
 
-        filter_ = self.filter_
-
-        include_text: bool | None | Unset
-        if isinstance(self.include_text, Unset):
-            include_text = UNSET
+        limit: int | None | Unset
+        if isinstance(self.limit, Unset):
+            limit = UNSET
         else:
-            include_text = self.include_text
+            limit = self.limit
+
+        filter_ = self.filter_
 
         include_vector: bool | None | Unset
         if isinstance(self.include_vector, Unset):
@@ -60,25 +60,25 @@ class ScanRecordsRequest:
         else:
             include_vector = self.include_vector
 
-        limit: int | None | Unset
-        if isinstance(self.limit, Unset):
-            limit = UNSET
+        include_text: bool | None | Unset
+        if isinstance(self.include_text, Unset):
+            include_text = UNSET
         else:
-            limit = self.limit
+            include_text = self.include_text
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
         if cursor is not UNSET:
             field_dict["cursor"] = cursor
-        if filter_ is not UNSET:
-            field_dict["filter"] = filter_
-        if include_text is not UNSET:
-            field_dict["include_text"] = include_text
-        if include_vector is not UNSET:
-            field_dict["include_vector"] = include_vector
         if limit is not UNSET:
             field_dict["limit"] = limit
+        if filter_ is not UNSET:
+            field_dict["filter"] = filter_
+        if include_vector is not UNSET:
+            field_dict["include_vector"] = include_vector
+        if include_text is not UNSET:
+            field_dict["include_text"] = include_text
 
         return field_dict
 
@@ -95,16 +95,16 @@ class ScanRecordsRequest:
 
         cursor = _parse_cursor(d.pop("cursor", UNSET))
 
-        filter_ = d.pop("filter", UNSET)
-
-        def _parse_include_text(data: object) -> bool | None | Unset:
+        def _parse_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(bool | None | Unset, data)
+            return cast(int | None | Unset, data)
 
-        include_text = _parse_include_text(d.pop("include_text", UNSET))
+        limit = _parse_limit(d.pop("limit", UNSET))
+
+        filter_ = d.pop("filter", UNSET)
 
         def _parse_include_vector(data: object) -> bool | None | Unset:
             if data is None:
@@ -115,21 +115,21 @@ class ScanRecordsRequest:
 
         include_vector = _parse_include_vector(d.pop("include_vector", UNSET))
 
-        def _parse_limit(data: object) -> int | None | Unset:
+        def _parse_include_text(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(int | None | Unset, data)
+            return cast(bool | None | Unset, data)
 
-        limit = _parse_limit(d.pop("limit", UNSET))
+        include_text = _parse_include_text(d.pop("include_text", UNSET))
 
         scan_records_request = cls(
             cursor=cursor,
-            filter_=filter_,
-            include_text=include_text,
-            include_vector=include_vector,
             limit=limit,
+            filter_=filter_,
+            include_vector=include_vector,
+            include_text=include_text,
         )
 
         scan_records_request.additional_properties = d

@@ -28,55 +28,55 @@ class SqlResponse:
     authority reports the affected count in `rows_returned` and `rows` is empty.
 
         Attributes:
-            column_types (list[str]):
-            columns (list[str]):
-            execution_time_ms (int):
-            request_id (str):
             rows (list[SqlResponseRowsItem]):
+            columns (list[str]):
+            column_types (list[str]):
             rows_returned (int):
             rows_scanned (int):
+            execution_time_ms (int):
+            request_id (str):
     """
 
-    column_types: list[str]
-    columns: list[str]
-    execution_time_ms: int
-    request_id: str
     rows: list[SqlResponseRowsItem]
+    columns: list[str]
+    column_types: list[str]
     rows_returned: int
     rows_scanned: int
+    execution_time_ms: int
+    request_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.sql_response_rows_item import SqlResponseRowsItem
-
-        column_types = self.column_types
-
-        columns = self.columns
-
-        execution_time_ms = self.execution_time_ms
-
-        request_id = self.request_id
 
         rows = []
         for rows_item_data in self.rows:
             rows_item = rows_item_data.to_dict()
             rows.append(rows_item)
 
+        columns = self.columns
+
+        column_types = self.column_types
+
         rows_returned = self.rows_returned
 
         rows_scanned = self.rows_scanned
+
+        execution_time_ms = self.execution_time_ms
+
+        request_id = self.request_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "column_types": column_types,
-                "columns": columns,
-                "execution_time_ms": execution_time_ms,
-                "request_id": request_id,
                 "rows": rows,
+                "columns": columns,
+                "column_types": column_types,
                 "rows_returned": rows_returned,
                 "rows_scanned": rows_scanned,
+                "execution_time_ms": execution_time_ms,
+                "request_id": request_id,
             }
         )
 
@@ -87,14 +87,6 @@ class SqlResponse:
         from ..models.sql_response_rows_item import SqlResponseRowsItem
 
         d = dict(src_dict)
-        column_types = cast(list[str], d.pop("column_types"))
-
-        columns = cast(list[str], d.pop("columns"))
-
-        execution_time_ms = d.pop("execution_time_ms")
-
-        request_id = d.pop("request_id")
-
         rows = []
         _rows = d.pop("rows")
         for rows_item_data in _rows:
@@ -102,18 +94,26 @@ class SqlResponse:
 
             rows.append(rows_item)
 
+        columns = cast(list[str], d.pop("columns"))
+
+        column_types = cast(list[str], d.pop("column_types"))
+
         rows_returned = d.pop("rows_returned")
 
         rows_scanned = d.pop("rows_scanned")
 
+        execution_time_ms = d.pop("execution_time_ms")
+
+        request_id = d.pop("request_id")
+
         sql_response = cls(
-            column_types=column_types,
-            columns=columns,
-            execution_time_ms=execution_time_ms,
-            request_id=request_id,
             rows=rows,
+            columns=columns,
+            column_types=column_types,
             rows_returned=rows_returned,
             rows_scanned=rows_scanned,
+            execution_time_ms=execution_time_ms,
+            request_id=request_id,
         )
 
         sql_response.additional_properties = d

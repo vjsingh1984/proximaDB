@@ -21,29 +21,29 @@ class EmbeddingInput:
     """
     Attributes:
         vector (list[float]):
-        modality (None | str | Unset):
         model_id (None | str | Unset):
+        modality (None | str | Unset):
     """
 
     vector: list[float]
-    modality: None | str | Unset = UNSET
     model_id: None | str | Unset = UNSET
+    modality: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         vector = self.vector
-
-        modality: None | str | Unset
-        if isinstance(self.modality, Unset):
-            modality = UNSET
-        else:
-            modality = self.modality
 
         model_id: None | str | Unset
         if isinstance(self.model_id, Unset):
             model_id = UNSET
         else:
             model_id = self.model_id
+
+        modality: None | str | Unset
+        if isinstance(self.modality, Unset):
+            modality = UNSET
+        else:
+            modality = self.modality
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -52,10 +52,10 @@ class EmbeddingInput:
                 "vector": vector,
             }
         )
-        if modality is not UNSET:
-            field_dict["modality"] = modality
         if model_id is not UNSET:
             field_dict["model_id"] = model_id
+        if modality is not UNSET:
+            field_dict["modality"] = modality
 
         return field_dict
 
@@ -63,15 +63,6 @@ class EmbeddingInput:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         vector = cast(list[float], d.pop("vector"))
-
-        def _parse_modality(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        modality = _parse_modality(d.pop("modality", UNSET))
 
         def _parse_model_id(data: object) -> None | str | Unset:
             if data is None:
@@ -82,10 +73,19 @@ class EmbeddingInput:
 
         model_id = _parse_model_id(d.pop("model_id", UNSET))
 
+        def _parse_modality(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        modality = _parse_modality(d.pop("modality", UNSET))
+
         embedding_input = cls(
             vector=vector,
-            modality=modality,
             model_id=model_id,
+            modality=modality,
         )
 
         embedding_input.additional_properties = d

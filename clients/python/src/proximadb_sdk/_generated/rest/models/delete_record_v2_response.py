@@ -21,30 +21,30 @@ class DeleteRecordV2Response:
     """Response for deleting a single record.
 
     Attributes:
+        success (bool): Whether the delete tombstone was accepted.
         id (str): Deleted record ID.
         processing_time_us (int): Processing latency in microseconds.
-        success (bool): Whether the delete tombstone was accepted.
     """
 
+    success: bool
     id: str
     processing_time_us: int
-    success: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        success = self.success
+
         id = self.id
 
         processing_time_us = self.processing_time_us
-
-        success = self.success
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "success": success,
                 "id": id,
                 "processing_time_us": processing_time_us,
-                "success": success,
             }
         )
 
@@ -53,16 +53,16 @@ class DeleteRecordV2Response:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        success = d.pop("success")
+
         id = d.pop("id")
 
         processing_time_us = d.pop("processing_time_us")
 
-        success = d.pop("success")
-
         delete_record_v2_response = cls(
+            success=success,
             id=id,
             processing_time_us=processing_time_us,
-            success=success,
         )
 
         delete_record_v2_response.additional_properties = d

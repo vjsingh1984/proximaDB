@@ -26,26 +26,24 @@ T = TypeVar("T", bound="CatalogEmbeddingOutputContract")
 class CatalogEmbeddingOutputContract:
     """
     Attributes:
-        dimension_policy (CatalogDimensionPolicyType0 | CatalogDimensionPolicyType1 | CatalogDimensionPolicyType2):
         native_dimension (int):
+        dimension_policy (CatalogDimensionPolicyType0 | CatalogDimensionPolicyType1 | CatalogDimensionPolicyType2):
+        supported_dimensions (list[int]):
         normalized (bool):
         pooling (str):
-        supported_dimensions (list[int]):
     """
 
-    dimension_policy: (
-        CatalogDimensionPolicyType0
-        | CatalogDimensionPolicyType1
-        | CatalogDimensionPolicyType2
-    )
     native_dimension: int
+    dimension_policy: CatalogDimensionPolicyType0 | CatalogDimensionPolicyType1 | CatalogDimensionPolicyType2
+    supported_dimensions: list[int]
     normalized: bool
     pooling: str
-    supported_dimensions: list[int]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.catalog_dimension_policy_type_2 import CatalogDimensionPolicyType2
+
+        native_dimension = self.native_dimension
 
         dimension_policy: dict[str, Any] | str
         if isinstance(self.dimension_policy, CatalogDimensionPolicyType0):
@@ -55,23 +53,21 @@ class CatalogEmbeddingOutputContract:
         else:
             dimension_policy = self.dimension_policy.to_dict()
 
-        native_dimension = self.native_dimension
+        supported_dimensions = self.supported_dimensions
 
         normalized = self.normalized
 
         pooling = self.pooling
 
-        supported_dimensions = self.supported_dimensions
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "dimension_policy": dimension_policy,
                 "native_dimension": native_dimension,
+                "dimension_policy": dimension_policy,
+                "supported_dimensions": supported_dimensions,
                 "normalized": normalized,
                 "pooling": pooling,
-                "supported_dimensions": supported_dimensions,
             }
         )
 
@@ -82,6 +78,7 @@ class CatalogEmbeddingOutputContract:
         from ..models.catalog_dimension_policy_type_2 import CatalogDimensionPolicyType2
 
         d = dict(src_dict)
+        native_dimension = d.pop("native_dimension")
 
         def _parse_dimension_policy(
             data: object,
@@ -120,20 +117,18 @@ class CatalogEmbeddingOutputContract:
 
         dimension_policy = _parse_dimension_policy(d.pop("dimension_policy"))
 
-        native_dimension = d.pop("native_dimension")
+        supported_dimensions = cast(list[int], d.pop("supported_dimensions"))
 
         normalized = d.pop("normalized")
 
         pooling = d.pop("pooling")
 
-        supported_dimensions = cast(list[int], d.pop("supported_dimensions"))
-
         catalog_embedding_output_contract = cls(
-            dimension_policy=dimension_policy,
             native_dimension=native_dimension,
+            dimension_policy=dimension_policy,
+            supported_dimensions=supported_dimensions,
             normalized=normalized,
             pooling=pooling,
-            supported_dimensions=supported_dimensions,
         )
 
         catalog_embedding_output_contract.additional_properties = d

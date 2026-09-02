@@ -20,60 +20,108 @@ T = TypeVar("T", bound="FusionSearchRequest")
 class FusionSearchRequest:
     """
     Attributes:
-        query_vector (list[float]): Query embedding for the ANN seed.
         vector_collection (str): Vector collection to seed from (its records co-indexed with this graph by `oid`).
+        query_vector (list[float]): Query embedding for the ANN seed.
+        limit (int | Unset):
+        max_depth (int | Unset): k-hop expansion depth (bounded; default 1 — the validated sweet spot).
+        edge_types (list[str] | Unset):
+        max_seeds (int | Unset): How many of the top vector seeds to expand from (bounded expansion).
+        vector_weight (float | None | Unset):
+        graph_weight (float | None | Unset):
+        rrf (bool | Unset): Use the rank-based RRF fallback instead of PIT-calibrated linear.
         consensus_beta (float | None | Unset): Consensus boost added to any `oid` present in ≥2 sources.
+        grain (None | str | Unset): Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
+        min_weight_fraction (float | None | Unset): Cost-routing policy inputs (TD-141): drop negligible modalities
+            (weight fraction) and budget each.
+            When absent, fusion is unbounded.
+        total_budget (int | None | Unset):
+        text_query (None | str | Unset): Optional BM25/full-text query (TD-138). When present (and non-empty), fusion
+            also searches the
+            collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+            (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
         document_collection (None | str | Unset): Collection whose document index to BM25-search. Defaults to
             `vector_collection` (documents
             co-indexed with the vectors share the record `oid`, so they merge by `oid`).
         document_weight (float | None | Unset): Document modality weight (mirrors `vector_weight` / `graph_weight`).
             Defaults to 1.0.
-        edge_types (list[str] | Unset):
-        grain (None | str | Unset): Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
-        graph_weight (float | None | Unset):
-        limit (int | Unset):
-        max_depth (int | Unset): k-hop expansion depth (bounded; default 1 — the validated sweet spot).
-        max_seeds (int | Unset): How many of the top vector seeds to expand from (bounded expansion).
-        min_weight_fraction (float | None | Unset): Cost-routing policy inputs (TD-141): drop negligible modalities
-            (weight fraction) and budget each.
-            When absent, fusion is unbounded.
-        rrf (bool | Unset): Use the rank-based RRF fallback instead of PIT-calibrated linear.
-        text_query (None | str | Unset): Optional BM25/full-text query (TD-138). When present (and non-empty), fusion
-            also searches the
-            collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
-            (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
-        total_budget (int | None | Unset):
-        vector_weight (float | None | Unset):
     """
 
-    query_vector: list[float]
     vector_collection: str
-    consensus_beta: float | None | Unset = UNSET
-    document_collection: None | str | Unset = UNSET
-    document_weight: float | None | Unset = UNSET
-    edge_types: list[str] | Unset = UNSET
-    grain: None | str | Unset = UNSET
-    graph_weight: float | None | Unset = UNSET
+    query_vector: list[float]
     limit: int | Unset = UNSET
     max_depth: int | Unset = UNSET
+    edge_types: list[str] | Unset = UNSET
     max_seeds: int | Unset = UNSET
-    min_weight_fraction: float | None | Unset = UNSET
-    rrf: bool | Unset = UNSET
-    text_query: None | str | Unset = UNSET
-    total_budget: int | None | Unset = UNSET
     vector_weight: float | None | Unset = UNSET
+    graph_weight: float | None | Unset = UNSET
+    rrf: bool | Unset = UNSET
+    consensus_beta: float | None | Unset = UNSET
+    grain: None | str | Unset = UNSET
+    min_weight_fraction: float | None | Unset = UNSET
+    total_budget: int | None | Unset = UNSET
+    text_query: None | str | Unset = UNSET
+    document_collection: None | str | Unset = UNSET
+    document_weight: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        vector_collection = self.vector_collection
+
         query_vector = self.query_vector
 
-        vector_collection = self.vector_collection
+        limit = self.limit
+
+        max_depth = self.max_depth
+
+        edge_types: list[str] | Unset = UNSET
+        if not isinstance(self.edge_types, Unset):
+            edge_types = self.edge_types
+
+        max_seeds = self.max_seeds
+
+        vector_weight: float | None | Unset
+        if isinstance(self.vector_weight, Unset):
+            vector_weight = UNSET
+        else:
+            vector_weight = self.vector_weight
+
+        graph_weight: float | None | Unset
+        if isinstance(self.graph_weight, Unset):
+            graph_weight = UNSET
+        else:
+            graph_weight = self.graph_weight
+
+        rrf = self.rrf
 
         consensus_beta: float | None | Unset
         if isinstance(self.consensus_beta, Unset):
             consensus_beta = UNSET
         else:
             consensus_beta = self.consensus_beta
+
+        grain: None | str | Unset
+        if isinstance(self.grain, Unset):
+            grain = UNSET
+        else:
+            grain = self.grain
+
+        min_weight_fraction: float | None | Unset
+        if isinstance(self.min_weight_fraction, Unset):
+            min_weight_fraction = UNSET
+        else:
+            min_weight_fraction = self.min_weight_fraction
+
+        total_budget: int | None | Unset
+        if isinstance(self.total_budget, Unset):
+            total_budget = UNSET
+        else:
+            total_budget = self.total_budget
+
+        text_query: None | str | Unset
+        if isinstance(self.text_query, Unset):
+            text_query = UNSET
+        else:
+            text_query = self.text_query
 
         document_collection: None | str | Unset
         if isinstance(self.document_collection, Unset):
@@ -87,99 +135,79 @@ class FusionSearchRequest:
         else:
             document_weight = self.document_weight
 
-        edge_types: list[str] | Unset = UNSET
-        if not isinstance(self.edge_types, Unset):
-            edge_types = self.edge_types
-
-        grain: None | str | Unset
-        if isinstance(self.grain, Unset):
-            grain = UNSET
-        else:
-            grain = self.grain
-
-        graph_weight: float | None | Unset
-        if isinstance(self.graph_weight, Unset):
-            graph_weight = UNSET
-        else:
-            graph_weight = self.graph_weight
-
-        limit = self.limit
-
-        max_depth = self.max_depth
-
-        max_seeds = self.max_seeds
-
-        min_weight_fraction: float | None | Unset
-        if isinstance(self.min_weight_fraction, Unset):
-            min_weight_fraction = UNSET
-        else:
-            min_weight_fraction = self.min_weight_fraction
-
-        rrf = self.rrf
-
-        text_query: None | str | Unset
-        if isinstance(self.text_query, Unset):
-            text_query = UNSET
-        else:
-            text_query = self.text_query
-
-        total_budget: int | None | Unset
-        if isinstance(self.total_budget, Unset):
-            total_budget = UNSET
-        else:
-            total_budget = self.total_budget
-
-        vector_weight: float | None | Unset
-        if isinstance(self.vector_weight, Unset):
-            vector_weight = UNSET
-        else:
-            vector_weight = self.vector_weight
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "query_vector": query_vector,
                 "vector_collection": vector_collection,
+                "query_vector": query_vector,
             }
         )
-        if consensus_beta is not UNSET:
-            field_dict["consensus_beta"] = consensus_beta
-        if document_collection is not UNSET:
-            field_dict["document_collection"] = document_collection
-        if document_weight is not UNSET:
-            field_dict["document_weight"] = document_weight
-        if edge_types is not UNSET:
-            field_dict["edge_types"] = edge_types
-        if grain is not UNSET:
-            field_dict["grain"] = grain
-        if graph_weight is not UNSET:
-            field_dict["graph_weight"] = graph_weight
         if limit is not UNSET:
             field_dict["limit"] = limit
         if max_depth is not UNSET:
             field_dict["max_depth"] = max_depth
+        if edge_types is not UNSET:
+            field_dict["edge_types"] = edge_types
         if max_seeds is not UNSET:
             field_dict["max_seeds"] = max_seeds
-        if min_weight_fraction is not UNSET:
-            field_dict["min_weight_fraction"] = min_weight_fraction
-        if rrf is not UNSET:
-            field_dict["rrf"] = rrf
-        if text_query is not UNSET:
-            field_dict["text_query"] = text_query
-        if total_budget is not UNSET:
-            field_dict["total_budget"] = total_budget
         if vector_weight is not UNSET:
             field_dict["vector_weight"] = vector_weight
+        if graph_weight is not UNSET:
+            field_dict["graph_weight"] = graph_weight
+        if rrf is not UNSET:
+            field_dict["rrf"] = rrf
+        if consensus_beta is not UNSET:
+            field_dict["consensus_beta"] = consensus_beta
+        if grain is not UNSET:
+            field_dict["grain"] = grain
+        if min_weight_fraction is not UNSET:
+            field_dict["min_weight_fraction"] = min_weight_fraction
+        if total_budget is not UNSET:
+            field_dict["total_budget"] = total_budget
+        if text_query is not UNSET:
+            field_dict["text_query"] = text_query
+        if document_collection is not UNSET:
+            field_dict["document_collection"] = document_collection
+        if document_weight is not UNSET:
+            field_dict["document_weight"] = document_weight
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        vector_collection = d.pop("vector_collection")
+
         query_vector = cast(list[float], d.pop("query_vector"))
 
-        vector_collection = d.pop("vector_collection")
+        limit = d.pop("limit", UNSET)
+
+        max_depth = d.pop("max_depth", UNSET)
+
+        edge_types = cast(list[str], d.pop("edge_types", UNSET))
+
+        max_seeds = d.pop("max_seeds", UNSET)
+
+        def _parse_vector_weight(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        vector_weight = _parse_vector_weight(d.pop("vector_weight", UNSET))
+
+        def _parse_graph_weight(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        graph_weight = _parse_graph_weight(d.pop("graph_weight", UNSET))
+
+        rrf = d.pop("rrf", UNSET)
 
         def _parse_consensus_beta(data: object) -> float | None | Unset:
             if data is None:
@@ -189,6 +217,44 @@ class FusionSearchRequest:
             return cast(float | None | Unset, data)
 
         consensus_beta = _parse_consensus_beta(d.pop("consensus_beta", UNSET))
+
+        def _parse_grain(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        grain = _parse_grain(d.pop("grain", UNSET))
+
+        def _parse_min_weight_fraction(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        min_weight_fraction = _parse_min_weight_fraction(
+            d.pop("min_weight_fraction", UNSET)
+        )
+
+        def _parse_total_budget(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        total_budget = _parse_total_budget(d.pop("total_budget", UNSET))
+
+        def _parse_text_query(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        text_query = _parse_text_query(d.pop("text_query", UNSET))
 
         def _parse_document_collection(data: object) -> None | str | Unset:
             if data is None:
@@ -210,89 +276,23 @@ class FusionSearchRequest:
 
         document_weight = _parse_document_weight(d.pop("document_weight", UNSET))
 
-        edge_types = cast(list[str], d.pop("edge_types", UNSET))
-
-        def _parse_grain(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        grain = _parse_grain(d.pop("grain", UNSET))
-
-        def _parse_graph_weight(data: object) -> float | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(float | None | Unset, data)
-
-        graph_weight = _parse_graph_weight(d.pop("graph_weight", UNSET))
-
-        limit = d.pop("limit", UNSET)
-
-        max_depth = d.pop("max_depth", UNSET)
-
-        max_seeds = d.pop("max_seeds", UNSET)
-
-        def _parse_min_weight_fraction(data: object) -> float | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(float | None | Unset, data)
-
-        min_weight_fraction = _parse_min_weight_fraction(
-            d.pop("min_weight_fraction", UNSET)
-        )
-
-        rrf = d.pop("rrf", UNSET)
-
-        def _parse_text_query(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        text_query = _parse_text_query(d.pop("text_query", UNSET))
-
-        def _parse_total_budget(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        total_budget = _parse_total_budget(d.pop("total_budget", UNSET))
-
-        def _parse_vector_weight(data: object) -> float | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(float | None | Unset, data)
-
-        vector_weight = _parse_vector_weight(d.pop("vector_weight", UNSET))
-
         fusion_search_request = cls(
-            query_vector=query_vector,
             vector_collection=vector_collection,
-            consensus_beta=consensus_beta,
-            document_collection=document_collection,
-            document_weight=document_weight,
-            edge_types=edge_types,
-            grain=grain,
-            graph_weight=graph_weight,
+            query_vector=query_vector,
             limit=limit,
             max_depth=max_depth,
+            edge_types=edge_types,
             max_seeds=max_seeds,
-            min_weight_fraction=min_weight_fraction,
-            rrf=rrf,
-            text_query=text_query,
-            total_budget=total_budget,
             vector_weight=vector_weight,
+            graph_weight=graph_weight,
+            rrf=rrf,
+            consensus_beta=consensus_beta,
+            grain=grain,
+            min_weight_fraction=min_weight_fraction,
+            total_budget=total_budget,
+            text_query=text_query,
+            document_collection=document_collection,
+            document_weight=document_weight,
         )
 
         fusion_search_request.additional_properties = d

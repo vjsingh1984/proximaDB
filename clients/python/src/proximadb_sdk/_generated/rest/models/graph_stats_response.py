@@ -20,42 +20,45 @@ T = TypeVar("T", bound="GraphStatsResponse")
 class GraphStatsResponse:
     """
     Attributes:
-        density (float | None | Unset):
-        edge_count (int | Unset):
         node_count (int | Unset):
+        edge_count (int | Unset):
+        density (float | None | Unset):
     """
 
-    density: float | None | Unset = UNSET
-    edge_count: int | Unset = UNSET
     node_count: int | Unset = UNSET
+    edge_count: int | Unset = UNSET
+    density: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        node_count = self.node_count
+
+        edge_count = self.edge_count
+
         density: float | None | Unset
         if isinstance(self.density, Unset):
             density = UNSET
         else:
             density = self.density
 
-        edge_count = self.edge_count
-
-        node_count = self.node_count
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if density is not UNSET:
-            field_dict["density"] = density
-        if edge_count is not UNSET:
-            field_dict["edge_count"] = edge_count
         if node_count is not UNSET:
             field_dict["node_count"] = node_count
+        if edge_count is not UNSET:
+            field_dict["edge_count"] = edge_count
+        if density is not UNSET:
+            field_dict["density"] = density
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        node_count = d.pop("node_count", UNSET)
+
+        edge_count = d.pop("edge_count", UNSET)
 
         def _parse_density(data: object) -> float | None | Unset:
             if data is None:
@@ -66,14 +69,10 @@ class GraphStatsResponse:
 
         density = _parse_density(d.pop("density", UNSET))
 
-        edge_count = d.pop("edge_count", UNSET)
-
-        node_count = d.pop("node_count", UNSET)
-
         graph_stats_response = cls(
-            density=density,
-            edge_count=edge_count,
             node_count=node_count,
+            edge_count=edge_count,
+            density=density,
         )
 
         graph_stats_response.additional_properties = d

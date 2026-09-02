@@ -20,25 +20,25 @@ T = TypeVar("T", bound="IngestedRecord")
 class IngestedRecord:
     """
     Attributes:
-        dim (int):
         id (str):
+        dim (int):
     """
 
-    dim: int
     id: str
+    dim: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        dim = self.dim
-
         id = self.id
+
+        dim = self.dim
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "dim": dim,
                 "id": id,
+                "dim": dim,
             }
         )
 
@@ -47,13 +47,13 @@ class IngestedRecord:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        dim = d.pop("dim")
-
         id = d.pop("id")
 
+        dim = d.pop("dim")
+
         ingested_record = cls(
-            dim=dim,
             id=id,
+            dim=dim,
         )
 
         ingested_record.additional_properties = d

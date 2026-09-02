@@ -24,32 +24,32 @@ T = TypeVar("T", bound="EntityDto")
 class EntityDto:
     """
     Attributes:
+        id (str):
         collection_id (str):
         flexible_metadata (EntityDtoFlexibleMetadata):
-        id (str):
     """
 
+    id: str
     collection_id: str
     flexible_metadata: EntityDtoFlexibleMetadata
-    id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.entity_dto_flexible_metadata import EntityDtoFlexibleMetadata
 
+        id = self.id
+
         collection_id = self.collection_id
 
         flexible_metadata = self.flexible_metadata.to_dict()
-
-        id = self.id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "id": id,
                 "collection_id": collection_id,
                 "flexible_metadata": flexible_metadata,
-                "id": id,
             }
         )
 
@@ -60,18 +60,18 @@ class EntityDto:
         from ..models.entity_dto_flexible_metadata import EntityDtoFlexibleMetadata
 
         d = dict(src_dict)
+        id = d.pop("id")
+
         collection_id = d.pop("collection_id")
 
         flexible_metadata = EntityDtoFlexibleMetadata.from_dict(
             d.pop("flexible_metadata")
         )
 
-        id = d.pop("id")
-
         entity_dto = cls(
+            id=id,
             collection_id=collection_id,
             flexible_metadata=flexible_metadata,
-            id=id,
         )
 
         entity_dto.additional_properties = d

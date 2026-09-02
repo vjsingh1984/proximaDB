@@ -20,39 +20,39 @@ T = TypeVar("T", bound="DeleteNodeResponse")
 class DeleteNodeResponse:
     """
     Attributes:
-        id (str | Unset):
         success (bool | Unset):
+        id (str | Unset):
     """
 
-    id: str | Unset = UNSET
     success: bool | Unset = UNSET
+    id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        id = self.id
-
         success = self.success
+
+        id = self.id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if id is not UNSET:
-            field_dict["id"] = id
         if success is not UNSET:
             field_dict["success"] = success
+        if id is not UNSET:
+            field_dict["id"] = id
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        id = d.pop("id", UNSET)
-
         success = d.pop("success", UNSET)
 
+        id = d.pop("id", UNSET)
+
         delete_node_response = cls(
-            id=id,
             success=success,
+            id=id,
         )
 
         delete_node_response.additional_properties = d

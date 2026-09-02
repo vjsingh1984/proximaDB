@@ -25,50 +25,50 @@ class UpdateSchemaResponse:
     """Schema update response
 
     Attributes:
-        changes (list[SchemaChange]): List of applied changes
-        previous_schema_id (str): Previous schema ID (for rollback)
         schema_id (str): Updated schema ID
         schema_version (str): New schema version
-        updated_at (str): Update timestamp
+        previous_schema_id (str): Previous schema ID (for rollback)
+        changes (list[SchemaChange]): List of applied changes
         warnings (list[str]): Warnings about the update
+        updated_at (str): Update timestamp
     """
 
-    changes: list[SchemaChange]
-    previous_schema_id: str
     schema_id: str
     schema_version: str
-    updated_at: str
+    previous_schema_id: str
+    changes: list[SchemaChange]
     warnings: list[str]
+    updated_at: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.schema_change import SchemaChange
+
+        schema_id = self.schema_id
+
+        schema_version = self.schema_version
+
+        previous_schema_id = self.previous_schema_id
 
         changes = []
         for changes_item_data in self.changes:
             changes_item = changes_item_data.to_dict()
             changes.append(changes_item)
 
-        previous_schema_id = self.previous_schema_id
-
-        schema_id = self.schema_id
-
-        schema_version = self.schema_version
+        warnings = self.warnings
 
         updated_at = self.updated_at
-
-        warnings = self.warnings
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "changes": changes,
-                "previous_schema_id": previous_schema_id,
                 "schema_id": schema_id,
                 "schema_version": schema_version,
-                "updated_at": updated_at,
+                "previous_schema_id": previous_schema_id,
+                "changes": changes,
                 "warnings": warnings,
+                "updated_at": updated_at,
             }
         )
 
@@ -79,6 +79,12 @@ class UpdateSchemaResponse:
         from ..models.schema_change import SchemaChange
 
         d = dict(src_dict)
+        schema_id = d.pop("schema_id")
+
+        schema_version = d.pop("schema_version")
+
+        previous_schema_id = d.pop("previous_schema_id")
+
         changes = []
         _changes = d.pop("changes")
         for changes_item_data in _changes:
@@ -86,23 +92,17 @@ class UpdateSchemaResponse:
 
             changes.append(changes_item)
 
-        previous_schema_id = d.pop("previous_schema_id")
-
-        schema_id = d.pop("schema_id")
-
-        schema_version = d.pop("schema_version")
+        warnings = cast(list[str], d.pop("warnings"))
 
         updated_at = d.pop("updated_at")
 
-        warnings = cast(list[str], d.pop("warnings"))
-
         update_schema_response = cls(
-            changes=changes,
-            previous_schema_id=previous_schema_id,
             schema_id=schema_id,
             schema_version=schema_version,
-            updated_at=updated_at,
+            previous_schema_id=previous_schema_id,
+            changes=changes,
             warnings=warnings,
+            updated_at=updated_at,
         )
 
         update_schema_response.additional_properties = d

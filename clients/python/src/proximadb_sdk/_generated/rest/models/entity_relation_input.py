@@ -24,18 +24,18 @@ T = TypeVar("T", bound="EntityRelationInput")
 class EntityRelationInput:
     """
     Attributes:
-        relation_type (str):
         source_entity_id (str):
         target_entity_id (str):
-        properties (EntityRelationInputProperties | Unset):
+        relation_type (str):
         weight (float | Unset):
+        properties (EntityRelationInputProperties | Unset):
     """
 
-    relation_type: str
     source_entity_id: str
     target_entity_id: str
-    properties: EntityRelationInputProperties | Unset = UNSET
+    relation_type: str
     weight: float | Unset = UNSET
+    properties: EntityRelationInputProperties | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,31 +43,31 @@ class EntityRelationInput:
             EntityRelationInputProperties,
         )
 
-        relation_type = self.relation_type
-
         source_entity_id = self.source_entity_id
 
         target_entity_id = self.target_entity_id
+
+        relation_type = self.relation_type
+
+        weight = self.weight
 
         properties: dict[str, Any] | Unset = UNSET
         if not isinstance(self.properties, Unset):
             properties = self.properties.to_dict()
 
-        weight = self.weight
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "relation_type": relation_type,
                 "source_entity_id": source_entity_id,
                 "target_entity_id": target_entity_id,
+                "relation_type": relation_type,
             }
         )
-        if properties is not UNSET:
-            field_dict["properties"] = properties
         if weight is not UNSET:
             field_dict["weight"] = weight
+        if properties is not UNSET:
+            field_dict["properties"] = properties
 
         return field_dict
 
@@ -78,11 +78,13 @@ class EntityRelationInput:
         )
 
         d = dict(src_dict)
-        relation_type = d.pop("relation_type")
-
         source_entity_id = d.pop("source_entity_id")
 
         target_entity_id = d.pop("target_entity_id")
+
+        relation_type = d.pop("relation_type")
+
+        weight = d.pop("weight", UNSET)
 
         _properties = d.pop("properties", UNSET)
         properties: EntityRelationInputProperties | Unset
@@ -91,14 +93,12 @@ class EntityRelationInput:
         else:
             properties = EntityRelationInputProperties.from_dict(_properties)
 
-        weight = d.pop("weight", UNSET)
-
         entity_relation_input = cls(
-            relation_type=relation_type,
             source_entity_id=source_entity_id,
             target_entity_id=target_entity_id,
-            properties=properties,
+            relation_type=relation_type,
             weight=weight,
+            properties=properties,
         )
 
         entity_relation_input.additional_properties = d

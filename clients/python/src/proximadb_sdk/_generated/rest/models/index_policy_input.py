@@ -22,41 +22,29 @@ class IndexPolicyInput:
     `IndexPolicy`; ADR-028).
 
         Attributes:
-            byte_budget (int | None | Unset): Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
-                for the storage class.
             mode (None | str | Unset): Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
                 "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
                 The engine modes force the collection onto that engine/route.
-            nprobe (int | None | Unset): nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
-                `mode = "exact"`.
             rehydrate (None | str | Unset): Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
                 Index/auto modes only — rejected when `mode = "exact"`.
+            byte_budget (int | None | Unset): Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+                for the storage class.
+            nprobe (int | None | Unset): nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+                `mode = "exact"`.
     """
 
-    byte_budget: int | None | Unset = UNSET
     mode: None | str | Unset = UNSET
-    nprobe: int | None | Unset = UNSET
     rehydrate: None | str | Unset = UNSET
+    byte_budget: int | None | Unset = UNSET
+    nprobe: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        byte_budget: int | None | Unset
-        if isinstance(self.byte_budget, Unset):
-            byte_budget = UNSET
-        else:
-            byte_budget = self.byte_budget
-
         mode: None | str | Unset
         if isinstance(self.mode, Unset):
             mode = UNSET
         else:
             mode = self.mode
-
-        nprobe: int | None | Unset
-        if isinstance(self.nprobe, Unset):
-            nprobe = UNSET
-        else:
-            nprobe = self.nprobe
 
         rehydrate: None | str | Unset
         if isinstance(self.rehydrate, Unset):
@@ -64,32 +52,35 @@ class IndexPolicyInput:
         else:
             rehydrate = self.rehydrate
 
+        byte_budget: int | None | Unset
+        if isinstance(self.byte_budget, Unset):
+            byte_budget = UNSET
+        else:
+            byte_budget = self.byte_budget
+
+        nprobe: int | None | Unset
+        if isinstance(self.nprobe, Unset):
+            nprobe = UNSET
+        else:
+            nprobe = self.nprobe
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if byte_budget is not UNSET:
-            field_dict["byte_budget"] = byte_budget
         if mode is not UNSET:
             field_dict["mode"] = mode
-        if nprobe is not UNSET:
-            field_dict["nprobe"] = nprobe
         if rehydrate is not UNSET:
             field_dict["rehydrate"] = rehydrate
+        if byte_budget is not UNSET:
+            field_dict["byte_budget"] = byte_budget
+        if nprobe is not UNSET:
+            field_dict["nprobe"] = nprobe
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-
-        def _parse_byte_budget(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        byte_budget = _parse_byte_budget(d.pop("byte_budget", UNSET))
 
         def _parse_mode(data: object) -> None | str | Unset:
             if data is None:
@@ -100,15 +91,6 @@ class IndexPolicyInput:
 
         mode = _parse_mode(d.pop("mode", UNSET))
 
-        def _parse_nprobe(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        nprobe = _parse_nprobe(d.pop("nprobe", UNSET))
-
         def _parse_rehydrate(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -118,11 +100,29 @@ class IndexPolicyInput:
 
         rehydrate = _parse_rehydrate(d.pop("rehydrate", UNSET))
 
+        def _parse_byte_budget(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        byte_budget = _parse_byte_budget(d.pop("byte_budget", UNSET))
+
+        def _parse_nprobe(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        nprobe = _parse_nprobe(d.pop("nprobe", UNSET))
+
         index_policy_input = cls(
-            byte_budget=byte_budget,
             mode=mode,
-            nprobe=nprobe,
             rehydrate=rehydrate,
+            byte_budget=byte_budget,
+            nprobe=nprobe,
         )
 
         index_policy_input.additional_properties = d

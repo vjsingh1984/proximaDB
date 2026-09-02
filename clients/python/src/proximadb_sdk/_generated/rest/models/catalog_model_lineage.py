@@ -25,18 +25,24 @@ class CatalogModelLineage:
     """MLMD/OpenLineage-shaped producer execution and its declared inputs.
 
     Attributes:
+        producer_execution_id (None | str | Unset):
         code_revision (None | str | Unset):
         inputs (list[CatalogLineageInput] | Unset):
-        producer_execution_id (None | str | Unset):
     """
 
+    producer_execution_id: None | str | Unset = UNSET
     code_revision: None | str | Unset = UNSET
     inputs: list[CatalogLineageInput] | Unset = UNSET
-    producer_execution_id: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.catalog_lineage_input import CatalogLineageInput
+
+        producer_execution_id: None | str | Unset
+        if isinstance(self.producer_execution_id, Unset):
+            producer_execution_id = UNSET
+        else:
+            producer_execution_id = self.producer_execution_id
 
         code_revision: None | str | Unset
         if isinstance(self.code_revision, Unset):
@@ -51,21 +57,15 @@ class CatalogModelLineage:
                 inputs_item = inputs_item_data.to_dict()
                 inputs.append(inputs_item)
 
-        producer_execution_id: None | str | Unset
-        if isinstance(self.producer_execution_id, Unset):
-            producer_execution_id = UNSET
-        else:
-            producer_execution_id = self.producer_execution_id
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if producer_execution_id is not UNSET:
+            field_dict["producer_execution_id"] = producer_execution_id
         if code_revision is not UNSET:
             field_dict["code_revision"] = code_revision
         if inputs is not UNSET:
             field_dict["inputs"] = inputs
-        if producer_execution_id is not UNSET:
-            field_dict["producer_execution_id"] = producer_execution_id
 
         return field_dict
 
@@ -74,6 +74,17 @@ class CatalogModelLineage:
         from ..models.catalog_lineage_input import CatalogLineageInput
 
         d = dict(src_dict)
+
+        def _parse_producer_execution_id(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        producer_execution_id = _parse_producer_execution_id(
+            d.pop("producer_execution_id", UNSET)
+        )
 
         def _parse_code_revision(data: object) -> None | str | Unset:
             if data is None:
@@ -93,21 +104,10 @@ class CatalogModelLineage:
 
                 inputs.append(inputs_item)
 
-        def _parse_producer_execution_id(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        producer_execution_id = _parse_producer_execution_id(
-            d.pop("producer_execution_id", UNSET)
-        )
-
         catalog_model_lineage = cls(
+            producer_execution_id=producer_execution_id,
             code_revision=code_revision,
             inputs=inputs,
-            producer_execution_id=producer_execution_id,
         )
 
         catalog_model_lineage.additional_properties = d

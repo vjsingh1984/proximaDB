@@ -21,6 +21,7 @@ class RestColumnDefinition:
     """Column definition for schema
 
     Attributes:
+        name (str): Column name
         data_type (str): Data type
 
             Supported types:
@@ -41,47 +42,46 @@ class RestColumnDefinition:
             - "map_string_string", "map_string_any"
             - "geo_point": Latitude/longitude point
             - "vector": Fixed-dimension vector (specify dimension)
-        name (str): Column name
-        filterable (bool | None | Unset): Enable filtering on this column
+        nullable (bool | None | Unset): Whether null values are allowed
 
-            When true, the column can be used in WHERE clauses.
-            Default: true for indexed columns, false otherwise
+            Default: true
         indexed (bool | None | Unset): Create secondary index for this column
 
             Improves query performance for equality/range filters.
             Default: false
+        filterable (bool | None | Unset): Enable filtering on this column
+
+            When true, the column can be used in WHERE clauses.
+            Default: true for indexed columns, false otherwise
         max_length (int | None | Unset): Maximum length for TEXT/BINARY columns
 
             Default: no limit
-        nullable (bool | None | Unset): Whether null values are allowed
-
-            Default: true
         precision (int | None | Unset): Precision for DECIMAL type (1-38)
         scale (int | None | Unset): Scale for DECIMAL type (0-precision)
         vector_dimension (int | None | Unset): Dimension for VECTOR type
     """
 
-    data_type: str
     name: str
-    filterable: bool | None | Unset = UNSET
-    indexed: bool | None | Unset = UNSET
-    max_length: int | None | Unset = UNSET
+    data_type: str
     nullable: bool | None | Unset = UNSET
+    indexed: bool | None | Unset = UNSET
+    filterable: bool | None | Unset = UNSET
+    max_length: int | None | Unset = UNSET
     precision: int | None | Unset = UNSET
     scale: int | None | Unset = UNSET
     vector_dimension: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        data_type = self.data_type
-
         name = self.name
 
-        filterable: bool | None | Unset
-        if isinstance(self.filterable, Unset):
-            filterable = UNSET
+        data_type = self.data_type
+
+        nullable: bool | None | Unset
+        if isinstance(self.nullable, Unset):
+            nullable = UNSET
         else:
-            filterable = self.filterable
+            nullable = self.nullable
 
         indexed: bool | None | Unset
         if isinstance(self.indexed, Unset):
@@ -89,17 +89,17 @@ class RestColumnDefinition:
         else:
             indexed = self.indexed
 
+        filterable: bool | None | Unset
+        if isinstance(self.filterable, Unset):
+            filterable = UNSET
+        else:
+            filterable = self.filterable
+
         max_length: int | None | Unset
         if isinstance(self.max_length, Unset):
             max_length = UNSET
         else:
             max_length = self.max_length
-
-        nullable: bool | None | Unset
-        if isinstance(self.nullable, Unset):
-            nullable = UNSET
-        else:
-            nullable = self.nullable
 
         precision: int | None | Unset
         if isinstance(self.precision, Unset):
@@ -123,18 +123,18 @@ class RestColumnDefinition:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "data_type": data_type,
                 "name": name,
+                "data_type": data_type,
             }
         )
-        if filterable is not UNSET:
-            field_dict["filterable"] = filterable
-        if indexed is not UNSET:
-            field_dict["indexed"] = indexed
-        if max_length is not UNSET:
-            field_dict["max_length"] = max_length
         if nullable is not UNSET:
             field_dict["nullable"] = nullable
+        if indexed is not UNSET:
+            field_dict["indexed"] = indexed
+        if filterable is not UNSET:
+            field_dict["filterable"] = filterable
+        if max_length is not UNSET:
+            field_dict["max_length"] = max_length
         if precision is not UNSET:
             field_dict["precision"] = precision
         if scale is not UNSET:
@@ -147,18 +147,18 @@ class RestColumnDefinition:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        data_type = d.pop("data_type")
-
         name = d.pop("name")
 
-        def _parse_filterable(data: object) -> bool | None | Unset:
+        data_type = d.pop("data_type")
+
+        def _parse_nullable(data: object) -> bool | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
             return cast(bool | None | Unset, data)
 
-        filterable = _parse_filterable(d.pop("filterable", UNSET))
+        nullable = _parse_nullable(d.pop("nullable", UNSET))
 
         def _parse_indexed(data: object) -> bool | None | Unset:
             if data is None:
@@ -169,6 +169,15 @@ class RestColumnDefinition:
 
         indexed = _parse_indexed(d.pop("indexed", UNSET))
 
+        def _parse_filterable(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        filterable = _parse_filterable(d.pop("filterable", UNSET))
+
         def _parse_max_length(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -177,15 +186,6 @@ class RestColumnDefinition:
             return cast(int | None | Unset, data)
 
         max_length = _parse_max_length(d.pop("max_length", UNSET))
-
-        def _parse_nullable(data: object) -> bool | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(bool | None | Unset, data)
-
-        nullable = _parse_nullable(d.pop("nullable", UNSET))
 
         def _parse_precision(data: object) -> int | None | Unset:
             if data is None:
@@ -215,12 +215,12 @@ class RestColumnDefinition:
         vector_dimension = _parse_vector_dimension(d.pop("vector_dimension", UNSET))
 
         rest_column_definition = cls(
-            data_type=data_type,
             name=name,
-            filterable=filterable,
-            indexed=indexed,
-            max_length=max_length,
+            data_type=data_type,
             nullable=nullable,
+            indexed=indexed,
+            filterable=filterable,
+            max_length=max_length,
             precision=precision,
             scale=scale,
             vector_dimension=vector_dimension,

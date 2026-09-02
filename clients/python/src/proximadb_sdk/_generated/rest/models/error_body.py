@@ -25,28 +25,34 @@ class ErrorBody:
     """Inner body of [`ErrorResponse`].
 
     Attributes:
-        code (int): HTTP status code.
-        message (str):
         type_ (str): Stable machine-readable error code (snake_case). Example: collection_not_found.
-        details (ErrorBodyDetailsType0 | None | Unset): Optional structured context (e.g. migration hints).
+        message (str):
+        code (int): HTTP status code.
         request_id (None | str | Unset): Correlation id (matches the X-Request-ID header).
+        details (ErrorBodyDetailsType0 | None | Unset): Optional structured context (e.g. migration hints).
     """
 
-    code: int
-    message: str
     type_: str
-    details: ErrorBodyDetailsType0 | None | Unset = UNSET
+    message: str
+    code: int
     request_id: None | str | Unset = UNSET
+    details: ErrorBodyDetailsType0 | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.error_body_details_type_0 import ErrorBodyDetailsType0
 
-        code = self.code
+        type_ = self.type_
 
         message = self.message
 
-        type_ = self.type_
+        code = self.code
+
+        request_id: None | str | Unset
+        if isinstance(self.request_id, Unset):
+            request_id = UNSET
+        else:
+            request_id = self.request_id
 
         details: dict[str, Any] | None | Unset
         if isinstance(self.details, Unset):
@@ -56,25 +62,19 @@ class ErrorBody:
         else:
             details = self.details
 
-        request_id: None | str | Unset
-        if isinstance(self.request_id, Unset):
-            request_id = UNSET
-        else:
-            request_id = self.request_id
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "code": code,
-                "message": message,
                 "type": type_,
+                "message": message,
+                "code": code,
             }
         )
-        if details is not UNSET:
-            field_dict["details"] = details
         if request_id is not UNSET:
             field_dict["request_id"] = request_id
+        if details is not UNSET:
+            field_dict["details"] = details
 
         return field_dict
 
@@ -83,11 +83,20 @@ class ErrorBody:
         from ..models.error_body_details_type_0 import ErrorBodyDetailsType0
 
         d = dict(src_dict)
-        code = d.pop("code")
+        type_ = d.pop("type")
 
         message = d.pop("message")
 
-        type_ = d.pop("type")
+        code = d.pop("code")
+
+        def _parse_request_id(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        request_id = _parse_request_id(d.pop("request_id", UNSET))
 
         def _parse_details(data: object) -> ErrorBodyDetailsType0 | None | Unset:
             if data is None:
@@ -106,21 +115,12 @@ class ErrorBody:
 
         details = _parse_details(d.pop("details", UNSET))
 
-        def _parse_request_id(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        request_id = _parse_request_id(d.pop("request_id", UNSET))
-
         error_body = cls(
-            code=code,
-            message=message,
             type_=type_,
-            details=details,
+            message=message,
+            code=code,
             request_id=request_id,
+            details=details,
         )
 
         error_body.additional_properties = d

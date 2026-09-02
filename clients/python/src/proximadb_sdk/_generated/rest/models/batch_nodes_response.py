@@ -25,30 +25,30 @@ class BatchNodesResponse:
     """Server returns a `GraphResponse<BatchResults<Node>>` envelope.
 
     Attributes:
-        data (BatchNodesResponseData | Unset):
         success (bool | Unset):
+        data (BatchNodesResponseData | Unset):
     """
 
-    data: BatchNodesResponseData | Unset = UNSET
     success: bool | Unset = UNSET
+    data: BatchNodesResponseData | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.batch_nodes_response_data import BatchNodesResponseData
 
+        success = self.success
+
         data: dict[str, Any] | Unset = UNSET
         if not isinstance(self.data, Unset):
             data = self.data.to_dict()
 
-        success = self.success
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if data is not UNSET:
-            field_dict["data"] = data
         if success is not UNSET:
             field_dict["success"] = success
+        if data is not UNSET:
+            field_dict["data"] = data
 
         return field_dict
 
@@ -57,6 +57,8 @@ class BatchNodesResponse:
         from ..models.batch_nodes_response_data import BatchNodesResponseData
 
         d = dict(src_dict)
+        success = d.pop("success", UNSET)
+
         _data = d.pop("data", UNSET)
         data: BatchNodesResponseData | Unset
         if isinstance(_data, Unset):
@@ -64,11 +66,9 @@ class BatchNodesResponse:
         else:
             data = BatchNodesResponseData.from_dict(_data)
 
-        success = d.pop("success", UNSET)
-
         batch_nodes_response = cls(
-            data=data,
             success=success,
+            data=data,
         )
 
         batch_nodes_response.additional_properties = d

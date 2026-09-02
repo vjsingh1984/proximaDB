@@ -21,22 +21,22 @@ class TextFieldOutput:
     """Output format for TEXT fields
 
     Attributes:
-        content (str): Text content (may be truncated for large content)
         name (str): Field name
+        content (str): Text content (may be truncated for large content)
         truncated (bool): Whether content was truncated
         chunk_count (int | None | Unset): Number of chunks (for chunked storage)
     """
 
-    content: str
     name: str
+    content: str
     truncated: bool
     chunk_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        content = self.content
-
         name = self.name
+
+        content = self.content
 
         truncated = self.truncated
 
@@ -50,8 +50,8 @@ class TextFieldOutput:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "content": content,
                 "name": name,
+                "content": content,
                 "truncated": truncated,
             }
         )
@@ -63,9 +63,9 @@ class TextFieldOutput:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        content = d.pop("content")
-
         name = d.pop("name")
+
+        content = d.pop("content")
 
         truncated = d.pop("truncated")
 
@@ -79,8 +79,8 @@ class TextFieldOutput:
         chunk_count = _parse_chunk_count(d.pop("chunk_count", UNSET))
 
         text_field_output = cls(
-            content=content,
             name=name,
+            content=content,
             truncated=truncated,
             chunk_count=chunk_count,
         )

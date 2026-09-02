@@ -25,18 +25,18 @@ class EdgeResponse:
     """
     Attributes:
         id (str):
-        edge_type (None | str | Unset):
         from_node_id (str | Unset):
-        properties (EdgeResponsePropertiesType0 | None | Unset):
         to_node_id (str | Unset):
+        edge_type (None | str | Unset):
+        properties (EdgeResponsePropertiesType0 | None | Unset):
         weight (float | None | Unset):
     """
 
     id: str
-    edge_type: None | str | Unset = UNSET
     from_node_id: str | Unset = UNSET
-    properties: EdgeResponsePropertiesType0 | None | Unset = UNSET
     to_node_id: str | Unset = UNSET
+    edge_type: None | str | Unset = UNSET
+    properties: EdgeResponsePropertiesType0 | None | Unset = UNSET
     weight: float | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -45,13 +45,15 @@ class EdgeResponse:
 
         id = self.id
 
+        from_node_id = self.from_node_id
+
+        to_node_id = self.to_node_id
+
         edge_type: None | str | Unset
         if isinstance(self.edge_type, Unset):
             edge_type = UNSET
         else:
             edge_type = self.edge_type
-
-        from_node_id = self.from_node_id
 
         properties: dict[str, Any] | None | Unset
         if isinstance(self.properties, Unset):
@@ -60,8 +62,6 @@ class EdgeResponse:
             properties = self.properties.to_dict()
         else:
             properties = self.properties
-
-        to_node_id = self.to_node_id
 
         weight: float | None | Unset
         if isinstance(self.weight, Unset):
@@ -76,14 +76,14 @@ class EdgeResponse:
                 "id": id,
             }
         )
-        if edge_type is not UNSET:
-            field_dict["edge_type"] = edge_type
         if from_node_id is not UNSET:
             field_dict["from_node_id"] = from_node_id
-        if properties is not UNSET:
-            field_dict["properties"] = properties
         if to_node_id is not UNSET:
             field_dict["to_node_id"] = to_node_id
+        if edge_type is not UNSET:
+            field_dict["edge_type"] = edge_type
+        if properties is not UNSET:
+            field_dict["properties"] = properties
         if weight is not UNSET:
             field_dict["weight"] = weight
 
@@ -96,6 +96,10 @@ class EdgeResponse:
         d = dict(src_dict)
         id = d.pop("id")
 
+        from_node_id = d.pop("from_node_id", UNSET)
+
+        to_node_id = d.pop("to_node_id", UNSET)
+
         def _parse_edge_type(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -104,8 +108,6 @@ class EdgeResponse:
             return cast(None | str | Unset, data)
 
         edge_type = _parse_edge_type(d.pop("edge_type", UNSET))
-
-        from_node_id = d.pop("from_node_id", UNSET)
 
         def _parse_properties(
             data: object,
@@ -126,8 +128,6 @@ class EdgeResponse:
 
         properties = _parse_properties(d.pop("properties", UNSET))
 
-        to_node_id = d.pop("to_node_id", UNSET)
-
         def _parse_weight(data: object) -> float | None | Unset:
             if data is None:
                 return data
@@ -139,10 +139,10 @@ class EdgeResponse:
 
         edge_response = cls(
             id=id,
-            edge_type=edge_type,
             from_node_id=from_node_id,
-            properties=properties,
             to_node_id=to_node_id,
+            edge_type=edge_type,
+            properties=properties,
             weight=weight,
         )
 

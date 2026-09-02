@@ -20,30 +20,30 @@ T = TypeVar("T", bound="UpsertEntityResponse")
 class UpsertEntityResponse:
     """
     Attributes:
+        success (bool):
         entity_id (str):
         message (str):
-        success (bool):
     """
 
+    success: bool
     entity_id: str
     message: str
-    success: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        success = self.success
+
         entity_id = self.entity_id
 
         message = self.message
-
-        success = self.success
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "success": success,
                 "entity_id": entity_id,
                 "message": message,
-                "success": success,
             }
         )
 
@@ -52,16 +52,16 @@ class UpsertEntityResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        success = d.pop("success")
+
         entity_id = d.pop("entity_id")
 
         message = d.pop("message")
 
-        success = d.pop("success")
-
         upsert_entity_response = cls(
+            success=success,
             entity_id=entity_id,
             message=message,
-            success=success,
         )
 
         upsert_entity_response.additional_properties = d

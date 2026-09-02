@@ -22,30 +22,30 @@ class CatalogLineageInput:
     """Digest-pinned input consumed by the execution that produced a model.
 
     Attributes:
-        digest (str):
         kind (CatalogLineageInputKind):
         name (str):
+        digest (str):
     """
 
-    digest: str
     kind: CatalogLineageInputKind
     name: str
+    digest: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        digest = self.digest
-
         kind = self.kind.value
 
         name = self.name
+
+        digest = self.digest
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "digest": digest,
                 "kind": kind,
                 "name": name,
+                "digest": digest,
             }
         )
 
@@ -54,16 +54,16 @@ class CatalogLineageInput:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        digest = d.pop("digest")
-
         kind = CatalogLineageInputKind(d.pop("kind"))
 
         name = d.pop("name")
 
+        digest = d.pop("digest")
+
         catalog_lineage_input = cls(
-            digest=digest,
             kind=kind,
             name=name,
+            digest=digest,
         )
 
         catalog_lineage_input.additional_properties = d

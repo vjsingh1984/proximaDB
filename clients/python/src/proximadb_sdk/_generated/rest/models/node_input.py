@@ -28,15 +28,15 @@ class NodeInput:
 
         Attributes:
             id (str):
-            embedding (EmbeddingInput | Unset):
             labels (list[str] | Unset):
             properties (NodeInputProperties | Unset):
+            embedding (EmbeddingInput | Unset):
     """
 
     id: str
-    embedding: EmbeddingInput | Unset = UNSET
     labels: list[str] | Unset = UNSET
     properties: NodeInputProperties | Unset = UNSET
+    embedding: EmbeddingInput | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,10 +44,6 @@ class NodeInput:
         from ..models.node_input_properties import NodeInputProperties
 
         id = self.id
-
-        embedding: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.embedding, Unset):
-            embedding = self.embedding.to_dict()
 
         labels: list[str] | Unset = UNSET
         if not isinstance(self.labels, Unset):
@@ -57,6 +53,10 @@ class NodeInput:
         if not isinstance(self.properties, Unset):
             properties = self.properties.to_dict()
 
+        embedding: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.embedding, Unset):
+            embedding = self.embedding.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -64,12 +64,12 @@ class NodeInput:
                 "id": id,
             }
         )
-        if embedding is not UNSET:
-            field_dict["embedding"] = embedding
         if labels is not UNSET:
             field_dict["labels"] = labels
         if properties is not UNSET:
             field_dict["properties"] = properties
+        if embedding is not UNSET:
+            field_dict["embedding"] = embedding
 
         return field_dict
 
@@ -81,13 +81,6 @@ class NodeInput:
         d = dict(src_dict)
         id = d.pop("id")
 
-        _embedding = d.pop("embedding", UNSET)
-        embedding: EmbeddingInput | Unset
-        if isinstance(_embedding, Unset):
-            embedding = UNSET
-        else:
-            embedding = EmbeddingInput.from_dict(_embedding)
-
         labels = cast(list[str], d.pop("labels", UNSET))
 
         _properties = d.pop("properties", UNSET)
@@ -97,11 +90,18 @@ class NodeInput:
         else:
             properties = NodeInputProperties.from_dict(_properties)
 
+        _embedding = d.pop("embedding", UNSET)
+        embedding: EmbeddingInput | Unset
+        if isinstance(_embedding, Unset):
+            embedding = UNSET
+        else:
+            embedding = EmbeddingInput.from_dict(_embedding)
+
         node_input = cls(
             id=id,
-            embedding=embedding,
             labels=labels,
             properties=properties,
+            embedding=embedding,
         )
 
         node_input.additional_properties = d
