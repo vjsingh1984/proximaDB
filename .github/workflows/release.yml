@@ -5,7 +5,8 @@
 # OVERVIEW:
 #   This workflow creates and publishes ProximaDB releases across multiple
 #   platforms and package registries. It builds native binaries, Python wheels,
-#   and publishes to GitHub Releases, PyPI, and crates.io.
+#   and publishes to GitHub Releases and crates.io. Python packages are NOT
+#   published here — release-python.yml owns PyPI/TestPyPI on python-v* tags.
 #
 # TRIGGER MODES:
 #   1. Tag Push: Automatically triggered by pushing a version tag (v0.2.0, v0.2.0-beta.1)
@@ -26,7 +27,8 @@
 #   ├─────────────────────────────────────────────────────────────────────────┤
 #   │  4. PUBLISH (sequential, gated)                                        │
 #   │     ├── create-release    GitHub Release with all artifacts            │
-#   │     ├── publish-pypi      PyPI (stable) or TestPyPI (pre-release)      │
+#   │     (Python → PyPI/TestPyPI is owned by release-python.yml on            │
+#   │     python-v* tags — its trusted-publisher registration is the live one.)│
 #   │     ├── publish-crates    crates.io (stable only)                      │
 #   │     └── update-homebrew   Homebrew formula artifact                    │
 #   ├─────────────────────────────────────────────────────────────────────────┤
@@ -49,8 +51,7 @@
 # SAFEGUARDS:
 #   - dry_run: Builds all artifacts but skips publishing (test the pipeline)
 #   - Artifact validation gate: Blocks publishing if any artifact is missing
-#   - Environment protection: pypi/crates-io/testpypi require approval
-#   - Pre-release detection: Auto-routes to TestPyPI for pre-releases
+#   - Environment protection: crates-io requires approval
 #   Checksum verification: SHA256 checksums for all artifacts
 #
 # v0.2.0 SCOPE:
@@ -72,13 +73,11 @@
 #   1. Ensure Cargo.toml version matches tag version
 #   2. Create and push tag: git tag v0.2.0 && git push origin v0.2.0
 #   3. Workflow triggers automatically
-#   4. Pre-releases (v0.2.0-beta.1) go to TestPyPI
-#   5. Stable releases go to PyPI and crates.io
+#   4. Stable releases go to crates.io (Python: release-python.yml on python-v*)
 #
 # TROUBLESHOOTING:
 #   - Build failures: Check platform-specific build logs
 #   - Missing artifacts: Validate job shows which artifacts are missing
-#   - PyPI failures: Check trusted publishing configuration
 #   - crates.io failures: Verify CARGO_REGISTRY_TOKEN secret
 #
 # MAINTENANCE:
@@ -122,7 +121,6 @@ env:
 permissions:
   contents: write
   packages: write
-  id-token: write  # For PyPI trusted publishing
 
 jobs:
   # ============================================================================
@@ -903,156 +901,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ============================================================================
-  # PUBLISH TO PYPI - Python package registry
-  # ============================================================================
-  # SAFEGUARDS:
-  # - Requires successful artifact validation
-  # - Uses GitHub Environment protection rules (configure in repo settings)
-  # - Only runs for stable releases (not pre-releases)
-  # - Pre-publish verification step with manual confirmation prompt
-  # ============================================================================
-  publish-pypi:
-    name: Publish to PyPI
-    needs: [prepare, build-sdist, create-release]
-    runs-on: ubuntu-latest
-    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
-    environment:
-      name: pypi
-      url: https://pypi.org/project/proximadb/
-    steps:
-      - name: Pre-Publish Verification
-        run: |
-          echo "=============================================="
-          echo "PyPI PUBLISH VERIFICATION"
-          echo "=============================================="
-          echo ""
-          echo "Version: ${{ needs.prepare.outputs.version }}"
-          echo "Pre-release: ${{ needs.prepare.outputs.prerelease }}"
-          echo "Artifact Validation: ${{ needs.validate-artifacts.outputs.validation_passed }}"
-          echo ""
-          echo "Artifact Summary:"
-          echo "${{ needs.validate-artifacts.outputs.artifact_report }}"
-          echo ""
-          echo "This step will publish to PyPI (production)."
-          echo "Ensure all artifacts are correct before proceeding."
-          echo ""
-          echo "=============================================="
-
-      - name: Download Wheel Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: wheel-*
-          path: dist
-          merge-multiple: true
-
-      - name: Download Embedded Wheel Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: embedded-wheel-*
-          path: embedded-dist
-          merge-multiple: true
-
-      - name: Download sdist Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: sdist
-          path: sdist
-
-      - name: Consolidate Packages
-        id: consolidate
-        run: |
-          mkdir -p publish
-          cp dist/*.whl publish/ 2>/dev/null || true
-          cp sdist/*.tar.gz publish/ 2>/dev/null || true
-
-          mkdir -p publish-embedded
-          cp embedded-dist/*.whl publish-embedded/ 2>/dev/null || true
-          cp sdist/clients/python-embedded/dist/*.tar.gz publish-embedded/ 2>/dev/null || true
-
-          echo "Main package contents:"
-          ls -la publish/
-          echo "Embedded package contents:"
-          ls -la publish-embedded/
-
-          # pypa/gh-action-pypi-publish hard-fails on an empty packages-dir;
-          # emit outputs so the publish steps can skip instead (wheel builds
-          # are disabled here and the embedded sdist build is commented out).
-          echo "main_has_files=$([ -n "$(ls -A publish)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "embedded_has_files=$([ -n "$(ls -A publish-embedded)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
-      - name: Publish Main Package to PyPI
-        if: steps.consolidate.outputs.main_has_files == 'true'
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: publish/
-          skip-existing: true
-          verbose: true
-
-      - name: Publish Embedded Package to PyPI
-        if: steps.consolidate.outputs.embedded_has_files == 'true'
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: publish-embedded/
-          skip-existing: true
-          verbose: true
-
-  # ============================================================================
-  # PUBLISH TO TEST PYPI - For pre-releases
-  # ============================================================================
-  # Pre-releases are published to TestPyPI for validation before stable release.
-  # Still requires artifact validation to ensure a complete package.
-  # ============================================================================
-  publish-testpypi:
-    name: Publish to TestPyPI
-    needs: [prepare, build-sdist, validate-artifacts]
-    runs-on: ubuntu-latest
-    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease == 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/project/proximadb/
-    steps:
-      - name: Pre-Publish Verification
-        run: |
-          echo "=============================================="
-          echo "TestPyPI PUBLISH VERIFICATION"
-          echo "=============================================="
-          echo ""
-          echo "Version: ${{ needs.prepare.outputs.version }}"
-          echo "Pre-release: ${{ needs.prepare.outputs.prerelease }}"
-          echo ""
-          echo "This is a PRE-RELEASE publishing to TestPyPI."
-          echo "Install with: pip install -i https://test.pypi.org/simple/ proximadb==${{ needs.prepare.outputs.version }}"
-          echo ""
-          echo "=============================================="
-
-      - name: Download Wheel Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: wheel-*
-          path: dist
-          merge-multiple: true
-
-      - name: Download sdist Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: sdist
-          path: sdist
-
-      - name: Consolidate Packages
-        run: |
-          mkdir -p publish
-          cp dist/*.whl publish/ 2>/dev/null || true
-          cp sdist/*.tar.gz publish/ 2>/dev/null || true
-
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          packages-dir: publish/
-          skip-existing: true
-          verbose: true
-
-  # ============================================================================
   # PUBLISH TO CRATES.IO - Rust package registry
   # ============================================================================
   # SAFEGUARDS:
@@ -1311,7 +1159,7 @@ jobs:
   # ============================================================================
   verify-release:
     name: Verify Release
-    needs: [prepare, publish-pypi, publish-crates, validate-artifacts]
+    needs: [prepare, publish-crates, validate-artifacts]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
     steps:
@@ -1347,7 +1195,7 @@ jobs:
   # ============================================================================
   cleanup:
     name: Cleanup Old Artifacts
-    needs: [prepare, create-release, publish-pypi, publish-crates, dry-run-summary]
+    needs: [prepare, create-release, publish-crates, dry-run-summary]
     runs-on: ubuntu-latest
     if: always()
     steps:
