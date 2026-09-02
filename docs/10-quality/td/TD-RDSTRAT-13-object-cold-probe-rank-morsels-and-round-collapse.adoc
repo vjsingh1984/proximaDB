@@ -212,3 +212,15 @@ remainder). The attribution RE-RANKS the 2b candidates versus the exploration's 
 
 Result-identity/GET/bytes parity gates unchanged for every 2b candidate. Raw evidence:
 `dataserver2:/home/vsingh/rdstrat13/runs/tail_attrib/` (result.json + log).
+
+== PR-B 2b measured (2b-1 cache-first rehydrate + 2b-2 waved Region-D) — disk A/B
+
+Same bed shape, same protocol, 2a binary vs 2b binary on dataserver2: p50 350.6 → 343.8 ms
+(−2%); rehydrate 168.3 → 165.9 ms; region-D 19.7 → 17.9 ms; region-B 88.8 → 83.4 ms; GETs
+21.95 both; bytes 58.5 MB both; recall .9835 both; result-identity IDENTICAL. The
+IO-structure changes (−3 IO ops/segment/query; serial RG chunk GETs → one wave) are
+**RTT-levers**: near-neutral on local disk, and their object-store value is the removed
+serial-RTT terms (~top-k × RTT for region-D, 3 × RTT for rehydrate). The disk p50 residual is
+now precisely: region-B 83 ms (bytes-bound SQ8 survivor fetch — recall-gated pool-sizing
+lever), rehydrate 166 ms (block fetch + full-record decode — wanted-rows decode lever), rank
+48 ms, cascade/REST remainder ~46 ms.
