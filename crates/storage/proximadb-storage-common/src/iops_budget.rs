@@ -518,7 +518,10 @@ mod tests {
         };
         super::register_location_budget("file:///iobudget-test-c", first);
         super::register_location_budget("file:///iobudget-test-c", second);
-        assert_eq!(IopsBudget::for_path("file:///iobudget-test-c/seg.pax"), second);
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-c/seg.pax"),
+            second
+        );
     }
 
     #[test]
@@ -536,11 +539,28 @@ mod tests {
             read_range_cap_candidates("file:///iobudget-test-d/seg.pax"),
             vec![mib, 2 * mib]
         );
+
+        // An explicit registered target ABOVE the scheme ceiling is operator
+        // intent (the TD-SEARCH-3-style opt-in): the enumeration honors it
+        // rather than clamping back to the 8 MiB local default.
+        let big = IopsBudget {
+            min: 512 * 1024,
+            target: 16 * mib,
+            max: 16 * mib,
+        };
+        super::register_location_budget("file:///iobudget-test-e", big);
+        assert_eq!(
+            read_range_cap_candidates("file:///iobudget-test-e/seg.pax"),
+            vec![16 * mib]
+        );
     }
 
     #[test]
     fn scheme_cloud_budget_maps_per_scheme() {
-        assert_eq!(IopsBudget::scheme_cloud_budget("file:///x"), IopsBudget::CLOUD);
+        assert_eq!(
+            IopsBudget::scheme_cloud_budget("file:///x"),
+            IopsBudget::CLOUD
+        );
         assert_eq!(
             IopsBudget::scheme_cloud_budget("minio://b/k"),
             IopsBudget::CLOUD

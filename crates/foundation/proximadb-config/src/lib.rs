@@ -770,6 +770,59 @@ impl MetricsConfig {
     }
 }
 
+/// Device class backing a storage location (TD-IOBUDGET-1).
+///
+/// Selects the ranged-GET coalescing profile a location's I/O budget uses when
+/// no explicit `min_bytes`/`target_bytes`/`max_bytes` override is given:
+/// `ssd` → the local/NVMe profile (~1 MiB target), `hdd` → the remote-style
+/// CLOUD profile (ADR-073: a seek-bound disk must issue few, large, coalesced
+/// reads), `cloud` → "coalesce like a remote store for MY scheme" (a `file://`
+/// location gets CLOUD; `s3://` keeps the S3 profile). A value outside these
+/// three fails config LOAD (serde enum), so a typo never silently runs the
+/// wrong profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiskClass {
+    /// Local SSD / NVMe: no round-trip cost, small reads are fine.
+    #[serde(rename = "ssd")]
+    Ssd,
+    /// Spinning disk (500-IOPS class): coalesce like a remote store (ADR-073).
+    #[serde(rename = "hdd")]
+    Hdd,
+    /// Object storage (or a disk wanting remote-style coalescing):
+    /// scheme-aware cloud default.
+    #[serde(rename = "cloud")]
+    Cloud,
+}
+
+/// Optional per-storage-location I/O budget (TD-IOBUDGET-1).
+///
+/// Sizes the ranged GETs the engine issues against THIS location — the reader
+/// coalescing policies, the adaptive read planner's cap enumeration, and the
+/// writer's cell-count derivation. Resolution precedence: explicit
+/// `min_bytes`/`target_bytes`/`max_bytes` override the `disk_class` profile,
+/// which overrides the URL-scheme default. The root crate validates the
+/// resolved budget (fail-closed at load) and registers it at boot.
+///
+/// `deny_unknown_fields` is deliberate: a misspelled key (`target_byets`)
+/// must fail startup rather than be silently ignored (the repo-wide serde
+/// policy otherwise drops unknown fields).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IoBudgetConfig {
+    /// Device class — picks the base profile (`ssd` | `hdd` | `cloud`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_class: Option<DiskClass>,
+    /// Smallest useful ranged GET in bytes (profile value when unset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_bytes: Option<u64>,
+    /// Preferred ranged-GET size in bytes (profile value when unset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_bytes: Option<u64>,
+    /// Largest single coalesced range in bytes (profile value when unset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+}
+
 /// Storage location configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageLocation {
@@ -781,6 +834,11 @@ pub struct StorageLocation {
 
     /// Tags for filtering (e.g., ["fast", "local"], ["cloud", "archive"]).
     pub tags: Vec<String>,
+
+    /// Optional per-location I/O budget (TD-IOBUDGET-1). Unset → the URL
+    /// scheme's default profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub io_budget: Option<IoBudgetConfig>,
 }
 
 impl Default for StorageLocation {
@@ -789,6 +847,7 @@ impl Default for StorageLocation {
             url: "file://./data".to_string(),
             weight: 1,
             tags: vec!["local".to_string()],
+            io_budget: None,
         }
     }
 }

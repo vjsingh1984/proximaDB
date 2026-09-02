@@ -44,6 +44,7 @@ async fn create_basic_storage_engine() -> (StorageEngine, TempDir) {
         url: format!("file://{}", temp_dir.path().join("data").display()),
         weight: 1,
         tags: vec![], // Empty tags for basic testing
+        io_budget: None,
     }];
 
     let storage_engine = StorageEngine::new_without_collection_service(config.storage)

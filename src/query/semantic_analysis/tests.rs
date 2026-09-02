@@ -235,6 +235,7 @@ async fn setup_analyzer_with_mock() -> (Analyzer, tempfile::TempDir) {
             url: storage_url.clone(),
             weight: 1,
             tags: vec!["local".to_string()],
+            io_budget: None,
         }],
         ..Default::default()
     };

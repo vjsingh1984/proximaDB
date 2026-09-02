@@ -15,11 +15,13 @@ mod tests {
                     url: "file:///nvme1/proximadb".to_string(),
                     weight: 1,
                     tags: vec!["fast".to_string(), "local".to_string()],
+                    io_budget: None,
                 },
                 StorageLocation {
                     url: "s3://my-bucket/proximadb".to_string(),
                     weight: 2,
                     tags: vec!["cloud".to_string(), "archive".to_string()],
+                    io_budget: None,
                 },
             ],
             metadata_url: "file:///nvme1/proximadb/metadata_info".to_string(),
@@ -56,11 +58,13 @@ mod tests {
                     url: "file:///nvme1/proximadb".to_string(),
                     weight: 1,
                     tags: vec![],
+                    io_budget: None,
                 },
                 StorageLocation {
                     url: "s3://bucket/proximadb/".to_string(), // With trailing slash
                     weight: 1,
                     tags: vec![],
+                    io_budget: None,
                 },
             ],
             metadata_url: "file:///fast-ssd/metadata_info".to_string(),
@@ -93,22 +97,26 @@ mod tests {
                     url: "file:///local/proximadb".to_string(),
                     weight: 1,
                     tags: vec!["local".to_string()],
+                    io_budget: None,
                 },
                 StorageLocation {
                     url: "s3://aws-bucket/proximadb".to_string(),
                     weight: 2,
                     tags: vec!["cloud".to_string(), "aws".to_string()],
+                    io_budget: None,
                 },
                 StorageLocation {
                     url: "gs://gcp-bucket/proximadb".to_string(),
                     weight: 2,
                     tags: vec!["cloud".to_string(), "gcp".to_string()],
+                    io_budget: None,
                 },
                 StorageLocation {
                     url: "adls://azure-account.dfs.core.windows.net/container/proximadb"
                         .to_string(),
                     weight: 2,
                     tags: vec!["cloud".to_string(), "azure".to_string()],
+                    io_budget: None,
                 },
             ],
             metadata_url: "file:///fast-ssd/metadata_info".to_string(),
@@ -143,6 +151,7 @@ mod tests {
                 url: "file:///disk1".to_string(),
                 weight: 1,
                 tags: vec![],
+                io_budget: None,
             }],
             metadata_url: "file:///disk1/metadata_info".to_string(),
             assignment_config: AssignmentConfig {
@@ -271,6 +280,243 @@ mod tests {
         assert_eq!(
             original.storage.cache_size_mb,
             recovered.storage.cache_size_mb
+        );
+    }
+}
+
+// ---- TD-IOBUDGET-1: per-location I/O budget resolution, validation, registration ----
+
+#[cfg(test)]
+mod io_budget_tests {
+    use crate::core::config::{StorageConfig, StorageLocation};
+    use proximadb_config::{DiskClass, IoBudgetConfig};
+    use proximadb_storage_common::iops_budget::IopsBudget;
+
+    const MIB: u64 = 1024 * 1024;
+
+    #[test]
+    fn disk_class_selects_the_documented_profile() {
+        let cfg = |dc: Option<DiskClass>| IoBudgetConfig {
+            disk_class: dc,
+            ..Default::default()
+        };
+        // ssd → LOCAL profile; hdd → CLOUD profile (ADR-073).
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget(
+                "file:///mnt/nvme",
+                &cfg(Some(DiskClass::Ssd))
+            )
+            .unwrap(),
+            IopsBudget::LOCAL
+        );
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget(
+                "file:///mnt/sas",
+                &cfg(Some(DiskClass::Hdd))
+            )
+            .unwrap(),
+            IopsBudget::CLOUD
+        );
+        // cloud is scheme-aware: file:// gets CLOUD, s3:// keeps its own S3 profile.
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget(
+                "file:///mnt/sas",
+                &cfg(Some(DiskClass::Cloud))
+            )
+            .unwrap(),
+            IopsBudget::CLOUD
+        );
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget("s3://bucket", &cfg(Some(DiskClass::Cloud)))
+                .unwrap(),
+            IopsBudget::S3
+        );
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget(
+                "az://container",
+                &cfg(Some(DiskClass::Cloud))
+            )
+            .unwrap(),
+            IopsBudget::AZURE
+        );
+    }
+
+    #[test]
+    fn explicit_bytes_override_the_profile_per_field() {
+        // S3 profile {512K, 8M, 16M} with target lowered to 4 MiB.
+        let cfg = IoBudgetConfig {
+            disk_class: None,
+            min_bytes: None,
+            target_bytes: Some(4 * MIB),
+            max_bytes: None,
+        };
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget("s3://bucket", &cfg).unwrap(),
+            IopsBudget {
+                min: 512 * 1024,
+                target: 4 * MIB,
+                max: 16 * MIB
+            }
+        );
+        // The measured TD-SEARCH-3 opt-in: 16 MiB target on S3.
+        let cfg16 = IoBudgetConfig {
+            target_bytes: Some(16 * MIB),
+            max_bytes: Some(16 * MIB),
+            disk_class: None,
+            min_bytes: None,
+        };
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget("s3://bucket", &cfg16).unwrap(),
+            IopsBudget {
+                min: 512 * 1024,
+                target: 16 * MIB,
+                max: 16 * MIB
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_is_fail_closed_on_bad_bounds() {
+        // min below the 64 KiB floor.
+        let tiny_min = IoBudgetConfig {
+            min_bytes: Some(1024),
+            target_bytes: Some(MIB),
+            max_bytes: Some(2 * MIB),
+            disk_class: None,
+        };
+        let err = StorageConfig::resolve_location_io_budget("s3://bucket", &tiny_min).unwrap_err();
+        assert!(err.contains("floor"), "{err}");
+        // min > target.
+        let inverted = IoBudgetConfig {
+            min_bytes: Some(4 * MIB),
+            target_bytes: Some(2 * MIB),
+            max_bytes: Some(8 * MIB),
+            disk_class: None,
+        };
+        let err = StorageConfig::resolve_location_io_budget("s3://bucket", &inverted).unwrap_err();
+        assert!(err.contains("min ≤ target ≤ max"), "{err}");
+        // A per-field override that breaks the profile's own invariant
+        // (CLOUD target raised past CLOUD max without raising max) is rejected.
+        let target_past_max = IoBudgetConfig {
+            disk_class: Some(DiskClass::Hdd),
+            target_bytes: Some(16 * MIB),
+            min_bytes: None,
+            max_bytes: None,
+        };
+        assert!(StorageConfig::resolve_location_io_budget("file:///x", &target_past_max).is_err());
+    }
+
+    #[test]
+    fn toml_parse_fails_closed_on_typos() {
+        // Valid parse.
+        let cfg: IoBudgetConfig =
+            toml::from_str("disk_class = 'hdd'\ntarget_bytes = 4194304").unwrap();
+        assert_eq!(cfg.disk_class, Some(DiskClass::Hdd));
+        assert_eq!(cfg.target_bytes, Some(4 * MIB));
+        // Unknown disk_class value → LOAD error, not a silent default.
+        assert!(toml::from_str::<IoBudgetConfig>("disk_class = 'nvme'").is_err());
+        // Unknown KEY (the deny_unknown_fields typo guard) → LOAD error.
+        assert!(toml::from_str::<IoBudgetConfig>("target_byets = 4194304").is_err());
+        // StorageLocation deserializes with (and without) the io_budget table.
+        #[derive(serde::Deserialize)]
+        struct Locations {
+            locs: Vec<StorageLocation>,
+        }
+        let parsed: Locations = toml::from_str(
+            r#"
+            [[locs]]
+            url = "file:///mnt/sas"
+            weight = 1
+            tags = ["durable"]
+            [locs.io_budget]
+            disk_class = "hdd"
+            max_bytes = 16777216
+
+            [[locs]]
+            url = "s3://bucket"
+            weight = 2
+            tags = []
+        "#,
+        )
+        .unwrap();
+        assert_eq!(parsed.locs.len(), 2);
+        assert_eq!(
+            parsed.locs[0].io_budget.as_ref().unwrap().disk_class,
+            Some(DiskClass::Hdd)
+        );
+        assert!(parsed.locs[1].io_budget.is_none());
+    }
+
+    #[test]
+    fn registration_is_fail_closed_and_seeds_the_leaf() {
+        // A location whose budget violates the bounds → Err naming the URL.
+        let bad = StorageConfig {
+            storage_locations: vec![StorageLocation {
+                url: "file:///iobudget-root-test-bad".to_string(),
+                weight: 1,
+                tags: vec![],
+                io_budget: Some(IoBudgetConfig {
+                    min_bytes: Some(8 * MIB),
+                    target_bytes: Some(4 * MIB),
+                    max_bytes: Some(16 * MIB),
+                    disk_class: None,
+                }),
+            }],
+            ..StorageConfig::default()
+        };
+        let err = bad.register_io_budgets().unwrap_err().to_string();
+        assert!(err.contains("iobudget-root-test-bad"), "{err}");
+        // Nothing was registered for the rejected location.
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-root-test-bad/seg.pax"),
+            IopsBudget::LOCAL
+        );
+
+        // A valid config registers per-location budgets the leaf honors, and
+        // an unconfigured location keeps its scheme default.
+        let good = StorageConfig {
+            storage_locations: vec![
+                StorageLocation {
+                    url: "file:///iobudget-root-test-hdd".to_string(),
+                    weight: 1,
+                    tags: vec![],
+                    io_budget: Some(IoBudgetConfig {
+                        disk_class: Some(DiskClass::Hdd),
+                        max_bytes: Some(4 * MIB),
+                        min_bytes: None,
+                        target_bytes: None,
+                    }),
+                },
+                StorageLocation {
+                    url: "s3://iobudget-root-test-bucket".to_string(),
+                    weight: 1,
+                    tags: vec![],
+                    io_budget: Some(IoBudgetConfig {
+                        target_bytes: Some(16 * MIB),
+                        max_bytes: Some(16 * MIB),
+                        disk_class: None,
+                        min_bytes: None,
+                    }),
+                },
+            ],
+            ..StorageConfig::default()
+        };
+        good.register_io_budgets().unwrap();
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-root-test-hdd/coll/seg.pax"),
+            IopsBudget {
+                min: 512 * 1024,
+                target: 4 * MIB,
+                max: 4 * MIB
+            }
+        );
+        assert_eq!(
+            IopsBudget::for_path("s3://iobudget-root-test-bucket/coll/seg.pax"),
+            IopsBudget {
+                min: 512 * 1024,
+                target: 16 * MIB,
+                max: 16 * MIB
+            }
         );
     }
 }

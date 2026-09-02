@@ -791,6 +791,13 @@ impl ProximaDB {
                 .and_then(|sst| sst.coarse_probe.as_ref()),
         );
 
+        // TD-IOBUDGET-1: register per-location I/O budgets authoritatively from
+        // the loaded config — same overwritable-seed shape as the coarse probe
+        // above. Validation is fail-closed (invalid budgets abort startup) and
+        // the INFO dump is the operator's audit artifact of the effective
+        // ranged-GET geometry per storage location.
+        self._config.storage.register_io_budgets()?;
+
         // Step 1: Start the storage engine. It restores the catalog, registers
         // collection storage engines, and replays WAL in that dependency order.
         tracing::info!(

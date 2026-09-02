@@ -1044,6 +1044,7 @@ mod tests {
             url: base_url.clone(),
             weight: 1,
             tags: vec!["local".to_string()],
+            io_budget: None,
         }];
         storage_config.metadata_url = metadata_url;
 

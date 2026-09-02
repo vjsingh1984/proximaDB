@@ -874,10 +874,11 @@ pub struct CoreStorageConfig {
 }
 
 pub use proximadb_config::{
-    AdvancedPruneConfig, AssignmentConfig, CompactionConfig, ConsensusConfig,
-    FilesystemOptimizationConfig, MonitoringConfig, OptimizationConfig, PruneModeConfig,
-    StorageLocation, TempStrategy, TransactionalOperationsConfig,
+    AdvancedPruneConfig, AssignmentConfig, CompactionConfig, ConsensusConfig, DiskClass,
+    FilesystemOptimizationConfig, IoBudgetConfig, MonitoringConfig, OptimizationConfig,
+    PruneModeConfig, StorageLocation, TempStrategy, TransactionalOperationsConfig,
 };
+use proximadb_storage_common::iops_budget::{IopsBudget, register_location_budget};
 
 impl StorageConfig {
     /// Resolve the SST configuration that every runtime SST instance must use.
@@ -924,6 +925,92 @@ impl StorageConfig {
             .iter()
             .map(|loc| format!("{}/index", loc.url.trim_end_matches('/')))
             .collect()
+    }
+
+    /// Resolve one location's `io_budget` into the concrete [`IopsBudget`] the
+    /// storage leaf consumes (TD-IOBUDGET-1).
+    ///
+    /// Base profile: `disk_class` when present (`ssd` → LOCAL, `hdd` → CLOUD
+    /// per ADR-073, `cloud` → the path scheme's cloud default), otherwise the
+    /// path's scheme+env default. Each explicit `*_bytes` field then overrides
+    /// that profile's value. Validation is fail-closed: a 64 KiB floor on
+    /// `min` and `min ≤ target ≤ max` — an operator error must die at startup,
+    /// not silently size GETs.
+    pub fn resolve_location_io_budget(
+        url: &str,
+        cfg: &IoBudgetConfig,
+    ) -> Result<IopsBudget, String> {
+        const MIN_FLOOR_BYTES: u64 = 64 * 1024;
+
+        let mut budget = match cfg.disk_class {
+            Some(DiskClass::Ssd) => IopsBudget::LOCAL,
+            Some(DiskClass::Hdd) => IopsBudget::CLOUD,
+            Some(DiskClass::Cloud) => IopsBudget::scheme_cloud_budget(url),
+            None => IopsBudget::for_scheme_and_env(url),
+        };
+        if let Some(v) = cfg.min_bytes {
+            budget.min = v;
+        }
+        if let Some(v) = cfg.target_bytes {
+            budget.target = v;
+        }
+        if let Some(v) = cfg.max_bytes {
+            budget.max = v;
+        }
+        if budget.min < MIN_FLOOR_BYTES {
+            return Err(format!(
+                "min_bytes {} is below the {MIN_FLOOR_BYTES}-byte floor; a smaller ranged GET cannot amortize I/O",
+                budget.min
+            ));
+        }
+        if budget.min > budget.target || budget.target > budget.max {
+            return Err(format!(
+                "bounds must satisfy min ≤ target ≤ max, got min={} target={} max={}",
+                budget.min, budget.target, budget.max
+            ));
+        }
+        Ok(budget)
+    }
+
+    /// Validate + register every location's `io_budget` into the storage leaf
+    /// and emit the resolved table (the boot audit artifact, TD-IOBUDGET-1).
+    /// Called authoritatively from `ProximaDB::start` beside the coarse-probe
+    /// seed, so the TOML surface is effective regardless of engine construction
+    /// order. Locations without `io_budget` keep their scheme defaults and the
+    /// `PROXIMADB_DISK_CLASS` env hint.
+    pub fn register_io_budgets(&self) -> anyhow::Result<()> {
+        for location in &self.storage_locations {
+            match &location.io_budget {
+                Some(cfg) => {
+                    let budget =
+                        Self::resolve_location_io_budget(&location.url, cfg).map_err(|err| {
+                            anyhow::anyhow!(
+                                "storage.storage_locations[{}] io_budget: {err}",
+                                location.url
+                            )
+                        })?;
+                    register_location_budget(&location.url, budget);
+                    info!(
+                        url = %location.url,
+                        min_bytes = budget.min,
+                        target_bytes = budget.target,
+                        max_bytes = budget.max,
+                        "io_budget: registered per-location ranged-GET budget"
+                    );
+                }
+                None => {
+                    let scheme_default = IopsBudget::for_scheme_and_env(&location.url);
+                    info!(
+                        url = %location.url,
+                        min_bytes = scheme_default.min,
+                        target_bytes = scheme_default.target,
+                        max_bytes = scheme_default.max,
+                        "io_budget: no per-location budget configured; using scheme default"
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Fail closed when memory-mapped I/O is enabled against a CLOUD object

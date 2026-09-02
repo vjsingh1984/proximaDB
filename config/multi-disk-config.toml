@@ -19,11 +19,25 @@ metadata_url = "file:///home/vsingh/code/proximaDB/test_data_fresh/metadata"
 url = "file:///home/vsingh/code/proximaDB/test_data_fresh/disk1"
 weight = 3  # Higher weight for fast disk
 tags = ["fast", "nvme", "disk1"]
+# TD-IOBUDGET-1: per-location ranged-GET budget. "ssd" = local/NVMe profile
+# (~1 MiB target) — the default for file:// paths; shown here for clarity.
+[storage.storage_locations.io_budget]
+disk_class = "ssd"
+# Explicit byte bounds (validated: 64 KiB <= min <= target <= max) override
+# the disk-class profile per field, e.g.:
+# min_bytes = 262144
+# target_bytes = 1048576
+# max_bytes = 8388608
 
 [[storage.storage_locations]]
 url = "file:///home/vsingh/code/proximaDB/test_data_fresh/disk2"
 weight = 2  # Medium weight for secondary disk
 tags = ["ssd", "disk2"]
+# ADR-073: a seek-bound (spinning/RAID) disk must coalesce like a remote
+# store — "hdd" selects the CLOUD profile (~4 MiB target) for THIS location
+# only (the legacy `PROXIMADB_DISK_CLASS=hdd` env hint is pod-wide).
+[storage.storage_locations.io_budget]
+disk_class = "hdd"
 
 # Assignment configuration
 [storage.assignment_config]
