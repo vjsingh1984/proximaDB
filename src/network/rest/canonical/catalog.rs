@@ -552,13 +552,8 @@ async fn create_configured_catalog(
         }
         // TD-CAT-8: the Hive adapter was an in-memory mock — `thrift_uri` was
         // stored and never connected to. It was deleted rather than left to
-        // answer as though it had federated anything.
-        Some(Config::Hive(_)) => {
-            return Err(unsupported(
-                "the Hive Metastore backend has been removed (it never connected to a \
-                 metastore); this catalog type is no longer supported",
-            ));
-        }
+        // answer as though it had federated anything. The proto arm was retired
+        // in the catalog.proto follow-up (field 14 reserved, enum value 5 retired).
         Some(Config::Native(_)) => {
             return Err(unsupported(
                 "the native catalog is configured at startup (server.metadata_url), not \

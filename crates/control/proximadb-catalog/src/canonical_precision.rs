@@ -58,8 +58,8 @@ impl CanonicalPrecisionResolver {
     /// Wire a resolver to a catalog backend and its shared cache.
     ///
     /// The `cache` should be the same `CatalogCache` instance the
-    /// backend's `Catalog` impl writes to (the typical pattern: both
-    /// `OltpCatalog::new` and this resolver receive the same
+    /// backend's `Catalog` impl writes to (the typical pattern: the
+    /// catalog backend and this resolver receive the same
     /// `Arc<CatalogCache>` from the platform bootstrap).
     pub fn new(catalog: Arc<dyn Catalog>, cache: Arc<CatalogCache>) -> Self {
         Self { catalog, cache }
@@ -85,15 +85,210 @@ impl CanonicalPrecisionResolver {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     use crate::cache::CatalogCache;
-    use crate::oltp::{OltpCatalog, OltpCatalogConfig};
-    use crate::{CatalogTableSchema, TableIdentifier};
+    use crate::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
 
-    async fn make_test_catalog(cache: Arc<CatalogCache>) -> Arc<OltpCatalog> {
-        let config = OltpCatalogConfig::sqlite("sqlite::memory:");
-        let cat = OltpCatalog::new("test", config, cache).await.unwrap();
-        Arc::new(cat)
+    /// TD-CAT-10: Minimal in-memory test catalog.
+    ///
+    /// Replaces OltpCatalog which is gated behind `oltp-catalog` and unusable
+    /// in both configurations. This catalog stores everything in-memory HashMaps
+    /// and only implements the methods needed for these tests.
+    struct InMemoryTestCatalog {
+        name: String,
+        namespaces: RwLock<HashMap<Vec<String>, CatalogNamespace>>,
+        tables: RwLock<HashMap<TableIdentifier, CatalogTableSchema>>,
+    }
+
+    impl InMemoryTestCatalog {
+        fn new(name: String) -> Self {
+            Self {
+                name,
+                namespaces: RwLock::new(HashMap::new()),
+                tables: RwLock::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Catalog for InMemoryTestCatalog {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn catalog_type(&self) -> &str {
+            "test-memory"
+        }
+
+        fn identity_authority(&self) -> Option<&dyn crate::CatalogAuthority> {
+            None
+        }
+
+        async fn create_namespace(
+            &self,
+            namespace: &[String],
+            properties: HashMap<String, String>,
+        ) -> anyhow::Result<CatalogNamespace> {
+            let mut ns = CatalogNamespace::new(namespace.to_vec());
+            ns.properties = properties;
+            ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
+            let mut namespaces = self.namespaces.write().await;
+            namespaces.insert(namespace.to_vec(), ns.clone());
+            Ok(ns)
+        }
+
+        async fn create_table_inner(
+            &self,
+            identifier: &TableIdentifier,
+            schema: CatalogTableSchema,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            let mut tables = self.tables.write().await;
+            tables.insert(identifier.clone(), schema.clone());
+            Ok(schema)
+        }
+
+        async fn get_table(
+            &self,
+            identifier: &TableIdentifier,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            let tables = self.tables.read().await;
+            tables
+                .get(identifier)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Table not found: {}", identifier))
+        }
+
+        async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<CatalogNamespace> {
+            let namespaces = self.namespaces.read().await;
+            namespaces
+                .get(namespace)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Namespace not found: {}", namespace.join(".")))
+        }
+
+        async fn list_namespaces(
+            &self,
+            _parent: Option<&[String]>,
+        ) -> anyhow::Result<Vec<CatalogNamespace>> {
+            let namespaces = self.namespaces.read().await;
+            Ok(namespaces.values().cloned().collect())
+        }
+
+        async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>> {
+            let tables = self.tables.read().await;
+            Ok(tables
+                .keys()
+                .filter(|id| id.namespace == *namespace)
+                .cloned()
+                .collect())
+        }
+
+        async fn drop_table(
+            &self,
+            identifier: &TableIdentifier,
+            _purge: bool,
+        ) -> anyhow::Result<bool> {
+            let mut tables = self.tables.write().await;
+            Ok(tables.remove(identifier).is_some())
+        }
+
+        // Minimal stubs for remaining trait methods (test double)
+        async fn get_schema_version(&self, _identifier: &TableIdentifier) -> anyhow::Result<i32> {
+            Ok(0)
+        }
+
+        async fn get_schema_by_version(
+            &self,
+            _identifier: &TableIdentifier,
+            _version: i32,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            anyhow::bail!("get_schema_by_version not implemented in test double")
+        }
+
+        async fn create_index(
+            &self,
+            _identifier: &TableIdentifier,
+            _index: crate::CatalogIndex,
+        ) -> anyhow::Result<crate::CatalogIndex> {
+            anyhow::bail!("create_index not implemented in test double")
+        }
+
+        async fn drop_index(
+            &self,
+            _identifier: &TableIdentifier,
+            _index_name: &str,
+        ) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn list_indexes(
+            &self,
+            _identifier: &TableIdentifier,
+        ) -> anyhow::Result<Vec<crate::CatalogIndex>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_statistics(
+            &self,
+            _identifier: &TableIdentifier,
+        ) -> anyhow::Result<crate::CatalogTableStatistics> {
+            anyhow::bail!("get_statistics not implemented in test double")
+        }
+
+        async fn update_statistics(
+            &self,
+            _identifier: &TableIdentifier,
+            _stats: crate::CatalogTableStatistics,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn drop_namespace(
+            &self,
+            _namespace: &[String],
+            _cascade: bool,
+        ) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn namespace_exists(&self, _namespace: &[String]) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn update_namespace_properties(
+            &self,
+            _namespace: &[String],
+            _updates: HashMap<String, String>,
+            _removals: Vec<String>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn table_exists(&self, _identifier: &TableIdentifier) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn rename_table(
+            &self,
+            _from: &TableIdentifier,
+            _to: &TableIdentifier,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("rename_table not implemented in test double")
+        }
+
+        async fn evolve_schema(
+            &self,
+            _identifier: &TableIdentifier,
+            _evolution: crate::CatalogSchemaEvolution,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            anyhow::bail!("evolve_schema not implemented in test double")
+        }
+    }
+
+    async fn make_test_catalog(_cache: Arc<CatalogCache>) -> Arc<dyn Catalog> {
+        Arc::new(InMemoryTestCatalog::new("test".to_string()))
     }
 
     fn fp16_schema(name: &str) -> CatalogTableSchema {
@@ -163,10 +358,9 @@ mod tests {
             "first resolve must populate the cache so subsequent reads stay hot"
         );
 
-        // Drop the catalog backend; if the resolver hit the cache the second
-        // call should still succeed even with a broken backend. We model this
-        // by clearing the SQLite-backed table out from under it, then
-        // checking that the resolver still answers correctly.
+        // If the resolver populated the cache on the first miss, the second
+        // call answers from the cache without another backend round-trip
+        // (modeled by the in-memory test double holding the same data).
         let result = resolver.resolve(&id).await.unwrap();
         assert_eq!(result, EmbeddingScalarType::Fp16);
     }

@@ -92,6 +92,7 @@ pub(crate) mod testfs;
 pub mod object_store_bridge {
     pub use proximadb_catalog_schema::object_store_bridge::*;
 }
+#[cfg(feature = "oltp-catalog")]
 pub mod oltp;
 #[cfg(feature = "polaris-catalog")]
 pub mod polaris;
