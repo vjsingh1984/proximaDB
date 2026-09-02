@@ -78,6 +78,7 @@ impl SSOIntegrationManager {
                 aws.validate_token(sso_token).await?
             }
             SSOProvider::AzureAD => {
+                #[cfg(test)]
                 let azure = self
                     .azure_integration
                     .as_ref()
@@ -558,7 +559,7 @@ mod tests {
 
         let _ = EnterpriseUserContext::system_admin();
 
-        assert!(true);
+        // compile-only smoke test
     }
 
     // --- Integration Tests ---
@@ -577,6 +578,6 @@ mod tests {
         let _ = std::any::type_name::<GoogleCloudIntegration>();
         let _ = std::any::type_name::<SAMLIntegration>();
 
-        assert!(true);
+        // compile-only smoke test
     }
 }
