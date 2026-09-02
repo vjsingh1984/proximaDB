@@ -45,5 +45,5 @@ sentence-transformers>=6.0.0
 torch>=2.13.0
 
 # LLM support for RAG demo
-transformers>=5.15.1
+transformers>=5.16.1
 sentencepiece>=0.1.99
