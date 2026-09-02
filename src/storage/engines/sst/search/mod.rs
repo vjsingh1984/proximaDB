@@ -554,6 +554,7 @@ impl SstEngine {
                             &[],
                             &[],
                             None,
+                            self.segment_invariants_cache.as_deref(),
                         )
                         .await
                         .unwrap_or_else(|e| {

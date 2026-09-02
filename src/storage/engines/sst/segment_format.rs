@@ -1220,6 +1220,10 @@ pub(crate) async fn read_records_by_positions(
     embedding_model_ids: &[String],
     user_column_keys: &[String],
     tenant_ctx: Option<&str>,
+    // TD-RDSTRAT-13 PR-B 2b: the invariants cache the cascade just warmed —
+    // the rehydrate's header/footer reads become cache hits (zero GETs)
+    // instead of 3 duplicate IO ops per segment per query.
+    cache: Option<&SegmentInvariantsCache>,
 ) -> Result<Vec<Option<proximadb_records::ProximaRecord>>> {
     use proximadb_block_format::{PaxBlockReader, record::FlatRow};
     use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
@@ -1232,29 +1236,45 @@ pub(crate) async fn read_records_by_positions(
         return Ok(out);
     }
 
-    // 1-2. Header prefix + footer → block table (mirrors stage F; a
-    // non-coalesced segment is an error here — the cascade only runs on
-    // coalesced segments).
-    let size = fs
-        .metadata(path)
-        .await
-        .map_err(|e| anyhow::anyhow!("rehydrate stat {path}: {e}"))?
-        .size;
-    if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
-        anyhow::bail!("rehydrate {path}: not a coalesced segment");
-    }
-    let read_len = (coalesced_header_prefetch_floor() as u64).min(size);
-    let header_bytes = fs
-        .read_range(path, 0, read_len)
-        .await
-        .map_err(|e| anyhow::anyhow!("rehydrate header {path}: {e}"))?;
-    let header = SegmentHeaderPrefix::parse(&header_bytes)
-        .map_err(|e| anyhow::anyhow!("rehydrate header parse {path}: {e}"))?;
-    let footer_bytes = fs
-        .read_range(path, header.footer_off, header.footer_len)
-        .await
-        .map_err(|e| anyhow::anyhow!("rehydrate footer {path}: {e}"))?;
-    let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+    // 1-2. Header prefix + footer → block table. Cache-first (TD-RDSTRAT-13
+    // 2b): the probe warmed the invariants cache EARLIER IN THIS QUERY, so the
+    // rehydrate's lookups are L1 hits — no HEAD, no header GET, no footer GET.
+    // On a miss (cold cache), fall back to the exact stat+read path.
+    let (_header, footer) = if let Some(cache) = cache
+        && let Some(inv) = cache.get_or_promote(path).await.value()
+    {
+        match (
+            SegmentHeaderPrefix::parse(&inv.header_bytes),
+            SegmentFooterIndex::parse(&inv.footer_bytes),
+        ) {
+            (Ok(h), Ok(f)) => (h, f),
+            (Err(e), _) | (_, Err(e)) => {
+                anyhow::bail!("rehydrate cached layout {path}: {e}")
+            }
+        }
+    } else {
+        let size = fs
+            .metadata(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("rehydrate stat {path}: {e}"))?
+            .size;
+        if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
+            anyhow::bail!("rehydrate {path}: not a coalesced segment");
+        }
+        let read_len = (coalesced_header_prefetch_floor() as u64).min(size);
+        let header_bytes = fs
+            .read_range(path, 0, read_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("rehydrate header {path}: {e}"))?;
+        let header = SegmentHeaderPrefix::parse(&header_bytes)
+            .map_err(|e| anyhow::anyhow!("rehydrate header parse {path}: {e}"))?;
+        let footer_bytes = fs
+            .read_range(path, header.footer_off, header.footer_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("rehydrate footer {path}: {e}"))?;
+        let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+        (header, footer)
+    };
     let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
     let mut acc = 0u64;
     for b in &footer.blocks {
