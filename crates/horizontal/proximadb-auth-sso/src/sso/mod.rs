@@ -78,11 +78,24 @@ impl SSOIntegrationManager {
                 aws.validate_token(sso_token).await?
             }
             SSOProvider::AzureAD => {
-                let azure = self
+                let _azure = self
                     .azure_integration
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Azure AD not configured"))?;
-                azure.validate_token(sso_token).await?
+                {
+                    // Azure AD validate_token is cfg(test) — the stub returned
+                    // system_admin() for any unexpired token (privilege escalation).
+                    #[cfg(test)]
+                    {
+                        azure.validate_token(sso_token).await?
+                    }
+                    #[cfg(not(test))]
+                    {
+                        return Err(anyhow::anyhow!(
+                            "Azure AD stub quarantined (TD-SSO-1); use [security.authentication.oidc]"
+                        ));
+                    }
+                }
             }
             _ => return Err(anyhow::anyhow!("Unsupported SSO provider")),
         };

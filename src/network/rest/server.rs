@@ -1351,8 +1351,6 @@ mod tests {
                     enabled: false,
                     providers: vec![],
                     token_cache_ttl_minutes: 5,
-                    aws_iam: None,
-                    azure_ad: None,
                 },
                 mtls: MtlsConfig::default(),
                 oidc: None,

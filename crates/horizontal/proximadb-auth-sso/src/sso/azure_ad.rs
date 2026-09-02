@@ -1,8 +1,9 @@
 //! Azure AD integration - clean implementation foundation
 
 use super::AzureADConfig;
+#[cfg(test)]
 use super::types::{EnterpriseUserContext, SSOToken, SSOValidationResult};
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 /// Clean Azure AD integration
 pub struct AzureADIntegration {
@@ -24,7 +25,11 @@ impl AzureADIntegration {
         })
     }
 
-    /// Validate Azure AD token (foundation implementation)
+    /// Validate Azure AD token — QUARANTINED (TD-SSO-1 provider portability).
+    /// This stub returned `system_admin()` for any unexpired token with zero
+    /// signature verification (a latent privilege escalation). It is test-only
+    /// now; production IdP validation goes through the generic OIDC verifier.
+    #[cfg(test)]
     pub async fn validate_token(&self, sso_token: &SSOToken) -> Result<SSOValidationResult> {
         // Foundation implementation - will be enhanced in Phase 2
         if sso_token.is_expired() {
