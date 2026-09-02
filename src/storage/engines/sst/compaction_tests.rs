@@ -5,8 +5,11 @@ use crate::storage::engines::sst::blocks::SstRecord;
 use crate::storage::engines::sst::{
     Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,
 };
+use std::collections::HashMap as StdHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use crate::testing::InMemoryTestCatalog;
 
 #[tokio::test]
 async fn test_compaction_basic() {
@@ -903,22 +906,12 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
 async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
     use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
-    use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
 
     // Stand up an in-memory catalog with a fp16 collection.
     let cache = Arc::new(CatalogCache::new(1000, 60));
-    let cat: Arc<OltpCatalog> = Arc::new(
-        OltpCatalog::new(
-            "compaction-test",
-            OltpCatalogConfig::sqlite("sqlite::memory:"),
-            cache.clone(),
-        )
-        .await
-        .unwrap(),
-    );
+    let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new("compaction-test".to_string()));
     cat.create_namespace(&["default".to_string()], StdHashMap::new())
         .await
         .unwrap();
@@ -987,21 +980,12 @@ async fn td_global_precision_resolver_stamps_hint_without_per_instance_wiring() 
     use crate::storage::engines::sst::compaction::set_global_precision_resolver;
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
-    use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
-    use std::collections::HashMap as StdHashMap;
+    use proximadb_catalog::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
     use std::sync::Arc;
-
     let cache = Arc::new(CatalogCache::new(1000, 60));
-    let cat: Arc<OltpCatalog> = Arc::new(
-        OltpCatalog::new(
-            "compaction-test-global",
-            OltpCatalogConfig::sqlite("sqlite::memory:"),
-            cache.clone(),
-        )
-        .await
-        .unwrap(),
-    );
+    let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new(
+        "compaction-test-global".to_string(),
+    ));
     cat.create_namespace(&["default".to_string()], StdHashMap::new())
         .await
         .unwrap();
