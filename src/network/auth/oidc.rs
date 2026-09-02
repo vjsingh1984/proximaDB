@@ -578,8 +578,17 @@ impl OidcTokenVerifier {
         // `iss` alongside the URL form) and multiple audiences (Azure's
         // `api://{client-id}` + bare `{client-id}`). jsonwebtoken's
         // set_issuer/set_audience already accept any-of semantics.
-        let mut issuers = vec![self.config.issuer_url.clone()];
-        issuers.extend(self.config.issuer_aliases.iter().cloned());
+        // Trailing-slash normalization: discovery URL building already trims
+        // the issuer, so an operator-supplied trailing slash would otherwise
+        // boot cleanly and then reject every token (fail-closed footgun).
+        // IdPs emit canonical no-slash `iss` claims; trim the configured side.
+        let mut issuers = vec![self.config.issuer_url.trim_end_matches('/').to_string()];
+        issuers.extend(
+            self.config
+                .issuer_aliases
+                .iter()
+                .map(|a| a.trim_end_matches('/').to_string()),
+        );
         validation.set_issuer(&issuers);
         validation.set_audience(&self.config.audience);
         validation.leeway = self.config.clock_skew_seconds;
@@ -982,6 +991,27 @@ mod tests {
         wrong["iss"] = serde_json::json!("https://evil.example.test");
         let wrong_token = sign_rs256(&wrong);
         assert!(verifier.verify(&wrong_token).await.is_err());
+    }
+
+    /// R4 (adversarial review): trailing-slash issuer config must not reject
+    /// canonical tokens — discovery trims, so validation must too.
+    #[tokio::test]
+    async fn trailing_slash_issuer_config_still_validates() {
+        let (_server, url) = mock_jwks_server().await;
+        let mut cfg = oidc_cfg_for(url, &[]);
+        let trimmed = cfg.issuer_url.clone();
+        cfg.issuer_url = format!("{}/", trimmed); // operator adds trailing slash
+        let verifier = OidcTokenVerifier::new(cfg).expect("verifier");
+        let now = chrono::Utc::now().timestamp();
+
+        // Token carries the canonical no-slash issuer → must still pass
+        let claims = std_claims(now);
+        let token = sign_rs256(&claims);
+        let result = verifier.verify(&token).await;
+        assert!(
+            result.is_ok(),
+            "trailing-slash config must accept canonical iss: {result:?}"
+        );
     }
 
     /// D (adversarial review): nested claim path through the full verify().

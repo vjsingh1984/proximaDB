@@ -117,7 +117,7 @@ mode = "production"  # Secure production mode
 
 [security.authentication]
 # Multiple authentication methods for production
-methods = ["sso", "jwt", "api_key", "mtls"]
+methods = ["jwt", "api_key", "mtls"]  # "sso" removed — legacy SSO is gone; OIDC rides the "jwt" method
 require_authentication = true  # Always require authentication
 default_session_timeout_minutes = 480
 enabled = true  # When true and security is configured, REST auth middleware is enabled

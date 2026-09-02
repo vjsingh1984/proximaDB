@@ -260,7 +260,7 @@ impl UnifiedAuthService {
             // disabled".
             if !config.methods.contains(&AuthenticationMethod::JWT) {
                 warn!(
-                    "[security.authentication.oidc] is enabled but methods lacks                      \"jwt\" — OIDC bearer tokens will be rejected until it is added"
+                    "[security.authentication.oidc] is enabled but methods lacks \"jwt\" — OIDC bearer tokens will be rejected until it is added"
                 );
             }
             info!(

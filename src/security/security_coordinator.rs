@@ -530,8 +530,9 @@ impl TenantSecurityPolicy {
             require_authentication: true,
             require_mfa: true,
             session_timeout_minutes: 120,
+            // SSO removed (TD-SSO-1): the legacy SSO path is fail-closed;
+            // enterprise OIDC federation rides the JWT method.
             allowed_auth_methods: vec![
-                super::auth_service::AuthenticationMethod::SSO,
                 super::auth_service::AuthenticationMethod::JWT,
                 super::auth_service::AuthenticationMethod::ClientCertificate,
             ],
