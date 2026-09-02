@@ -1259,7 +1259,7 @@ jobs:
               echo "  WOULD PUBLISH TO:"
               echo "    - GitHub Releases (pre-release: false)"
               echo "    - PyPI (https://pypi.org/project/proximadb/)"
-              echo "    - crates.io (https://crates.io/crates/proximadb)"
+              echo "    - crates.io (https://crates.io/crates/proximadb-sdk)"
               echo ""
               echo "  WOULD ALSO:"
               echo "    - Generate Homebrew formula"
@@ -1335,7 +1335,7 @@ jobs:
 
       - name: Verify crates.io Installation
         run: |
-          cargo install proximadb --version ${{ needs.prepare.outputs.version }} || echo "crates.io package not yet available"
+          cargo install proximadb-sdk --version ${{ needs.prepare.outputs.version }} || echo "crates.io package not yet available"
           proximadb-server --version || true
 
   # ============================================================================

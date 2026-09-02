@@ -190,8 +190,6 @@ pub enum DistanceMetric {
 pub struct CollectionBuilder<'a> {
     #[cfg(feature = "client")]
     client: Option<&'a crate::client::ProximaClient>,
-    #[cfg(feature = "embedded")]
-    db: Option<&'a crate::embedded::ProximaDB>,
     name: String,
     dimension: Option<u32>,
     engine: StorageEngine,
@@ -206,8 +204,6 @@ impl<'a> CollectionBuilder<'a> {
     pub fn new(client: &'a crate::client::ProximaClient, name: &str) -> Self {
         Self {
             client: Some(client),
-            #[cfg(feature = "embedded")]
-            db: None,
             name: name.to_string(),
             dimension: None,
             engine: StorageEngine::default(),
@@ -217,21 +213,6 @@ impl<'a> CollectionBuilder<'a> {
         }
     }
 
-    /// Create a new collection builder (embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn new_embedded(db: &'a crate::embedded::ProximaDB, name: &str) -> Self {
-        Self {
-            #[cfg(feature = "client")]
-            client: None,
-            db: Some(db),
-            name: name.to_string(),
-            dimension: None,
-            engine: StorageEngine::default(),
-            index: IndexType::default(),
-            metric: DistanceMetric::default(),
-            precision: EmbeddingPrecision::default(),
-        }
-    }
 
     /// Set the vector dimension (required)
     pub fn dimension(mut self, dim: u32) -> Self {
@@ -322,21 +303,6 @@ impl<'a> CollectionBuilder<'a> {
         Ok(())
     }
 
-    /// Execute the collection creation (sync, embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn execute_sync(self) -> Result<()> {
-        let db = self
-            .db
-            .ok_or_else(|| ProximaError::Internal("No embedded database reference".to_string()))?;
-
-        let dimension = self.dimension.ok_or_else(|| {
-            ProximaError::Collection(CollectionError::InvalidConfig {
-                reason: "dimension is required".to_string(),
-            })
-        })?;
-
-        db.create_collection_internal(&self.name, dimension, &self.engine, &self.index)
-    }
 }
 
 /// Handle to a collection for fluent operations
@@ -355,8 +321,6 @@ impl<'a> CollectionBuilder<'a> {
 pub struct CollectionHandle<'a> {
     #[cfg(feature = "client")]
     client: Option<&'a crate::client::ProximaClient>,
-    #[cfg(feature = "embedded")]
-    db: Option<&'a crate::embedded::ProximaDB>,
     name: String,
 }
 
@@ -366,22 +330,10 @@ impl<'a> CollectionHandle<'a> {
     pub fn new(client: &'a crate::client::ProximaClient, name: &str) -> Self {
         Self {
             client: Some(client),
-            #[cfg(feature = "embedded")]
-            db: None,
             name: name.to_string(),
         }
     }
 
-    /// Create a new collection handle (embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn new_embedded(db: &'a crate::embedded::ProximaDB, name: &str) -> Self {
-        Self {
-            #[cfg(feature = "client")]
-            client: None,
-            db: Some(db),
-            name: name.to_string(),
-        }
-    }
 
     /// Get the collection name
     pub fn name(&self) -> &str {
@@ -394,24 +346,12 @@ impl<'a> CollectionHandle<'a> {
         SearchBuilder::new_client(self.client.expect("Client reference required"), &self.name)
     }
 
-    /// Start building a search query (embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn search_embedded(&self) -> SearchBuilder<'a> {
-        SearchBuilder::new_embedded(self.db.expect("Embedded DB reference required"), &self.name)
-    }
 
     /// Start building an insert operation
     pub fn insert(&self) -> InsertBuilder<'a> {
         #[cfg(feature = "client")]
         {
             InsertBuilder::new_client(self.client.expect("Client reference required"), &self.name)
-        }
-        #[cfg(all(feature = "embedded", not(feature = "client")))]
-        {
-            InsertBuilder::new_embedded(
-                self.db.expect("Embedded DB reference required"),
-                &self.name,
-            )
         }
     }
 
@@ -446,14 +386,6 @@ impl<'a> CollectionHandle<'a> {
         {
             UpdateBuilder::new_client(
                 self.client.expect("Client reference required"),
-                &self.name,
-                id,
-            )
-        }
-        #[cfg(all(feature = "embedded", not(feature = "client")))]
-        {
-            UpdateBuilder::new_embedded(
-                self.db.expect("Embedded DB reference required"),
                 &self.name,
                 id,
             )
@@ -527,8 +459,6 @@ impl<'a> CollectionHandle<'a> {
 pub struct UpdateBuilder<'a> {
     #[cfg(feature = "client")]
     client: Option<&'a crate::client::ProximaClient>,
-    #[cfg(feature = "embedded")]
-    db: Option<&'a crate::embedded::ProximaDB>,
     collection: String,
     id: String,
     vector: Option<Vec<f32>>,
@@ -546,8 +476,6 @@ impl<'a> UpdateBuilder<'a> {
     ) -> Self {
         Self {
             client: Some(client),
-            #[cfg(feature = "embedded")]
-            db: None,
             collection: collection.to_string(),
             id: id.to_string(),
             vector: None,
@@ -556,20 +484,6 @@ impl<'a> UpdateBuilder<'a> {
         }
     }
 
-    /// Create a new update builder (embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn new_embedded(db: &'a crate::embedded::ProximaDB, collection: &str, id: &str) -> Self {
-        Self {
-            #[cfg(feature = "client")]
-            client: None,
-            db: Some(db),
-            collection: collection.to_string(),
-            id: id.to_string(),
-            vector: None,
-            metadata: HashMap::new(),
-            replace_metadata: false,
-        }
-    }
 
     /// Set a new vector
     pub fn vector(mut self, vector: &[f32]) -> Self {
@@ -627,21 +541,6 @@ impl<'a> UpdateBuilder<'a> {
         Ok(())
     }
 
-    /// Execute the update (sync, embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn execute_sync(self) -> Result<()> {
-        let db = self
-            .db
-            .ok_or_else(|| ProximaError::Internal("No embedded database reference".to_string()))?;
-
-        db.update_internal(
-            &self.collection,
-            self.id,
-            self.vector,
-            self.metadata,
-            self.replace_metadata,
-        )
-    }
 }
 
 /// Collection information
@@ -700,8 +599,6 @@ pub struct CollectionStats {
 pub struct InsertBuilder<'a> {
     #[cfg(feature = "client")]
     client: Option<&'a crate::client::ProximaClient>,
-    #[cfg(feature = "embedded")]
-    db: Option<&'a crate::embedded::ProximaDB>,
     collection: String,
     records: Vec<InsertRecord>,
 }
@@ -745,24 +642,11 @@ impl<'a> InsertBuilder<'a> {
     pub fn new_client(client: &'a crate::client::ProximaClient, collection: &str) -> Self {
         Self {
             client: Some(client),
-            #[cfg(feature = "embedded")]
-            db: None,
             collection: collection.to_string(),
             records: Vec::new(),
         }
     }
 
-    /// Create a new insert builder (embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn new_embedded(db: &'a crate::embedded::ProximaDB, collection: &str) -> Self {
-        Self {
-            #[cfg(feature = "client")]
-            client: None,
-            db: Some(db),
-            collection: collection.to_string(),
-            records: Vec::new(),
-        }
-    }
 
     /// Add a single vector with ID
     pub fn id(self, id: impl Into<String>) -> InsertBuilderWithId<'a> {
@@ -898,22 +782,6 @@ impl<'a> InsertBuilderWithId<'a> {
         Ok(())
     }
 
-    /// Execute the insert (sync, embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn execute_sync(self) -> Result<()> {
-        let vector = self.vector.ok_or_else(|| {
-            ProximaError::Vector(VectorError::InvalidFormat {
-                reason: "vector is required".to_string(),
-            })
-        })?;
-
-        let db = self
-            .builder
-            .db
-            .ok_or_else(|| ProximaError::Internal("No embedded database reference".to_string()))?;
-
-        db.insert_internal(&self.builder.collection, self.id, vector, self.metadata)
-    }
 }
 
 /// Insert builder for batch operations
@@ -948,30 +816,6 @@ impl<'a> InsertBuilderBatch<'a> {
         Ok(response.inserted_count)
     }
 
-    /// Execute the batch insert (sync, embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn execute_sync(self) -> Result<usize> {
-        let db = self
-            .builder
-            .db
-            .ok_or_else(|| ProximaError::Internal("No embedded database reference".to_string()))?;
-
-        let ids: Vec<String> = self.builder.records.iter().map(|r| r.id.clone()).collect();
-        let vectors: Vec<Vec<f32>> = self
-            .builder
-            .records
-            .iter()
-            .map(|r| r.vector.clone())
-            .collect();
-        let metadata: Vec<HashMap<String, serde_json::Value>> = self
-            .builder
-            .records
-            .iter()
-            .map(|r| r.metadata.clone())
-            .collect();
-
-        db.insert_batch_internal(&self.builder.collection, ids, vectors, metadata)
-    }
 }
 
 // Request/Response types for HTTP API

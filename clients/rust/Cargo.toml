@@ -37,27 +37,19 @@ tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
 # URL handling
 url = "2.4"
 
-# NOTE: the embedded-mode path deps (proximadb root + proximadb-embedded)
-# are intentionally NOT listed here. cargo publish rejects path deps
-# without crates.io versions, and the root monolith is not published.
-# The `embedded` feature is workspace-local: build it from the proximaDB
-# workspace root, not from crates.io.
+# NOTE: no embedded-mode deps here, on purpose. cargo publish rejects
+# path deps without crates.io versions, and the engine (proximadb root
+# monolith + proximadb-embedded) is not published. Embedded mode lives in
+# the workspace-local `proximadb-embedded` crate; this crate is
+# client-only and builds standalone — it does not drag the monolith.
 
 [features]
 default = ["client"]
 # Client mode - HTTP/REST client for remote connections
 client = []
-# Embedded mode - in-process database (requires linking to proximadb)
-embedded = []
-# Full SDK with both client and embedded modes
-full = ["client"]
 
 [dev-dependencies]
 tokio = { version = "1.37", features = ["full", "test-util"] }
-# Embedded-mode path deps for local development: cargo publish strips
-# dev-deps, so they don't block the crates.io publish.
-proximadb = { path = "../.." }
-proximadb-embedded = { path = "../../crates/binding/proximadb-embedded" }
 # OpenAPI contract gate (tests/openapi_contract.rs)
 httpmock = "0.7"
 serde_yaml = "0.9"
@@ -66,11 +58,6 @@ serde_yaml = "0.9"
 name = "client_mode"
 path = "examples/client_mode.rs"
 required-features = ["client"]
-
-[[example]]
-name = "embedded_mode"
-path = "examples/embedded_mode.rs"
-required-features = ["embedded"]
 
 [[example]]
 name = "fluent_api"

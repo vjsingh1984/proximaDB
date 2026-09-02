@@ -110,8 +110,6 @@ impl SearchMode {
 pub struct SearchBuilder<'a> {
     #[cfg(feature = "client")]
     client: Option<&'a crate::client::ProximaClient>,
-    #[cfg(feature = "embedded")]
-    db: Option<&'a crate::embedded::ProximaDB>,
     collection: String,
     vector: Option<Vec<f32>>,
     top_k: usize,
@@ -130,8 +128,6 @@ impl<'a> SearchBuilder<'a> {
     pub fn new_client(client: &'a crate::client::ProximaClient, collection: &str) -> Self {
         Self {
             client: Some(client),
-            #[cfg(feature = "embedded")]
-            db: None,
             collection: collection.to_string(),
             vector: None,
             top_k: 10,
@@ -145,25 +141,6 @@ impl<'a> SearchBuilder<'a> {
         }
     }
 
-    /// Create a new search builder (embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn new_embedded(db: &'a crate::embedded::ProximaDB, collection: &str) -> Self {
-        Self {
-            #[cfg(feature = "client")]
-            client: None,
-            db: Some(db),
-            collection: collection.to_string(),
-            vector: None,
-            top_k: 10,
-            filter: None,
-            filter_builder: None,
-            mode: SearchMode::default(),
-            include_vectors: false,
-            include_metadata: true,
-            min_score: None,
-            timeout_ms: None,
-        }
-    }
 
     /// Set the query vector
     pub fn vector(mut self, vector: &[f32]) -> Self {
@@ -431,39 +408,6 @@ impl<'a> SearchBuilder<'a> {
         Ok(results)
     }
 
-    /// Execute the search (sync, embedded mode)
-    #[cfg(feature = "embedded")]
-    pub fn execute_sync(self) -> Result<Vec<SearchResult>> {
-        let db = self.db.ok_or_else(|| {
-            ProximaError::Internal("No embedded DB reference for search".to_string())
-        })?;
-
-        // Build the filter expression before moving self.vector
-        let filter_expr = self.build_filter();
-
-        let vector = self.vector.ok_or_else(|| {
-            ProximaError::Search(SearchError::InvalidFilter {
-                reason: "query vector is required".to_string(),
-            })
-        })?;
-
-        if self.top_k == 0 || self.top_k > 10000 {
-            return Err(ProximaError::Search(SearchError::InvalidTopK {
-                value: self.top_k,
-                max: 10000,
-            }));
-        }
-
-        let mut results =
-            db.search_internal(&self.collection, vector, self.top_k, filter_expr, self.mode)?;
-
-        // Apply min_score filter if set
-        if let Some(min) = self.min_score {
-            results.retain(|r| r.score >= min);
-        }
-
-        Ok(results)
-    }
 }
 
 /// A single search result
