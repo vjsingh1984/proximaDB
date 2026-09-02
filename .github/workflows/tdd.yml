@@ -99,7 +99,15 @@ jobs:
           done
 
       - name: Check test coverage
+        id: coverage
+        # Report-generation only; the authoritative coverage lane is the CI
+        # workflow's `rust-coverage` job (extensive-tier, continue-on-error).
+        # llvm-cov does a FULL instrumented rebuild (~40min) that cannot fit
+        # the overflow-runner ~45min job cap after the main build+tests —
+        # observed killed at exactly the cap with the test steps green.
+        # Non-blocking so the cap kill can't fail the TDD verdict.
         if: matrix.rust != 'nightly' || github.ref == 'refs/heads/main'
+        continue-on-error: true
         env:
           RUSTFLAGS: "-A warnings"
         run: |
@@ -108,7 +116,7 @@ jobs:
 
       - name: Upload coverage reports
         uses: actions/upload-artifact@v7
-        if: matrix.rust == 'stable'
+        if: matrix.rust == 'stable' && steps.coverage.outcome == 'success'
         with:
           name: coverage-report
           path: coverage/
