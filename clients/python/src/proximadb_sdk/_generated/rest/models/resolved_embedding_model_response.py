@@ -25,17 +25,17 @@ class ResolvedEmbeddingModelResponse:
     """
     Attributes:
         asset_id (str):
-        contract_sha256 (str):
-        model (CatalogEmbeddingModelVersion): Immutable executable contract for one registered model version.
         registry_name (str):
         registry_revision (int):
+        contract_sha256 (str):
+        model (CatalogEmbeddingModelVersion): Immutable executable contract for one registered model version.
     """
 
     asset_id: str
-    contract_sha256: str
-    model: CatalogEmbeddingModelVersion
     registry_name: str
     registry_revision: int
+    contract_sha256: str
+    model: CatalogEmbeddingModelVersion
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,23 +45,23 @@ class ResolvedEmbeddingModelResponse:
 
         asset_id = self.asset_id
 
-        contract_sha256 = self.contract_sha256
-
-        model = self.model.to_dict()
-
         registry_name = self.registry_name
 
         registry_revision = self.registry_revision
+
+        contract_sha256 = self.contract_sha256
+
+        model = self.model.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "asset_id": asset_id,
-                "contract_sha256": contract_sha256,
-                "model": model,
                 "registry_name": registry_name,
                 "registry_revision": registry_revision,
+                "contract_sha256": contract_sha256,
+                "model": model,
             }
         )
 
@@ -76,20 +76,20 @@ class ResolvedEmbeddingModelResponse:
         d = dict(src_dict)
         asset_id = d.pop("asset_id")
 
-        contract_sha256 = d.pop("contract_sha256")
-
-        model = CatalogEmbeddingModelVersion.from_dict(d.pop("model"))
-
         registry_name = d.pop("registry_name")
 
         registry_revision = d.pop("registry_revision")
 
+        contract_sha256 = d.pop("contract_sha256")
+
+        model = CatalogEmbeddingModelVersion.from_dict(d.pop("model"))
+
         resolved_embedding_model_response = cls(
             asset_id=asset_id,
-            contract_sha256=contract_sha256,
-            model=model,
             registry_name=registry_name,
             registry_revision=registry_revision,
+            contract_sha256=contract_sha256,
+            model=model,
         )
 
         resolved_embedding_model_response.additional_properties = d

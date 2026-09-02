@@ -21,8 +21,8 @@ class CollectionStatsV2:
     """Collection statistics for v2 API
 
     Attributes:
-        indexed_fields (int): Number of indexed fields
         storage_size_bytes (int): Total storage size in bytes
+        indexed_fields (int): Number of indexed fields
         text_field_count (int): Number of TEXT fields with dedicated storage
         record_count (int | None | Unset): Total number of records, or `null` when the server does not know.
 
@@ -34,16 +34,16 @@ class CollectionStatsV2:
             durability bug report before the cause was found (#1527).
     """
 
-    indexed_fields: int
     storage_size_bytes: int
+    indexed_fields: int
     text_field_count: int
     record_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        indexed_fields = self.indexed_fields
-
         storage_size_bytes = self.storage_size_bytes
+
+        indexed_fields = self.indexed_fields
 
         text_field_count = self.text_field_count
 
@@ -57,8 +57,8 @@ class CollectionStatsV2:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "indexed_fields": indexed_fields,
                 "storage_size_bytes": storage_size_bytes,
+                "indexed_fields": indexed_fields,
                 "text_field_count": text_field_count,
             }
         )
@@ -70,9 +70,9 @@ class CollectionStatsV2:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        indexed_fields = d.pop("indexed_fields")
-
         storage_size_bytes = d.pop("storage_size_bytes")
+
+        indexed_fields = d.pop("indexed_fields")
 
         text_field_count = d.pop("text_field_count")
 
@@ -86,8 +86,8 @@ class CollectionStatsV2:
         record_count = _parse_record_count(d.pop("record_count", UNSET))
 
         collection_stats_v2 = cls(
-            indexed_fields=indexed_fields,
             storage_size_bytes=storage_size_bytes,
+            indexed_fields=indexed_fields,
             text_field_count=text_field_count,
             record_count=record_count,
         )

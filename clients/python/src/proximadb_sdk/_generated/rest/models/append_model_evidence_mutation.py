@@ -27,27 +27,27 @@ T = TypeVar("T", bound="AppendModelEvidenceMutation")
 class AppendModelEvidenceMutation:
     """
     Attributes:
-        operation (AppendModelEvidenceMutationOperation):
         payload (CatalogEvaluationEvidence): Append-only evaluation summary. Large row-level results remain external.
+        operation (AppendModelEvidenceMutationOperation):
     """
 
-    operation: AppendModelEvidenceMutationOperation
     payload: CatalogEvaluationEvidence
+    operation: AppendModelEvidenceMutationOperation
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.catalog_evaluation_evidence import CatalogEvaluationEvidence
 
-        operation = self.operation.value
-
         payload = self.payload.to_dict()
+
+        operation = self.operation.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "operation": operation,
                 "payload": payload,
+                "operation": operation,
             }
         )
 
@@ -58,13 +58,13 @@ class AppendModelEvidenceMutation:
         from ..models.catalog_evaluation_evidence import CatalogEvaluationEvidence
 
         d = dict(src_dict)
-        operation = AppendModelEvidenceMutationOperation(d.pop("operation"))
-
         payload = CatalogEvaluationEvidence.from_dict(d.pop("payload"))
 
+        operation = AppendModelEvidenceMutationOperation(d.pop("operation"))
+
         append_model_evidence_mutation = cls(
-            operation=operation,
             payload=payload,
+            operation=operation,
         )
 
         append_model_evidence_mutation.additional_properties = d

@@ -29,16 +29,16 @@ class QueryRequest:
     Attributes:
         language (QueryLanguage):
         query (str):
+        parameters (list[QueryRequestParametersType0Item] | None | Unset):
         collection (None | str | Unset):
         limit (int | None | Unset):
-        parameters (list[QueryRequestParametersType0Item] | None | Unset):
     """
 
     language: QueryLanguage
     query: str
+    parameters: list[QueryRequestParametersType0Item] | None | Unset = UNSET
     collection: None | str | Unset = UNSET
     limit: int | None | Unset = UNSET
-    parameters: list[QueryRequestParametersType0Item] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,18 +49,6 @@ class QueryRequest:
         language = self.language.value
 
         query = self.query
-
-        collection: None | str | Unset
-        if isinstance(self.collection, Unset):
-            collection = UNSET
-        else:
-            collection = self.collection
-
-        limit: int | None | Unset
-        if isinstance(self.limit, Unset):
-            limit = UNSET
-        else:
-            limit = self.limit
 
         parameters: list[dict[str, Any]] | None | Unset
         if isinstance(self.parameters, Unset):
@@ -74,6 +62,18 @@ class QueryRequest:
         else:
             parameters = self.parameters
 
+        collection: None | str | Unset
+        if isinstance(self.collection, Unset):
+            collection = UNSET
+        else:
+            collection = self.collection
+
+        limit: int | None | Unset
+        if isinstance(self.limit, Unset):
+            limit = UNSET
+        else:
+            limit = self.limit
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -82,12 +82,12 @@ class QueryRequest:
                 "query": query,
             }
         )
+        if parameters is not UNSET:
+            field_dict["parameters"] = parameters
         if collection is not UNSET:
             field_dict["collection"] = collection
         if limit is not UNSET:
             field_dict["limit"] = limit
-        if parameters is not UNSET:
-            field_dict["parameters"] = parameters
 
         return field_dict
 
@@ -101,24 +101,6 @@ class QueryRequest:
         language = QueryLanguage(d.pop("language"))
 
         query = d.pop("query")
-
-        def _parse_collection(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        collection = _parse_collection(d.pop("collection", UNSET))
-
-        def _parse_limit(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        limit = _parse_limit(d.pop("limit", UNSET))
 
         def _parse_parameters(
             data: object,
@@ -146,12 +128,30 @@ class QueryRequest:
 
         parameters = _parse_parameters(d.pop("parameters", UNSET))
 
+        def _parse_collection(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        collection = _parse_collection(d.pop("collection", UNSET))
+
+        def _parse_limit(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        limit = _parse_limit(d.pop("limit", UNSET))
+
         query_request = cls(
             language=language,
             query=query,
+            parameters=parameters,
             collection=collection,
             limit=limit,
-            parameters=parameters,
         )
 
         query_request.additional_properties = d

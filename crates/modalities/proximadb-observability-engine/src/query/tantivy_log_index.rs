@@ -419,13 +419,15 @@ impl TantivyLogIndex {
         let searcher = reader.searcher();
 
         // Find all docs before timestamp
-        let query = tantivy::query::RangeQuery::new_i64_bounds(
-            "timestamp_ns".to_string(),
+        let query = tantivy::query::RangeQuery::new(
             std::ops::Bound::Unbounded,
-            std::ops::Bound::Excluded(timestamp_ns),
+            std::ops::Bound::Excluded(tantivy::schema::Term::from_field_i64(
+                self.timestamp_field,
+                timestamp_ns,
+            )),
         );
 
-        let top_docs = searcher.search(&query, &TopDocs::with_limit(100_000))?;
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(100_000).order_by_score())?;
 
         let writer = self
             .writer
@@ -502,7 +504,7 @@ impl TantivyLogIndex {
             100
         };
         let top_docs = searcher
-            .search(&final_query, &TopDocs::with_limit(limit))
+            .search(&final_query, &TopDocs::with_limit(limit).order_by_score())
             .context("Log search failed")?;
 
         // Extract results
@@ -586,6 +588,16 @@ impl TantivyLogIndex {
 
         // Add time range filter using range query
         if options.start_time_ns.is_some() || options.end_time_ns.is_some() {
+            let to_term = |bound: std::ops::Bound<i64>| match bound {
+                std::ops::Bound::Included(v) => std::ops::Bound::Included(
+                    tantivy::schema::Term::from_field_i64(self.timestamp_field, v),
+                ),
+                std::ops::Bound::Excluded(v) => std::ops::Bound::Excluded(
+                    tantivy::schema::Term::from_field_i64(self.timestamp_field, v),
+                ),
+                std::ops::Bound::Unbounded => std::ops::Bound::Unbounded,
+            };
+
             let start = options
                 .start_time_ns
                 .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included);
@@ -593,8 +605,7 @@ impl TantivyLogIndex {
                 .end_time_ns
                 .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included);
 
-            let range_query =
-                tantivy::query::RangeQuery::new_i64_bounds("timestamp_ns".to_string(), start, end);
+            let range_query = tantivy::query::RangeQuery::new(to_term(start), to_term(end));
             clauses.push((Occur::Must, Box::new(range_query)));
         }
 

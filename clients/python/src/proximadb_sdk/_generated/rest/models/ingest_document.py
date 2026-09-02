@@ -26,28 +26,24 @@ class IngestDocument:
 
     Attributes:
         id (str):
-        metadata (IngestDocumentMetadata | Unset): Arbitrary metadata fields. Stored as ProximaRecord props.
         text (None | str | Unset): Raw text content. Required when `X-Embed-Source: native` (default);
             optional when the client also supplied a vector.
         vector (list[float] | None | Unset): Optional client-provided vector. When present, the server skips
             embedding for this record. Use case: SDK that already embedded
             locally (legacy path).
+        metadata (IngestDocumentMetadata | Unset): Arbitrary metadata fields. Stored as ProximaRecord props.
     """
 
     id: str
-    metadata: IngestDocumentMetadata | Unset = UNSET
     text: None | str | Unset = UNSET
     vector: list[float] | None | Unset = UNSET
+    metadata: IngestDocumentMetadata | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.ingest_document_metadata import IngestDocumentMetadata
 
         id = self.id
-
-        metadata: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.metadata, Unset):
-            metadata = self.metadata.to_dict()
 
         text: None | str | Unset
         if isinstance(self.text, Unset):
@@ -64,6 +60,10 @@ class IngestDocument:
         else:
             vector = self.vector
 
+        metadata: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.metadata, Unset):
+            metadata = self.metadata.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -71,12 +71,12 @@ class IngestDocument:
                 "id": id,
             }
         )
-        if metadata is not UNSET:
-            field_dict["metadata"] = metadata
         if text is not UNSET:
             field_dict["text"] = text
         if vector is not UNSET:
             field_dict["vector"] = vector
+        if metadata is not UNSET:
+            field_dict["metadata"] = metadata
 
         return field_dict
 
@@ -86,13 +86,6 @@ class IngestDocument:
 
         d = dict(src_dict)
         id = d.pop("id")
-
-        _metadata = d.pop("metadata", UNSET)
-        metadata: IngestDocumentMetadata | Unset
-        if isinstance(_metadata, Unset):
-            metadata = UNSET
-        else:
-            metadata = IngestDocumentMetadata.from_dict(_metadata)
 
         def _parse_text(data: object) -> None | str | Unset:
             if data is None:
@@ -120,11 +113,18 @@ class IngestDocument:
 
         vector = _parse_vector(d.pop("vector", UNSET))
 
+        _metadata = d.pop("metadata", UNSET)
+        metadata: IngestDocumentMetadata | Unset
+        if isinstance(_metadata, Unset):
+            metadata = UNSET
+        else:
+            metadata = IngestDocumentMetadata.from_dict(_metadata)
+
         ingest_document = cls(
             id=id,
-            metadata=metadata,
             text=text,
             vector=vector,
+            metadata=metadata,
         )
 
         ingest_document.additional_properties = d

@@ -22,17 +22,17 @@ class CollectionV2Summary:
 
     Attributes:
         collection_id (str): Collection ID
+        name (str): Collection name
         dimension (int): Vector dimension
         engine (str): Storage engine
-        name (str): Collection name
         proxima_record_enabled (bool): Whether ProximaRecord is enabled
         record_count (int | None | Unset): Record count (if include_stats is true)
     """
 
     collection_id: str
+    name: str
     dimension: int
     engine: str
-    name: str
     proxima_record_enabled: bool
     record_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -40,11 +40,11 @@ class CollectionV2Summary:
     def to_dict(self) -> dict[str, Any]:
         collection_id = self.collection_id
 
+        name = self.name
+
         dimension = self.dimension
 
         engine = self.engine
-
-        name = self.name
 
         proxima_record_enabled = self.proxima_record_enabled
 
@@ -59,9 +59,9 @@ class CollectionV2Summary:
         field_dict.update(
             {
                 "collection_id": collection_id,
+                "name": name,
                 "dimension": dimension,
                 "engine": engine,
-                "name": name,
                 "proxima_record_enabled": proxima_record_enabled,
             }
         )
@@ -75,11 +75,11 @@ class CollectionV2Summary:
         d = dict(src_dict)
         collection_id = d.pop("collection_id")
 
+        name = d.pop("name")
+
         dimension = d.pop("dimension")
 
         engine = d.pop("engine")
-
-        name = d.pop("name")
 
         proxima_record_enabled = d.pop("proxima_record_enabled")
 
@@ -94,9 +94,9 @@ class CollectionV2Summary:
 
         collection_v2_summary = cls(
             collection_id=collection_id,
+            name=name,
             dimension=dimension,
             engine=engine,
-            name=name,
             proxima_record_enabled=proxima_record_enabled,
             record_count=record_count,
         )

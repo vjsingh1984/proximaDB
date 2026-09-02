@@ -27,27 +27,27 @@ T = TypeVar("T", bound="UpsertModelDeploymentMutation")
 class UpsertModelDeploymentMutation:
     """
     Attributes:
-        operation (UpsertModelDeploymentMutationOperation):
         payload (CatalogDeploymentBinding): Mutable serving intent that always resolves to an immutable version/digest.
+        operation (UpsertModelDeploymentMutationOperation):
     """
 
-    operation: UpsertModelDeploymentMutationOperation
     payload: CatalogDeploymentBinding
+    operation: UpsertModelDeploymentMutationOperation
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.catalog_deployment_binding import CatalogDeploymentBinding
 
-        operation = self.operation.value
-
         payload = self.payload.to_dict()
+
+        operation = self.operation.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "operation": operation,
                 "payload": payload,
+                "operation": operation,
             }
         )
 
@@ -58,13 +58,13 @@ class UpsertModelDeploymentMutation:
         from ..models.catalog_deployment_binding import CatalogDeploymentBinding
 
         d = dict(src_dict)
-        operation = UpsertModelDeploymentMutationOperation(d.pop("operation"))
-
         payload = CatalogDeploymentBinding.from_dict(d.pop("payload"))
 
+        operation = UpsertModelDeploymentMutationOperation(d.pop("operation"))
+
         upsert_model_deployment_mutation = cls(
-            operation=operation,
             payload=payload,
+            operation=operation,
         )
 
         upsert_model_deployment_mutation.additional_properties = d

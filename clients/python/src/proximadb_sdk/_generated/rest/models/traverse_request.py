@@ -23,23 +23,33 @@ class TraverseRequest:
 
         Attributes:
             start_node_id (str):
-            algorithm (None | str | Unset): bfs | dfs | shortest_path
-            edge_types (list[str] | Unset):
-            limit (int | None | Unset):
             max_depth (int | Unset):  Default: 3.
+            edge_types (list[str] | Unset):
             node_labels (list[str] | Unset):
+            algorithm (None | str | Unset): bfs | dfs | shortest_path
+            limit (int | None | Unset):
     """
 
     start_node_id: str
-    algorithm: None | str | Unset = UNSET
-    edge_types: list[str] | Unset = UNSET
-    limit: int | None | Unset = UNSET
     max_depth: int | Unset = 3
+    edge_types: list[str] | Unset = UNSET
     node_labels: list[str] | Unset = UNSET
+    algorithm: None | str | Unset = UNSET
+    limit: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         start_node_id = self.start_node_id
+
+        max_depth = self.max_depth
+
+        edge_types: list[str] | Unset = UNSET
+        if not isinstance(self.edge_types, Unset):
+            edge_types = self.edge_types
+
+        node_labels: list[str] | Unset = UNSET
+        if not isinstance(self.node_labels, Unset):
+            node_labels = self.node_labels
 
         algorithm: None | str | Unset
         if isinstance(self.algorithm, Unset):
@@ -47,21 +57,11 @@ class TraverseRequest:
         else:
             algorithm = self.algorithm
 
-        edge_types: list[str] | Unset = UNSET
-        if not isinstance(self.edge_types, Unset):
-            edge_types = self.edge_types
-
         limit: int | None | Unset
         if isinstance(self.limit, Unset):
             limit = UNSET
         else:
             limit = self.limit
-
-        max_depth = self.max_depth
-
-        node_labels: list[str] | Unset = UNSET
-        if not isinstance(self.node_labels, Unset):
-            node_labels = self.node_labels
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -70,16 +70,16 @@ class TraverseRequest:
                 "start_node_id": start_node_id,
             }
         )
-        if algorithm is not UNSET:
-            field_dict["algorithm"] = algorithm
-        if edge_types is not UNSET:
-            field_dict["edge_types"] = edge_types
-        if limit is not UNSET:
-            field_dict["limit"] = limit
         if max_depth is not UNSET:
             field_dict["max_depth"] = max_depth
+        if edge_types is not UNSET:
+            field_dict["edge_types"] = edge_types
         if node_labels is not UNSET:
             field_dict["node_labels"] = node_labels
+        if algorithm is not UNSET:
+            field_dict["algorithm"] = algorithm
+        if limit is not UNSET:
+            field_dict["limit"] = limit
 
         return field_dict
 
@@ -87,6 +87,12 @@ class TraverseRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         start_node_id = d.pop("start_node_id")
+
+        max_depth = d.pop("max_depth", UNSET)
+
+        edge_types = cast(list[str], d.pop("edge_types", UNSET))
+
+        node_labels = cast(list[str], d.pop("node_labels", UNSET))
 
         def _parse_algorithm(data: object) -> None | str | Unset:
             if data is None:
@@ -97,8 +103,6 @@ class TraverseRequest:
 
         algorithm = _parse_algorithm(d.pop("algorithm", UNSET))
 
-        edge_types = cast(list[str], d.pop("edge_types", UNSET))
-
         def _parse_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -108,17 +112,13 @@ class TraverseRequest:
 
         limit = _parse_limit(d.pop("limit", UNSET))
 
-        max_depth = d.pop("max_depth", UNSET)
-
-        node_labels = cast(list[str], d.pop("node_labels", UNSET))
-
         traverse_request = cls(
             start_node_id=start_node_id,
-            algorithm=algorithm,
-            edge_types=edge_types,
-            limit=limit,
             max_depth=max_depth,
+            edge_types=edge_types,
             node_labels=node_labels,
+            algorithm=algorithm,
+            limit=limit,
         )
 
         traverse_request.additional_properties = d

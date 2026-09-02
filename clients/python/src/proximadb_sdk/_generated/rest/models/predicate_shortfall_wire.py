@@ -26,36 +26,36 @@ class PredicateShortfallWire:
     DTO) to derive `ToSchema`.
 
         Attributes:
-            ann_filtering_mode (str): ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
-                `pre_filter`).
-            oversample_pool (int): Candidate pool size considered before the predicate (oversample budget).
             requested_k (int): The `top_k` value the caller asked for.
             returned_k (int): Results actually returned after predicate filtering + merge.
+            oversample_pool (int): Candidate pool size considered before the predicate (oversample budget).
+            ann_filtering_mode (str): ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+                `pre_filter`).
     """
 
-    ann_filtering_mode: str
-    oversample_pool: int
     requested_k: int
     returned_k: int
+    oversample_pool: int
+    ann_filtering_mode: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        ann_filtering_mode = self.ann_filtering_mode
-
-        oversample_pool = self.oversample_pool
-
         requested_k = self.requested_k
 
         returned_k = self.returned_k
+
+        oversample_pool = self.oversample_pool
+
+        ann_filtering_mode = self.ann_filtering_mode
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "ann_filtering_mode": ann_filtering_mode,
-                "oversample_pool": oversample_pool,
                 "requested_k": requested_k,
                 "returned_k": returned_k,
+                "oversample_pool": oversample_pool,
+                "ann_filtering_mode": ann_filtering_mode,
             }
         )
 
@@ -64,19 +64,19 @@ class PredicateShortfallWire:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        ann_filtering_mode = d.pop("ann_filtering_mode")
-
-        oversample_pool = d.pop("oversample_pool")
-
         requested_k = d.pop("requested_k")
 
         returned_k = d.pop("returned_k")
 
+        oversample_pool = d.pop("oversample_pool")
+
+        ann_filtering_mode = d.pop("ann_filtering_mode")
+
         predicate_shortfall_wire = cls(
-            ann_filtering_mode=ann_filtering_mode,
-            oversample_pool=oversample_pool,
             requested_k=requested_k,
             returned_k=returned_k,
+            oversample_pool=oversample_pool,
+            ann_filtering_mode=ann_filtering_mode,
         )
 
         predicate_shortfall_wire.additional_properties = d

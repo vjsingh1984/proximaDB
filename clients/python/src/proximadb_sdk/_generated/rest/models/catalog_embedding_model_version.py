@@ -31,13 +31,13 @@ class CatalogEmbeddingModelVersion:
     """Immutable executable contract for one registered model version.
 
     Attributes:
+        version (int):
+        provider_model_id (str):
         artifact (CatalogArtifactDescriptor): Content-addressed reference to bytes held outside xCatalog.
-        created_at_ms (int):
         input_ (CatalogEmbeddingInputContract): Exact rendered-input and tokenizer budget consumed by an embedding
             runtime.
         output (CatalogEmbeddingOutputContract):
-        provider_model_id (str):
-        version (int):
+        created_at_ms (int):
         governance (CatalogModelGovernance | Unset): Supply-chain and runtime policy declared for an immutable model
             version.
             Approval decisions remain separate append-only audit records.
@@ -45,12 +45,12 @@ class CatalogEmbeddingModelVersion:
         source_run_id (None | str | Unset):
     """
 
+    version: int
+    provider_model_id: str
     artifact: CatalogArtifactDescriptor
-    created_at_ms: int
     input_: CatalogEmbeddingInputContract
     output: CatalogEmbeddingOutputContract
-    provider_model_id: str
-    version: int
+    created_at_ms: int
     governance: CatalogModelGovernance | Unset = UNSET
     lineage: CatalogModelLineage | Unset = UNSET
     source_run_id: None | str | Unset = UNSET
@@ -67,17 +67,17 @@ class CatalogEmbeddingModelVersion:
         from ..models.catalog_model_governance import CatalogModelGovernance
         from ..models.catalog_model_lineage import CatalogModelLineage
 
-        artifact = self.artifact.to_dict()
+        version = self.version
 
-        created_at_ms = self.created_at_ms
+        provider_model_id = self.provider_model_id
+
+        artifact = self.artifact.to_dict()
 
         input_ = self.input_.to_dict()
 
         output = self.output.to_dict()
 
-        provider_model_id = self.provider_model_id
-
-        version = self.version
+        created_at_ms = self.created_at_ms
 
         governance: dict[str, Any] | Unset = UNSET
         if not isinstance(self.governance, Unset):
@@ -97,12 +97,12 @@ class CatalogEmbeddingModelVersion:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "version": version,
+                "provider_model_id": provider_model_id,
                 "artifact": artifact,
-                "created_at_ms": created_at_ms,
                 "input": input_,
                 "output": output,
-                "provider_model_id": provider_model_id,
-                "version": version,
+                "created_at_ms": created_at_ms,
             }
         )
         if governance is not UNSET:
@@ -127,17 +127,17 @@ class CatalogEmbeddingModelVersion:
         from ..models.catalog_model_lineage import CatalogModelLineage
 
         d = dict(src_dict)
-        artifact = CatalogArtifactDescriptor.from_dict(d.pop("artifact"))
+        version = d.pop("version")
 
-        created_at_ms = d.pop("created_at_ms")
+        provider_model_id = d.pop("provider_model_id")
+
+        artifact = CatalogArtifactDescriptor.from_dict(d.pop("artifact"))
 
         input_ = CatalogEmbeddingInputContract.from_dict(d.pop("input"))
 
         output = CatalogEmbeddingOutputContract.from_dict(d.pop("output"))
 
-        provider_model_id = d.pop("provider_model_id")
-
-        version = d.pop("version")
+        created_at_ms = d.pop("created_at_ms")
 
         _governance = d.pop("governance", UNSET)
         governance: CatalogModelGovernance | Unset
@@ -163,12 +163,12 @@ class CatalogEmbeddingModelVersion:
         source_run_id = _parse_source_run_id(d.pop("source_run_id", UNSET))
 
         catalog_embedding_model_version = cls(
+            version=version,
+            provider_model_id=provider_model_id,
             artifact=artifact,
-            created_at_ms=created_at_ms,
             input_=input_,
             output=output,
-            provider_model_id=provider_model_id,
-            version=version,
+            created_at_ms=created_at_ms,
             governance=governance,
             lineage=lineage,
             source_run_id=source_run_id,

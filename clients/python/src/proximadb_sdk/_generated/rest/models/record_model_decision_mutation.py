@@ -27,27 +27,27 @@ T = TypeVar("T", bound="RecordModelDecisionMutation")
 class RecordModelDecisionMutation:
     """
     Attributes:
-        operation (RecordModelDecisionMutationOperation):
         payload (CatalogModelDecision): Append-only policy/audit decision, intentionally separate from evidence.
+        operation (RecordModelDecisionMutationOperation):
     """
 
-    operation: RecordModelDecisionMutationOperation
     payload: CatalogModelDecision
+    operation: RecordModelDecisionMutationOperation
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.catalog_model_decision import CatalogModelDecision
 
-        operation = self.operation.value
-
         payload = self.payload.to_dict()
+
+        operation = self.operation.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "operation": operation,
                 "payload": payload,
+                "operation": operation,
             }
         )
 
@@ -58,13 +58,13 @@ class RecordModelDecisionMutation:
         from ..models.catalog_model_decision import CatalogModelDecision
 
         d = dict(src_dict)
-        operation = RecordModelDecisionMutationOperation(d.pop("operation"))
-
         payload = CatalogModelDecision.from_dict(d.pop("payload"))
 
+        operation = RecordModelDecisionMutationOperation(d.pop("operation"))
+
         record_model_decision_mutation = cls(
-            operation=operation,
             payload=payload,
+            operation=operation,
         )
 
         record_model_decision_mutation.additional_properties = d

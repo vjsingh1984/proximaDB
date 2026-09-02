@@ -29,6 +29,9 @@ use object_store::ObjectStore;
 use object_store::ObjectStoreExt;
 use object_store::path::Path;
 use parquet::arrow::ProjectionMask;
+// arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+// apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+#[allow(deprecated)]
 use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 use parquet::bloom_filter::Sbbf;
 use parquet::file::metadata::ParquetMetaData;
@@ -84,6 +87,9 @@ fn footer_size_hint() -> usize {
         .unwrap_or(512 * 1024)
 }
 
+// arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+// apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+#[allow(deprecated)]
 fn parquet_reader(
     store: Arc<dyn ObjectStore>,
     path: Path,
@@ -1900,7 +1906,7 @@ mod tests {
         let props = WriterProperties::builder()
             .set_column_bloom_filter_enabled(ColumnPath::from("k"), true)
             .set_column_bloom_filter_fpp(ColumnPath::from("k"), 0.000_001)
-            .set_column_bloom_filter_ndv(ColumnPath::from("k"), 256)
+            .set_column_bloom_filter_max_ndv(ColumnPath::from("k"), 256)
             .build();
         let file = std::fs::File::create(path).unwrap();
         let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();

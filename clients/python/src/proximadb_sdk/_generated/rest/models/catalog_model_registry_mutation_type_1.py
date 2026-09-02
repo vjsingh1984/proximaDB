@@ -27,27 +27,27 @@ T = TypeVar("T", bound="CatalogModelRegistryMutationType1")
 class CatalogModelRegistryMutationType1:
     """
     Attributes:
-        operation (CatalogModelRegistryMutationType1Operation):
         payload (CatalogModelAliasMutation):
+        operation (CatalogModelRegistryMutationType1Operation):
     """
 
-    operation: CatalogModelRegistryMutationType1Operation
     payload: CatalogModelAliasMutation
+    operation: CatalogModelRegistryMutationType1Operation
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.catalog_model_alias_mutation import CatalogModelAliasMutation
 
-        operation = self.operation.value
-
         payload = self.payload.to_dict()
+
+        operation = self.operation.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "operation": operation,
                 "payload": payload,
+                "operation": operation,
             }
         )
 
@@ -58,13 +58,13 @@ class CatalogModelRegistryMutationType1:
         from ..models.catalog_model_alias_mutation import CatalogModelAliasMutation
 
         d = dict(src_dict)
-        operation = CatalogModelRegistryMutationType1Operation(d.pop("operation"))
-
         payload = CatalogModelAliasMutation.from_dict(d.pop("payload"))
 
+        operation = CatalogModelRegistryMutationType1Operation(d.pop("operation"))
+
         catalog_model_registry_mutation_type_1 = cls(
-            operation=operation,
             payload=payload,
+            operation=operation,
         )
 
         catalog_model_registry_mutation_type_1.additional_properties = d

@@ -170,7 +170,11 @@ pub enum MetricsUpdate {
     ColumnStats {
         collection_id: String,
         column_name: String,
-        stats: FilterableColumnStats,
+        // Boxed: FilterableColumnStats is the largest payload by far
+        // (~300 B vs ~100 B for the next-largest variant), which trips
+        // clippy::large_enum_variant's 3× ratio; the box keeps the enum
+        // at pointer size.
+        stats: Box<FilterableColumnStats>,
     },
 }
 
@@ -423,7 +427,7 @@ impl AsyncMetricsUpdater {
 
                 metrics
                     .filterable_column_stats
-                    .insert(column_name.clone(), stats.clone());
+                    .insert(column_name.clone(), (**stats).clone());
                 metrics.updated_at = chrono::Utc::now().timestamp_millis();
             }
         }
@@ -518,7 +522,7 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
         let _ = self.tx.try_send(MetricsUpdate::ColumnStats {
             collection_id: collection_id.to_string(),
             column_name: column_name.to_string(),
-            stats,
+            stats: Box::new(stats),
         });
         Ok(())
     }

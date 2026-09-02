@@ -22,14 +22,14 @@ class ResolveModelAliasRequest:
     Attributes:
         alias (str):
         dimension (int):
-        require_approved (bool | Unset): Require the latest append-only decision to approve the selected version.
         runtime (None | str | Unset): Runtime implementation that will execute the immutable contract.
+        require_approved (bool | Unset): Require the latest append-only decision to approve the selected version.
     """
 
     alias: str
     dimension: int
-    require_approved: bool | Unset = UNSET
     runtime: None | str | Unset = UNSET
+    require_approved: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,13 +37,13 @@ class ResolveModelAliasRequest:
 
         dimension = self.dimension
 
-        require_approved = self.require_approved
-
         runtime: None | str | Unset
         if isinstance(self.runtime, Unset):
             runtime = UNSET
         else:
             runtime = self.runtime
+
+        require_approved = self.require_approved
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -53,10 +53,10 @@ class ResolveModelAliasRequest:
                 "dimension": dimension,
             }
         )
-        if require_approved is not UNSET:
-            field_dict["require_approved"] = require_approved
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
+        if require_approved is not UNSET:
+            field_dict["require_approved"] = require_approved
 
         return field_dict
 
@@ -67,8 +67,6 @@ class ResolveModelAliasRequest:
 
         dimension = d.pop("dimension")
 
-        require_approved = d.pop("require_approved", UNSET)
-
         def _parse_runtime(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -78,11 +76,13 @@ class ResolveModelAliasRequest:
 
         runtime = _parse_runtime(d.pop("runtime", UNSET))
 
+        require_approved = d.pop("require_approved", UNSET)
+
         resolve_model_alias_request = cls(
             alias=alias,
             dimension=dimension,
-            require_approved=require_approved,
             runtime=runtime,
+            require_approved=require_approved,
         )
 
         resolve_model_alias_request.additional_properties = d

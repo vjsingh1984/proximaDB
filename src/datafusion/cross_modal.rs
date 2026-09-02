@@ -845,12 +845,12 @@ impl DocumentScanPort for DocumentServiceScan {
             .documents
             .into_iter()
             .map(|doc| {
-                let json = serde_json::Value::Object(
-                    crate::core::search::sql_value_filter::proxima_tree_to_json_map(&doc.props)
-                        .into_iter()
-                        .collect(),
-                );
-                (doc.id, serde_json::to_string(&json).unwrap_or_default())
+                (
+                    doc.id,
+                    crate::core::search::sql_value_filter::proxima_tree_to_canonical_json_string(
+                        &doc.props,
+                    ),
+                )
             })
             .collect())
     }

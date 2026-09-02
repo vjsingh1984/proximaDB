@@ -219,6 +219,38 @@ pub fn proxima_tree_to_json_map(props: &ProximaTree) -> HashMap<String, serde_js
         .collect()
 }
 
+/// Serialise `props` to a canonical JSON string: object keys sorted at every level.
+///
+/// Key order must be canonical here, not incidental: `serde_json::Map` is
+/// order-preserving whenever some dependency enables the `preserve_order`
+/// feature (datafusion-physical-plan 55+ does, via `serde_json/preserve_order`)
+/// and a plain `BTreeMap` otherwise, so insertion-order serialisation changes
+/// byte-for-byte with the dependency graph. Sorting explicitly pins the
+/// serialised form — the same bytes `BTreeMap` semantics produced before.
+pub fn proxima_tree_to_canonical_json_string(props: &ProximaTree) -> String {
+    fn node_to_canonical_json(node: &ProximaTreeNode) -> serde_json::Value {
+        match node {
+            ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
+            ProximaTreeNode::Object(subtree) => {
+                let mut entries: Vec<(String, serde_json::Value)> = subtree
+                    .iter()
+                    .map(|(k, n)| (k.clone(), node_to_canonical_json(n)))
+                    .collect();
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                serde_json::Value::Object(entries.into_iter().collect())
+            }
+        }
+    }
+
+    let mut entries: Vec<(String, serde_json::Value)> = props
+        .iter()
+        .map(|(key, node)| (key.clone(), node_to_canonical_json(node)))
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    serde_json::to_string(&serde_json::Value::Object(entries.into_iter().collect()))
+        .unwrap_or_default()
+}
+
 /// Flatten a `ProximaTree` into the canonical `OptimizedSearchRecord` metadata map.
 ///
 /// Nested objects are preserved as `ProximaValue::Struct` so storage engines can return

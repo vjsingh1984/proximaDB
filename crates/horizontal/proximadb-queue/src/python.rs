@@ -80,7 +80,7 @@ impl PyQueueClient {
         if let Some(t) = topics {
             for (k, v) in t.iter() {
                 let name: String = k.extract()?;
-                let dict: &Bound<PyDict> = v.downcast()?;
+                let dict: &Bound<PyDict> = v.cast()?;
                 let mut topic_cfg = TopicConfig::default();
                 if let Ok(Some(pc)) = dict.get_item("partition_count") {
                     topic_cfg.partition_count = pc.extract()?;

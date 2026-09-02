@@ -21,45 +21,45 @@ class CatalogDeploymentBinding:
     """Mutable serving intent that always resolves to an immutable version/digest.
 
     Attributes:
-        artifact_digest (str):
-        endpoint (str):
         name (str):
-        runtime (str):
-        updated_at_ms (int):
         version (int):
+        artifact_digest (str):
+        runtime (str):
+        endpoint (str):
+        updated_at_ms (int):
     """
 
-    artifact_digest: str
-    endpoint: str
     name: str
-    runtime: str
-    updated_at_ms: int
     version: int
+    artifact_digest: str
+    runtime: str
+    endpoint: str
+    updated_at_ms: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        artifact_digest = self.artifact_digest
-
-        endpoint = self.endpoint
-
         name = self.name
+
+        version = self.version
+
+        artifact_digest = self.artifact_digest
 
         runtime = self.runtime
 
-        updated_at_ms = self.updated_at_ms
+        endpoint = self.endpoint
 
-        version = self.version
+        updated_at_ms = self.updated_at_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "artifact_digest": artifact_digest,
-                "endpoint": endpoint,
                 "name": name,
-                "runtime": runtime,
-                "updated_at_ms": updated_at_ms,
                 "version": version,
+                "artifact_digest": artifact_digest,
+                "runtime": runtime,
+                "endpoint": endpoint,
+                "updated_at_ms": updated_at_ms,
             }
         )
 
@@ -68,25 +68,25 @@ class CatalogDeploymentBinding:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        artifact_digest = d.pop("artifact_digest")
-
-        endpoint = d.pop("endpoint")
-
         name = d.pop("name")
-
-        runtime = d.pop("runtime")
-
-        updated_at_ms = d.pop("updated_at_ms")
 
         version = d.pop("version")
 
+        artifact_digest = d.pop("artifact_digest")
+
+        runtime = d.pop("runtime")
+
+        endpoint = d.pop("endpoint")
+
+        updated_at_ms = d.pop("updated_at_ms")
+
         catalog_deployment_binding = cls(
-            artifact_digest=artifact_digest,
-            endpoint=endpoint,
             name=name,
-            runtime=runtime,
-            updated_at_ms=updated_at_ms,
             version=version,
+            artifact_digest=artifact_digest,
+            runtime=runtime,
+            endpoint=endpoint,
+            updated_at_ms=updated_at_ms,
         )
 
         catalog_deployment_binding.additional_properties = d

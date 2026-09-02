@@ -26,16 +26,16 @@ class ModelRegistryRecordResponse:
     not lose precision. gRPC exposes the same value as `uint64`.
 
         Attributes:
+            tenant_id (str):
             asset_id (str):
             registry (CatalogEmbeddingModelRegistry): Registered embedding model: immutable versions plus separately mutable
                 or
                 append-only lifecycle records.
-            tenant_id (str):
     """
 
+    tenant_id: str
     asset_id: str
     registry: CatalogEmbeddingModelRegistry
-    tenant_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,19 +43,19 @@ class ModelRegistryRecordResponse:
             CatalogEmbeddingModelRegistry,
         )
 
+        tenant_id = self.tenant_id
+
         asset_id = self.asset_id
 
         registry = self.registry.to_dict()
-
-        tenant_id = self.tenant_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "tenant_id": tenant_id,
                 "asset_id": asset_id,
                 "registry": registry,
-                "tenant_id": tenant_id,
             }
         )
 
@@ -68,16 +68,16 @@ class ModelRegistryRecordResponse:
         )
 
         d = dict(src_dict)
+        tenant_id = d.pop("tenant_id")
+
         asset_id = d.pop("asset_id")
 
         registry = CatalogEmbeddingModelRegistry.from_dict(d.pop("registry"))
 
-        tenant_id = d.pop("tenant_id")
-
         model_registry_record_response = cls(
+            tenant_id=tenant_id,
             asset_id=asset_id,
             registry=registry,
-            tenant_id=tenant_id,
         )
 
         model_registry_record_response.additional_properties = d
