@@ -19,6 +19,7 @@ fn storage_config(dir: &std::path::Path) -> StorageConfig {
         url: format!("file://{}/storage", dir.display()),
         weight: 1,
         tags: vec![],
+        io_budget: None,
     }];
     sc.wal_config.write_buffer_directory = format!("file://{}/wal", dir.display());
     sc

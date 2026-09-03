@@ -12,10 +12,49 @@
 //! the read-projection *strategy*; this budget sizes the *physical* ranged GET.
 //! Resolving a budget never changes a durability contract.
 
+use std::collections::BTreeMap;
+
+use parking_lot::RwLock;
+
 /// Fallback rows-per-block when a row's survivor byte cost is unknown (0), so the
 /// geometry derivation stays total (no divide-by-zero). Matches the legacy
 /// `SST_DEFAULT_VECTORS_PER_BLOCK=128` until the per-row cost is measured.
 pub const FALLBACK_ROWS_PER_BLOCK: u64 = 128;
+
+/// The URL-scheme taxonomy every scheme-dependent decision in this module
+/// resolves through (TD-IOBUDGET-1: one home for the scheme lists — three
+/// independent match arms is the TD-IVF-4 defect class; a scheme alias added
+/// to one arm but not the others would make `DiskClass::Cloud` resolve a
+/// different profile than `for_scheme_and_env` for the same URL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scheme {
+    /// Azure Blob / ABFS / ADLS family.
+    Azure,
+    /// AWS S3 and HTTP(S) (no hard range limit).
+    S3,
+    /// Google Cloud Storage.
+    Gcs,
+    /// Local disk / MinIO / scheme-less bare path.
+    Local,
+    /// Anything else (generic default profile).
+    Unknown,
+}
+
+impl Scheme {
+    fn of(path: &str) -> Self {
+        match path
+            .split_once("://")
+            .map(|(s, _)| s.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("azure" | "abfs" | "adls" | "az") => Self::Azure,
+            Some("s3" | "http" | "https") => Self::S3,
+            Some("gs" | "gcs") => Self::Gcs,
+            Some("file" | "minio") | None => Self::Local,
+            Some(_) => Self::Unknown,
+        }
+    }
+}
 
 /// Per-backend ranged-GET byte budget for the coalesced-RaBitQ survivor fetch
 /// (ADR-062 D6). `target` is the preferred block byte size; `min`/`max` bound the
@@ -88,26 +127,43 @@ impl IopsBudget {
 
     /// Resolve the budget from a storage path's URL scheme (ADR-036 / ADR-062 D6).
     ///
-    /// Per-provider: Azure schemes → [`IopsBudget::AZURE`] (conservative 4 MiB
-    /// evaluation policy); S3 / HTTP → [`IopsBudget::S3`] (8 MiB — no hard
-    /// limit); GCS → [`IopsBudget::GCS`] (8 MiB); local / `file` / `minio` /
-    /// bare paths → [`IopsBudget::LOCAL`]; unknown → [`IopsBudget::DEFAULT`].
+    /// Resolution order (TD-IOBUDGET-1): an operator-configured per-location
+    /// budget (registered at boot from `[[storage.storage_locations]]
+    /// io_budget`) wins by longest matching URL prefix; otherwise the scheme
+    /// consts and the `PROXIMADB_DISK_CLASS` env hint apply unchanged.
+    ///
+    /// Per-provider defaults: Azure schemes → [`IopsBudget::AZURE`]
+    /// (conservative 4 MiB evaluation policy); S3 / HTTP → [`IopsBudget::S3`]
+    /// (8 MiB — no hard limit); GCS → [`IopsBudget::GCS`] (8 MiB); local /
+    /// `file` / `minio` / bare paths → [`IopsBudget::LOCAL`]; unknown →
+    /// [`IopsBudget::DEFAULT`].
     pub fn for_path(path: &str) -> Self {
-        let scheme = path.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
-        match scheme.as_deref() {
+        if let Some(registered) = location_budget_for(path) {
+            return registered;
+        }
+        Self::for_scheme_and_env(path)
+    }
+
+    /// The registry-free scheme + env resolution (`for_path` minus any
+    /// registered per-location budget). Exposed so the root crate can seed the
+    /// registry itself: an operator's partial `io_budget` (e.g. only
+    /// `target_bytes`) resolves its unspecified fields from the SAME scheme
+    /// default a path would get unregistered, never from a stale entry.
+    pub fn for_scheme_and_env(path: &str) -> Self {
+        match Scheme::of(path) {
             // Azure: conservative 4 MiB policy pending TD-SEARCH-3 wire sweep.
-            Some("azure" | "abfs" | "adls" | "az") => Self::AZURE,
+            Scheme::Azure => Self::AZURE,
             // S3 / HTTP: no hard range limit; 8 MiB sweet spot.
-            Some("s3" | "http" | "https") => Self::S3,
+            Scheme::S3 => Self::S3,
             // GCS: same as S3.
-            Some("gs" | "gcs") => Self::GCS,
+            Scheme::Gcs => Self::GCS,
             // Local / MinIO / bare path: no round-trip cost. ADR-073: an
             // HDD-backed location (500 IOPS, seek-bound) must coalesce like a
             // cloud store — the measured sweep puts the LOCAL profile at ~191
             // reads/query (≈2.6 QPS on HDD) vs ~41 with the CLOUD profile
             // (≈12 QPS). `PROXIMADB_DISK_CLASS=hdd` is the deploy-time hint
             // (per-location tags don't reach this leaf crate).
-            Some("file" | "minio") | None => {
+            Scheme::Local => {
                 if std::env::var("PROXIMADB_DISK_CLASS")
                     .map(|v| v.trim().eq_ignore_ascii_case("hdd"))
                     .unwrap_or(false)
@@ -117,7 +173,22 @@ impl IopsBudget {
                     Self::LOCAL
                 }
             }
-            Some(_) => Self::DEFAULT,
+            Scheme::Unknown => Self::DEFAULT,
+        }
+    }
+
+    /// The cloud-default profile for a path's scheme (TD-IOBUDGET-1).
+    ///
+    /// `DiskClass::Cloud` maps here — "coalesce like a remote store for MY
+    /// scheme": a `file://` location gets [`IopsBudget::CLOUD`] (4 MiB, the
+    /// ADR-073 remote-style coalescing), while an `s3://` location keeps its
+    /// own [`IopsBudget::S3`] profile (8 MiB).
+    pub fn scheme_cloud_budget(path: &str) -> Self {
+        match Scheme::of(path) {
+            Scheme::Azure => Self::AZURE,
+            Scheme::S3 => Self::S3,
+            Scheme::Gcs => Self::GCS,
+            Scheme::Local | Scheme::Unknown => Self::CLOUD,
         }
     }
 
@@ -159,6 +230,57 @@ impl Default for IopsBudget {
     }
 }
 
+/// Boot-seeded registry of operator-configured per-storage-location budgets
+/// (TD-IOBUDGET-1). The root crate resolves each
+/// `[[storage.storage_locations]] io_budget` into an [`IopsBudget`] and
+/// registers it here under the location URL before engines start; `for_path`
+/// then prefers the longest matching registered prefix. Insert-overwrite (not
+/// first-wins) so re-seeding a restart or an embedded re-boot is idempotent
+/// (the TD-COMPACT-9 lesson: a first-wins seed silently ignores the TOML).
+///
+/// This is the leaf-side half of the seam ADR-073 asked for: `tags` on
+/// `StorageLocation` cannot reach this crate (foundation may not depend on
+/// storage), so the root converts the config and pushes resolved values down.
+static LOCATION_BUDGETS: RwLock<BTreeMap<String, IopsBudget>> = RwLock::new(BTreeMap::new());
+
+/// Register (or overwrite) the budget for a storage location URL prefix.
+/// Called at boot from the root crate after config validation.
+pub fn register_location_budget(url_prefix: &str, budget: IopsBudget) {
+    LOCATION_BUDGETS
+        .write()
+        .insert(normalize_prefix(url_prefix), budget);
+}
+
+/// Drop every registered location budget. Seeding is authoritative-REPLACE:
+/// the root crate drains before re-registering the config's full set, so a
+/// location DROPPED from a later config cannot keep serving its stale budget
+/// to an in-process re-boot (embedded re-init, test suites).
+pub fn clear_location_budgets() {
+    LOCATION_BUDGETS.write().clear();
+}
+
+/// The registered budget for a path, if any — the longest registered URL
+/// prefix that matches wins. A prefix matches when the path equals it or
+/// continues it at a `/` boundary (so `s3://bucket` never claims
+/// `s3://bucket-other/…`).
+pub fn location_budget_for(path: &str) -> Option<IopsBudget> {
+    LOCATION_BUDGETS
+        .read()
+        .iter()
+        .filter(|(prefix, _)| prefix_matches(path, prefix))
+        .max_by_key(|(prefix, _)| prefix.len())
+        .map(|(_, budget)| *budget)
+}
+
+fn normalize_prefix(url_prefix: &str) -> String {
+    url_prefix.trim_end_matches('/').to_string()
+}
+
+fn prefix_matches(path: &str, prefix: &str) -> bool {
+    path.starts_with(prefix)
+        && (path.len() == prefix.len() || path.as_bytes()[prefix.len()] == b'/')
+}
+
 /// The IOP target a **writer** should size blocks/cells against.
 ///
 /// Read-side planning resolves the backend from the object URL, but the write
@@ -193,14 +315,27 @@ pub fn write_target_block_bytes(destination_url: Option<&str>) -> u64 {
 /// Azure's 24 MiB ceiling covers the measured 1M and 768-d knees without
 /// admitting the 32 MiB point that exceeded the declared RSS guard. S3/GCS keep
 /// their existing 16 MiB maximum; local storage remains bounded at 8 MiB.
+/// Those provider ceilings bound UNREGISTERED paths; a registered location
+/// budget (TD-IOBUDGET-1) tightens the enumeration to its own `max` — and an
+/// explicit registered target ABOVE a scheme ceiling is honored operator
+/// intent (the TD-SEARCH-3-style opt-in), never clamped back to the default.
 pub fn read_range_cap_candidates(path: &str) -> Vec<u64> {
     let budget = IopsBudget::for_path(path);
-    let scheme = path.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
-    let ceiling = match scheme.as_deref() {
-        Some("az" | "azure" | "adls" | "abfs") => 24 * 1024 * 1024,
-        Some("s3" | "gs" | "gcs" | "http" | "https") => 16 * 1024 * 1024,
-        Some("file" | "minio") | None => 8 * 1024 * 1024,
-        Some(_) => 8 * 1024 * 1024,
+    let scheme_ceiling = match Scheme::of(path) {
+        Scheme::Azure => 24 * 1024 * 1024,
+        Scheme::S3 | Scheme::Gcs => 16 * 1024 * 1024,
+        Scheme::Local | Scheme::Unknown => 8 * 1024 * 1024,
+    };
+    // TD-IOBUDGET-1: an operator-registered location budget tightens the read
+    // enumeration to its own `max` (explicit intent — e.g. an HDD location
+    // with a 4 MiB max should never enumerate 8 MiB GETs). Scheme presets
+    // deliberately do NOT tighten via `IopsBudget::max`: that field bounds
+    // writer block geometry (Azure's 4 MiB writer max must not collapse the
+    // measured 24 MiB read enumeration). The floor at `budget.target` keeps
+    // the candidate list non-empty under any registered value.
+    let ceiling = match location_budget_for(path) {
+        Some(registered) => scheme_ceiling.min(registered.max).max(budget.target),
+        None => scheme_ceiling,
     };
 
     let mut caps = Vec::with_capacity(6);
@@ -341,5 +476,164 @@ mod tests {
             assert!(!caps.is_empty(), "{path}");
             assert!(caps.windows(2).all(|pair| pair[0] < pair[1]), "{path}");
         }
+    }
+
+    // ---- TD-IOBUDGET-1: per-location registry ----
+    // Registered prefixes use iobudget-test/* namespaces so tests never
+    // contend for the same registry entries (nextest isolates processes, but
+    // keep each test's footprint local regardless).
+
+    #[test]
+    fn registered_location_budget_wins_over_scheme_default() {
+        let registered = IopsBudget {
+            min: 512 * 1024,
+            target: 16 * 1024 * 1024,
+            max: 16 * 1024 * 1024,
+        };
+        super::register_location_budget("file:///iobudget-test-a", registered);
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-a/coll/seg.pax"),
+            registered
+        );
+        // An unregistered sibling location keeps the scheme default.
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-a-sibling/seg.pax"),
+            IopsBudget::LOCAL
+        );
+    }
+
+    #[test]
+    fn longest_registered_prefix_wins() {
+        let wide = IopsBudget {
+            min: 512 * 1024,
+            target: 8 * 1024 * 1024,
+            max: 16 * 1024 * 1024,
+        };
+        let narrow = IopsBudget {
+            min: 512 * 1024,
+            target: 2 * 1024 * 1024,
+            max: 4 * 1024 * 1024,
+        };
+        super::register_location_budget("file:///iobudget-test-b", wide);
+        super::register_location_budget("file:///iobudget-test-b/nvme", narrow);
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-b/nvme/seg.pax"),
+            narrow
+        );
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-b/sas/seg.pax"),
+            wide
+        );
+    }
+
+    #[test]
+    fn registered_prefix_respects_path_boundary() {
+        let registered = IopsBudget {
+            min: 512 * 1024,
+            target: 4 * 1024 * 1024,
+            max: 4 * 1024 * 1024,
+        };
+        super::register_location_budget("s3://iobudget-test-bucket", registered);
+        // Inside the bucket → registered; a bucket whose name merely extends
+        // the prefix → scheme default.
+        assert_eq!(
+            IopsBudget::for_path("s3://iobudget-test-bucket/coll/seg.pax"),
+            registered
+        );
+        assert_eq!(
+            IopsBudget::for_path("s3://iobudget-test-bucket-two/seg.pax"),
+            IopsBudget::S3
+        );
+    }
+
+    #[test]
+    fn registration_is_overwrite_not_first_wins() {
+        let first = IopsBudget {
+            min: 512 * 1024,
+            target: 1 * 1024 * 1024,
+            max: 2 * 1024 * 1024,
+        };
+        let second = IopsBudget {
+            min: 512 * 1024,
+            target: 8 * 1024 * 1024,
+            max: 16 * 1024 * 1024,
+        };
+        super::register_location_budget("file:///iobudget-test-c", first);
+        super::register_location_budget("file:///iobudget-test-c", second);
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-c/seg.pax"),
+            second
+        );
+    }
+
+    #[test]
+    fn registered_budget_tightens_read_cap_candidates() {
+        let mib = 1024 * 1024;
+        let registered = IopsBudget {
+            min: 512 * 1024,
+            target: mib,
+            max: 2 * mib,
+        };
+        super::register_location_budget("file:///iobudget-test-d", registered);
+        // Enumeration now ends at the registered max (2 MiB), not the local
+        // 8 MiB scheme ceiling — and stays monotone/non-empty.
+        assert_eq!(
+            read_range_cap_candidates("file:///iobudget-test-d/seg.pax"),
+            vec![mib, 2 * mib]
+        );
+
+        // An explicit registered target ABOVE the scheme ceiling is operator
+        // intent (the TD-SEARCH-3-style opt-in): the enumeration honors it
+        // rather than clamping back to the 8 MiB local default.
+        let big = IopsBudget {
+            min: 512 * 1024,
+            target: 16 * mib,
+            max: 16 * mib,
+        };
+        super::register_location_budget("file:///iobudget-test-e", big);
+        assert_eq!(
+            read_range_cap_candidates("file:///iobudget-test-e/seg.pax"),
+            vec![16 * mib]
+        );
+    }
+
+    #[test]
+    fn scheme_cloud_budget_maps_per_scheme() {
+        assert_eq!(
+            IopsBudget::scheme_cloud_budget("file:///x"),
+            IopsBudget::CLOUD
+        );
+        assert_eq!(
+            IopsBudget::scheme_cloud_budget("minio://b/k"),
+            IopsBudget::CLOUD
+        );
+        assert_eq!(IopsBudget::scheme_cloud_budget("s3://b/k"), IopsBudget::S3);
+        assert_eq!(
+            IopsBudget::scheme_cloud_budget("az://c/k"),
+            IopsBudget::AZURE
+        );
+        assert_eq!(IopsBudget::scheme_cloud_budget("gs://b/k"), IopsBudget::GCS);
+    }
+
+    /// TD-IOBUDGET-1 review finding N8: seeding is authoritative-REPLACE.
+    /// (Relies on nextest process isolation — like the env-var test above —
+    /// because the drain clears the process-global registry.)
+    #[test]
+    fn clear_location_budgets_drains_the_registry() {
+        let registered = IopsBudget {
+            min: 512 * 1024,
+            target: 4 * 1024 * 1024,
+            max: 8 * 1024 * 1024,
+        };
+        super::register_location_budget("file:///iobudget-test-clear", registered);
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-clear/seg.pax"),
+            registered
+        );
+        super::clear_location_budgets();
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-clear/seg.pax"),
+            IopsBudget::LOCAL
+        );
     }
 }

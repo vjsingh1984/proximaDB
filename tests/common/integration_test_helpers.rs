@@ -119,6 +119,7 @@ impl UnifiedTestEnvironment {
             url: format!("file://{}", persistent_dir.to_str().unwrap()),
             weight: 1,
             tags: vec!["unified_test".to_string()],
+            io_budget: None,
         }];
 
         Ok(Self {

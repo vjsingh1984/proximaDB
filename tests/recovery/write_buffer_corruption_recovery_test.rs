@@ -28,6 +28,7 @@ mod write_ahead_log_corruption_recovery_tests {
                     url: format!("file://{}", base_path),
                     weight: 1,
                     tags: vec![],
+                    io_budget: None,
                 }],
                 metadata_url: format!("file://{}/metadata", base_path),
                 assignment_config: Default::default(),

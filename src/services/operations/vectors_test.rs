@@ -78,6 +78,7 @@ mod tests {
             url: format!("file://{}", temp_dir.path().join("data").display()),
             weight: 1,
             tags: vec![],
+            io_budget: None,
         }];
 
         // Create storage engines

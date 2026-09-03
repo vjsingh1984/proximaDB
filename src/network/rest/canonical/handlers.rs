@@ -2584,6 +2584,7 @@ mod tests {
             url: file_url(&storage_path),
             weight: 1,
             tags: vec!["test".to_string()],
+            io_budget: None,
         }];
 
         let (shared_services, _) = crate::network::multi_server::SharedServices::new(

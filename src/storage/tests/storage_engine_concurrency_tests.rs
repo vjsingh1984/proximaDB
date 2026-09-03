@@ -40,6 +40,7 @@ mod tests {
             url: storage_url.clone(),
             weight: 1,
             tags: vec!["ssd".to_string()],
+            io_budget: None,
         }];
 
         config.sst_config = Some(SstConfig {

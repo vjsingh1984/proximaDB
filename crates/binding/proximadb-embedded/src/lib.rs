@@ -1098,6 +1098,7 @@ impl EmbeddedProximaDB {
                 url: loc.to_url(),
                 weight: loc.weight,
                 tags: loc.tags.clone(),
+                io_budget: None,
             })
             .collect();
 
