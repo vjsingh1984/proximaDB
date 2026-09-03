@@ -1,195 +1,151 @@
-//! Enhanced authentication and authorization for multi-tenant enterprise
+//! Enterprise identity types shared by the AI insights and audit surfaces.
 //
-//! **DEPRECATION NOTICE (TD-AUTH-CONSOLIDATION)**:
-//! This module is being consolidated into `crate::security`.
-//! - SSO/OIDC/SAML → `crate::security::auth` + `crate::security::auth_service`
-//! - RBAC → `crate::security::rbac_service`
-//! - Network-layer auth (JWT, middleware) → `crate::network::auth`
-//!
-//! New code should import from `crate::security` directly.
-//! This module will become a thin re-export shim and be removed in a future release.
-//! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
+//! History (TD-SSO-1 / TD-SSO-2 arc): this module previously hosted the
+//! legacy enterprise-SSO stack — `EnterpriseAuthManager`, the
+//! `federated_delegation_complete` AWS/Azure delegation path, a local RBAC
+//! copy, and the `proximadb-auth-sso` crate re-export. All of it was
+//! dead (zero route registrations, zero constructions, stub validators)
+//! and was removed. Live authentication lives in `crate::security` (local
+// JWT + OIDC resource server) and `crate::network::auth` (middleware).
+//
+//! What remains is `EnterpriseUserContext` — the identity parameter type
+//! threaded through the AI/audit reporting surfaces — relocated verbatim
+//! from the removed crate. Nothing constructs it from a verified token
+//! today; when TD-SSO-2 (multi-provider OIDC) lands, map the verified
+//! OIDC claims into this type at the AI/audit seams.
 
-pub mod federated_delegation_complete;
-pub mod rbac;
-pub use proximadb_auth_sso::sso;
+use chrono::{DateTime, Utc};
+use std::collections::{HashMap, HashSet};
 
-pub use federated_delegation_complete::{
-    AuthenticationResult, CompleteDelegationResult, CompleteFederatedIdentityDelegation,
-};
-pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
-pub use sso::{EnterpriseUserContext, SSOIntegrationManager, SSOProvider, SSOToken};
+/// Enhanced user context for enterprise operations
+#[derive(Debug, Clone)]
+pub struct EnterpriseUserContext {
+    /// Unique user identifier from the identity provider.
+    pub user_id: String,
+    /// User email address.
+    pub email: String,
+    /// Human-readable display name.
+    pub display_name: String,
 
-use crate::security::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
-use crate::security::security_coordinator::{
-    AuthorizedContext as SecurityAuthorizedContext, SessionMetadata as SecuritySessionMetadata,
-};
-use anyhow::Result;
+    /// Tenant the user belongs to.
+    pub tenant_id: String,
+    /// Organization the user belongs to.
+    pub organization_id: String,
 
-/// Enterprise authentication coordinator
-pub struct EnterpriseAuthManager {
-    /// SSO integration manager
-    sso_manager: sso::SSOIntegrationManager,
+    /// Assigned role names for RBAC.
+    pub roles: Vec<String>,
+    /// Granted permission strings for fine-grained access control.
+    pub permissions: HashSet<String>,
 
-    /// Enhanced RBAC manager
-    rbac_manager: rbac::EnhancedRBACManager,
+    /// User's security clearance level.
+    pub security_clearance: SecurityClearance,
+    /// User's department within the organization.
+    pub department: Option<String>,
+    /// Cost center for billing attribution.
+    pub cost_center: Option<String>,
+
+    /// Active session identifier.
+    pub session_id: String,
+    /// Timestamp of the initial login.
+    pub login_timestamp: DateTime<Utc>,
+    /// Timestamp of the most recent activity.
+    pub last_activity: DateTime<Utc>,
+
+    /// Provider-specific identity context (AWS, Azure, or generic).
+    pub provider_context: ProviderUserContext,
 }
 
-impl EnterpriseAuthManager {
-    /// Create new enterprise auth manager
-    pub fn new(
-        sso_manager: sso::SSOIntegrationManager,
-        rbac_manager: rbac::EnhancedRBACManager,
-    ) -> Self {
+/// Security clearance levels
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum SecurityClearance {
+    /// Publicly accessible, no clearance required.
+    Public,
+    /// Internal-only, requires organizational membership.
+    Internal,
+    /// Confidential data, requires explicit clearance.
+    Confidential,
+    /// Secret data, requires elevated clearance.
+    Secret,
+    /// Top secret data, requires maximum clearance.
+    TopSecret,
+}
+
+/// Provider-specific user context
+#[derive(Debug, Clone)]
+pub enum ProviderUserContext {
+    /// AWS IAM identity context.
+    AWS {
+        /// AWS account ID.
+        account_id: String,
+        /// Full IAM user ARN.
+        user_arn: String,
+        /// ARN of the assumed role, if any.
+        assumed_role_arn: Option<String>,
+        /// Whether MFA was used during authentication.
+        mfa_authenticated: bool,
+    },
+    /// Azure AD identity context.
+    Azure {
+        /// Azure AD tenant identifier.
+        tenant_id: String,
+        /// Azure AD object identifier.
+        object_id: String,
+        /// User principal name (UPN).
+        user_principal_name: String,
+        /// Azure AD group memberships.
+        group_memberships: Vec<String>,
+    },
+    /// Generic provider identity context.
+    Generic {
+        /// Provider-specific user identifier.
+        provider_user_id: String,
+        /// Arbitrary key-value attributes from the provider.
+        attributes: HashMap<String, String>,
+    },
+}
+
+impl EnterpriseUserContext {
+    /// Create system admin context for internal operations
+    pub fn system_admin() -> Self {
+        let now = Utc::now();
         Self {
-            sso_manager,
-            rbac_manager,
+            user_id: "system".to_string(),
+            email: "system@proximadb.com".to_string(),
+            display_name: "System Administrator".to_string(),
+            tenant_id: "system".to_string(),
+            organization_id: "proximadb".to_string(),
+            roles: vec!["system_admin".to_string()],
+            permissions: ["system_admin".to_string()].into_iter().collect(),
+            security_clearance: SecurityClearance::TopSecret,
+            department: None,
+            cost_center: None,
+            session_id: "system_session".to_string(),
+            login_timestamp: now,
+            last_activity: now,
+            provider_context: ProviderUserContext::Generic {
+                provider_user_id: "system".to_string(),
+                attributes: HashMap::new(),
+            },
         }
     }
 
-    /// Validate and resolve SSO token to enterprise user context
-    pub async fn validate_and_resolve_token(
-        &self,
-        sso_token: &SSOToken,
-    ) -> Result<EnterpriseUserContext> {
-        self.sso_manager.validate_and_resolve_token(sso_token).await
+    /// Check if user has specific permission
+    pub fn has_permission(&self, permission: &str) -> bool {
+        self.permissions.contains(permission) || self.permissions.contains("system_admin")
     }
 
-    /// Authenticate and authorize user operation
-    pub async fn authenticate_and_authorize(
-        &self,
-        sso_token: &SSOToken,
-        tenant_id: &str,
-        operation: AuthorizedOperation,
-    ) -> Result<SecurityAuthorizedContext> {
-        // Validate SSO token and resolve user context
-        let enterprise_user = self
-            .sso_manager
-            .validate_and_resolve_token(sso_token)
-            .await?;
+    /// Check if user has role
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.contains(&role.to_string())
+    }
 
-        // Validate operation authorization with RBAC
-        let operation_permission = map_authorized_operation_permission(&operation);
-        let _authorization_result = match operation {
-            AuthorizedOperation::CollectionAccess {
-                collection_id,
-                operation_type,
-            } => {
-                self.rbac_manager
-                    .validate_collection_access(
-                        tenant_id,
-                        &collection_id,
-                        operation_type,
-                        &crate::auth::enterprise_to_storage_user_context(enterprise_user.clone()),
-                    )
-                    .await?
-            } // Additional operation types to be added
-        };
-
-        Ok(SecurityAuthorizedContext {
-            user_context: enterprise_user_to_unified_user_context(enterprise_user),
-            granted_permission: operation_permission,
-            session_metadata: SecuritySessionMetadata {
-                authenticated_at: chrono::Utc::now(),
-                auth_method: map_sso_provider(&sso_token.provider),
-                requires_mfa: false,
-            },
-        })
+    /// Update last activity timestamp
+    pub fn update_activity(&mut self) {
+        self.last_activity = Utc::now();
     }
 }
 
-/// Operations requiring authorization
-#[derive(Debug, Clone)]
-pub enum AuthorizedOperation {
-    /// Access a collection with a specific operation type.
-    CollectionAccess {
-        /// Target collection identifier.
-        collection_id: String,
-        /// Type of operation to perform on the collection.
-        operation_type: rbac::CollectionOperation,
-    },
-    // Additional operations to be added
-}
-
-fn map_authorized_operation_permission(operation: &AuthorizedOperation) -> UnifiedPermission {
-    match operation {
-        AuthorizedOperation::CollectionAccess {
-            collection_id,
-            operation_type,
-        } => match operation_type {
-            rbac::CollectionOperation::Read => {
-                UnifiedPermission::CollectionRead(collection_id.to_string())
-            }
-            rbac::CollectionOperation::Write => {
-                UnifiedPermission::CollectionWrite(collection_id.to_string())
-            }
-            rbac::CollectionOperation::Delete => {
-                UnifiedPermission::CollectionDelete(collection_id.to_string())
-            }
-            rbac::CollectionOperation::Admin => {
-                UnifiedPermission::CollectionAdmin(collection_id.to_string())
-            }
-        },
-    }
-}
-
-fn map_sso_provider(provider: &SSOProvider) -> UnifiedAuthMethod {
-    let provider_name = match provider {
-        SSOProvider::AWSIAM => "aws_iam",
-        SSOProvider::AzureAD => "azure_ad",
-        SSOProvider::GoogleCloud => "google_cloud",
-        SSOProvider::SAML => "saml",
-        SSOProvider::OIDC => "oidc",
-        SSOProvider::Okta => "okta",
-        SSOProvider::Generic => "generic",
-    };
-
-    UnifiedAuthMethod::SSO {
-        provider: provider_name.to_string(),
-    }
-}
-
-fn enterprise_user_to_unified_user_context(
-    enterprise_user: EnterpriseUserContext,
-) -> UnifiedUserContext {
-    use std::collections::{HashMap, HashSet};
-
-    UnifiedUserContext {
-        user_id: enterprise_user.user_id,
-        tenant_id: Some(enterprise_user.tenant_id),
-        roles: enterprise_user.roles,
-        effective_permissions: HashSet::new(),
-        auth_method: match &enterprise_user.provider_context {
-            sso::types::ProviderUserContext::AWS { .. } => map_sso_provider(&SSOProvider::AWSIAM),
-            sso::types::ProviderUserContext::Azure { .. } => {
-                map_sso_provider(&SSOProvider::AzureAD)
-            }
-            sso::types::ProviderUserContext::Generic { .. } => {
-                map_sso_provider(&SSOProvider::Generic)
-            }
-        },
-        session_id: enterprise_user.session_id,
-        expires_at: None,
-        created_at: enterprise_user.login_timestamp,
-        metadata: {
-            let mut metadata = HashMap::new();
-            metadata.insert("email".to_string(), enterprise_user.email.clone());
-            metadata.insert(
-                "organization_id".to_string(),
-                enterprise_user.organization_id.clone(),
-            );
-            metadata
-        },
-    }
-}
-
-// Conversion from EnterpriseUserContext to storage::tenant::UserContext.
-//
-// This is a free function rather than a `From` impl because the two types now
-// live in different crates (`EnterpriseUserContext` in `proximadb-auth-sso`,
-// `UserContext` in `proximadb-storage-tenant`), so a trait impl in the root
-// crate would violate the orphan rule (neither type is local to root). A free
-// function is orphan-rule-clean and preserves the identical conversion.
+/// Convert an enterprise user context to the storage-layer user context
 pub fn enterprise_to_storage_user_context(
     enterprise_user: EnterpriseUserContext,
 ) -> crate::storage::tenant::UserContext {
@@ -206,300 +162,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_user_context_conversion() {
-        let enterprise_user = EnterpriseUserContext::system_admin();
-        let storage_user: crate::storage::tenant::UserContext =
-            enterprise_to_storage_user_context(enterprise_user);
+    fn system_admin_context_has_admin_role_and_permission() {
+        let ctx = EnterpriseUserContext::system_admin();
+        assert!(ctx.has_role("system_admin"));
+        assert!(ctx.has_permission("anything-else"));
+        assert_eq!(ctx.security_clearance, SecurityClearance::TopSecret);
+    }
 
+    #[test]
+    fn enterprise_context_converts_to_storage_user_context() {
+        let storage_user =
+            enterprise_to_storage_user_context(EnterpriseUserContext::system_admin());
         assert_eq!(storage_user.user_id, "system");
         assert_eq!(storage_user.tenant_id, "system");
+        // Roles AND permissions must each land in their own Vec — a swap or
+        // drop here silently checks the wrong RBAC list downstream.
+        assert!(storage_user.roles.contains(&"system_admin".to_string()));
+        assert!(
+            storage_user
+                .permissions
+                .contains(&"system_admin".to_string())
+        );
+        assert!(!storage_user.roles.is_empty());
+        assert!(!storage_user.permissions.is_empty());
     }
 
-    // ========================== Additional Tests for Coverage ==========================
-
-    // --- AuthorizedOperation Tests ---
-
+    /// Negative control for the `system_admin` bypass in `has_permission`:
+    /// a context WITHOUT the bypass must be denied an ungranted permission.
     #[test]
-    fn test_authorized_operation_collection_access() {
-        let operation = AuthorizedOperation::CollectionAccess {
-            collection_id: "test_collection".to_string(),
-            operation_type: rbac::CollectionOperation::Read,
-        };
-
-        match operation {
-            AuthorizedOperation::CollectionAccess {
-                collection_id,
-                operation_type,
-            } => {
-                assert_eq!(collection_id, "test_collection");
-                assert!(matches!(operation_type, rbac::CollectionOperation::Read));
-            }
-        }
-    }
-
-    #[test]
-    fn test_authorized_operation_collection_access_write() {
-        let operation = AuthorizedOperation::CollectionAccess {
-            collection_id: "writable_collection".to_string(),
-            operation_type: rbac::CollectionOperation::Write,
-        };
-
-        match operation {
-            AuthorizedOperation::CollectionAccess {
-                collection_id,
-                operation_type,
-            } => {
-                assert_eq!(collection_id, "writable_collection");
-                assert!(matches!(operation_type, rbac::CollectionOperation::Write));
-            }
-        }
-    }
-
-    #[test]
-    fn test_authorized_operation_collection_access_delete() {
-        let operation = AuthorizedOperation::CollectionAccess {
-            collection_id: "deletable_collection".to_string(),
-            operation_type: rbac::CollectionOperation::Delete,
-        };
-
-        match operation {
-            AuthorizedOperation::CollectionAccess {
-                collection_id,
-                operation_type,
-            } => {
-                assert_eq!(collection_id, "deletable_collection");
-                assert!(matches!(operation_type, rbac::CollectionOperation::Delete));
-            }
-        }
-    }
-
-    #[test]
-    fn test_authorized_operation_clone() {
-        let operation = AuthorizedOperation::CollectionAccess {
-            collection_id: "test".to_string(),
-            operation_type: rbac::CollectionOperation::Read,
-        };
-
-        let cloned = operation.clone();
-
-        match (operation, cloned) {
-            (
-                AuthorizedOperation::CollectionAccess {
-                    collection_id: id1,
-                    operation_type: op1,
-                },
-                AuthorizedOperation::CollectionAccess {
-                    collection_id: id2,
-                    operation_type: op2,
-                },
-            ) => {
-                assert_eq!(id1, id2);
-                assert!(matches!(op1, rbac::CollectionOperation::Read));
-                assert!(matches!(op2, rbac::CollectionOperation::Read));
-            }
-        }
-    }
-
-    // --- User Context Conversion Tests ---
-
-    #[test]
-    fn test_user_context_conversion_with_roles() {
-        use std::collections::HashSet;
-
-        let enterprise_user = sso::EnterpriseUserContext {
-            user_id: "test_user".to_string(),
-            email: "test@example.com".to_string(),
-            display_name: "Test User".to_string(),
-            tenant_id: "tenant_123".to_string(),
-            organization_id: "org_456".to_string(),
-            roles: vec!["admin".to_string(), "developer".to_string()],
-            permissions: {
-                let mut perms = HashSet::new();
-                perms.insert("read".to_string());
-                perms.insert("write".to_string());
-                perms
-            },
-            security_clearance: sso::types::SecurityClearance::Confidential,
-            department: Some("Engineering".to_string()),
-            cost_center: Some("CC001".to_string()),
-            session_id: "session_abc".to_string(),
-            login_timestamp: chrono::Utc::now(),
-            last_activity: chrono::Utc::now(),
-            provider_context: sso::types::ProviderUserContext::Generic {
-                provider_user_id: "provider_user_123".to_string(),
-                attributes: std::collections::HashMap::new(),
-            },
-        };
-
-        let storage_user: crate::storage::tenant::UserContext =
-            enterprise_to_storage_user_context(enterprise_user);
-
-        assert_eq!(storage_user.user_id, "test_user");
-        assert_eq!(storage_user.tenant_id, "tenant_123");
-        assert!(storage_user.roles.contains(&"admin".to_string()));
-        assert!(storage_user.roles.contains(&"developer".to_string()));
-        assert!(storage_user.permissions.contains(&"read".to_string()));
-        assert!(storage_user.permissions.contains(&"write".to_string()));
-    }
-
-    #[test]
-    fn test_user_context_conversion_empty_permissions() {
-        use std::collections::HashSet;
-
-        let enterprise_user = sso::EnterpriseUserContext {
-            user_id: "minimal_user".to_string(),
-            email: "minimal@example.com".to_string(),
-            display_name: "Minimal User".to_string(),
-            tenant_id: "default_tenant".to_string(),
-            organization_id: "default_org".to_string(),
-            roles: vec![],
-            permissions: HashSet::new(),
-            security_clearance: sso::types::SecurityClearance::Public,
+    fn non_admin_context_is_denied_ungranted_permissions() {
+        let ctx = EnterpriseUserContext {
+            user_id: "analyst".to_string(),
+            email: "analyst@example.test".to_string(),
+            display_name: "Analyst".to_string(),
+            tenant_id: "acme".to_string(),
+            organization_id: "acme".to_string(),
+            roles: vec!["reader".to_string()],
+            permissions: ["vector:read".to_string()].into_iter().collect(),
+            security_clearance: SecurityClearance::Internal,
             department: None,
             cost_center: None,
-            session_id: "session_xyz".to_string(),
-            login_timestamp: chrono::Utc::now(),
-            last_activity: chrono::Utc::now(),
-            provider_context: sso::types::ProviderUserContext::Generic {
-                provider_user_id: "user".to_string(),
-                attributes: std::collections::HashMap::new(),
+            session_id: "s1".to_string(),
+            login_timestamp: Utc::now(),
+            last_activity: Utc::now(),
+            provider_context: ProviderUserContext::Generic {
+                provider_user_id: "analyst".to_string(),
+                attributes: HashMap::new(),
             },
         };
-
-        let storage_user: crate::storage::tenant::UserContext =
-            enterprise_to_storage_user_context(enterprise_user);
-
-        assert_eq!(storage_user.user_id, "minimal_user");
-        assert!(storage_user.roles.is_empty());
-        assert!(storage_user.permissions.is_empty());
-    }
-
-    // --- Integration Validation Tests ---
-
-    #[tokio::test]
-    async fn test_validate_and_resolve_token_no_aws_config() {
-        let sso_manager = sso::SSOIntegrationManager::new();
-
-        // Create an AWS SSO token
-        let sso_token = sso::SSOToken::new(
-            sso::SSOProvider::AWSIAM,
-            "test_token_data".to_string(),
-            "test_user".to_string(),
-            3600,
-        );
-
-        // Without AWS configured, should fail
-        let result = sso_manager.validate_and_resolve_token(&sso_token).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not configured"));
-    }
-
-    #[tokio::test]
-    async fn test_validate_and_resolve_token_unsupported_provider() {
-        let sso_manager = sso::SSOIntegrationManager::new();
-
-        // Create a token with unsupported provider
-        let sso_token = sso::SSOToken::new(
-            sso::SSOProvider::Generic,
-            "test_token_data".to_string(),
-            "test_user".to_string(),
-            3600,
-        );
-
-        // Unsupported provider should fail
-        let result = sso_manager.validate_and_resolve_token(&sso_token).await;
-        assert!(result.is_err());
-    }
-
-    // --- Re-exports Tests ---
-
-    #[test]
-    fn test_re_exports_available() {
-        // Verify that re-exports are accessible
-        let _provider = sso::SSOProvider::AWSIAM;
-        let _context = EnterpriseUserContext::system_admin();
-
-        // These should compile successfully
-        assert!(true);
-    }
-
-    #[test]
-    fn test_rbac_re_exports() {
-        // Verify RBAC re-exports
-        let _permission = rbac::Permission::CollectionRead;
-        let _operation = rbac::CollectionOperation::Read;
-
-        assert!(true);
-    }
-
-    // --- Enterprise User Context Tests ---
-
-    #[test]
-    fn test_enterprise_user_context_system_admin() {
-        let context = EnterpriseUserContext::system_admin();
-
-        assert_eq!(context.user_id, "system");
-        assert!(context.has_permission("system_admin"));
-        assert!(context.has_role("system_admin"));
-    }
-
-    #[test]
-    fn test_enterprise_user_context_has_permission() {
-        let mut context = EnterpriseUserContext::system_admin();
-        context.permissions.insert("custom_permission".to_string());
-
-        assert!(context.has_permission("custom_permission"));
-        // System admin has bypass
-        assert!(context.has_permission("any_permission"));
-    }
-
-    #[test]
-    fn test_enterprise_user_context_has_role() {
-        let mut context = EnterpriseUserContext::system_admin();
-        context.roles.push("custom_role".to_string());
-
-        assert!(context.has_role("custom_role"));
-        assert!(context.has_role("system_admin"));
-        assert!(!context.has_role("nonexistent_role"));
-    }
-
-    // --- SSO Token Tests ---
-
-    #[test]
-    fn test_sso_token_creation_and_expiration() {
-        let token = sso::SSOToken::new(
-            sso::SSOProvider::AWSIAM,
-            "test_data".to_string(),
-            "test_user".to_string(),
-            3600,
-        );
-
-        assert!(!token.is_expired());
-        assert!(!token.expires_soon());
-        assert_eq!(token.provider, sso::SSOProvider::AWSIAM);
-        assert_eq!(token.user_id, "test_user");
-    }
-
-    #[test]
-    fn test_sso_token_providers() {
-        let providers = vec![
-            sso::SSOProvider::AWSIAM,
-            sso::SSOProvider::AzureAD,
-            sso::SSOProvider::GoogleCloud,
-            sso::SSOProvider::SAML,
-            sso::SSOProvider::OIDC,
-            sso::SSOProvider::Okta,
-            sso::SSOProvider::Generic,
-        ];
-
-        for provider in providers {
-            let token = sso::SSOToken::new(
-                provider.clone(),
-                "data".to_string(),
-                "user".to_string(),
-                3600,
-            );
-            assert_eq!(token.provider, provider);
-        }
+        assert!(ctx.has_permission("vector:read"));
+        assert!(!ctx.has_permission("vector:write"));
+        assert!(!ctx.has_permission("admin:delete"));
+        assert!(ctx.has_role("reader"));
+        assert!(!ctx.has_role("system_admin"));
     }
 }

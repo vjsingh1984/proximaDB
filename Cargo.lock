@@ -6996,7 +6996,6 @@ dependencies = [
  "proximadb-api",
  "proximadb-arrow-block-index",
  "proximadb-audit",
- "proximadb-auth-sso",
  "proximadb-automl",
  "proximadb-axis-tunnel",
  "proximadb-batch-group-cache",
@@ -7268,20 +7267,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "proximadb-auth-sso"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "chrono",
- "dashmap",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
