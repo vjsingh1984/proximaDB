@@ -2700,7 +2700,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("seg.pax");
         let records = vec![record("r1", "t", 1000), record("r2", "t", 3000)];
-        write_pax_segment(&path, &records, "col", 0, VectorQuant::Auto, None)
+        write_pax_segment(&path, &records, "col", 0, VectorQuant::Auto, None, None)
             .expect("write_pax_segment");
 
         // Build the ScanCtx: FilesystemFactory + pre-discovered splits + column mapping.

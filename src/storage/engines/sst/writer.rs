@@ -336,6 +336,7 @@ impl SstableWriter {
             VectorQuant::RaBitQ,
             false,
             None,
+            Some(fs_url.as_str()),
         )?;
         let bytes = std::fs::read(&staging)
             .map_err(|e| anyhow::anyhow!("read PAX staging {}: {e}", staging.display()))?;

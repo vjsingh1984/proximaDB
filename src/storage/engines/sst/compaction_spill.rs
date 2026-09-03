@@ -1230,6 +1230,7 @@ pub(crate) fn cluster_external_mvcc(
     max_run_buffer_bytes: u64,
     max_merge_fan_in: usize,
     max_working_memory_bytes: u64,
+    destination_url: Option<&str>,
 ) -> Result<ExternalClusterOutput> {
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
     use crate::storage::engines::sst::block_cluster::{
@@ -1259,7 +1260,7 @@ pub(crate) fn cluster_external_mvcc(
     let dim = dim.ok_or_else(|| {
         SstError::Compaction("spill IVF requires at least one f32 embedding".to_string())
     })?;
-    let shape = ivf_training_shape(usable_rows, dim).ok_or_else(|| {
+    let shape = ivf_training_shape(usable_rows, dim, destination_url).ok_or_else(|| {
         SstError::Compaction(format!(
             "spill IVF requires at least 64 usable rows; found {usable_rows}"
         ))
@@ -2054,6 +2055,7 @@ mod tests {
         let canonical_plan = crate::storage::engines::sst::block_cluster::cluster_plan_ivf_probe(
             &canonical_records,
             0,
+            None,
         )
         .expect("canonical IVF plan");
 
@@ -2088,8 +2090,9 @@ mod tests {
             10_000,
         )
         .expect("MVCC winners");
-        let clustered = cluster_external_mvcc(winners, root.path(), 2_048, 2, 64 * 1024 * 1024)
-            .expect("external IVF");
+        let clustered =
+            cluster_external_mvcc(winners, root.path(), 2_048, 2, 64 * 1024 * 1024, None)
+                .expect("external IVF");
         assert_eq!(clustered.model(), &canonical_plan.model);
         assert_eq!(clustered.stats().input_records, 128);
         assert_eq!(clustered.stats().usable_records, 128);
@@ -2151,7 +2154,7 @@ mod tests {
             10_000,
         )
         .expect("MVCC winners");
-        let error = cluster_external_mvcc(winners, root.path(), 4_096, 4, 1024)
+        let error = cluster_external_mvcc(winners, root.path(), 4_096, 4, 1024, None)
             .expect_err("tiny working set must reject PCA");
         assert!(error.to_string().contains("above the admitted"));
     }
@@ -2159,8 +2162,9 @@ mod tests {
     #[test]
     fn openai_embedding_partition_training_fits_default_spill_working_set() {
         for (rows, dim) in [(11_184_810usize, 1_536usize), (5_592_405, 3_072)] {
-            let shape = crate::storage::engines::sst::block_cluster::ivf_training_shape(rows, dim)
-                .expect("billion-scale partition shape");
+            let shape =
+                crate::storage::engines::sst::block_cluster::ivf_training_shape(rows, dim, None)
+                    .expect("billion-scale partition shape");
             let estimate = estimated_ivf_training_peak_bytes(dim, shape).expect("memory estimate");
             assert!(
                 estimate <= 512 * 1024 * 1024,

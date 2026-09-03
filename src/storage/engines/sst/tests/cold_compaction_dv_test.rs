@@ -62,6 +62,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             None,
+            None, // destination_url
         )?;
 
         // Find r1's on-disk row position (the space the DV keys on).
