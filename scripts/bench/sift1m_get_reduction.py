@@ -2003,7 +2003,17 @@ class OwnedServer:
             environment["PROXIMADB_SEARCH_MORSEL_DEGREE"] = str(self.rank_degree)
         if self.adaptive_read_strategy:
             environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] = "1"
+            print("[chooser] ON arm engaged: PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER=1")
         else:
+            # TD-IOBUDGET-2: an inherited gate must NOT leak into the OFF arm —
+            # the 2026-08-31 A/B compared two un-engaged arms because the env
+            # pop at construction was the only thing standing between an
+            # operator's exported gate and the "OFF" baseline.
+            if environment.get("PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER") is not None:
+                raise RuntimeError(
+                    "chooser gate present in the OFF arm's server env; the "
+                    "baseline would silently run engaged"
+                )
             # Keep the planner fixed across local and Azure profiles so
             # backend choice does not silently change controlled sweeps.
             environment.update(
@@ -2742,6 +2752,16 @@ def main() -> int:
         help="force query-time coarse cells (scale experiments only)",
     )
     parser.add_argument(
+        "--adaptive-read-strategy",
+        action="store_true",
+        help=(
+            "engage the read-strategy chooser in the spawned server "
+            "(PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER=1). TD-IOBUDGET-2: this "
+            "flag is the ONLY wire from the CLI to the gate — the 2026-08-31 "
+            "chooser A/B ran its ON arm un-engaged because nothing set it."
+        ),
+    )
+    parser.add_argument(
         "--training-compaction-min-mb",
         type=int,
         help=(
@@ -3194,6 +3214,7 @@ def main() -> int:
             rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
+            adaptive_read_strategy=args.adaptive_read_strategy,
         )
         active.start()
         if args.compaction_spill:
@@ -3338,6 +3359,7 @@ def main() -> int:
             rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
+            adaptive_read_strategy=args.adaptive_read_strategy,
         )
         active.start()
         local_warm = run_query_sweep(
@@ -3380,6 +3402,7 @@ def main() -> int:
             rank_degree=args.rank_degree,
             read_ranges_inflight=args.read_ranges_inflight,
             read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
+            adaptive_read_strategy=args.adaptive_read_strategy,
         )
         active.start()
         object_cold = run_query_sweep(

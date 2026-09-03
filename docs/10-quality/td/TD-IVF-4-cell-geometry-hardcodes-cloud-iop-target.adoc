@@ -1,14 +1,14 @@
 // Copyright (C) 2026 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 = TD-IVF-4: IVF cell geometry hard-codes the CLOUD IOP target while the reader resolves it per backend
-:status: Open
+:status: Resolved
 :dim: D1
 :pillar: PERF
 
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | **Open — one shared helper now exists (`write_target_block_bytes`), but the divergence remains: the write path cannot see its destination backend. Not measured; every bed to date ran on Azure Blob, where the two happen to agree.**
+| Status | **RESOLVED 2026-09-03 — the destination URL is plumbed from the compaction/flush callers down to `ivf_fine_cell_count`; writer geometry now resolves the SAME per-location budget the reader uses (TD-IOBUDGET-1 registry). Red→green unit test `destination_url_resolves_the_iop_target`. See Resolution.** |
 | Priority | **P3 — latent.** No incorrect behaviour on Azure (the hard-coded constant is the correct one there). The risk is that S3/GCS deployments silently size cells for a different IOP than the reader coalesces to.
 | Component | `src/storage/engines/sst/block_cluster.rs` — `ivf_fine_cell_count()`. Compare `src/storage/engines/sst/segment_format.rs` (D-block coalescing, `default_probe_range_policy`) and `crates/storage/proximadb-storage-common/src/iops_budget.rs`.
 | Evidence | Code inspection only. No measurement on a non-Azure backend exists.
@@ -97,3 +97,23 @@ the target should be per backend.
   again, and GCS PUT tiering is separately still a TODO.
 * Whether the divergence is observable at all below some corpus size, since `k` is
   clamped to `2..4096` and the clamp may mask the difference at both extremes.
+
+== Resolution (2026-09-03, TD-IOBUDGET-2 batch)
+
+The premise narrowed on re-exploration: the DEFAULT flush never reaches
+`ivf_fine_cell_count` (flush IVF clustering is the eval knob
+`PROXIMADB_PAX_FLUSH_CLUSTER=ivf`, default OFF) — the live path is COMPACTION,
+and compaction always knew its destination (`SstCompactionTask.output_file` is
+minted from the collection dir before any write; flush's `perform_atomic_flush`
+holds `storage_url`). The fix threads `destination_url: Option<&str>` from the
+seven production writer call sites (compaction: `task.output_file.to_str()`;
+flush: `Some(storage_url)`; SST writer: `Some(fs_url.as_str())`) through the
+segment_format internals into `cluster_plan_*` → `ivf_fine_cell_count` →
+`write_target_block_bytes(destination)`.
+
+With TD-IOBUDGET-1's registry seeded, the writer now resolves the SAME budget
+per location that the reader's coalescing policies resolve — the "one IOP"
+co-design premise holds on BOTH sides of the storage boundary. `None` remains
+the explicit fallback for genuinely destination-less callers (the
+`compactor_impl` silent local variant, direct unit tests). New segments only;
+cell counts are per-segment self-describing metadata — no format change.
