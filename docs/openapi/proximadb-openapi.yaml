@@ -1850,6 +1850,229 @@ paths:
         description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
         schema:
           type: string
+  /api/v2/observability/namespaces:
+    post:
+      tags:
+      - Observability
+      operationId: createObservabilityNamespace
+      summary: Create an observability namespace.
+      description: |
+        Creates a namespace for log/metric/trace data with tiered retention.
+        Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+        365 days server-side.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateObservabilityNamespaceRequest'
+      responses:
+        '200':
+          description: Namespace created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateObservabilityNamespaceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/observability/namespaces/{namespace}/logs/bulk:
+    parameters:
+    - name: namespace
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      tags:
+      - Observability
+      operationId: ingestLogs
+      summary: Ingest a batch of log entries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkLogIngestRequest'
+      responses:
+        '200':
+          description: Ingestion result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservabilityIngestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/observability/namespaces/{namespace}/metrics:
+    parameters:
+    - name: namespace
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      tags:
+      - Observability
+      operationId: ingestMetric
+      summary: Ingest a single metric sample.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetricSampleInput'
+      responses:
+        '200':
+          description: Ingestion result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservabilityIngestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/observability/namespaces/{namespace}/metrics/bulk:
+    parameters:
+    - name: namespace
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      tags:
+      - Observability
+      operationId: ingestMetrics
+      summary: Ingest a batch of metric samples.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkMetricIngestRequest'
+      responses:
+        '200':
+          description: Ingestion result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservabilityIngestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/observability/namespaces/{namespace}/metrics/aggregate:
+    parameters:
+    - name: namespace
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      tags:
+      - Observability
+      operationId: aggregateMetrics
+      summary: Aggregate a metric over a time range.
+      description: |
+        Aggregation defaults to `avg` with a 60-second step. Results are
+        grouped by `group_by` label names and filtered by exact `labels` match.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetricAggregationInput'
+      responses:
+        '200':
+          description: Aggregated time series.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricAggregationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/nl/translate:
+    post:
+      tags:
+      - Query
+      operationId: translateNaturalLanguage
+      summary: Translate natural language to a query (AV-SQL).
+      description: |
+        Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+        over the configured LLM (`config.llm`) and returns the normalized
+        query, the agent-selected views, and the final composed query string.
+        Requires the LLM integration to be configured; the result is
+        model-generated — validate before execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NlTranslateRequest'
+      responses:
+        '200':
+          description: Translation result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NlTranslateResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: LLM unavailable or translation failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
 components:
   schemas:
     ApplyModelRegistryMutationRequest:
@@ -4692,6 +4915,221 @@ components:
                 $ref: '#/components/schemas/EdgeResponse'
             count:
               type: integer
+    CreateObservabilityNamespaceRequest:
+      type: object
+      required:
+      - name
+      description: |
+        Body for `POST /api/v2/observability/namespaces`. Retention days
+        default to hot=1, warm=7, cold=30.
+      properties:
+        name:
+          type: string
+          minLength: 1
+        hot_retention_days:
+          type: integer
+          format: uint32
+          default: 1
+        warm_retention_days:
+          type: integer
+          format: uint32
+          default: 7
+        cold_retention_days:
+          type: integer
+          format: uint32
+          default: 30
+    CreateObservabilityNamespaceResponse:
+      type: object
+      required:
+      - success
+      - namespace
+      properties:
+        success:
+          type: boolean
+        namespace:
+          type: string
+    LogEntryInput:
+      type: object
+      required:
+      - message
+      description: |
+        A single log entry for ingestion. `severity` defaults to `info`;
+        `fields` carries arbitrary structured attributes.
+      properties:
+        timestamp_ns:
+          type: integer
+          format: int64
+          nullable: true
+        message:
+          type: string
+        severity:
+          type: string
+          default: info
+          description: 'One of: trace, debug, info, warn, error, fatal (case-insensitive).'
+        source:
+          type: string
+          nullable: true
+        service:
+          type: string
+          nullable: true
+        fields:
+          type: object
+          additionalProperties: true
+    BulkLogIngestRequest:
+      type: object
+      required:
+      - logs
+      properties:
+        logs:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/LogEntryInput'
+    MetricSampleInput:
+      type: object
+      required:
+      - name
+      - value
+      properties:
+        name:
+          type: string
+          minLength: 1
+        value:
+          type: number
+          format: double
+        timestamp_ns:
+          type: integer
+          format: int64
+          nullable: true
+          description: Defaults to server receive time.
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    BulkMetricIngestRequest:
+      type: object
+      required:
+      - metrics
+      properties:
+        metrics:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/MetricSampleInput'
+    ObservabilityIngestResponse:
+      type: object
+      required:
+      - ingested
+      - failed
+      - success
+      properties:
+        ingested:
+          type: integer
+          format: uint64
+        failed:
+          type: integer
+          format: uint64
+        success:
+          type: boolean
+    MetricAggregationInput:
+      type: object
+      required:
+      - metric_name
+      - start_time_ns
+      - end_time_ns
+      properties:
+        metric_name:
+          type: string
+          minLength: 1
+        start_time_ns:
+          type: integer
+          format: int64
+        end_time_ns:
+          type: integer
+          format: int64
+        aggregation:
+          type: string
+          default: avg
+          description: min, max, avg, sum, or count.
+        step_seconds:
+          type: integer
+          format: uint32
+          default: 60
+        group_by:
+          type: array
+          items:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    MetricDataPoint:
+      type: object
+      required:
+      - timestamp_ns
+      - value
+      properties:
+        timestamp_ns:
+          type: integer
+          format: int64
+        value:
+          type: number
+          format: double
+    MetricTimeSeries:
+      type: object
+      required:
+      - labels
+      - points
+      properties:
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricDataPoint'
+    MetricAggregationResult:
+      type: object
+      required:
+      - series
+      - query_time_ms
+      properties:
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricTimeSeries'
+        query_time_ms:
+          type: integer
+          format: uint64
+    NlTranslateRequest:
+      type: object
+      required:
+      - query
+      description: |
+        Body for `POST /api/v2/nl/translate`.
+      properties:
+        query:
+          type: string
+          minLength: 1
+    NlTranslateResult:
+      type: object
+      required:
+      - normalized_query
+      - views
+      - final_query
+      description: |
+        Model-generated translation output — the final query string is not
+        validated SQL/AQL; validate before executing it.
+      properties:
+        normalized_query:
+          type: string
+        views:
+          type: array
+          items:
+            type: string
+        final_query:
+          type: string
   securitySchemes:
     bearerAuth:
       type: http
