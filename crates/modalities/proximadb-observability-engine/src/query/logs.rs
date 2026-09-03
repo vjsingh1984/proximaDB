@@ -499,6 +499,7 @@ impl LogAggregator {
             Some(Value::NumberValue(f)) => f.to_string(),
             Some(Value::StringValue(s)) => s.clone(),
             Some(Value::BytesValue(b)) => format!("<bytes:{}>", b.len()),
+            Some(Value::JsonbValue(b)) => format!("<jsonb:{}>", b.len()),
             Some(Value::ArrayValue(arr)) => format!("<array:{}>", arr.values.len()),
             Some(Value::ObjectValue(obj)) => format!("<object:{}>", obj.fields.len()),
             None => "<empty>".to_string(),

@@ -206,6 +206,9 @@ impl Serialize for SqlValue {
             Some(SqlValueVariant::ObjectValue(v)) => {
                 map.serialize_entry("object_value", v)?;
             }
+            Some(SqlValueVariant::JsonbValue(v)) => {
+                map.serialize_entry("jsonb_value", &base64_encode(v))?;
+            }
             None => {
                 map.serialize_entry("null_value", &serde_json::Value::Null)?;
             }
@@ -282,6 +285,14 @@ impl<'de> Deserialize<'de> for SqlValue {
                     let bytes = base64_decode(s).map_err(serde::de::Error::custom)?;
                     return Ok(SqlValue {
                         value: Some(SqlValueVariant::BytesValue(bytes)),
+                    });
+                }
+                if let Some(v) = obj.get("jsonb_value")
+                    && let Some(s) = v.as_str()
+                {
+                    let bytes = base64_decode(s).map_err(serde::de::Error::custom)?;
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::JsonbValue(bytes)),
                     });
                 }
                 if obj.contains_key("null_value") {

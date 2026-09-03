@@ -1203,6 +1203,7 @@ impl ArrowProtoCodec {
             Some(Value::BoolValue(b)) => b.to_string(),
             Some(Value::NullValue(_)) => "null".to_string(),
             Some(Value::BytesValue(b)) => format!("{:?}", b),
+            Some(Value::JsonbValue(b)) => format!("{:?}", b),
             Some(Value::ArrayValue(_)) => "[array]".to_string(),
             Some(Value::ObjectValue(_)) => "{object}".to_string(),
             None => "null".to_string(),

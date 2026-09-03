@@ -459,6 +459,9 @@ impl UniversalSearchPipeline {
                             crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
                                 serde_json::Value::String("[binary data]".to_string())
                             }
+                            crate::proto::proximadb_v1::sql_value::Value::JsonbValue(_) => {
+                                serde_json::Value::String("[jsonb data]".to_string())
+                            }
                             crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => {
                                 serde_json::Value::Null
                             }

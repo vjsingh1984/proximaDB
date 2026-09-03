@@ -342,6 +342,9 @@ pub fn sql_values_to_json_map(
             Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_bytes)) => {
                 serde_json::Value::String("[Binary Data]".to_string())
             }
+            Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(_bytes)) => {
+                serde_json::Value::String("[Jsonb Data]".to_string())
+            }
             Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                 serde_json::Value::Null
             }
@@ -597,6 +600,11 @@ pub fn sql_values_to_metadata_items(
                 Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => Some(
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "[Binary Data]".to_string(),
+                    ),
+                ),
+                Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(_)) => Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "[Jsonb Data]".to_string(),
                     ),
                 ),
                 Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => None,

@@ -183,6 +183,7 @@ fn sql_value_to_proxima_value(
         Value::BoolValue(b) => ProximaValue::Boolean(b),
         Value::NullValue(_) => ProximaValue::Null,
         Value::BytesValue(bytes) => ProximaValue::Binary(bytes),
+        Value::JsonbValue(bytes) => ProximaValue::Binary(bytes),
         Value::ArrayValue(list) => {
             let items: Vec<ProximaValue> = list
                 .values

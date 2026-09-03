@@ -44,6 +44,9 @@ fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
         crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
             MetadataValue::String(Arc::from("[binary]"))
         }
+        crate::proto::proximadb_v1::sql_value::Value::JsonbValue(_) => {
+            MetadataValue::String(Arc::from("[jsonb]"))
+        }
         crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => MetadataValue::Null,
         crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
             MetadataValue::String(Arc::from("[array]"))

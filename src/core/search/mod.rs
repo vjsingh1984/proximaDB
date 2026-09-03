@@ -319,6 +319,9 @@ pub mod protocol_conversions {
                     Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(bytes)) => {
                         serde_json::Value::String(format!("BYTES({} bytes)", bytes.len()))
                     }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(bytes)) => {
+                        serde_json::Value::String(format!("JSONB({} bytes)", bytes.len()))
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         serde_json::Value::Null
                     }

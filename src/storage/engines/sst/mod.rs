@@ -924,6 +924,9 @@ mod block_utils {
                     Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
                         serde_json::Value::String("[binary]".to_string())
                     }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(_)) => {
+                        serde_json::Value::String("[jsonb]".to_string())
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         col_stats.null_count += 1;
                         continue;

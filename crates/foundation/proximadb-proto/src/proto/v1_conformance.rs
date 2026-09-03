@@ -1,0 +1,1363 @@
+//! TD-PROTO-2: conformance guard for the hand-maintained v1 Rust mirrors.
+//!
+//! The v1 proto packages are NOT code-generated: `build.rs` regenerates only the
+//! self-contained `proximadb.v2` package, and the v1 mirrors under
+//! `src/proto/*.v1.rs` (+ `src/ranking.rs`) are hand-maintained to protect
+//! hand-written serde impls. Nothing else checks that they still match the
+//! `.proto` sources — a field added to a proto but not to the mirror silently
+//! decodes to `None`/default on the binary wire, and a field added only to the
+//! mirror is dead code. Both directions were invisible to every gate until this
+//! test (the live instance it was filed on: `CatalogConfig`'s missing
+//! `oltp = 17` oneof arm).
+//!
+//! How it works:
+//! 1. When `protoc` is available, compile `proto/proximadb/v1/*.proto` +
+//!    `proto/proximadb/explain.proto` into a `FileDescriptorSet`
+//!    (`--include_imports`) and decode it with `prost-types`.
+//! 2. Parse the mirror sources for their `#[prost(...)]` attributes, derives,
+//!    enum discriminants and `from_str_name` tables (the mirrors carry no
+//!    runtime reflection, so the source is the only self-description).
+//! 3. Compare per package: message sets, field names/tags/kinds/cardinality,
+//!    oneof member tags, and enum value wire-name → discriminant mappings, in
+//!    BOTH directions (proto→mirror catches missing fields, mirror→proto
+//!    catches invented ones).
+//!
+//! Skips gracefully when `protoc` is absent (CI's unit-test job installs
+//! `protobuf-compiler`, so the gate is exercised there). When `protoc` exists,
+//! current findings are ratcheted against the checked-in ledger
+//! (`v1_conformance_known_drift.json`): NEW drift fails the test, and FIXED
+//! drift makes the stale ledger entry fail until the ledger is shrunk — the
+//! count only goes down (same semantics as the repo's other quality ratchets).
+//!
+//! Note: this file lives under `src/proto/` so the v1-proto-usage migration
+//! ratchet (`scripts/check_v1_proto_usage.py`) does not count it — that metric
+//! measures migration progress, and this harness is contract infrastructure
+//! over the mirror itself, not a new consumer of it.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+use std::process::Command;
+
+use prost::Message as _;
+use prost_types::field_descriptor_proto::{Label, Type};
+use prost_types::{DescriptorProto, FieldDescriptorProto, FileDescriptorProto, FileDescriptorSet};
+
+/// (proto package, mirror source file relative to this crate's manifest).
+const MIRRORS: &[(&str, &str)] = &[
+    ("proximadb.v1", "src/proto/proximadb.v1.rs"),
+    ("proximadb.cluster.v1", "src/proto/proximadb.cluster.v1.rs"),
+    (
+        "proximadb.streaming.v1",
+        "src/proto/proximadb.streaming.v1.rs",
+    ),
+    ("proximadb.explain.v1", "src/proto/proximadb.explain.v1.rs"),
+    ("proximadb.v1.ranking", "src/ranking.rs"),
+];
+
+/// Packages with their own drift gates — never compared here.
+const EXCLUDED_PACKAGES: &[&str] = &["proximadb.v2"];
+
+/// Checked-in ledger of KNOWN pre-existing drift (ratchet semantics, mirroring
+/// `UPDATE_OPENAPI_SPEC`): the test fails on any finding NOT in the snapshot
+/// (new drift) and on any snapshot entry that no longer reproduces (fixed —
+/// shrink the ledger). Regenerate after fixing drift with:
+///
+/// ```sh
+/// UPDATE_V1_DRIFT_SNAPSHOT=1 cargo test -p proximadb-proto --lib v1_conformance
+/// ```
+const SNAPSHOT_PATH: &str = "src/proto/v1_conformance_known_drift.json";
+
+// ---------------------------------------------------------------------------
+// Mirror source parsing
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default)]
+struct MirrorField {
+    name: String,
+    tag: u32,
+    kind: String,
+    repeated: bool,
+    optional: bool,
+    map: Option<(String, String)>,
+}
+
+#[derive(Debug, Default)]
+struct MirrorOneofField {
+    /// Struct field name (== proto oneof name).
+    name: String,
+    /// The `oneof = "mod::Enum"` reference, verbatim.
+    r#ref: String,
+    tags: Vec<u32>,
+}
+
+#[derive(Debug, Default)]
+struct MirrorMessage {
+    fields: Vec<MirrorField>,
+    oneof_fields: Vec<MirrorOneofField>,
+}
+
+#[derive(Debug, Default)]
+struct MirrorOneof {
+    /// (variant name, tag, kind)
+    variants: Vec<(String, u32, String)>,
+}
+
+#[derive(Debug, Default)]
+struct MirrorEnum {
+    /// (variant name, discriminant)
+    values: Vec<(String, i32)>,
+    /// wire name -> variant name, from `from_str_name`.
+    from_str_name: BTreeMap<String, String>,
+    /// variant name -> wire name, from `as_str_name`.
+    as_str_name: BTreeMap<String, String>,
+}
+
+/// Everything the source parser indexed, plus anything it could not classify —
+/// non-empty anomalies are a failure: unrecognized syntax must never silently
+/// dodge the gate.
+#[derive(Debug, Default)]
+struct MirrorModel {
+    messages: BTreeMap<String, MirrorMessage>,
+    oneofs: BTreeMap<String, MirrorOneof>,
+    enums: BTreeMap<String, MirrorEnum>,
+    anomalies: Vec<String>,
+}
+
+enum ItemKind {
+    /// A `#[prost::Message]` struct.
+    Message(String),
+    /// A `#[prost::Oneof]` enum.
+    Oneof(String),
+    /// A `#[prost::Enumeration]` enum.
+    Enum(String),
+}
+
+#[derive(Default)]
+struct ParsedProstAttr {
+    kind: Option<String>,
+    r#ref: Option<String>,
+    map_kv: Option<(String, String)>,
+    repeated: bool,
+    optional: bool,
+    tag: Option<u32>,
+    tags: Vec<u32>,
+}
+
+/// Split `#[prost(...)]` content on commas outside quoted strings.
+fn split_attr_tokens(body: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    for ch in body.chars() {
+        match ch {
+            '"' => {
+                in_quote = !in_quote;
+                cur.push(ch);
+            }
+            ',' if !in_quote => {
+                tokens.push(cur.trim().to_string());
+                cur.clear();
+            }
+            _ => cur.push(ch),
+        }
+    }
+    if !cur.trim().is_empty() {
+        tokens.push(cur.trim().to_string());
+    }
+    tokens
+}
+
+/// Parse one complete `#[prost(...)]` attribute; `Err` on unrecognized tokens
+/// (fail-loud).
+fn parse_prost_attr(attr: &str) -> Result<ParsedProstAttr, String> {
+    let body = attr
+        .strip_prefix("#[prost(")
+        .and_then(|b| b.strip_suffix(")]"))
+        .ok_or_else(|| format!("not a prost attribute: {attr}"))?;
+    let mut out = ParsedProstAttr::default();
+    for token in split_attr_tokens(body) {
+        if token.is_empty() {
+            continue;
+        }
+        if let Some(value) = token.strip_prefix("tag = ") {
+            out.tag = Some(
+                value
+                    .trim_matches('"')
+                    .parse()
+                    .map_err(|_| format!("unparseable tag in {attr}"))?,
+            );
+        } else if let Some(value) = token.strip_prefix("tags = ") {
+            for digits in value.trim_matches('"').split(',') {
+                let digits = digits.trim();
+                if !digits.is_empty() {
+                    out.tags.push(
+                        digits
+                            .parse()
+                            .map_err(|_| format!("unparseable tags entry in {attr}"))?,
+                    );
+                }
+            }
+        } else if let Some(value) = token.strip_prefix("enumeration = ") {
+            out.r#ref = Some(value.trim_matches('"').to_string());
+            out.kind = Some("enumeration".into());
+        } else if let Some(value) = token.strip_prefix("map = ") {
+            let kv = value.trim_matches('"');
+            let (k, v) = kv
+                .split_once(',')
+                .ok_or_else(|| format!("bad map in {attr}"))?;
+            out.map_kv = Some((k.trim().to_string(), v.trim().to_string()));
+            out.kind = Some("map".into());
+        } else if let Some(value) = token.strip_prefix("oneof = ") {
+            out.r#ref = Some(value.trim_matches('"').to_string());
+            out.kind = Some("oneof".into());
+        } else if let Some((kind, hint)) = token.split_once(" = ") {
+            // prost collection hints: `bytes = "vec"`, `message = "btreemap"`, …
+            // — they select the Rust container, not the wire shape.
+            let hint = hint.trim_matches('"');
+            if !matches!(hint, "vec" | "btreemap" | "hashmap") {
+                return Err(format!("unrecognized prost attr token {token:?} in {attr}"));
+            }
+            out.kind = Some(kind.to_string());
+        } else if token == "optional" {
+            out.optional = true;
+        } else if token == "repeated" {
+            out.repeated = true;
+        } else if token == "packed" {
+            // Recognized and ignored: packing only affects the wire layout of
+            // repeated scalars, which tag equality already guards.
+        } else if !token.contains('=') && !token.contains('(') {
+            out.kind = Some(token);
+        } else {
+            return Err(format!("unrecognized prost attr token {token:?} in {attr}"));
+        }
+    }
+    if out.kind.is_none() {
+        return Err(format!("prost attribute without a kind: {attr}"));
+    }
+    Ok(out)
+}
+
+/// heck-style CamelCase → snake_case (splits before the last uppercase of an
+/// acronym run: "SqlValue" → "sql_value", "OLTPConfig" → "oltp_config").
+fn snake(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::new();
+    for (i, &ch) in chars.iter().enumerate() {
+        let prev_lower = i > 0 && chars[i - 1].is_lowercase();
+        let next_lower = chars.get(i + 1).is_some_and(|c| c.is_lowercase());
+        if ch.is_uppercase() && (prev_lower || next_lower) && !out.is_empty() {
+            out.push('_');
+        }
+        out.push(ch.to_ascii_lowercase());
+    }
+    out
+}
+
+/// snake_case → PascalCase ("string_value" → "StringValue").
+fn pascal(name: &str) -> String {
+    name.split('_')
+        .map(|part| {
+            let mut c = part.chars();
+            match c.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+/// Normalize a type path key: snake_case the LAST component only ("A::B::Camel"
+/// → "A::B::camel"). Message/enum names are compared in snake space so a
+/// hand-maintainer's casing rename (RbacAuditEvent vs proto's RBACAuditEvent)
+/// is not flagged — the wire contract carries tags, not Rust type names.
+fn normalize_type_path(path: &str) -> String {
+    match path.rsplit_once("::") {
+        Some((head, last)) => format!("{head}::{}", snake(last)),
+        None => snake(path),
+    }
+}
+
+fn brace_delta(line: &str) -> isize {
+    line.matches('{').count() as isize - line.matches('}').count() as isize
+}
+
+/// Whether a `#[derive(...)]` line includes a prost trait under the given
+/// bare or path-qualified name (`Message`, `::prost::Message`, …).
+fn derive_has(derive: &str, trait_name: &str) -> bool {
+    let inner = derive
+        .trim_start_matches("#[derive(")
+        .trim_end_matches(")]");
+    inner.split(',').any(|token| {
+        let token = token.trim();
+        token == trait_name || token.ends_with(&format!("::{trait_name}"))
+    })
+}
+
+/// `pub struct Foo …{` / `pub enum Foo {` / `pub mod foo {` → item name.
+fn opener_name(line: &str, prefix: &str) -> Option<String> {
+    let rest = line.strip_prefix(prefix)?;
+    if !rest.ends_with('{') {
+        return None;
+    }
+    let name = rest
+        .trim_end_matches('{')
+        .trim()
+        .split(['<', ' ', '('])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(name)
+}
+
+fn parse_enum_value(line: &str) -> Option<(String, i32)> {
+    let line = line.split("//").next().unwrap_or("").trim();
+    let line = line.trim_end_matches(',');
+    let (name, number) = line.split_once('=')?;
+    let number: i32 = number.trim().parse().ok()?;
+    let name = name.trim();
+    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        Some((name.to_string(), number))
+    } else {
+        None
+    }
+}
+
+fn parse_from_str_arm(line: &str) -> Option<(String, String)> {
+    // "WIRE_NAME" => Some(Self::Variant),
+    if !line.contains("\" =>") {
+        return None; // `_ => None,` and friends
+    }
+    let (wire, rest) = line.split_once("=>")?;
+    let wire = wire.trim().trim_matches('"');
+    let variant = rest
+        .trim()
+        .trim_start_matches("Some(Self::")
+        .trim_end_matches("),");
+    if wire.is_empty()
+        || variant.is_empty()
+        || variant.contains(|c: char| !c.is_alphanumeric() && c != '_')
+    {
+        return None;
+    }
+    Some((wire.to_string(), variant.to_string()))
+}
+
+fn parse_as_str_arm(line: &str) -> Option<(String, String)> {
+    // Self::Variant => "WIRE_NAME",  (or `EnumName::Variant => "WIRE_NAME",`)
+    if !line.contains("=> \"") {
+        return None;
+    }
+    let (variant, wire) = line.split_once("=>")?;
+    let variant = variant.trim().rsplit("::").next()?.trim();
+    let wire = wire.trim().trim_end_matches(',').trim().trim_matches('"');
+    if variant.is_empty()
+        || wire.is_empty()
+        || variant.contains(|c: char| !c.is_alphanumeric() && c != '_')
+        || wire.contains(|c: char| !c.is_alphanumeric() && c != '_')
+    {
+        return None;
+    }
+    Some((variant.to_string(), wire.to_string()))
+}
+
+/// Parse one mirror source file into a [`MirrorModel`].
+fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
+    let mut model = MirrorModel::default();
+    let module_key = |modules: &[(String, usize)]| {
+        modules
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect::<Vec<_>>()
+            .join("::")
+    };
+
+    // Parser state.
+    let mut depth: usize = 0;
+    // (module name, depth of its CONTENTS — opener line depth + 1).
+    let mut modules: Vec<(String, usize)> = Vec::new();
+    let mut attr_buf = String::new();
+    let mut last_derive = String::new();
+    let mut pending_prost: Option<String> = None;
+    let mut pending_variant_prost: Option<String> = None;
+    let mut item: Option<ItemKind> = None;
+    let mut item_depth: usize = 0;
+    // Open `impl NAME {` block: (enum key it feeds, opener line depth).
+    let mut open_impl: Option<(String, usize)> = None;
+    let mut in_from_str_name = false;
+    let mut in_as_str_name = false;
+
+    for raw in source.lines() {
+        let line = raw.trim();
+
+        // ---- attributes (accumulate until brackets balance) ----
+        if !attr_buf.is_empty() || line.starts_with("#[") {
+            attr_buf.push_str(line);
+            let opens = attr_buf.matches('[').count();
+            let closes = attr_buf.matches(']').count();
+            if opens > 0 && closes >= opens {
+                let attr = std::mem::take(&mut attr_buf);
+                if attr.starts_with("#[derive(") {
+                    last_derive = attr;
+                } else if attr.starts_with("#[prost(") {
+                    // Inside a oneof enum body the attr belongs to the next
+                    // variant line; elsewhere to the next field line.
+                    if matches!(item, Some(ItemKind::Oneof(_))) {
+                        pending_variant_prost = Some(attr);
+                    } else if pending_prost.is_some() {
+                        model
+                            .anomalies
+                            .push(format!("{file_label}: two prost attrs in a row: {attr}"));
+                    } else {
+                        pending_prost = Some(attr);
+                    }
+                }
+                // serde/doc/repr/other attrs: ignored.
+            }
+            continue; // attributes never contribute braces
+        }
+
+        // ---- comment-only lines ----
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+
+        // ---- impl blocks feed the enum wire-name tables ----
+        if line.starts_with("impl ") && line.ends_with('{') {
+            let name = line
+                .strip_prefix("impl ")
+                .and_then(|r| r.strip_suffix(" {"))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            // Keys normalize the type name with snake(), matching how enum
+            // items are keyed (hand-maintainers rename e.g. RBACAuditEvent).
+            let name = normalize_type_path(&name);
+            let key = if name.contains("::") {
+                name
+            } else {
+                let mk = module_key(&modules);
+                if mk.is_empty() {
+                    name
+                } else {
+                    format!("{mk}::{name}")
+                }
+            };
+            open_impl = Some((key, depth));
+            in_from_str_name = false;
+        } else if let Some((key, impl_depth)) = &open_impl {
+            if depth == *impl_depth + 1 && line.starts_with("pub fn ") {
+                in_from_str_name = line.starts_with("pub fn from_str_name");
+                in_as_str_name = line.starts_with("pub fn as_str_name");
+            } else if depth >= *impl_depth + 2 {
+                if in_from_str_name {
+                    if let Some((wire, variant)) = parse_from_str_arm(line) {
+                        model
+                            .enums
+                            .entry(key.clone())
+                            .or_default()
+                            .from_str_name
+                            .insert(wire, variant);
+                    }
+                } else if in_as_str_name {
+                    // Self::Variant => "WIRE",  (also `EnumName::Variant => …`)
+                    if let Some((variant, wire)) = parse_as_str_arm(line) {
+                        model
+                            .enums
+                            .entry(key.clone())
+                            .or_default()
+                            .as_str_name
+                            .insert(variant, wire);
+                    }
+                }
+            }
+        }
+
+        // ---- item bodies ----
+        match &item {
+            Some(ItemKind::Message(key)) => {
+                if let Some(rest) = line.strip_prefix("pub ")
+                    && let Some((name, _ty)) = rest.split_once(':')
+                {
+                    // Raw identifiers (`pub r#type:`) mirror proto field
+                    // names that are Rust keywords — normalize.
+                    let name = name.trim().trim_start_matches("r#").to_string();
+                    match pending_prost.take() {
+                        None => model.anomalies.push(format!(
+                            "{file_label}: {key}: pub field {name:?} has no #[prost] attribute"
+                        )),
+                        Some(attr) => match parse_prost_attr(&attr) {
+                            Ok(parsed) => {
+                                let message = model.messages.entry(key.clone()).or_default();
+                                if parsed.kind.as_deref() == Some("oneof") {
+                                    message.oneof_fields.push(MirrorOneofField {
+                                        name,
+                                        r#ref: parsed.r#ref.unwrap_or_default(),
+                                        tags: parsed.tags,
+                                    });
+                                } else {
+                                    message.fields.push(MirrorField {
+                                        name,
+                                        tag: parsed.tag.unwrap_or(0),
+                                        kind: parsed.kind.unwrap_or_default(),
+                                        repeated: parsed.repeated,
+                                        optional: parsed.optional,
+                                        map: parsed.map_kv,
+                                    });
+                                }
+                            }
+                            Err(reason) => model.anomalies.push(format!("{file_label}: {reason}")),
+                        },
+                    }
+                    continue; // field lines carry no braces
+                }
+            }
+            Some(ItemKind::Oneof(key)) => {
+                if let Some(attr) = pending_variant_prost.take() {
+                    let variant = line
+                        .split(|c: char| c == '(' || c == ',' || c.is_whitespace())
+                        .next()
+                        .unwrap_or_default()
+                        .to_string();
+                    match parse_prost_attr(&attr) {
+                        Ok(parsed) => {
+                            model.oneofs.entry(key.clone()).or_default().variants.push((
+                                variant,
+                                parsed.tag.unwrap_or(0),
+                                parsed.kind.unwrap_or_default(),
+                            ));
+                        }
+                        Err(reason) => model.anomalies.push(format!("{file_label}: {reason}")),
+                    }
+                    continue; // variant lines carry no braces
+                }
+                // An identifier followed by `(` is a variant line that arrived
+                // without a prost attr — a drift signal. Continuation lines of
+                // a wrapped payload start with `::` and are ignored.
+                let looks_like_variant = line.split_once('(').is_some_and(|(head, _)| {
+                    !head.is_empty() && head.chars().all(|c| c.is_alphanumeric() || c == '_')
+                });
+                if looks_like_variant {
+                    model.anomalies.push(format!(
+                        "{file_label}: {key}: oneof variant {line:?} has no #[prost] attribute"
+                    ));
+                }
+            }
+            Some(ItemKind::Enum(key)) => {
+                if let Some((name, number)) = parse_enum_value(line) {
+                    model
+                        .enums
+                        .entry(key.clone())
+                        .or_default()
+                        .values
+                        .push((name, number));
+                }
+                // Other lines (rare cfg attrs / impl headers) are handled above.
+            }
+            None => {}
+        }
+
+        // ---- item/module openers ----
+        if let Some(name) = opener_name(line, "pub struct ") {
+            item = if derive_has(&last_derive, "Message") {
+                let mk = module_key(&modules);
+                let key = normalize_type_path(&if mk.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{mk}::{name}")
+                });
+                model.messages.entry(key.clone()).or_default();
+                item_depth = depth;
+                Some(ItemKind::Message(key))
+            } else {
+                None // tonic client/server structs and friends
+            };
+            last_derive.clear();
+        } else if let Some(name) = opener_name(line, "pub enum ") {
+            let mk = module_key(&modules);
+            let key = normalize_type_path(&if mk.is_empty() {
+                name.clone()
+            } else {
+                format!("{mk}::{name}")
+            });
+            item = if derive_has(&last_derive, "Oneof") {
+                model.oneofs.entry(key.clone()).or_default();
+                item_depth = depth;
+                Some(ItemKind::Oneof(key))
+            } else if derive_has(&last_derive, "Enumeration") {
+                model.enums.entry(key.clone()).or_default();
+                item_depth = depth;
+                Some(ItemKind::Enum(key))
+            } else {
+                None
+            };
+            last_derive.clear();
+        } else if let Some(name) = opener_name(line, "pub mod ") {
+            modules.push((name, depth + 1));
+            last_derive.clear();
+        }
+
+        // ---- depth bookkeeping + closings ----
+        let delta = brace_delta(line);
+        if delta < 0 {
+            let new_depth = depth.saturating_sub((-delta) as usize);
+            if new_depth <= item_depth {
+                item = None;
+            }
+            if let Some((_, impl_depth)) = &open_impl
+                && new_depth <= *impl_depth
+            {
+                open_impl = None;
+                in_from_str_name = false;
+                in_as_str_name = false;
+            }
+            while modules.last().is_some_and(|(_, d)| *d > new_depth) {
+                modules.pop();
+            }
+            depth = new_depth;
+        } else {
+            depth += delta as usize;
+        }
+    }
+
+    model
+}
+
+// ---------------------------------------------------------------------------
+// Descriptor model
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct DescField {
+    name: String,
+    number: u32,
+    kind: &'static str,
+    repeated: bool,
+    proto3_optional: bool,
+    is_map: bool,
+    oneof: Option<String>,
+}
+
+impl DescField {
+    /// Wire kind as it appears in a prost attribute.
+    fn attr_kind(&self) -> &str {
+        if self.is_map { "map" } else { self.kind }
+    }
+}
+
+#[derive(Debug, Default)]
+struct DescMessage {
+    /// ALL fields, oneof members included.
+    fields: Vec<DescField>,
+    /// Declared oneof names, synthetic proto3-optional singles removed.
+    oneofs: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct DescIndex {
+    messages: BTreeMap<String, DescMessage>,
+    /// (wire value name, number) per enum.
+    enums: BTreeMap<String, Vec<(String, i32)>>,
+}
+
+fn kind_of(ty: &Type) -> Option<&'static str> {
+    Some(match ty {
+        Type::Double => "double",
+        Type::Float => "float",
+        Type::Int64 => "int64",
+        Type::Uint64 => "uint64",
+        Type::Int32 => "int32",
+        Type::Fixed64 => "fixed64",
+        Type::Fixed32 => "fixed32",
+        Type::Bool => "bool",
+        Type::String => "string",
+        Type::Message => "message",
+        Type::Bytes => "bytes",
+        Type::Uint32 => "uint32",
+        Type::Enum => "enumeration",
+        Type::Sfixed32 => "sfixed32",
+        Type::Sfixed64 => "sfixed64",
+        Type::Sint32 => "sint32",
+        Type::Sint64 => "sint64",
+        Type::Group => return None,
+    })
+}
+
+fn enum_values(en: &prost_types::EnumDescriptorProto) -> Vec<(String, i32)> {
+    en.value
+        .iter()
+        .map(|v| (v.name.clone().unwrap_or_default(), v.number.unwrap_or(0)))
+        .collect()
+}
+
+fn build_desc_index(files: &[FileDescriptorProto]) -> DescIndex {
+    let mut index = DescIndex::default();
+
+    fn walk(msg: &DescriptorProto, ancestors: &[String], index: &mut DescIndex) {
+        let chain: Vec<String> = ancestors.iter().map(|a| snake(a)).collect();
+        let join = |name: &str| {
+            normalize_type_path(&if chain.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}::{}", chain.join("::"), name)
+            })
+        };
+        let key = join(msg.name.as_deref().unwrap_or_default());
+
+        let mut out = DescMessage::default();
+        let oneof_names: Vec<String> = msg
+            .oneof_decl
+            .iter()
+            .map(|o| o.name.clone().unwrap_or_default())
+            .collect();
+
+        for field in &msg.field {
+            if let Some(f) = describe_field(field, &oneof_names) {
+                out.fields.push(f);
+            }
+        }
+        // Keep only oneofs with at least one non-synthetic member (each proto3
+        // `optional` field gets a synthetic single-member oneof).
+        out.oneofs = oneof_names
+            .into_iter()
+            .filter(|oname| {
+                msg.field.iter().any(|f| {
+                    !f.proto3_optional.unwrap_or(false)
+                        && f.oneof_index
+                            .and_then(|i| {
+                                msg.oneof_decl
+                                    .get(i as usize)
+                                    .and_then(|o| o.name.as_deref())
+                                    .map(|n| n == oname.as_str())
+                            })
+                            .unwrap_or(false)
+                })
+            })
+            .collect();
+
+        index.messages.insert(key, out);
+
+        for nested in &msg.nested_type {
+            let is_map_entry = nested
+                .options
+                .as_ref()
+                .is_some_and(|o| o.map_entry.unwrap_or(false));
+            if !is_map_entry {
+                let mut chain = ancestors.to_vec();
+                chain.push(msg.name.clone().unwrap_or_default());
+                walk(nested, &chain, index);
+            }
+        }
+        for en in &msg.enum_type {
+            // Nested enums are keyed under the parent message's module too:
+            // `message Foo { enum Bar {} }` → "foo::bar".
+            let mut echain = chain.clone();
+            echain.push(snake(msg.name.as_deref().unwrap_or_default()));
+            let ekey = normalize_type_path(&format!(
+                "{}::{}",
+                echain.join("::"),
+                en.name.as_deref().unwrap_or_default()
+            ));
+            index.enums.insert(ekey, enum_values(en));
+        }
+    }
+
+    for file in files {
+        for en in &file.enum_type {
+            index.enums.insert(
+                snake(en.name.as_deref().unwrap_or_default()),
+                enum_values(en),
+            );
+        }
+        for msg in &file.message_type {
+            walk(msg, &[], &mut index);
+        }
+    }
+    index
+}
+
+fn describe_field(field: &FieldDescriptorProto, oneof_names: &[String]) -> Option<DescField> {
+    let ty: Type = field.r#type.and_then(|v| Type::try_from(v).ok())?;
+    let label: Label = field.label.and_then(|v| Label::try_from(v).ok())?;
+    let kind = kind_of(&ty)?;
+    let name = field.name.clone().unwrap_or_default();
+
+    // Map fields: protoc gives each map field a synthetic nested message named
+    // `<FieldName>Entry` (PascalCased) referenced by type_name.
+    let entry_suffix = format!("{}Entry", pascal(&name));
+    let is_map = ty == Type::Message
+        && label == Label::Repeated
+        && field
+            .type_name
+            .as_deref()
+            .is_some_and(|tn| tn.ends_with(&entry_suffix));
+
+    let oneof = field
+        .oneof_index
+        .and_then(|i| oneof_names.get(i as usize).cloned())
+        .filter(|_| !field.proto3_optional.unwrap_or(false));
+
+    Some(DescField {
+        name,
+        number: field.number.unwrap_or(0).unsigned_abs(),
+        kind,
+        repeated: label == Label::Repeated && !is_map,
+        proto3_optional: field.proto3_optional.unwrap_or(false),
+        is_map,
+        oneof,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Comparison
+// ---------------------------------------------------------------------------
+
+/// Resolve a mirror `oneof = "…"` reference against the parsed oneof enums.
+/// The reference is module-RELATIVE to the field's enclosing module (e.g.
+/// `evolution_change::Change` inside `schema_evolution_request`), so try the
+/// message's enclosing module chain from innermost to outermost, then bare.
+fn resolve_oneof_ref<'a>(
+    r#ref: &str,
+    message_key: &str,
+    oneofs: &'a BTreeMap<String, MirrorOneof>,
+) -> Option<(String, &'a MirrorOneof)> {
+    let normalized = normalize_type_path(r#ref);
+    let msg_comps: Vec<&str> = message_key.split("::").collect();
+    let mut prefixes: Vec<String> = Vec::new();
+    for take in (0..msg_comps.len().saturating_sub(1)).rev() {
+        prefixes.push(msg_comps[..=take].join("::"));
+    }
+    prefixes.push(String::new());
+    for prefix in prefixes {
+        let candidate = if prefix.is_empty() {
+            normalized.clone()
+        } else {
+            format!("{prefix}::{normalized}")
+        };
+        if let Some(oneof) = oneofs.get(&candidate) {
+            return Some((candidate, oneof));
+        }
+    }
+    None
+}
+
+struct Comparer {
+    file_label: &'static str,
+    errors: Vec<String>,
+}
+
+impl Comparer {
+    fn record(&mut self, key: &str, what: String) {
+        self.errors
+            .push(format!("{} {key}: {what}", self.file_label));
+    }
+
+    fn compare(&mut self, desc: &DescIndex, mirror: &MirrorModel) {
+        self.errors.extend(mirror.anomalies.iter().cloned());
+
+        self.compare_message_sets(desc, mirror);
+        for (key, dmsg) in &desc.messages {
+            if let Some(mmsg) = mirror.messages.get(key) {
+                self.compare_message(key, dmsg, mmsg, mirror);
+            }
+        }
+        self.compare_enums(desc, mirror);
+    }
+
+    fn compare_message_sets(&mut self, desc: &DescIndex, mirror: &MirrorModel) {
+        let desc_keys: BTreeSet<&String> = desc.messages.keys().collect();
+        let mirror_keys: BTreeSet<&String> = mirror.messages.keys().collect();
+        for missing in desc_keys.difference(&mirror_keys) {
+            self.record(
+                "(message set)",
+                format!("proto message {missing:?} missing from mirror"),
+            );
+        }
+        for invented in mirror_keys.difference(&desc_keys) {
+            self.record(
+                "(message set)",
+                format!("mirror message {invented:?} not declared in any proto"),
+            );
+        }
+    }
+
+    fn compare_message(
+        &mut self,
+        key: &str,
+        dmsg: &DescMessage,
+        mmsg: &MirrorMessage,
+        mirror: &MirrorModel,
+    ) {
+        let dfields: BTreeMap<&String, &DescField> = dmsg
+            .fields
+            .iter()
+            .filter(|f| f.oneof.is_none())
+            .map(|f| (&f.name, f))
+            .collect();
+        let mfields: BTreeMap<&String, &MirrorField> =
+            mmsg.fields.iter().map(|f| (&f.name, f)).collect();
+
+        for (name, df) in &dfields {
+            match mfields.get(*name) {
+                None => self.record(
+                    key,
+                    format!(
+                        "proto field {name:?} (tag {}) missing from mirror",
+                        df.number
+                    ),
+                ),
+                Some(mf) => {
+                    if mf.tag != df.number {
+                        self.record(
+                            key,
+                            format!(
+                                "field {name:?}: tag mismatch mirror {} vs proto {}",
+                                mf.tag, df.number
+                            ),
+                        );
+                    }
+                    if mf.kind != df.attr_kind() {
+                        self.record(
+                            key,
+                            format!(
+                                "field {name:?}: kind mismatch mirror {:?} vs proto {:?}",
+                                mf.kind,
+                                df.attr_kind()
+                            ),
+                        );
+                    } else if df.is_map
+                        && let Some((mk, _mv)) = &mf.map
+                        && mk != "string"
+                    {
+                        // Map key kinds are compared; the value kind's CLASS
+                        // (message/enum/scalar) already matched above.
+                        self.record(
+                            key,
+                            format!(
+                                "map field {name:?}: mirror key kind {mk:?}, proto keys are scalars"
+                            ),
+                        );
+                    }
+                    if mf.repeated != df.repeated {
+                        self.record(
+                            key,
+                            format!(
+                                "field {name:?}: repeated mismatch mirror {} vs proto {}",
+                                mf.repeated, df.repeated
+                            ),
+                        );
+                    }
+                    // proto3 `optional` (explicit presence) on non-message
+                    // fields must be mirrored with the `optional` attr. Message
+                    // presence is Option-typed either way, so it is not
+                    // compared.
+                    if df.kind != "message" && !df.is_map && mf.optional != df.proto3_optional {
+                        self.record(
+                            key,
+                            format!(
+                                "field {name:?}: optional mismatch mirror {} vs proto {}",
+                                mf.optional, df.proto3_optional
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        // Members of descriptor oneofs the mirror models as plain fields
+        // (wire-compatible flattening, accepted in compare_oneofs) must not be
+        // flagged again here as invented fields.
+        let flattened_members: BTreeSet<&String> = dmsg
+            .oneofs
+            .iter()
+            .filter(|dname| !mmsg.oneof_fields.iter().any(|o| &o.name == *dname))
+            .flat_map(|dname| {
+                dmsg.fields
+                    .iter()
+                    .filter(move |f| f.oneof.as_deref() == Some(dname.as_str()))
+                    .map(|f| &f.name)
+            })
+            .collect();
+        for name in mfields.keys() {
+            if !dfields.contains_key(*name) && !flattened_members.contains(*name) {
+                self.record(key, format!("mirror field {name:?} not declared in proto"));
+            }
+        }
+
+        self.compare_oneofs(key, dmsg, mmsg, mirror);
+    }
+
+    fn compare_oneofs(
+        &mut self,
+        key: &str,
+        dmsg: &DescMessage,
+        mmsg: &MirrorMessage,
+        mirror: &MirrorModel,
+    ) {
+        let moneofs: BTreeMap<&String, &MirrorOneofField> =
+            mmsg.oneof_fields.iter().map(|o| (&o.name, o)).collect();
+        let doneofs: BTreeSet<&String> = dmsg.oneofs.iter().collect();
+
+        for dname in &doneofs {
+            let members: Vec<&DescField> = dmsg
+                .fields
+                .iter()
+                .filter(|f| f.oneof.as_deref() == Some(dname.as_str()))
+                .collect();
+            match moneofs.get(*dname) {
+                None => {
+                    // Wire-compatible flattening: the mirror may model a proto
+                    // oneof as plain optional fields with the same tags (same
+                    // wire shape; loses only the one-at-a-time invariant).
+                    // Accept iff EVERY member matches a plain field.
+                    let flattened_ok = members.iter().all(|df| {
+                        mmsg.fields.iter().any(|mf| {
+                            mf.name == df.name
+                                && mf.tag == df.number
+                                && mf.kind == df.attr_kind()
+                                && !mf.repeated
+                        })
+                    });
+                    if !flattened_ok {
+                        let names: Vec<&str> = members.iter().map(|f| f.name.as_str()).collect();
+                        self.record(
+                            key,
+                            format!(
+                                "proto oneof {dname:?} (members {names:?}) missing from mirror"
+                            ),
+                        );
+                    }
+                }
+                Some(mo) => {
+                    let oneof_enum = match resolve_oneof_ref(&mo.r#ref, key, &mirror.oneofs) {
+                        Some((_, oe)) => oe,
+                        None => {
+                            self.record(
+                                key,
+                                format!(
+                                    "oneof {dname:?}: mirror references enum {:?} which was not parsed",
+                                    mo.r#ref
+                                ),
+                            );
+                            continue;
+                        }
+                    };
+                    let member_tags: BTreeSet<u32> = members.iter().map(|f| f.number).collect();
+                    let wrapper_tags: BTreeSet<u32> = mo.tags.iter().copied().collect();
+                    if member_tags != wrapper_tags {
+                        self.record(
+                            key,
+                            format!(
+                                "oneof {dname:?}: wrapper tags {wrapper_tags:?} != member tags {member_tags:?}"
+                            ),
+                        );
+                    }
+                    let proto: BTreeSet<(String, u32, &str)> = members
+                        .iter()
+                        .map(|f| (pascal(&f.name), f.number, f.attr_kind()))
+                        .collect();
+                    let mirror_variants: BTreeSet<(String, u32, String)> = oneof_enum
+                        .variants
+                        .iter()
+                        .map(|(n, t, k)| (n.clone(), *t, k.clone()))
+                        .collect();
+                    if proto
+                        != mirror_variants
+                            .iter()
+                            .map(|(n, t, k)| (n.clone(), *t, k.as_str()))
+                            .collect::<BTreeSet<(String, u32, &str)>>()
+                    {
+                        let proto_dbg: Vec<String> = proto
+                            .iter()
+                            .map(|(n, t, k)| format!("{n}:{t}:{k}"))
+                            .collect();
+                        let mirror_dbg: Vec<String> = mirror_variants
+                            .iter()
+                            .map(|(n, t, k)| format!("{n}:{t}:{k}"))
+                            .collect();
+                        self.record(
+                            key,
+                            format!(
+                                "oneof {dname:?}: member/variant mismatch proto [{}] vs mirror [{}]",
+                                proto_dbg.join(", "),
+                                mirror_dbg.join(", ")
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        for mname in moneofs.keys() {
+            if !doneofs.contains(*mname) {
+                self.record(key, format!("mirror oneof {mname:?} not declared in proto"));
+            }
+        }
+    }
+
+    fn compare_enums(&mut self, desc: &DescIndex, mirror: &MirrorModel) {
+        for (key, dvalues) in &desc.enums {
+            let menum = match mirror.enums.get(key) {
+                Some(e) => e,
+                None => {
+                    self.record(
+                        "(enum set)",
+                        format!("proto enum {key:?} missing from mirror"),
+                    );
+                    continue;
+                }
+            };
+            let disc: BTreeMap<&String, i32> = menum.values.iter().map(|(n, v)| (n, *v)).collect();
+            // wire name -> discriminant, merged from both name tables (the
+            // hand-written mirrors sometimes carry only `as_str_name`).
+            let mut entries: Vec<(&str, i32)> = Vec::new();
+            for (variant, wire) in &menum.as_str_name {
+                if let Some(&d) = disc.get(variant) {
+                    entries.push((wire.as_str(), d));
+                }
+            }
+            for (wire, variant) in &menum.from_str_name {
+                if let Some(&d) = disc.get(variant) {
+                    entries.push((wire.as_str(), d));
+                }
+            }
+            let wire_to_disc: BTreeMap<&str, i32> = entries.into_iter().collect();
+
+            if wire_to_disc.is_empty() {
+                // No name table at all: fall back to comparing the discriminant
+                // multisets (weaker — a renamed value would pass, a missing or
+                // renumbered one would not).
+                let mut dnums: Vec<i32> = dvalues.iter().map(|(_, n)| *n).collect();
+                let mut mnums: Vec<i32> = menum.values.iter().map(|(_, n)| *n).collect();
+                dnums.sort_unstable();
+                mnums.sort_unstable();
+                if dnums != mnums {
+                    self.record(
+                        key,
+                        format!("enum value numbers mismatch proto {dnums:?} vs mirror {mnums:?}"),
+                    );
+                }
+                continue;
+            }
+            for (wire, number) in dvalues {
+                match wire_to_disc.get(wire.as_str()) {
+                    None => self.record(
+                        key,
+                        format!("enum value {wire:?} = {number} missing from mirror"),
+                    ),
+                    Some(&d) if d == *number => {}
+                    Some(&d) => self.record(
+                        key,
+                        format!(
+                            "enum value {wire:?}: discriminant mismatch mirror {d} vs proto {number}"
+                        ),
+                    ),
+                }
+            }
+            for wire in wire_to_disc.keys() {
+                if !dvalues.iter().any(|(w, _)| w == wire) {
+                    self.record(
+                        key,
+                        format!("mirror enum wire name {wire:?} not declared in proto"),
+                    );
+                }
+            }
+        }
+        let dkeys: BTreeSet<&String> = desc.enums.keys().collect();
+        for mkey in mirror.enums.keys() {
+            if !dkeys.contains(mkey) {
+                self.record(
+                    "(enum set)",
+                    format!("mirror enum {mkey:?} not declared in any proto"),
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// protoc driver + entry point
+// ---------------------------------------------------------------------------
+
+fn compile_descriptor_set() -> Option<Vec<u8>> {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest.ancestors().nth(3)?.to_path_buf();
+    let proto_root = repo_root.join("proto");
+
+    let mut inputs = vec![proto_root.join("proximadb/explain.proto")];
+    let v1_dir = proto_root.join("proximadb/v1");
+    let mut v1_files: Vec<PathBuf> = std::fs::read_dir(&v1_dir)
+        .expect("read proto/proximadb/v1")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "proto"))
+        .collect();
+    v1_files.sort();
+    inputs.extend(v1_files);
+
+    let out_dir = std::env::temp_dir().join(format!("proximadb-td-proto-2-{}", std::process::id()));
+    std::fs::create_dir_all(&out_dir).expect("temp dir for descriptor set");
+    let desc_path = out_dir.join("descriptor.bin");
+    let _ = std::fs::remove_file(&desc_path);
+
+    let protoc = std::env::var_os("PROTOC").unwrap_or_else(|| "protoc".into());
+    let output = match Command::new(&protoc)
+        .arg("--include_imports")
+        .arg("--descriptor_set_out")
+        .arg(&desc_path)
+        .arg("-I")
+        .arg(&proto_root)
+        .args(&inputs)
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "SKIP: protoc not found (PROTOC unset) — TD-PROTO-2 mirror conformance check \
+                 did not run. CI installs protobuf-compiler, so this gates there."
+            );
+            return None;
+        }
+        Err(err) => panic!("failed to spawn protoc: {err}"),
+    };
+    if !output.status.success() {
+        panic!(
+            "protoc failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Some(std::fs::read(&desc_path).expect("read descriptor set"))
+}
+
+#[test]
+fn v1_mirrors_conform_to_proto_descriptors() {
+    let Some(bytes) = compile_descriptor_set() else {
+        return;
+    };
+    let fds = FileDescriptorSet::decode(bytes.as_slice()).expect("decode FileDescriptorSet");
+
+    let mut by_package: BTreeMap<String, Vec<FileDescriptorProto>> = BTreeMap::new();
+    for file in fds.file {
+        let package = file.package.clone().unwrap_or_default();
+        if package.starts_with("google.") {
+            continue;
+        }
+        by_package.entry(package).or_default().push(file);
+    }
+
+    let mut findings: Vec<String> = Vec::new();
+
+    for package in by_package.keys() {
+        if EXCLUDED_PACKAGES.contains(&package.as_str()) {
+            continue;
+        }
+        if !MIRRORS.iter().any(|(pkg, _)| pkg == package) {
+            findings.push(format!(
+                "(packages) : package {package:?} has proto sources but no mirror entry in \
+                 MIRRORS — add one (or an EXCLUDED_PACKAGES entry with its authority)"
+            ));
+        }
+    }
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for (package, mirror_file) in MIRRORS {
+        let files = match by_package.get(*package) {
+            Some(files) if !files.is_empty() => files,
+            _ => {
+                findings.push(format!(
+                    "(packages) : package {package:?}: no proto sources compiled"
+                ));
+                continue;
+            }
+        };
+        let mirror_path = manifest.join(mirror_file);
+        let source = std::fs::read_to_string(&mirror_path)
+            .unwrap_or_else(|_| panic!("read mirror source {}", mirror_path.display()));
+        let label: &'static str = mirror_file.rsplit('/').next().unwrap_or(mirror_file);
+
+        let mirror = parse_mirror(&source, label);
+        let desc = build_desc_index(files);
+
+        let mut comparer = Comparer {
+            file_label: label,
+            errors: Vec::new(),
+        };
+        comparer.compare(&desc, &mirror);
+        findings.extend(comparer.errors);
+    }
+
+    // Ratchet against the checked-in known-drift ledger.
+    findings.sort();
+    let snapshot_path = manifest.join(SNAPSHOT_PATH);
+    if std::env::var_os("UPDATE_V1_DRIFT_SNAPSHOT").is_some() {
+        let json = serde_json::json!({
+            "_doc": "TD-PROTO-2 known-drift ledger: pre-existing v1-mirror ↔ proto \
+                     mismatches, ratcheted DOWN only. Regenerate with \
+                     UPDATE_V1_DRIFT_SNAPSHOT=1 cargo test -p proximadb-proto --lib \
+                     v1_conformance after fixing drift. New drift is never added here — \
+                     it is fixed.",
+            "findings": findings,
+        });
+        let pretty = serde_json::to_string_pretty(&json).expect("serialize snapshot");
+        std::fs::write(&snapshot_path, pretty + "\n").expect("write snapshot");
+        eprintln!(
+            "wrote {} ({} findings)",
+            snapshot_path.display(),
+            findings.len()
+        );
+        return;
+    }
+
+    let known: BTreeSet<String> = serde_json::from_str::<serde_json::Value>(
+        &std::fs::read_to_string(&snapshot_path).unwrap_or_else(|_| {
+            panic!(
+                "read {} — run with UPDATE_V1_DRIFT_SNAPSHOT=1 to create",
+                SNAPSHOT_PATH
+            )
+        }),
+    )
+    .expect("parse snapshot JSON")
+    .get("findings")
+    .and_then(|f| f.as_array())
+    .expect("snapshot JSON has a findings array")
+    .iter()
+    .filter_map(|v| v.as_str().map(String::from))
+    .collect();
+
+    let current: BTreeSet<String> = findings.iter().cloned().collect();
+    let new_drift: Vec<&String> = current.difference(&known).collect();
+    let stale: Vec<&String> = known.difference(&current).collect();
+
+    if !new_drift.is_empty() || !stale.is_empty() {
+        let mut report = String::new();
+        if !new_drift.is_empty() {
+            report.push_str(&format!(
+                "\nNEW drift ({} — fix it, do NOT add it to the ledger):\n  - ",
+                new_drift.len()
+            ));
+            report.push_str(
+                &new_drift
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n  - "),
+            );
+        }
+        if !stale.is_empty() {
+            report.push_str(&format!(
+                "\nSTALE ledger entries ({} — fixed or changed; regenerate with \
+                 UPDATE_V1_DRIFT_SNAPSHOT=1):\n  - ",
+                stale.len()
+            ));
+            report.push_str(
+                &stale
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n  - "),
+            );
+        }
+        panic!("TD-PROTO-2 v1-mirror drift ratchet:{report}");
+    }
+}

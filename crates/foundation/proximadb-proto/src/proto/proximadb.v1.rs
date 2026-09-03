@@ -15,7 +15,7 @@ pub struct SqlObject {
 /// Keep oneof for memory efficiency, add custom serde implementation
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SqlValue {
-    #[prost(oneof = "sql_value::Value", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
+    #[prost(oneof = "sql_value::Value", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
     pub value: ::core::option::Option<sql_value::Value>,
 }
 /// Nested message and enum types in `SqlValue`.
@@ -38,6 +38,9 @@ pub mod sql_value {
         ArrayValue(super::SqlArray),
         #[prost(message, tag = "8")]
         ObjectValue(super::SqlObject),
+        /// PostgreSQL JSONB binary representation (types.proto tag 9)
+        #[prost(bytes, tag = "9")]
+        JsonbValue(::prost::alloc::vec::Vec<u8>),
     }
 }
 /// Single SQL row field
@@ -12881,7 +12884,7 @@ pub struct CatalogConfig {
     #[prost(map = "string, string", tag = "23")]
     pub properties:
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
-    #[prost(oneof = "catalog_config::Config", tags = "10, 11, 12, 13, 15, 16")]
+    #[prost(oneof = "catalog_config::Config", tags = "10, 11, 12, 13, 15, 16, 17")]
     pub config: ::core::option::Option<catalog_config::Config>,
 }
 /// Nested message and enum types in `CatalogConfig`.
@@ -12901,6 +12904,11 @@ pub mod catalog_config {
         Iceberg(super::IcebergCatalogConfig),
         #[prost(message, tag = "16")]
         Delta(super::DeltaCatalogConfig),
+        /// OLTP backend (postgres/mysql/sqlite) — metadata-only catalog.
+        /// The Rust adapter is retired/opt-in (TD-CAT-10); the wire shape stays
+        /// so binary field-17 configs decode instead of collapsing to None.
+        #[prost(message, tag = "17")]
+        Oltp(super::OltpCatalogConfig),
     }
 }
 /// Native ProximaDB catalog (cloud-first)
@@ -13030,6 +13038,30 @@ pub struct DeltaCatalogConfig {
     /// Checkpoint every N commits
     #[prost(int32, optional, tag = "6")]
     pub checkpoint_interval: ::core::option::Option<i32>,
+}
+/// OLTP catalog configuration — stores catalog metadata only.
+/// Record data always stays in ProximaDB's internal engines (stacked durability
+/// mandate). Use for collections < size_threshold_bytes (default: 1 GB).
+///
+/// The Rust adapter behind this wire type is retired/opt-in (TD-CAT-10); the
+/// mirror carries it so binary field-17 configs decode losslessly.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
+pub struct OltpCatalogConfig {
+    /// Database connection URL
+    #[prost(string, tag = "1")]
+    pub connection_string: ::prost::alloc::string::String,
+    /// Connection pool size (default: 10)
+    #[prost(uint32, tag = "2")]
+    pub pool_max_connections: u32,
+    /// SQL table prefix (default: "xcatalog_")
+    #[prost(string, tag = "3")]
+    pub table_prefix: ::prost::alloc::string::String,
+    /// Run DDL migrations on startup (default: true)
+    #[prost(bool, tag = "4")]
+    pub auto_migrate: bool,
+    /// Collections above this use lakehouse catalog instead
+    #[prost(uint64, tag = "5")]
+    pub size_threshold_bytes: u64,
 }
 /// Cross-region replication for native catalog
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
@@ -13821,6 +13853,12 @@ pub enum CatalogType {
     IcebergHadoop = 8,
     /// Delta Lake catalog
     Delta = 9,
+    /// PostgreSQL / Neon / Supabase / CockroachDB (metadata-only)
+    OltpPostgres = 10,
+    /// MariaDB / MySQL / TiDB / PlanetScale (metadata-only)
+    OltpMysql = 11,
+    /// SQLite (embedded / development)
+    OltpSqlite = 12,
 }
 impl CatalogType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -13838,6 +13876,9 @@ impl CatalogType {
             Self::IcebergJdbc => "CATALOG_TYPE_ICEBERG_JDBC",
             Self::IcebergHadoop => "CATALOG_TYPE_ICEBERG_HADOOP",
             Self::Delta => "CATALOG_TYPE_DELTA",
+            Self::OltpPostgres => "CATALOG_TYPE_OLTP_POSTGRES",
+            Self::OltpMysql => "CATALOG_TYPE_OLTP_MYSQL",
+            Self::OltpSqlite => "CATALOG_TYPE_OLTP_SQLITE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -13852,6 +13893,9 @@ impl CatalogType {
             "CATALOG_TYPE_ICEBERG_JDBC" => Some(Self::IcebergJdbc),
             "CATALOG_TYPE_ICEBERG_HADOOP" => Some(Self::IcebergHadoop),
             "CATALOG_TYPE_DELTA" => Some(Self::Delta),
+            "CATALOG_TYPE_OLTP_POSTGRES" => Some(Self::OltpPostgres),
+            "CATALOG_TYPE_OLTP_MYSQL" => Some(Self::OltpMysql),
+            "CATALOG_TYPE_OLTP_SQLITE" => Some(Self::OltpSqlite),
             _ => None,
         }
     }

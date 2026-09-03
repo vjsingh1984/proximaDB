@@ -126,6 +126,12 @@ pub mod proto {
 #[path = "proto/serde_impls.rs"]
 pub mod serde_impls;
 
+/// TD-PROTO-2: conformance guard for the hand-maintained v1 mirrors (runs only
+/// under `cargo test`; skips when `protoc` is absent).
+#[cfg(test)]
+#[path = "proto/v1_conformance.rs"]
+mod v1_conformance;
+
 #[cfg(test)]
 mod tests {
     use super::proximadb_v1::StorageEngine;

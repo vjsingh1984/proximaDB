@@ -134,6 +134,11 @@ pub fn sql_value_to_json(v: &SqlValue) -> serde_json::Value {
                 .map(|x| serde_json::Value::Number((*x as u64).into()))
                 .collect(),
         ),
+        Some(V::JsonbValue(b)) => serde_json::Value::Array(
+            b.iter()
+                .map(|x| serde_json::Value::Number((*x as u64).into()))
+                .collect(),
+        ),
         Some(V::NullValue(_)) | None => serde_json::Value::Null,
         Some(V::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())

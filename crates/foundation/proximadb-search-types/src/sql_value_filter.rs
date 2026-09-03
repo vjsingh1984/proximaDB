@@ -102,6 +102,12 @@ fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
                 .map(|byte| serde_json::Value::Number((*byte).into()))
                 .collect(),
         ),
+        SqlVal::JsonbValue(bytes) => serde_json::Value::Array(
+            bytes
+                .iter()
+                .map(|byte| serde_json::Value::Number((*byte).into()))
+                .collect(),
+        ),
         SqlVal::NullValue(_) => serde_json::Value::Null,
         SqlVal::ArrayValue(array) => serde_json::Value::Array(
             array

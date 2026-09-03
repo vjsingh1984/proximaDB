@@ -263,6 +263,7 @@ impl From<&proximadb_proto::proximadb_v1::SqlValue> for MetadataValue {
             Some(Value::NullValue(_)) => MetadataValue::Null,
             Some(Value::ArrayValue(_)) => MetadataValue::String(Arc::from("[array]")),
             Some(Value::ObjectValue(_)) => MetadataValue::String(Arc::from("[object]")),
+            Some(Value::JsonbValue(_)) => MetadataValue::String(Arc::from("[jsonb]")),
             None => MetadataValue::Null,
         }
     }

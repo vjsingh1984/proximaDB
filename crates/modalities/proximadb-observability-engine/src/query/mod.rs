@@ -523,6 +523,7 @@ impl ObservabilityQueryEngine {
             Some(Value::NumberValue(f)) => f.to_string(),
             Some(Value::BoolValue(b)) => b.to_string(),
             Some(Value::BytesValue(b)) => String::from_utf8_lossy(b).to_string(),
+            Some(Value::JsonbValue(b)) => String::from_utf8_lossy(b).to_string(),
             Some(Value::NullValue(_)) => "null".to_string(),
             Some(Value::ArrayValue(_)) => "[array]".to_string(),
             Some(Value::ObjectValue(_)) => "{object}".to_string(),

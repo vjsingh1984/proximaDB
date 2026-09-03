@@ -643,6 +643,7 @@ impl TantivyLogIndex {
             Some(SqlValueVariant::BoolValue(b)) => b.to_string(),
             Some(SqlValueVariant::NullValue(_)) => String::new(),
             Some(SqlValueVariant::BytesValue(b)) => format!("<bytes:{}>", b.len()),
+            Some(SqlValueVariant::JsonbValue(b)) => format!("<jsonb:{}>", b.len()),
             Some(SqlValueVariant::ArrayValue(arr)) => arr
                 .values
                 .iter()

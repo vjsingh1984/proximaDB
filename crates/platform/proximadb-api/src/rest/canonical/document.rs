@@ -691,6 +691,9 @@ pub fn sql_value_to_json(value: &SqlValue) -> serde_json::Value {
         Some(Value::BytesValue(b)) => {
             serde_json::Value::String(b.iter().map(|byte| format!("{:02x}", byte)).collect())
         }
+        Some(Value::JsonbValue(b)) => {
+            serde_json::Value::String(b.iter().map(|byte| format!("{:02x}", byte)).collect())
+        }
         Some(Value::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
         }

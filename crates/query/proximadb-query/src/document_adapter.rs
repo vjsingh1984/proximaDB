@@ -33,6 +33,10 @@ pub fn sql_value_to_json(value: &SqlValue) -> serde_json::Value {
             let encoded: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
             serde_json::Value::String(encoded)
         }
+        Some(SqlValueVariant::JsonbValue(b)) => {
+            let encoded: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+            serde_json::Value::String(encoded)
+        }
         Some(SqlValueVariant::ArrayValue(arr)) => {
             let items: Vec<serde_json::Value> = arr.values.iter().map(sql_value_to_json).collect();
             serde_json::Value::Array(items)

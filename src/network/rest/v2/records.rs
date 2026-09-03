@@ -114,6 +114,11 @@ fn sql_value_to_json(
                 .map(|x| serde_json::Value::Number((*x as u64).into()))
                 .collect(),
         ),
+        Some(Value::JsonbValue(b)) => serde_json::Value::Array(
+            b.iter()
+                .map(|x| serde_json::Value::Number((*x as u64).into()))
+                .collect(),
+        ),
         Some(Value::ArrayValue(arr)) => serde_json::Value::Array(
             arr.values
                 .iter()

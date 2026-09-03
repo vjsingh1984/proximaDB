@@ -336,6 +336,11 @@ fn sql_value_to_property_value(sql_value: &SqlValue) -> Result<PropertyValue> {
         Some(sql_value::Value::BytesValue(bytes)) => {
             Some(property_value::Value::BytesValue(bytes.clone()))
         }
+        // JSONB carries typed JSON semantics property_value lacks — pass the
+        // bytes through like BytesValue.
+        Some(sql_value::Value::JsonbValue(bytes)) => {
+            Some(property_value::Value::BytesValue(bytes.clone()))
+        }
         Some(sql_value::Value::NullValue(_)) => None,
         // For complex types (arrays, objects), serialize to JSON string for now
         Some(sql_value::Value::ArrayValue(arr)) => {

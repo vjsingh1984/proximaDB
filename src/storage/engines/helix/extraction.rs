@@ -303,6 +303,11 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<ser
             let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
             serde_json::Value::String(hex)
         }
+        Value::JsonbValue(b) => {
+            // JSONB bytes as hex string, matching BytesValue
+            let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+            serde_json::Value::String(hex)
+        }
         Value::ArrayValue(_) => serde_json::Value::String("[array]".to_string()),
         Value::ObjectValue(_) => serde_json::Value::String("[object]".to_string()),
     })

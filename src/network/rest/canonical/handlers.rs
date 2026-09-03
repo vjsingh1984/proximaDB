@@ -1334,6 +1334,14 @@ fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
                     .collect(),
             )
         }
+        Some(V::JsonbValue(b)) => {
+            // JSONB bytes as JSON array of integers, matching BytesValue
+            serde_json::Value::Array(
+                b.iter()
+                    .map(|x| serde_json::Value::Number((*x as u64).into()))
+                    .collect(),
+            )
+        }
         Some(V::NullValue(_)) => serde_json::Value::Null,
         Some(V::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())

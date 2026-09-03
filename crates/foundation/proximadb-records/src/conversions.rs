@@ -51,6 +51,13 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
             Ok(v) => ProximaValue::Jsonb(v),
             Err(_) => ProximaValue::Binary(b.clone()),
         },
+        // types.proto tag 9: PostgreSQL JSONB binary — by construction valid
+        // JSONB, but fall back to Binary like BytesValue if a producer sent
+        // malformed bytes.
+        Some(sql_value::Value::JsonbValue(b)) => match ProximaValue::from_jsonb_slice(b) {
+            Ok(v) => ProximaValue::Jsonb(v),
+            Err(_) => ProximaValue::Binary(b.clone()),
+        },
         Some(sql_value::Value::NullValue(_)) => ProximaValue::Null,
         Some(sql_value::Value::ArrayValue(arr)) => {
             let items: Vec<ProximaValue> = arr.values.iter().map(sql_value_to_proxima).collect();
