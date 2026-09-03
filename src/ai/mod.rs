@@ -65,7 +65,7 @@ impl AIEnterpiseIntelligenceCoordinator {
         &self,
         tenant_id: &str,
         ai_query: AIEnterpriseQuery,
-        user_context: &crate::auth::sso::EnterpriseUserContext,
+        user_context: &crate::auth::EnterpriseUserContext,
     ) -> Result<AIEnterpriseIntelligenceResult> {
         match ai_query {
             AIEnterpriseQuery::NaturalLanguage {

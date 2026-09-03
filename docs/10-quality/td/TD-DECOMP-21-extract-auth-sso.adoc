@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Landing
+| Status | Superseded — the crate was removed again by [[TD-SSO-3]] (2026-09-03): after TD-SSO-1 shipped the real OIDC seam, the extracted legacy SSO stack had zero live consumers. The extraction's remaining value (the `EnterpriseUserContext` type) was relocated back to root `src/auth/mod.rs`.
 | Severity | Low — behavior-neutral re-export (security-sensitive module; verbatim move)
 | Component | `crates/horizontal/proximadb-auth-sso`; root `src/auth/mod.rs`
 | Relates to | [[TD-DECOMP-1]] (recipe); broad clean-leaf scan across root `src/`

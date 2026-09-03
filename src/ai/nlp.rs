@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::auth::sso::EnterpriseUserContext;
+use crate::auth::EnterpriseUserContext;
 use crate::storage::tenant::BusinessContext;
 
 /// Enterprise NLP engine for business intelligence queries

@@ -86,7 +86,6 @@ members = [
     "crates/horizontal/proximadb-document-compression",
     "crates/horizontal/proximadb-arrow-block-index",
     "crates/horizontal/proximadb-geo-queries",
-    "crates/horizontal/proximadb-auth-sso",
     "crates/horizontal/proximadb-catapult",
     "crates/horizontal/proximadb-axis-tunnel",
     "crates/horizontal/proximadb-filterable-metadata",
@@ -334,7 +333,6 @@ proximadb-implicit-id-generator = { path = "crates/horizontal/proximadb-implicit
 proximadb-document-compression = { path = "crates/horizontal/proximadb-document-compression" }
 proximadb-arrow-block-index = { path = "crates/horizontal/proximadb-arrow-block-index" }
 proximadb-geo-queries = { path = "crates/horizontal/proximadb-geo-queries" }
-proximadb-auth-sso = { path = "crates/horizontal/proximadb-auth-sso" }
 proximadb-catapult = { path = "crates/horizontal/proximadb-catapult" }
 proximadb-axis-tunnel = { path = "crates/horizontal/proximadb-axis-tunnel" }
 proximadb-filterable-metadata = { path = "crates/horizontal/proximadb-filterable-metadata" }
@@ -486,7 +484,6 @@ proximadb-implicit-id-generator = { workspace = true }
 proximadb-document-compression = { workspace = true }
 proximadb-arrow-block-index = { workspace = true }
 proximadb-geo-queries = { workspace = true }
-proximadb-auth-sso = { workspace = true }
 proximadb-catapult = { workspace = true }
 proximadb-axis-tunnel = { workspace = true }
 proximadb-filterable-metadata = { workspace = true }
