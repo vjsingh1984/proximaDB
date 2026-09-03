@@ -1768,6 +1768,7 @@ impl Compaction {
                     run_buffer_bytes,
                     merge_fan_in,
                     plan.memory_bytes,
+                    task.output_file.to_str(),
                 )
                 .map_err(|error| {
                     crate::core::StorageError::SstEngine(format!(
@@ -2493,7 +2494,7 @@ impl Compaction {
                                 None,
                                 cache_on_write.includes_survivors(),
                                 &shred_spec,
-                            )
+                             task.output_file.to_str())
                             .map_err(|e| {
                                 crate::core::StorageError::SstEngine(format!(
                                     "PAX compaction write failed: {e}"
@@ -2511,7 +2512,7 @@ impl Compaction {
                             f32_tier,
                             None,
                             &shred_spec,
-                        )
+                         task.output_file.to_str())
                         .map_err(|e| {
                             crate::core::StorageError::SstEngine(format!(
                                 "PAX compaction write failed: {e}"
@@ -2652,7 +2653,7 @@ impl Compaction {
                                 None,
                                 cache_on_write.includes_survivors(),
                                 &shred_spec,
-                            )
+                             task.output_file.to_str())
                             .map_err(|e| {
                                 crate::core::StorageError::SstEngine(format!(
                                     "PAX compaction write failed: {e}"
@@ -2670,7 +2671,7 @@ impl Compaction {
                             f32_tier,
                             None,
                             &shred_spec,
-                        )
+                         task.output_file.to_str())
                         .map_err(|e| {
                             crate::core::StorageError::SstEngine(format!(
                                 "PAX compaction write failed: {e}"

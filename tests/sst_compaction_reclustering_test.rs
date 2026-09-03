@@ -89,6 +89,7 @@ async fn test_append_compaction_reclusters_and_improves_coherence() {
         VectorQuant::Sq8,
         false,
         Some(ROWS_PER_BLOCK_TARGET * 1024),
+        None,
     )
     .expect("bootstrap write");
 
@@ -101,6 +102,7 @@ async fn test_append_compaction_reclusters_and_improves_coherence() {
         VectorQuant::Sq8,
         false,
         Some(ROWS_PER_BLOCK_TARGET * 1024),
+        None,
     )
     .expect("compacted write");
 
@@ -155,6 +157,7 @@ async fn test_cluster_kill_switch_disables_centroids() {
         VectorQuant::Sq8,
         false,
         Some(ROWS_PER_BLOCK_TARGET * 1024),
+        None,
     )
     .expect("write with kill-switch");
     assert!(

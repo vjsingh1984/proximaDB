@@ -123,6 +123,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             None,
+            None, // destination_url
         )?;
 
         // The exact `.pax` path the scan probes (the engine's discovered URL), so

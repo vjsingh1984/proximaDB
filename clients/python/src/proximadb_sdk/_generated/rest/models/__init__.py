@@ -16,6 +16,8 @@ from .batch_edges_response import BatchEdgesResponse
 from .batch_edges_response_data import BatchEdgesResponseData
 from .batch_nodes_response import BatchNodesResponse
 from .batch_nodes_response_data import BatchNodesResponseData
+from .bulk_log_ingest_request import BulkLogIngestRequest
+from .bulk_metric_ingest_request import BulkMetricIngestRequest
 from .capabilities_response import CapabilitiesResponse
 from .capabilities_response_error_envelope import CapabilitiesResponseErrorEnvelope
 from .capabilities_response_limits import CapabilitiesResponseLimits
@@ -70,6 +72,10 @@ from .create_edge_request import CreateEdgeRequest
 from .create_graph_request import CreateGraphRequest
 from .create_model_registry_request import CreateModelRegistryRequest
 from .create_node_request import CreateNodeRequest
+from .create_observability_namespace_request import CreateObservabilityNamespaceRequest
+from .create_observability_namespace_response import (
+    CreateObservabilityNamespaceResponse,
+)
 from .delete_collection_v2_response import DeleteCollectionV2Response
 from .delete_graph_response import DeleteGraphResponse
 from .delete_node_response import DeleteNodeResponse
@@ -128,11 +134,24 @@ from .list_collections_v2_response import ListCollectionsV2Response
 from .list_document_collections_response_200 import ListDocumentCollectionsResponse200
 from .list_graphs_response import ListGraphsResponse
 from .list_model_registries_response import ListModelRegistriesResponse
+from .log_entry_input import LogEntryInput
+from .log_entry_input_fields import LogEntryInputFields
+from .metric_aggregation_input import MetricAggregationInput
+from .metric_aggregation_input_labels import MetricAggregationInputLabels
+from .metric_aggregation_result import MetricAggregationResult
+from .metric_data_point import MetricDataPoint
+from .metric_sample_input import MetricSampleInput
+from .metric_sample_input_labels import MetricSampleInputLabels
+from .metric_time_series import MetricTimeSeries
+from .metric_time_series_labels import MetricTimeSeriesLabels
 from .model_registry_record_response import ModelRegistryRecordResponse
+from .nl_translate_request import NlTranslateRequest
+from .nl_translate_result import NlTranslateResult
 from .node_input import NodeInput
 from .node_input_properties import NodeInputProperties
 from .node_response import NodeResponse
 from .node_response_properties_type_0 import NodeResponsePropertiesType0
+from .observability_ingest_response import ObservabilityIngestResponse
 from .predicate_shortfall_wire import PredicateShortfallWire
 from .probe_response import ProbeResponse
 from .proxima_record_input import ProximaRecordInput
@@ -200,6 +219,8 @@ __all__ = (
     "BatchEdgesResponseData",
     "BatchNodesResponse",
     "BatchNodesResponseData",
+    "BulkLogIngestRequest",
+    "BulkMetricIngestRequest",
     "CapabilitiesResponse",
     "CapabilitiesResponseErrorEnvelope",
     "CapabilitiesResponseLimits",
@@ -242,6 +263,8 @@ __all__ = (
     "CreateGraphRequest",
     "CreateModelRegistryRequest",
     "CreateNodeRequest",
+    "CreateObservabilityNamespaceRequest",
+    "CreateObservabilityNamespaceResponse",
     "DeleteCollectionV2Response",
     "DeleteGraphResponse",
     "DeleteNodeResponse",
@@ -300,11 +323,24 @@ __all__ = (
     "ListDocumentCollectionsResponse200",
     "ListGraphsResponse",
     "ListModelRegistriesResponse",
+    "LogEntryInput",
+    "LogEntryInputFields",
+    "MetricAggregationInput",
+    "MetricAggregationInputLabels",
+    "MetricAggregationResult",
+    "MetricDataPoint",
+    "MetricSampleInput",
+    "MetricSampleInputLabels",
+    "MetricTimeSeries",
+    "MetricTimeSeriesLabels",
     "ModelRegistryRecordResponse",
+    "NlTranslateRequest",
+    "NlTranslateResult",
     "NodeInput",
     "NodeInputProperties",
     "NodeResponse",
     "NodeResponsePropertiesType0",
+    "ObservabilityIngestResponse",
     "PredicateShortfallWire",
     "ProbeResponse",
     "ProximaRecordInput",
