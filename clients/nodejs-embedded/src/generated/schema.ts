@@ -886,6 +886,132 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/observability/namespaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an observability namespace.
+         * @description Creates a namespace for log/metric/trace data with tiered retention.
+         *     Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+         *     365 days server-side.
+         */
+        post: operations["createObservabilityNamespace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/logs/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest a batch of log entries. */
+        post: operations["ingestLogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest a single metric sample. */
+        post: operations["ingestMetric"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/metrics/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest a batch of metric samples. */
+        post: operations["ingestMetrics"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/metrics/aggregate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aggregate a metric over a time range.
+         * @description Aggregation defaults to `avg` with a 60-second step. Results are
+         *     grouped by `group_by` label names and filtered by exact `labels` match.
+         */
+        post: operations["aggregateMetrics"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/nl/translate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Translate natural language to a query (AV-SQL).
+         * @description Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+         *     over the configured LLM (`config.llm`) and returns the normalized
+         *     query, the agent-selected views, and the final composed query string.
+         *     Requires the LLM integration to be configured; the result is
+         *     model-generated — validate before execution.
+         */
+        post: operations["translateNaturalLanguage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2448,6 +2574,128 @@ export interface components {
             };
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * @description Body for `POST /api/v2/observability/namespaces`. Retention days
+         *     default to hot=1, warm=7, cold=30.
+         */
+        CreateObservabilityNamespaceRequest: {
+            name: string;
+            /**
+             * Format: uint32
+             * @default 1
+             */
+            hot_retention_days: number;
+            /**
+             * Format: uint32
+             * @default 7
+             */
+            warm_retention_days: number;
+            /**
+             * Format: uint32
+             * @default 30
+             */
+            cold_retention_days: number;
+        };
+        CreateObservabilityNamespaceResponse: {
+            success: boolean;
+            namespace: string;
+        };
+        /**
+         * @description A single log entry for ingestion. `severity` defaults to `info`;
+         *     `fields` carries arbitrary structured attributes.
+         */
+        LogEntryInput: {
+            /** Format: int64 */
+            timestamp_ns?: number | null;
+            message: string;
+            /**
+             * @description One of: trace, debug, info, warn, error, fatal (case-insensitive).
+             * @default info
+             */
+            severity: string;
+            source?: string | null;
+            service?: string | null;
+            fields?: {
+                [key: string]: unknown;
+            };
+        };
+        BulkLogIngestRequest: {
+            logs: components["schemas"]["LogEntryInput"][];
+        };
+        MetricSampleInput: {
+            name: string;
+            /** Format: double */
+            value: number;
+            /**
+             * Format: int64
+             * @description Defaults to server receive time.
+             */
+            timestamp_ns?: number | null;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        BulkMetricIngestRequest: {
+            metrics: components["schemas"]["MetricSampleInput"][];
+        };
+        ObservabilityIngestResponse: {
+            /** Format: uint64 */
+            ingested: number;
+            /** Format: uint64 */
+            failed: number;
+            success: boolean;
+        };
+        MetricAggregationInput: {
+            metric_name: string;
+            /** Format: int64 */
+            start_time_ns: number;
+            /** Format: int64 */
+            end_time_ns: number;
+            /**
+             * @description min, max, avg, sum, or count.
+             * @default avg
+             */
+            aggregation: string;
+            /**
+             * Format: uint32
+             * @default 60
+             */
+            step_seconds: number;
+            group_by?: string[];
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        MetricDataPoint: {
+            /** Format: int64 */
+            timestamp_ns: number;
+            /** Format: double */
+            value: number;
+        };
+        MetricTimeSeries: {
+            labels: {
+                [key: string]: string;
+            };
+            points: components["schemas"]["MetricDataPoint"][];
+        };
+        MetricAggregationResult: {
+            series: components["schemas"]["MetricTimeSeries"][];
+            /** Format: uint64 */
+            query_time_ms: number;
+        };
+        /** @description Body for `POST /api/v2/nl/translate`. */
+        NlTranslateRequest: {
+            query: string;
+        };
+        /**
+         * @description Model-generated translation output — the final query string is not
+         *     validated SQL/AQL; validate before executing it.
+         */
+        NlTranslateResult: {
+            normalized_query: string;
+            views: string[];
+            final_query: string;
         };
     };
     responses: {
@@ -4264,6 +4512,197 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    createObservabilityNamespace: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateObservabilityNamespaceRequest"];
+            };
+        };
+        responses: {
+            /** @description Namespace created. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateObservabilityNamespaceResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    ingestLogs: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkLogIngestRequest"];
+            };
+        };
+        responses: {
+            /** @description Ingestion result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservabilityIngestResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    ingestMetric: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricSampleInput"];
+            };
+        };
+        responses: {
+            /** @description Ingestion result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservabilityIngestResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    ingestMetrics: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkMetricIngestRequest"];
+            };
+        };
+        responses: {
+            /** @description Ingestion result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservabilityIngestResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    aggregateMetrics: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricAggregationInput"];
+            };
+        };
+        responses: {
+            /** @description Aggregated time series. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricAggregationResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    translateNaturalLanguage: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NlTranslateRequest"];
+            };
+        };
+        responses: {
+            /** @description Translation result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NlTranslateResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description LLM unavailable or translation failed. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
