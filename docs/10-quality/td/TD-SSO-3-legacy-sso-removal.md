@@ -57,12 +57,15 @@ customers may consume them in embedded form. Removal requires explicit product
 sign-off, not an automated dead-code census.
 
 As-of-today reachability census (recorded so the next session doesn't redo it;
-descriptive, NOT prescriptive): no REST routes exist for these modules (so no
-spec-generated SDK can reach them), the embedded bindings
-(`crates/binding/proximadb-embedded`) re-export no `ai::` surface, AnvaiOps
-consumes ProximaDB only via the Python SDK over the wire, and no sibling repo
-path-depends on the root crate. The live LLM path is the separate
-`ai::llm_integration` module (wired into `multi_server`/`rest`).
+descriptive, NOT prescriptive — adversarially fact-checked, PR #1824): no REST
+routes exist for these modules (so no spec-generated SDK can reach them), the
+embedded bindings (`crates/binding/proximadb-embedded`) re-export no `ai::`
+surface, AnvaiOps reaches ProximaDB via the Python SDK (connector-sdk), raw
+REST against spec'd routes (`apps/api`), the **embedded PyO3 bindings
+in-process** (`apps/runtime` — zero network), and pgwire — none of which
+expose the `src/ai` enterprise surface — and no sibling repo path-depends on
+the root crate. The live LLM path is the separate `ai::llm_integration`
+module (wired into `multi_server`/`rest` and mounted at `/api/v2/nl`).
 
 == Verification
 
