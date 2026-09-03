@@ -178,6 +178,15 @@ impl ConfigLoader {
                 })?;
             }
         }
+        // TD-IOBUDGET-1 (review finding): duplicate location URLs with
+        // CONFLICTING resolved budgets would silently let the last entry win
+        // (the leaf registry is URL-keyed with insert-overwrite).
+        crate::core::config::StorageConfig::validate_io_budget_conflicts(&config.storage).map_err(
+            |err| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
+                    as Box<dyn std::error::Error + Send + Sync>
+            },
+        )?;
 
         Ok(())
     }

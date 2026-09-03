@@ -878,7 +878,9 @@ pub use proximadb_config::{
     FilesystemOptimizationConfig, IoBudgetConfig, MonitoringConfig, OptimizationConfig,
     PruneModeConfig, StorageLocation, TempStrategy, TransactionalOperationsConfig,
 };
-use proximadb_storage_common::iops_budget::{IopsBudget, register_location_budget};
+use proximadb_storage_common::iops_budget::{
+    IopsBudget, clear_location_budgets, register_location_budget,
+};
 
 impl StorageConfig {
     /// Resolve the SST configuration that every runtime SST instance must use.
@@ -972,6 +974,44 @@ impl StorageConfig {
         Ok(budget)
     }
 
+    /// Fail closed when the same location URL carries io_budget sections that
+    /// resolve to DIFFERENT budgets (TD-IOBUDGET-1 review finding). The leaf
+    /// registry is keyed by URL with insert-overwrite, so two entries for one
+    /// URL would silently let the last one win for every path under that
+    /// prefix. Duplicate URLs with identical (or absent) budgets stay allowed
+    /// — deliberate weight duplication pre-exists and is not a budget
+    /// conflict.
+    pub fn validate_io_budget_conflicts(&self) -> Result<(), String> {
+        let mut resolved_by_url: std::collections::HashMap<&str, IopsBudget> =
+            std::collections::HashMap::new();
+        for location in &self.storage_locations {
+            let Some(cfg) = &location.io_budget else {
+                continue;
+            };
+            let budget = Self::resolve_location_io_budget(&location.url, cfg).map_err(|err| {
+                format!(
+                    "storage.storage_locations[{}] io_budget: {err}",
+                    location.url
+                )
+            })?;
+            match resolved_by_url.get(location.url.as_str()) {
+                Some(prev) if *prev != budget => {
+                    return Err(format!(
+                        "storage_locations contains duplicate URL {} with conflicting \
+                         io_budgets ({prev:?} vs {budget:?}); a location URL must resolve \
+                         to exactly one budget",
+                        location.url
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    resolved_by_url.insert(location.url.as_str(), budget);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validate + register every location's `io_budget` into the storage leaf
     /// and emit the resolved table (the boot audit artifact, TD-IOBUDGET-1).
     /// Called authoritatively from `ProximaDB::start` beside the coarse-probe
@@ -979,6 +1019,13 @@ impl StorageConfig {
     /// order. Locations without `io_budget` keep their scheme defaults and the
     /// `PROXIMADB_DISK_CLASS` env hint.
     pub fn register_io_budgets(&self) -> anyhow::Result<()> {
+        // Authoritative-REPLACE seeding: drain before re-registering so a
+        // location dropped from a later config cannot keep serving its stale
+        // budget to an in-process re-boot. Then refuse conflicting duplicate
+        // URLs BEFORE registering anything (nothing wins a conflict).
+        clear_location_budgets();
+        self.validate_io_budget_conflicts()
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
         for location in &self.storage_locations {
             match &location.io_budget {
                 Some(cfg) => {

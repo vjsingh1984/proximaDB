@@ -52,7 +52,10 @@ operator intent and is honored; scheme ceilings bound unregistered paths)
 
 | `sst/block_cluster.rs` `ivf_fine_cell_count` (writer)
 | `write_target_block_bytes` → `for_path`
-| Per clustering run; affects only NEW segments
+| NOT registry-reachable today: the sole call site passes `None` (destination
+unknown at clustering time), so writer geometry stays the CLOUD constant.
+Plumbing the destination URL from the flush/compaction caller is the TD-IVF-4
+follow-up
 
 |===
 
@@ -102,12 +105,14 @@ ADR-024 comment in storage-common's Cargo.toml). Therefore:
 
 === Precedence (specific beats general)
 
-Per-location TOML `io_budget` → `PROXIMADB_DISK_CLASS` env (file/minio paths
-without an explicit budget; per-pod emergency hint, registry row updated) →
-scheme consts. Inside one `io_budget`: explicit `*_bytes` fields override the
-`disk_class` profile, which overrides the scheme default. `cloud` is
-scheme-aware (`IopsBudget::scheme_cloud_budget`): a `file://` location gets
-CLOUD; `s3://` keeps the S3 profile.
+Within one `io_budget`: explicit `*_bytes` fields override the `disk_class`
+profile, which overrides the scheme default. The `PROXIMADB_DISK_CLASS` env
+var (file/minio/bare paths) supplies the device CLASS wherever `disk_class`
+is UNSET — including inside a partial io_budget: env is the pod-level
+hardware-truth signal and bytes are refinements, so a pod-wide
+`PROXIMADB_DISK_CLASS=hdd` composes with a per-location `max_bytes` cap.
+`cloud` is scheme-aware (`IopsBudget::scheme_cloud_budget`): a `file://`
+location gets CLOUD; `s3://` keeps the S3 profile.
 
 === Fail-closed + auditable
 
@@ -118,6 +123,14 @@ CLOUD; `s3://` keeps the S3 profile.
   **fail startup** via `validate_config` and `register_io_budgets`.
 * `ProximaDB::start` INFO-dumps the resolved table: every location →
   registered min/target/max, or "scheme default" — the audit artifact.
+* Duplicate location URLs with CONFLICTING resolved budgets fail startup
+  (`validate_io_budget_conflicts`, checked at load AND boot): the registry is
+  URL-keyed, so insert-overwrite would silently let the last entry win.
+  Identical budgets and budget-less duplicates stay allowed.
+* Boot seeding is authoritative-REPLACE (`clear_location_budgets` drains the
+  registry before re-registering): a location dropped from a later config
+  stops serving its stale budget to an in-process re-boot (embedded re-init,
+  test suites).
 
 == Verification
 

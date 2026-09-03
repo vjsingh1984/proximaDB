@@ -520,3 +520,167 @@ mod io_budget_tests {
         );
     }
 }
+
+// ---- TD-IOBUDGET-1 review findings: precedence pinning, round-trip, duplicate-URL conflict, reseed ----
+
+#[cfg(test)]
+mod io_budget_review_tests {
+    use crate::core::config::{StorageConfig, StorageLocation};
+    use proximadb_config::{DiskClass, IoBudgetConfig};
+    use proximadb_storage_common::iops_budget::IopsBudget;
+
+    const MIB: u64 = 1024 * 1024;
+
+    /// Finding F1 (pinned semantics): the env var supplies the device CLASS
+    /// wherever a budget leaves `disk_class` unset — a partial TOML budget
+    /// (bytes only) refines the env-selected profile rather than suppressing
+    /// it; an explicit `disk_class` beats the env.
+    #[test]
+    fn env_disk_class_supplies_class_for_partial_budget() {
+        struct EnvGuard;
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                unsafe { std::env::remove_var("PROXIMADB_DISK_CLASS") };
+            }
+        }
+        unsafe { std::env::set_var("PROXIMADB_DISK_CLASS", "hdd") };
+        let _guard = EnvGuard;
+
+        let partial = IoBudgetConfig {
+            disk_class: None,
+            max_bytes: Some(4 * MIB),
+            min_bytes: None,
+            target_bytes: None,
+        };
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget("file:///mnt/sas", &partial).unwrap(),
+            IopsBudget {
+                min: 512 * 1024,
+                target: 4 * MIB,
+                max: 4 * MIB
+            }
+        );
+
+        let explicit = IoBudgetConfig {
+            disk_class: Some(DiskClass::Ssd),
+            max_bytes: Some(4 * MIB),
+            min_bytes: None,
+            target_bytes: None,
+        };
+        assert_eq!(
+            StorageConfig::resolve_location_io_budget("file:///mnt/sas", &explicit).unwrap(),
+            IopsBudget {
+                min: 256 * 1024,
+                target: MIB,
+                max: 4 * MIB
+            }
+        );
+    }
+
+    /// Finding F3: serialization round-trips both shapes, and a location
+    /// WITHOUT a budget must not emit an `io_budget` key at all
+    /// (skip_serializing_if guards the serialized byte-shape).
+    #[test]
+    fn storage_location_serialization_round_trips() {
+        let with = StorageLocation {
+            url: "s3://iobudget-roundtrip".to_string(),
+            weight: 2,
+            tags: vec!["cloud".to_string()],
+            io_budget: Some(IoBudgetConfig {
+                disk_class: Some(DiskClass::Cloud),
+                target_bytes: Some(16 * MIB),
+                ..Default::default()
+            }),
+        };
+        let serialized = toml::to_string(&with).unwrap();
+        let parsed: StorageLocation = toml::from_str(&serialized).unwrap();
+        assert_eq!(parsed, with);
+
+        let without = StorageLocation {
+            url: "file:///iobudget-roundtrip".to_string(),
+            weight: 1,
+            tags: vec![],
+            io_budget: None,
+        };
+        let serialized = toml::to_string(&without).unwrap();
+        assert!(!serialized.contains("io_budget"), "{serialized}");
+        let parsed: StorageLocation = toml::from_str(&serialized).unwrap();
+        assert_eq!(parsed, without);
+    }
+
+    /// Finding F4: the registry is URL-keyed, so two entries for the same URL
+    /// with DIFFERENT resolved budgets would silently let the last one win —
+    /// that must die at startup, naming the URL.
+    #[test]
+    fn duplicate_url_with_conflicting_budgets_fails_closed() {
+        let config = StorageConfig {
+            storage_locations: vec![
+                StorageLocation {
+                    url: "file:///iobudget-root-test-dup".to_string(),
+                    weight: 3,
+                    tags: vec![],
+                    io_budget: Some(IoBudgetConfig {
+                        disk_class: Some(DiskClass::Ssd),
+                        ..Default::default()
+                    }),
+                },
+                StorageLocation {
+                    url: "file:///iobudget-root-test-dup".to_string(),
+                    weight: 1,
+                    tags: vec![],
+                    io_budget: Some(IoBudgetConfig {
+                        disk_class: Some(DiskClass::Hdd),
+                        ..Default::default()
+                    }),
+                },
+            ],
+            ..StorageConfig::default()
+        };
+        let err = config.register_io_budgets().unwrap_err().to_string();
+        assert!(err.contains("iobudget-root-test-dup"), "{err}");
+        // Nothing won: the conflicting URL never registers.
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-root-test-dup/seg.pax"),
+            IopsBudget::LOCAL
+        );
+    }
+
+    /// Finding N8: seeding is authoritative-REPLACE — a location dropped from
+    /// a later config must not keep serving its stale budget to an in-process
+    /// re-boot (embedded re-init, test suites).
+    #[test]
+    fn dropped_location_budget_is_cleared_on_reseed() {
+        let with_budget = StorageConfig {
+            storage_locations: vec![StorageLocation {
+                url: "file:///iobudget-root-test-drop".to_string(),
+                weight: 1,
+                tags: vec![],
+                io_budget: Some(IoBudgetConfig {
+                    disk_class: Some(DiskClass::Hdd),
+                    ..Default::default()
+                }),
+            }],
+            ..StorageConfig::default()
+        };
+        with_budget.register_io_budgets().unwrap();
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-root-test-drop/seg.pax"),
+            IopsBudget::CLOUD
+        );
+
+        let without_budget = StorageConfig {
+            storage_locations: vec![StorageLocation {
+                url: "file:///iobudget-root-test-other".to_string(),
+                weight: 1,
+                tags: vec![],
+                io_budget: None,
+            }],
+            ..StorageConfig::default()
+        };
+        without_budget.register_io_budgets().unwrap();
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-root-test-drop/seg.pax"),
+            IopsBudget::LOCAL
+        );
+    }
+}

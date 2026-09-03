@@ -21,6 +21,41 @@ use parking_lot::RwLock;
 /// `SST_DEFAULT_VECTORS_PER_BLOCK=128` until the per-row cost is measured.
 pub const FALLBACK_ROWS_PER_BLOCK: u64 = 128;
 
+/// The URL-scheme taxonomy every scheme-dependent decision in this module
+/// resolves through (TD-IOBUDGET-1: one home for the scheme lists — three
+/// independent match arms is the TD-IVF-4 defect class; a scheme alias added
+/// to one arm but not the others would make `DiskClass::Cloud` resolve a
+/// different profile than `for_scheme_and_env` for the same URL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scheme {
+    /// Azure Blob / ABFS / ADLS family.
+    Azure,
+    /// AWS S3 and HTTP(S) (no hard range limit).
+    S3,
+    /// Google Cloud Storage.
+    Gcs,
+    /// Local disk / MinIO / scheme-less bare path.
+    Local,
+    /// Anything else (generic default profile).
+    Unknown,
+}
+
+impl Scheme {
+    fn of(path: &str) -> Self {
+        match path
+            .split_once("://")
+            .map(|(s, _)| s.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("azure" | "abfs" | "adls" | "az") => Self::Azure,
+            Some("s3" | "http" | "https") => Self::S3,
+            Some("gs" | "gcs") => Self::Gcs,
+            Some("file" | "minio") | None => Self::Local,
+            Some(_) => Self::Unknown,
+        }
+    }
+}
+
 /// Per-backend ranged-GET byte budget for the coalesced-RaBitQ survivor fetch
 /// (ADR-062 D6). `target` is the preferred block byte size; `min`/`max` bound the
 /// self-derived rows-per-block.
@@ -115,21 +150,20 @@ impl IopsBudget {
     /// `target_bytes`) resolves its unspecified fields from the SAME scheme
     /// default a path would get unregistered, never from a stale entry.
     pub fn for_scheme_and_env(path: &str) -> Self {
-        let scheme = path.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
-        match scheme.as_deref() {
+        match Scheme::of(path) {
             // Azure: conservative 4 MiB policy pending TD-SEARCH-3 wire sweep.
-            Some("azure" | "abfs" | "adls" | "az") => Self::AZURE,
+            Scheme::Azure => Self::AZURE,
             // S3 / HTTP: no hard range limit; 8 MiB sweet spot.
-            Some("s3" | "http" | "https") => Self::S3,
+            Scheme::S3 => Self::S3,
             // GCS: same as S3.
-            Some("gs" | "gcs") => Self::GCS,
+            Scheme::Gcs => Self::GCS,
             // Local / MinIO / bare path: no round-trip cost. ADR-073: an
             // HDD-backed location (500 IOPS, seek-bound) must coalesce like a
             // cloud store — the measured sweep puts the LOCAL profile at ~191
             // reads/query (≈2.6 QPS on HDD) vs ~41 with the CLOUD profile
             // (≈12 QPS). `PROXIMADB_DISK_CLASS=hdd` is the deploy-time hint
             // (per-location tags don't reach this leaf crate).
-            Some("file" | "minio") | None => {
+            Scheme::Local => {
                 if std::env::var("PROXIMADB_DISK_CLASS")
                     .map(|v| v.trim().eq_ignore_ascii_case("hdd"))
                     .unwrap_or(false)
@@ -139,7 +173,7 @@ impl IopsBudget {
                     Self::LOCAL
                 }
             }
-            Some(_) => Self::DEFAULT,
+            Scheme::Unknown => Self::DEFAULT,
         }
     }
 
@@ -148,15 +182,13 @@ impl IopsBudget {
     /// `DiskClass::Cloud` maps here — "coalesce like a remote store for MY
     /// scheme": a `file://` location gets [`IopsBudget::CLOUD`] (4 MiB, the
     /// ADR-073 remote-style coalescing), while an `s3://` location keeps its
-    /// own [`IopsBudget::S3`] profile (8 MiB). Kept next to `for_scheme_and_env`
-    /// so the scheme lists have a single home.
+    /// own [`IopsBudget::S3`] profile (8 MiB).
     pub fn scheme_cloud_budget(path: &str) -> Self {
-        let scheme = path.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
-        match scheme.as_deref() {
-            Some("azure" | "abfs" | "adls" | "az") => Self::AZURE,
-            Some("s3" | "http" | "https") => Self::S3,
-            Some("gs" | "gcs") => Self::GCS,
-            _ => Self::CLOUD,
+        match Scheme::of(path) {
+            Scheme::Azure => Self::AZURE,
+            Scheme::S3 => Self::S3,
+            Scheme::Gcs => Self::GCS,
+            Scheme::Local | Scheme::Unknown => Self::CLOUD,
         }
     }
 
@@ -219,6 +251,14 @@ pub fn register_location_budget(url_prefix: &str, budget: IopsBudget) {
         .insert(normalize_prefix(url_prefix), budget);
 }
 
+/// Drop every registered location budget. Seeding is authoritative-REPLACE:
+/// the root crate drains before re-registering the config's full set, so a
+/// location DROPPED from a later config cannot keep serving its stale budget
+/// to an in-process re-boot (embedded re-init, test suites).
+pub fn clear_location_budgets() {
+    LOCATION_BUDGETS.write().clear();
+}
+
 /// The registered budget for a path, if any — the longest registered URL
 /// prefix that matches wins. A prefix matches when the path equals it or
 /// continues it at a `/` boundary (so `s3://bucket` never claims
@@ -275,14 +315,16 @@ pub fn write_target_block_bytes(destination_url: Option<&str>) -> u64 {
 /// Azure's 24 MiB ceiling covers the measured 1M and 768-d knees without
 /// admitting the 32 MiB point that exceeded the declared RSS guard. S3/GCS keep
 /// their existing 16 MiB maximum; local storage remains bounded at 8 MiB.
+/// Those provider ceilings bound UNREGISTERED paths; a registered location
+/// budget (TD-IOBUDGET-1) tightens the enumeration to its own `max` — and an
+/// explicit registered target ABOVE a scheme ceiling is honored operator
+/// intent (the TD-SEARCH-3-style opt-in), never clamped back to the default.
 pub fn read_range_cap_candidates(path: &str) -> Vec<u64> {
     let budget = IopsBudget::for_path(path);
-    let scheme = path.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
-    let scheme_ceiling = match scheme.as_deref() {
-        Some("az" | "azure" | "adls" | "abfs") => 24 * 1024 * 1024,
-        Some("s3" | "gs" | "gcs" | "http" | "https") => 16 * 1024 * 1024,
-        Some("file" | "minio") | None => 8 * 1024 * 1024,
-        Some(_) => 8 * 1024 * 1024,
+    let scheme_ceiling = match Scheme::of(path) {
+        Scheme::Azure => 24 * 1024 * 1024,
+        Scheme::S3 | Scheme::Gcs => 16 * 1024 * 1024,
+        Scheme::Local | Scheme::Unknown => 8 * 1024 * 1024,
     };
     // TD-IOBUDGET-1: an operator-registered location budget tightens the read
     // enumeration to its own `max` (explicit intent — e.g. an HDD location
@@ -571,5 +613,27 @@ mod tests {
             IopsBudget::AZURE
         );
         assert_eq!(IopsBudget::scheme_cloud_budget("gs://b/k"), IopsBudget::GCS);
+    }
+
+    /// TD-IOBUDGET-1 review finding N8: seeding is authoritative-REPLACE.
+    /// (Relies on nextest process isolation — like the env-var test above —
+    /// because the drain clears the process-global registry.)
+    #[test]
+    fn clear_location_budgets_drains_the_registry() {
+        let registered = IopsBudget {
+            min: 512 * 1024,
+            target: 4 * 1024 * 1024,
+            max: 8 * 1024 * 1024,
+        };
+        super::register_location_budget("file:///iobudget-test-clear", registered);
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-clear/seg.pax"),
+            registered
+        );
+        super::clear_location_budgets();
+        assert_eq!(
+            IopsBudget::for_path("file:///iobudget-test-clear/seg.pax"),
+            IopsBudget::LOCAL
+        );
     }
 }

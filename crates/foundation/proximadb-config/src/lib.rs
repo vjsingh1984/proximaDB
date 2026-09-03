@@ -797,8 +797,10 @@ pub enum DiskClass {
 /// Optional per-storage-location I/O budget (TD-IOBUDGET-1).
 ///
 /// Sizes the ranged GETs the engine issues against THIS location — the reader
-/// coalescing policies, the adaptive read planner's cap enumeration, and the
-/// writer's cell-count derivation. Resolution precedence: explicit
+/// coalescing policies and the adaptive read planner's cap enumeration. (The
+/// writer's cell-count derivation is NOT registry-reachable today: its call
+/// site passes `None`, destination unknown at clustering time — TD-IVF-4.)
+/// Resolution precedence: explicit
 /// `min_bytes`/`target_bytes`/`max_bytes` override the `disk_class` profile,
 /// which overrides the URL-scheme default. The root crate validates the
 /// resolved budget (fail-closed at load) and registers it at boot.
@@ -824,7 +826,7 @@ pub struct IoBudgetConfig {
 }
 
 /// Storage location configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StorageLocation {
     /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb").
     pub url: String,
