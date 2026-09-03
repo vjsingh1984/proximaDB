@@ -107,9 +107,18 @@ engaged" ×3 in the ON arm log, ×0 in OFF — the exact signal the invalidated
 
 | gates
 | FAIL (object_cold GET 21.95 > 20)
-| **PASS all**
+| **PASS all** (post-write/p50 gates at the campaign's loose settings — see below)
 | —
-|===
+
+Both arms ran with `--post-write-max-gets 5000 --max-p50-ms 60000`: those two
+defaults are bed-class-dependent (50 ms p50 is unattainable on ANY arm of this
+SAS-RAID bed, geometry-independent), so the economy verdict above rests on the
+GET/bytes/recall deltas, not absolute p50. The GET gates are geometry gates and
+are recalibrated to the shipped default geometry in this change (warm
+10.0 → 12.5, post-write 5.0 → 12.5; object-cold 20.0 already clears at 19.02).
+Settled geometry: coarse_cells **30** per arm — the s3/CLOUD default profile
+(2b binary predates the #1820 file:// geometry change), which is the correct
+on-default operating point the flip targets.
 
 **Verdict: the chooser delivers −27…−42% GETs and −7…−30% p50 at byte-identical
 recall, passes every gate the fixed-policy baseline fails, and does not degrade

@@ -307,7 +307,11 @@ file:// geometry (k=122: bytes/q −51.1%, object-cold GETs −13.3%, recall 0.9
 reported as measured context; the gate is the absolute floor. Context: the 10M
 curve's best measured recall 0.9782 was already recorded as "0.98 explicitly
 unattained rather than lowered" — 0.975 makes that point attainable too.
-Historical numbers in this TD keep their original 0.98-era contexts.
+Historical numbers in this TD keep their original 0.98-era contexts. The
+offline sweep tools' `--target-recall` defaults deliberately remain 0.98
+(nprobe_sweep, cache_tier_sweep, range_cap_sweep, analyze_nprobe_geometry):
+sweeps then over-provision slightly relative to the 0.975 floor, which is the
+safe direction.
 
 Exact ordered result equality is diagnostic, not an acceptance requirement.
 The benchmark now records per-query ordered-ID, ID-set, recall-hit, and

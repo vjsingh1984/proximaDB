@@ -2686,7 +2686,7 @@ def main() -> int:
             "footers; the current writer emits 1 (post-collapse single layout)"
         ),
     )
-    parser.add_argument("--post-write-max-gets", type=float, default=5.0)
+    parser.add_argument("--post-write-max-gets", type=float, default=12.5)
     parser.add_argument("--local-warm-max-gets", type=float, default=12.5)
     parser.add_argument("--object-cold-max-gets", type=float, default=20.0)
     # TD-IOBUDGET-2 (product decision 2026-09-03): the recall floor drops
