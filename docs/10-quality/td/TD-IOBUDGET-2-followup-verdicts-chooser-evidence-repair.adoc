@@ -70,7 +70,7 @@ the estimator's ledger note names. The ledger claim exists. One logging follow-u
 `pax.range_estimator` tracing target emitted nothing at info level on the 2b binary —
 route it to a visible level in the flip PR so future runs self-attest.
 
-**Flip checklist (remaining steps, mechanical):**
+**Flip checklist — the two steps the flip PR executes (this TD records them; execution is gated on product review of the campaign claim):**
 
 . (DONE — see above) Re-run the A/B with the flag; engagement attested; both-arm gate
    outcomes recorded; ledger claim added.
