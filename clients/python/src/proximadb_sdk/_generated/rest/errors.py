@@ -3,7 +3,7 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
-""" Contains shared errors types that can be raised from API functions """
+"""Contains shared errors types that can be raised from API functions"""
 
 
 class UnexpectedStatus(Exception):

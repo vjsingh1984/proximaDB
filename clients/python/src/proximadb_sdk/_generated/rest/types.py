@@ -3,7 +3,7 @@
 # Regenerate with `make gen-python-sdk`. Source of truth:
 # docs/openapi/proximadb-openapi.yaml. The CI gate `python-sdk-codegen-drift`
 # fails if this directory drifts from a fresh regeneration.
-""" Contains some shared types for properties """
+"""Contains some shared types for properties"""
 
 from collections.abc import Mapping, MutableMapping
 from http import HTTPStatus
