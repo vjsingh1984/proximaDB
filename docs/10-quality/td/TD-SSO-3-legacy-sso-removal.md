@@ -47,12 +47,25 @@ through `src/ai/{llm,nlp,insights,natural_language_api}.rs` and `src/audit/mod.r
 verified OIDC claims into it at those seams. The field set is unchanged — this is
 a removal, not a redesign.
 
-== Not removed (separate census, not security-adjacent)
+== Not removed (RETAINED by product direction — do not delete on a code census)
 
 The `src/ai` enterprise-intelligence modules that take
 `&EnterpriseUserContext` params (`llm`, `nlp`, `insights`, `natural_language_api`)
-have zero external consumers — candidates for their own removal TD. Left in place
-to keep this PR single-purpose.
+have zero in-repo consumers, but **"zero in-repo consumers" is not a deletion
+signal** (maintainer direction, 2026-09-03): AnvaiOps may adopt these surfaces, and
+customers may consume them in embedded form. Removal requires explicit product
+sign-off, not an automated dead-code census.
+
+As-of-today reachability census (recorded so the next session doesn't redo it;
+descriptive, NOT prescriptive — adversarially fact-checked, PR #1824): no REST
+routes exist for these modules (so no spec-generated SDK can reach them), the
+embedded bindings (`crates/binding/proximadb-embedded`) re-export no `ai::`
+surface, AnvaiOps reaches ProximaDB via the Python SDK (connector-sdk), raw
+REST against spec'd routes (`apps/api`), the **embedded PyO3 bindings
+in-process** (`apps/runtime` — zero network), and pgwire — none of which
+expose the `src/ai` enterprise surface — and no sibling repo path-depends on
+the root crate. The live LLM path is the separate `ai::llm_integration`
+module (wired into `multi_server`/`rest` and mounted at `/api/v2/nl`).
 
 == Verification
 
