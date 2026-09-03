@@ -653,6 +653,7 @@ async fn canonical_compaction_round_trips_real_pax_inputs() -> anyhow::Result<()
         1,
         VectorQuant::Sq8,
         None,
+        None,
     )?;
     write_pax_segment(
         &input_b,
@@ -660,6 +661,7 @@ async fn canonical_compaction_round_trips_real_pax_inputs() -> anyhow::Result<()
         "collection-7",
         1,
         VectorQuant::Sq8,
+        None,
         None,
     )?;
 
@@ -777,6 +779,7 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
             VectorQuant::Sq8,
             false,
             Some(1_024),
+            None,
         )?;
         write_pax_segment_compacted(
             &input_b,
@@ -787,6 +790,7 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
             VectorQuant::Sq8,
             false,
             Some(1_024),
+            None,
         )?;
     }
     let input_bytes = std::fs::metadata(&input_a)?.len() + std::fs::metadata(&input_b)?.len();

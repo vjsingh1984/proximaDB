@@ -1340,6 +1340,7 @@ fn write_ivf2_geometry(
             VectorQuant::Sq8,
             false,
             Some(target_block),
+            None, // destination_url
         )
         .expect("write compacted bakeoff segment");
         paths.push(path);

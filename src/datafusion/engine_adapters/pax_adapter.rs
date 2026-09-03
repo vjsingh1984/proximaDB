@@ -812,7 +812,7 @@ mod tests {
         let records = vec![record("r1", "t", r1), record("r2", "t", r2)];
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("seg.pax");
-        write_pax_segment(&path, &records, "col", 0, VectorQuant::Auto, None)
+        write_pax_segment(&path, &records, "col", 0, VectorQuant::Auto, None, None)
             .expect("write_pax_segment");
         std::fs::read(&path).expect("read segment back")
     }
@@ -895,6 +895,7 @@ mod tests {
             0,
             VectorQuant::Auto,
             Some(target_block),
+            None, // destination_url
         )
         .expect("write_pax_segment");
         let file_len = std::fs::metadata(&path).unwrap().len();

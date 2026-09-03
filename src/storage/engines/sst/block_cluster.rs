@@ -242,7 +242,9 @@ fn sq8_morton_key(codes: &[u8], dim: usize) -> Vec<u8> {
 /// batch-local model is discarded after ordering — persisted-model reuse
 /// (`pca_model_ref`) is the TD-WLP-4b follow-up.
 pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
-    cluster_plan_pca_ivf(records, idx).map(|plan| plan.order)
+    // Order-only wrapper (no production callers today); the destination is
+    // irrelevant to survivor ORDER, so `None` (CLOUD target) is explicit here.
+    cluster_plan_pca_ivf(records, idx, None).map(|plan| plan.order)
 }
 
 /// Below this many usable rows a trained model can't beat the bootstrap.
@@ -252,15 +254,15 @@ const MIN_ROWS_FOR_IVF: usize = 64;
 /// IOP-sized block, so survivors span fewer cells → fewer GETs and each
 /// cell-fetch is one efficient IOP. `PROXIMADB_IVF_K` overrides to map the
 /// GETs-vs-recall curve (eval knob, not a production setting).
-fn ivf_fine_cell_count(n_usable: usize, dim: usize) -> usize {
+fn ivf_fine_cell_count(n_usable: usize, dim: usize, destination: Option<&str>) -> usize {
     // Shared with the read-side range planner so both sides agree on what an
-    // "IOP" is (TD-IVF-4: two independent constants is the defect). `None`
-    // because the destination backend is genuinely unknown here — compaction
-    // stages the segment to a LOCAL file and publishes afterwards, so the path
-    // in hand would resolve to the LOCAL profile and be wrong. That preserves
-    // today's behaviour while making the gap explicit rather than implicit in a
-    // hard-coded constant.
-    let iop_target = proximadb_storage_common::iops_budget::write_target_block_bytes(None) as usize;
+    // "IOP" is (TD-IVF-4: two independent constants is the defect). The
+    // destination URL (the published object, NOT the local staging path)
+    // resolves the same per-location budget the reader uses for that location;
+    // `None` falls back to the CLOUD target and remains the explicit answer
+    // for callers that genuinely lack a destination.
+    let iop_target =
+        proximadb_storage_common::iops_budget::write_target_block_bytes(destination) as usize;
     std::env::var("PROXIMADB_IVF_K")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -472,11 +474,15 @@ pub(crate) struct IvfTrainingShape {
     pub(crate) sample_step: usize,
 }
 
-pub(crate) fn ivf_training_shape(usable_rows: usize, dim: usize) -> Option<IvfTrainingShape> {
+pub(crate) fn ivf_training_shape(
+    usable_rows: usize,
+    dim: usize,
+    destination: Option<&str>,
+) -> Option<IvfTrainingShape> {
     if usable_rows < MIN_ROWS_FOR_IVF || dim == 0 {
         return None;
     }
-    let k = ivf_fine_cell_count(usable_rows, dim).min(usable_rows);
+    let k = ivf_fine_cell_count(usable_rows, dim, destination).min(usable_rows);
     let train_sample = std::env::var("PROXIMADB_IVF_TRAIN_SAMPLE")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -682,7 +688,11 @@ pub(crate) fn finish_ivf_probe_classifier(
 }
 
 /// Compaction-grade PCA+IVF plan, including the contiguous IVF-cell runs.
-pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<ClusterPlan> {
+pub fn cluster_plan_pca_ivf(
+    records: &[ProximaRecord],
+    idx: usize,
+    destination: Option<&str>,
+) -> Option<ClusterPlan> {
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
 
     let usable: Vec<(usize, &[f32])> = records
@@ -706,7 +716,7 @@ pub fn cluster_plan_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Clu
     // can couple to it. n_comp: dim-term wins at SIFT's k (Phase-0 sweep:
     // recall@10 flat 0.989 for n_comp ∈ [4,128]); the k-term is the high-k
     // hedge. Clustering-only — search-time PCA keeps its own cap.
-    let k = ivf_fine_cell_count(usable.len(), dim);
+    let k = ivf_fine_cell_count(usable.len(), dim, destination);
     let n_components = ivf_projection_dims(dim, k);
     // TD-WLP-4b sample-train: fit PCA + train k-means on a deterministic
     // ~SAMPLE subset (the covariance / centroids converge far before N=1M),
@@ -878,7 +888,11 @@ pub struct IvfProbePlan {
 /// [`MIN_ROWS_FOR_IVF`] usable rows, degenerate dim, or k-means failure) — the
 /// caller falls back to [`cluster_plan_pca_ivf`] and writes the single-level
 /// layout (fail-safe, never a worse segment).
-pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<IvfProbePlan> {
+pub fn cluster_plan_ivf_probe(
+    records: &[ProximaRecord],
+    idx: usize,
+    destination: Option<&str>,
+) -> Option<IvfProbePlan> {
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
 
     let usable: Vec<(usize, &[f32])> = records
@@ -897,7 +911,7 @@ pub fn cluster_plan_ivf_probe(records: &[ProximaRecord], idx: usize) -> Option<I
     let trace_ivf = std::env::var_os("PROXIMADB_TRACE_IVF_FLUSH").is_some();
     let t_start = std::time::Instant::now();
 
-    let shape = ivf_training_shape(usable.len(), dim)?;
+    let shape = ivf_training_shape(usable.len(), dim, destination)?;
     let mut pca = IncrementalPCA::new(dim, shape.n_components);
     for (_, v) in usable.iter().step_by(shape.sample_step) {
         pca.add_sample(v);
@@ -1027,6 +1041,7 @@ pub fn cluster_plan_ivf_probe_partitioned(
     records: &[ProximaRecord],
     idx: usize,
     partition_key: &str,
+    destination: Option<&str>,
 ) -> Option<IvfProbePlan> {
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::IncrementalPCA;
 
@@ -1062,7 +1077,7 @@ pub fn cluster_plan_ivf_probe_partitioned(
 
     // ONE global PCA over the whole corpus (the shared projection space the
     // reader's probe already assumes).
-    let shape = ivf_training_shape(usable.len(), dim)?;
+    let shape = ivf_training_shape(usable.len(), dim, destination)?;
     let mut pca = IncrementalPCA::new(dim, shape.n_components);
     for (_, v) in usable.iter().step_by(shape.sample_step) {
         pca.add_sample(v);
@@ -1659,7 +1674,7 @@ mod tests {
             ..Default::default()
         });
 
-        let tl = cluster_plan_ivf_probe(&recs, 0).expect("ivf probe plan");
+        let tl = cluster_plan_ivf_probe(&recs, 0, None).expect("ivf probe plan");
         // Permutation over ALL records.
         assert_eq!(tl.plan.order.len(), recs.len());
         let mut seen = tl.plan.order.clone();
@@ -1695,13 +1710,13 @@ mod tests {
         assert_eq!(tail, vec!["bare1", "bare2"], "no-embedding rows tail last");
 
         // Deterministic: identical input ⇒ identical order AND model.
-        let again = cluster_plan_ivf_probe(&recs, 0).expect("second plan");
+        let again = cluster_plan_ivf_probe(&recs, 0, None).expect("second plan");
         assert_eq!(again.plan.order, tl.plan.order);
         assert_eq!(again.model, tl.model);
 
         // Too-small batch ⇒ None (caller falls back to the single-level plan).
         let small: Vec<ProximaRecord> = recs.iter().take(8).cloned().collect();
-        assert!(cluster_plan_ivf_probe(&small, 0).is_none());
+        assert!(cluster_plan_ivf_probe(&small, 0, None).is_none());
         unsafe {
             std::env::remove_var("PROXIMADB_IVF_K");
         }
@@ -1839,5 +1854,47 @@ mod ncomp_floor_tests {
         assert_eq!(parse_ncomp_floor("0"), Some(0));
         assert_eq!(parse_ncomp_floor("64"), Some(64));
         assert_eq!(parse_ncomp_floor("  32  "), Some(32));
+    }
+    /// TD-IVF-4: the destination URL reaches the IOP target. A registered
+    /// per-location budget (TD-IOBUDGET-1) changes the derived cell count `k`
+    /// (visible through `default_train_sample`'s k-scaling), while `None`
+    /// keeps the CLOUD fallback. Pure arithmetic — no records, no k-means.
+    /// (nextest process isolation covers the registry and env.)
+    #[test]
+    fn destination_url_resolves_the_iop_target() {
+        use proximadb_storage_common::iops_budget::{IopsBudget, register_location_budget};
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF_K");
+        }
+        unsafe {
+            std::env::remove_var("PROXIMADB_IVF_TRAIN_SAMPLE");
+        }
+
+        // 500k usable 768-d rows: k under the CLOUD 4 MiB target is ~9
+        // (train sample stays at the 50k floor); under a registered 64 KiB
+        // target k is ~5859 (train sample scales to the 200k cap).
+        let (rows, dim) = (500_000usize, 768usize);
+        let baseline = super::ivf_training_shape(rows, dim, None).expect("baseline shape");
+        assert_eq!(
+            baseline.train_sample, 50_000,
+            "CLOUD fallback keeps the floor"
+        );
+
+        register_location_budget(
+            "s3://iobudget-writer-test",
+            IopsBudget {
+                min: 64 * 1024,
+                target: 64 * 1024,
+                max: 1024 * 1024,
+            },
+        );
+        let shaped =
+            super::ivf_training_shape(rows, dim, Some("s3://iobudget-writer-test/c/seg.pax"))
+                .expect("registered shape");
+        assert_ne!(
+            shaped.train_sample, baseline.train_sample,
+            "the registered budget must move the IOP-derived k"
+        );
+        assert_eq!(shaped.train_sample, 200_000, "k-scaled sample hits the cap");
     }
 }
