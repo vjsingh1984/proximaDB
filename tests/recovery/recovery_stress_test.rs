@@ -47,11 +47,13 @@ mod recovery_stress_tests {
                         url: format!("file://{}/storage1", base_path),
                         weight: 1,
                         tags: vec!["primary".to_string()],
+                        io_budget: None,
                     },
                     StorageLocation {
                         url: format!("file://{}/storage2", base_path),
                         weight: 1,
                         tags: vec!["secondary".to_string()],
+                        io_budget: None,
                     },
                 ],
                 metadata_url: format!("file://{}/metadata", base_path),

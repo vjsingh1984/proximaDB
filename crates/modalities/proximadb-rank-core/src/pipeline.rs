@@ -370,10 +370,12 @@ impl RankPipeline {
     }
 
     /// Run the second phase: rescore the top `self.rerank_count` hits
-    /// using the supplied scorer, then re-sort all hits by the new
+    /// using the supplied scorer, then re-sort that prefix by its new
     /// scores. Hits beyond `rerank_count` keep their first-phase
-    /// scores and `PhaseId::FIRST` tag — they participate in the
-    /// re-sort but aren't rescored.
+    /// scores and `PhaseId::FIRST` tag. The rescored prefix is sorted
+    /// independently and remains ahead of that untouched tail: raw
+    /// second-stage relevance logits are not assumed to share a scale
+    /// with first-stage BM25/vector scores.
     ///
     /// When `self.second` is `None` the method is a pass-through
     /// (returns `first_outcome` unchanged) — preserves the contract
@@ -404,9 +406,10 @@ impl RankPipeline {
         // scores and rejoins for the final sort.
         let mut iter = first_outcome.hits.into_iter();
         let to_rescore: Vec<ScoredHit> = iter.by_ref().take(take).collect();
+        let mut expected_docs: Vec<DocHandle> = to_rescore.iter().map(|hit| hit.doc).collect();
         let tail: Vec<ScoredHit> = iter.collect();
 
-        let rescored = scorer.rescore(to_rescore, qctx)?;
+        let mut rescored = scorer.rescore(to_rescore, qctx)?;
 
         // Defensive: scorers must preserve hit count + identity. If
         // length drifts, surface a clear error rather than producing
@@ -422,13 +425,30 @@ impl RankPipeline {
             });
         }
 
-        let mut all = rescored;
-        all.extend(tail);
-        all.sort_by(|a, b| {
+        expected_docs.sort_unstable();
+        let mut actual_docs: Vec<DocHandle> = rescored.iter().map(|hit| hit.doc).collect();
+        actual_docs.sort_unstable();
+        if actual_docs != expected_docs {
+            return Err(crate::error::RankError::ModelInference {
+                model_id: "second_phase_scorer".into(),
+                reason: "rescore changed candidate identities".into(),
+            });
+        }
+        if rescored.iter().any(|hit| !hit.score.is_finite()) {
+            return Err(crate::error::RankError::ModelInference {
+                model_id: "second_phase_scorer".into(),
+                reason: "rescore returned a non-finite score".into(),
+            });
+        }
+
+        rescored.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.doc.cmp(&b.doc))
         });
+        let mut all = rescored;
+        all.extend(tail);
 
         let elapsed_us = t0.elapsed().as_micros() as u64;
         Ok(PhaseOutcome {
@@ -692,12 +712,13 @@ mod tests {
     }
 
     #[test]
-    fn run_second_phase_rescores_top_k_and_re_sorts() {
+    fn run_second_phase_reranks_prefix_without_mixing_score_scales() {
         // First-phase order by score desc: 5, 4, 3, 2, 1.
         // rerank_count=3 → top 3 (5, 4, 3) get rescored.
         // ConstantMultiplier(0.1) → those become 0.5, 0.4, 0.3.
-        // Tail (2, 1) keeps scores 2.0, 1.0.
-        // Final re-sort: 2.0 (doc 2), 1.0 (doc 1), 0.5 (doc 5), 0.4 (4), 0.3 (3).
+        // Tail (2, 1) keeps scores 2.0, 1.0. Those scores are not
+        // comparable with cross-encoder logits, so the rescored prefix
+        // remains ahead of the untouched tail.
         let pipe = pipeline_with_second_phase(10, 3);
         let inp = outcome(&[(5, 5.0), (4, 4.0), (3, 3.0), (2, 2.0), (1, 1.0)], false);
         let scorer = ConstantMultiplierSecondPhaseScorer { factor: 0.1 };
@@ -705,10 +726,12 @@ mod tests {
             .run_second_phase(inp, &scorer, &QueryContext::default())
             .unwrap();
         assert_eq!(out.hits.len(), 5);
-        assert_eq!(out.hits[0].doc, DocHandle(2));
-        assert_eq!(out.hits[0].score, 2.0);
-        assert_eq!(out.hits[1].doc, DocHandle(1));
-        assert_eq!(out.hits[2].doc, DocHandle(5));
+        assert_eq!(out.hits[0].doc, DocHandle(5));
+        assert_eq!(out.hits[0].score, 0.5);
+        assert_eq!(out.hits[1].doc, DocHandle(4));
+        assert_eq!(out.hits[2].doc, DocHandle(3));
+        assert_eq!(out.hits[3].doc, DocHandle(2));
+        assert_eq!(out.hits[4].doc, DocHandle(1));
         // Top-3 carry PhaseId::SECOND, tail keeps PhaseId::FIRST.
         let docs_second: Vec<u32> = out
             .hits
@@ -783,6 +806,52 @@ mod tests {
         match pipe.run_second_phase(inp, &DropsFirst, &QueryContext::default()) {
             Err(crate::error::RankError::ModelInference { reason, .. }) => {
                 assert!(reason.contains("returned 2 hits, expected 3"));
+            }
+            other => panic!("expected ModelInference, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_second_phase_rejects_scorer_that_changes_candidate_identity() {
+        struct ReplacesFirst;
+        impl SecondPhaseScorer for ReplacesFirst {
+            fn rescore(
+                &self,
+                mut hits: Vec<ScoredHit>,
+                _qctx: &QueryContext,
+            ) -> RankResult<Vec<ScoredHit>> {
+                hits[0].doc = DocHandle(999);
+                Ok(hits)
+            }
+        }
+        let pipe = pipeline_with_second_phase(10, 2);
+        let inp = outcome(&[(1, 2.0), (2, 1.0)], false);
+        match pipe.run_second_phase(inp, &ReplacesFirst, &QueryContext::default()) {
+            Err(crate::error::RankError::ModelInference { reason, .. }) => {
+                assert!(reason.contains("changed candidate identities"));
+            }
+            other => panic!("expected ModelInference, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_second_phase_rejects_non_finite_scores() {
+        struct ReturnsNan;
+        impl SecondPhaseScorer for ReturnsNan {
+            fn rescore(
+                &self,
+                mut hits: Vec<ScoredHit>,
+                _qctx: &QueryContext,
+            ) -> RankResult<Vec<ScoredHit>> {
+                hits[0].score = f32::NAN;
+                Ok(hits)
+            }
+        }
+        let pipe = pipeline_with_second_phase(10, 1);
+        let inp = outcome(&[(1, 1.0)], false);
+        match pipe.run_second_phase(inp, &ReturnsNan, &QueryContext::default()) {
+            Err(crate::error::RankError::ModelInference { reason, .. }) => {
+                assert!(reason.contains("non-finite score"));
             }
             other => panic!("expected ModelInference, got: {other:?}"),
         }

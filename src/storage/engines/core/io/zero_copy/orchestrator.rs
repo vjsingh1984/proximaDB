@@ -269,10 +269,18 @@ impl ZeroCopyIOSystem {
 
         // Create all engine serializers
         let serializers: Vec<Box<dyn MetadataSerializer>> = vec![
-            Box::new(SstMetadataSerializer::new(Arc::clone(&filesystem))),
-            Box::new(SwiftMetadataSerializer::new(Arc::clone(&filesystem))),
-            Box::new(ParquetMetadataSerializer::new(Arc::clone(&filesystem))),
-            Box::new(NovaMetadataSerializer::new(Arc::clone(&filesystem))),
+            Box::new(SstMetadataSerializer::new(
+                filesystem.clone() as Arc<dyn proximadb_storage_ports::FilesystemPort>
+            )),
+            Box::new(SwiftMetadataSerializer::new(
+                filesystem.clone() as Arc<dyn proximadb_storage_ports::FilesystemPort>
+            )),
+            Box::new(ParquetMetadataSerializer::new(
+                filesystem.clone() as Arc<dyn proximadb_storage_ports::FilesystemPort>
+            )),
+            Box::new(NovaMetadataSerializer::new(
+                filesystem.clone() as Arc<dyn proximadb_storage_ports::FilesystemPort>
+            )),
         ];
 
         info!(

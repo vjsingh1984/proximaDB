@@ -193,6 +193,8 @@ impl DocumentPaxPushdownProvider {
             self.filesystem_factory.clone(),
             self.name_to_col_id.clone(),
             physical_filters,
+            None, // tenant_id
+            None, // time_range
         );
 
         let id_idx = self.pax_read_schema.index_of("id")?;
@@ -282,11 +284,7 @@ impl DocumentPaxPushdownProvider {
         let props: Vec<String> = rows
             .iter()
             .map(|(_, tree)| {
-                let map: serde_json::Map<String, serde_json::Value> =
-                    crate::core::search::sql_value_filter::proxima_tree_to_json_map(tree)
-                        .into_iter()
-                        .collect();
-                serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
+                crate::core::search::sql_value_filter::proxima_tree_to_canonical_json_string(tree)
             })
             .collect();
 
@@ -984,12 +982,12 @@ mod tests {
                     crate::storage::document::canonical_adapter::proxima_record_to_legacy_document,
                 )
                 .map(|doc| {
-                    let json = serde_json::Value::Object(
-                        crate::core::search::sql_value_filter::proxima_tree_to_json_map(&doc.props)
-                            .into_iter()
-                            .collect(),
-                    );
-                    (doc.id, serde_json::to_string(&json).unwrap_or_default())
+                    (
+                        doc.id,
+                        crate::core::search::sql_value_filter::proxima_tree_to_canonical_json_string(
+                            &doc.props,
+                        ),
+                    )
                 })
                 .collect())
         }

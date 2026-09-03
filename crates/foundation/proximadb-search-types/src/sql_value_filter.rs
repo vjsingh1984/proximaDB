@@ -30,6 +30,7 @@
 //! The filter value comes from the query (as serde_json::Value), while the metadata
 //! is stored as SqlValue. We compare them type-safely without lossy conversions.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use proximadb_data_model::ProximaValue;
@@ -216,6 +217,38 @@ pub fn proxima_tree_to_json_map(props: &ProximaTree) -> HashMap<String, serde_js
         .iter()
         .map(|(key, node)| (key.clone(), node_to_json(node)))
         .collect()
+}
+
+/// Serialise `props` to a canonical JSON string: object keys sorted at every level.
+///
+/// Key order must be canonical here, not incidental: `serde_json::Map` is
+/// order-preserving whenever some dependency enables the `preserve_order`
+/// feature (datafusion-physical-plan 55+ does, via `serde_json/preserve_order`)
+/// and a plain `BTreeMap` otherwise, so insertion-order serialisation changes
+/// byte-for-byte with the dependency graph. Sorting explicitly pins the
+/// serialised form — the same bytes `BTreeMap` semantics produced before.
+pub fn proxima_tree_to_canonical_json_string(props: &ProximaTree) -> String {
+    fn node_to_canonical_json(node: &ProximaTreeNode) -> serde_json::Value {
+        match node {
+            ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
+            ProximaTreeNode::Object(subtree) => {
+                let mut entries: Vec<(String, serde_json::Value)> = subtree
+                    .iter()
+                    .map(|(k, n)| (k.clone(), node_to_canonical_json(n)))
+                    .collect();
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                serde_json::Value::Object(entries.into_iter().collect())
+            }
+        }
+    }
+
+    let mut entries: Vec<(String, serde_json::Value)> = props
+        .iter()
+        .map(|(key, node)| (key.clone(), node_to_canonical_json(node)))
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    serde_json::to_string(&serde_json::Value::Object(entries.into_iter().collect()))
+        .unwrap_or_default()
 }
 
 /// Flatten a `ProximaTree` into the canonical `OptimizedSearchRecord` metadata map.
@@ -434,13 +467,32 @@ where
 /// Evaluate a filter expression against a `ProximaTree` (canonical v2 path).
 ///
 /// Thin adapter over [`evaluate_filter_resolved`]: each field resolves to its
-/// scalar leaf lowered via [`proxima_value_to_json`]; nested `Object` nodes and
-/// absent fields resolve to `None`.
+/// scalar leaf lowered via [`proxima_value_to_json`]. Dot-separated fields walk
+/// both native [`ProximaTreeNode::Object`] values and JSON/JSONB scalar values,
+/// matching PostgreSQL's `payload->>'key'` semantics without flattening stored
+/// documents into a second metadata representation.
 pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> bool {
-    evaluate_filter_resolved(expr, &|field| match props.get(field) {
-        Some(ProximaTreeNode::Value(pv)) => Some(proxima_value_to_json(pv)),
-        _ => None,
+    evaluate_filter_resolved(expr, &|field| {
+        resolve_proxima_value(props, field).map(|value| proxima_value_to_json(value.as_ref()))
     })
+}
+
+fn resolve_proxima_value<'a>(props: &'a ProximaTree, field: &str) -> Option<Cow<'a, ProximaValue>> {
+    if let Some(value) = proximadb_records::tree_get(props, field) {
+        return Some(Cow::Borrowed(value));
+    }
+    let (head, tail) = field.split_once('.')?;
+    let root = match props.get(head)? {
+        ProximaTreeNode::Value(ProximaValue::Json(value))
+        | ProximaTreeNode::Value(ProximaValue::Jsonb(value)) => value,
+        _ => return None,
+    };
+    tail.split('.')
+        .try_fold(root, |value, segment| match value {
+            serde_json::Value::Object(object) => object.get(segment),
+            _ => None,
+        })
+        .map(|value| Cow::Owned(proximadb_records::conversions::json_to_proxima(value)))
 }
 
 /// Evaluate an **authorization** filter against a `ProximaTree` (canonical v2 path).
@@ -461,9 +513,8 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
 /// * this function is **type-strict** — it refuses cross-class comparisons.
 ///   Absence is handled exactly as the default walker handles it.
 pub fn evaluate_filter_proxima_type_strict(expr: &FilterExpression, props: &ProximaTree) -> bool {
-    evaluate_filter_resolved_type_strict(expr, &|field| match props.get(field) {
-        Some(ProximaTreeNode::Value(pv)) => Some(proxima_value_to_json(pv)),
-        _ => None,
+    evaluate_filter_resolved_type_strict(expr, &|field| {
+        resolve_proxima_value(props, field).map(|value| proxima_value_to_json(value.as_ref()))
     })
 }
 
@@ -527,21 +578,15 @@ fn compare_proxima_op(
 }
 
 /// Fail-loud variant of [`evaluate_filter_proxima`] (TD-FILT-1) on the canonical `ProximaTree`
-/// path. Resolves each field to its raw [`ProximaValue`] (no JSON lowering at resolve time) and
-/// compares via [`compare_proxima_op`]. Surfaces an unresolved field (absent or a non-scalar leaf)
-/// as [`FilterEvalError::MissingField`] instead of silently dropping the row. Match results are
-/// identical to the (JSON-lowering) [`evaluate_filter_proxima`]; only unresolved fields differ
-/// (strict errors, default silently drops).
+/// path. Resolves each field through the same nested-field resolver as
+/// [`evaluate_filter_proxima`] and compares via [`compare_proxima_op`]. Native tree
+/// values stay borrowed; a leaf nested inside JSON/JSONB is converted to an owned
+/// [`ProximaValue`]. Surfaces an unresolved field as [`FilterEvalError::MissingField`]
+/// instead of silently dropping the row.
 pub fn evaluate_filter_proxima_strict(
     expr: &FilterExpression,
     props: &ProximaTree,
 ) -> Result<bool, FilterEvalError> {
-    fn resolve<'a>(props: &'a ProximaTree, field: &'a str) -> Option<&'a ProximaValue> {
-        match props.get(field) {
-            Some(ProximaTreeNode::Value(pv)) => Some(pv),
-            _ => None,
-        }
-    }
     match expr {
         FilterExpression::And(exprs) => {
             // Non-short-circuit: evaluate every child so a MissingField in a later arm surfaces.
@@ -572,14 +617,12 @@ pub fn evaluate_filter_proxima_strict(
             value,
         } => match operator {
             // Null tests are decided by presence (SQL: an absent field IS NULL) — never an error.
-            ComparisonOperator::IsNull => {
-                Ok(resolve(props, field).is_none_or(|pv| matches!(pv, ProximaValue::Null)))
-            }
-            ComparisonOperator::IsNotNull => {
-                Ok(resolve(props, field).is_some_and(|pv| !matches!(pv, ProximaValue::Null)))
-            }
-            _ => match resolve(props, field) {
-                Some(pv) => Ok(compare_proxima_op(pv, operator, value)),
+            ComparisonOperator::IsNull => Ok(resolve_proxima_value(props, field)
+                .is_none_or(|pv| matches!(pv.as_ref(), ProximaValue::Null))),
+            ComparisonOperator::IsNotNull => Ok(resolve_proxima_value(props, field)
+                .is_some_and(|pv| !matches!(pv.as_ref(), ProximaValue::Null))),
+            _ => match resolve_proxima_value(props, field) {
+                Some(pv) => Ok(compare_proxima_op(pv.as_ref(), operator, value)),
                 None => Err(FilterEvalError::MissingField {
                     field: field.clone(),
                 }),
@@ -655,6 +698,25 @@ mod tests {
             )),
         );
         props
+    }
+
+    #[test]
+    fn proxima_jsonb_dot_path_resolves_without_flattening() {
+        let props = ProximaTree::from([(
+            "payload".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Jsonb(json!({
+                "memory": {"type": "fact"}
+            }))),
+        )]);
+        let filter = FilterExpression::Comparison {
+            field: "payload.memory.type".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!("fact"),
+        };
+
+        assert!(evaluate_filter_proxima(&filter, &props));
+        assert!(evaluate_filter_proxima_type_strict(&filter, &props));
+        assert_eq!(evaluate_filter_proxima_strict(&filter, &props), Ok(true));
     }
 
     #[test]

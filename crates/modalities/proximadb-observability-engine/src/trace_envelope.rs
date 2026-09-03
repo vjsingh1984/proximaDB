@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::io_trace::{ExecOpTrace, IoTraceSnapshot};
+use crate::io_trace::{ExecOpTrace, IoTraceSnapshot, VectorAccessTrace};
 
 /// Current envelope schema version. Bumped from the flat S1–S2b record (`1`) to the
 /// header+payload envelope (`2`). Explicit — never elided by `serde(default)`.
@@ -92,6 +92,11 @@ pub struct TraceHeader {
     pub footer_hits: u64,
     #[serde(default)]
     pub footer_misses: u64,
+    /// In-process DRAM cache outcomes. Additive and mixed-read-safe.
+    #[serde(default)]
+    pub survivor_l1_hits: u64,
+    #[serde(default)]
+    pub survivor_l1_misses: u64,
     /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
     /// `serde(default)` keeps pre-existing envelopes readable (mixed-read-safe).
     #[serde(default)]
@@ -185,6 +190,11 @@ pub struct RelationalPayload {
 /// reader deserializes a newer writer's envelope losslessly.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VectorAnnPayload {
+    /// One row per successfully completed vector operator is projected into the
+    /// warehouse's normalized vector-access satellite. Defaulted for envelopes
+    /// written before TD-XMODAL-4 S2.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub access_paths: Vec<VectorAccessTrace>,
     #[serde(default)]
     pub centroid_total_blocks: u64,
     #[serde(default)]
@@ -254,6 +264,8 @@ impl TraceHeader {
             range_gets: snap.range_gets,
             footer_hits: snap.footer_hits,
             footer_misses: snap.footer_misses,
+            survivor_l1_hits: snap.survivor_l1_hits,
+            survivor_l1_misses: snap.survivor_l1_misses,
             l2_hits: snap.l2_hits,
             l2_misses: snap.l2_misses,
             compute_ms: snap.compute_ms.clone(),
@@ -284,8 +296,10 @@ impl TracePayload {
             || snap.ivf_whole_region_fallback > 0
             || snap.ivf_region_a_bytes > 0
             || snap.ivf_region_b_bytes > 0
+            || !snap.vector_accesses.is_empty()
         {
             TracePayload::VectorAnn(VectorAnnPayload {
+                access_paths: snap.vector_accesses.clone(),
                 centroid_total_blocks: snap.centroid_total_blocks,
                 centroid_pruned_blocks: snap.centroid_pruned_blocks,
                 logical_striped_bytes: snap.logical_striped_bytes,
@@ -374,14 +388,18 @@ mod tests {
     #[test]
     fn header_carries_l2_probes_and_legacy_json_defaults_to_zero() {
         let snap = IoTraceSnapshot {
+            survivor_l1_hits: 7,
+            survivor_l1_misses: 3,
             l2_hits: 5,
             l2_misses: 2,
             ..Default::default()
         };
         let h = TraceHeader::from_snapshot(&snap, Some("t"), 1);
+        assert_eq!((h.survivor_l1_hits, h.survivor_l1_misses), (7, 3));
         assert_eq!((h.l2_hits, h.l2_misses), (5, 2));
 
         let legacy: TraceHeader = serde_json::from_str(r#"{"event_time_unix_ms":7}"#).unwrap();
+        assert_eq!((legacy.survivor_l1_hits, legacy.survivor_l1_misses), (0, 0));
         assert_eq!((legacy.l2_hits, legacy.l2_misses), (0, 0));
     }
 
@@ -446,6 +464,33 @@ mod tests {
                 assert_eq!(p.centroid_total_blocks, 64);
                 assert_eq!(p.centroid_pruned_blocks, 50);
             }
+            other => panic!("expected VectorAnn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vector_access_alone_classifies_and_round_trips_durably() {
+        use crate::io_trace::{VectorAccessPath, VectorCachePolicy, VectorSearchIntent};
+
+        let access = VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 384,
+            top_k: 10,
+            has_filter: true,
+            requested_mode: VectorSearchIntent::Adaptive,
+            actual_path: VectorAccessPath::Exact,
+            storage_scope: crate::io_trace::VectorStorageScope::Local,
+            cache_policy: VectorCachePolicy::Disabled,
+        };
+        let snap = IoTraceSnapshot {
+            vector_accesses: vec![access.clone()],
+            ..Default::default()
+        };
+        let payload = TracePayload::classify(&snap);
+        let json = serde_json::to_string(&payload).unwrap();
+        let round_trip: TracePayload = serde_json::from_str(&json).unwrap();
+        match round_trip {
+            TracePayload::VectorAnn(vector) => assert_eq!(vector.access_paths, vec![access]),
             other => panic!("expected VectorAnn, got {other:?}"),
         }
     }

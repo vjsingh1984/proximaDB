@@ -212,6 +212,29 @@ pub trait FilesystemPort: Send + Sync {
     async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>>;
 }
 
+/// Cache-tier usage snapshot reported by engines/services to the
+/// `CrossCacheOrchestrator` — hoisted from the root cache orchestrator
+/// (TD-DECOMP-82) so extracted engine leaves can implement the provider
+/// without a root dependency.
+#[derive(Clone, Debug)]
+pub struct UsageStats {
+    /// Hit rate over the reporting window (0.0–1.0).
+    pub hit_rate: f64,
+    /// Average entry size in bytes.
+    pub avg_entry_size: usize,
+    /// Mean access frequency (accesses/second over the window).
+    pub access_frequency: f64,
+    /// When the tier was last rebalanced.
+    pub last_rebalance: std::time::SystemTime,
+}
+
+/// Provider trait for engines/services to report usage snapshots — the root
+/// orchestrator collects these per `CacheType` for dynamic rebalancing.
+pub trait CacheStatsProvider {
+    /// Report a usage snapshot for the provider's cache tier.
+    fn snapshot(&self) -> UsageStats;
+}
+
 /// Cache-kind for access-pattern tracking — the engine-facing subset of the root
 /// `CacheType` (the 5 variants engines actually track, measured across
 /// `src/storage/engines/`: VectorData, Metadata, DistanceTable, FilterBitmap,

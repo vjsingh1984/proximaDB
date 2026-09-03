@@ -214,6 +214,10 @@ pub mod services;
 /// Storage engine layer — 6 engines, WAL, filesystem, cache, memtable, metadata
 #[allow(missing_docs)]
 pub mod storage;
+/// Shared cfg(test)-only test support (catalog double etc.) — TD-CAT-10
+#[allow(missing_docs)]
+#[cfg(test)]
+pub mod testing;
 /// Common utilities — UUID, checksum, encoding, bitmap, cache
 #[allow(missing_docs)]
 pub mod utils;
@@ -297,11 +301,6 @@ pub use catalog::{
     // Catalog management
     CatalogManager,
     TableIdentifier,
-    // Catalog federation for unified view across internal and external catalogs
-    federation::{
-        ConstraintSupport, ExternalCatalog, ExternalCatalogConfig, ExternalCatalogType,
-        FederatedCatalog, FederatedCatalogConfig, FederatedTableInfo,
-    },
     // Internal schema registry
     internal::{
         // Object model

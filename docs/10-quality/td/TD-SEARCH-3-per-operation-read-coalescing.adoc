@@ -11,8 +11,16 @@
 
 | Status
 | **In Progress.** The physical-operation counter and bounded prefix read are
-implemented. The SIFT1M cloud/restart evidence gate is still open; projected
-GET reductions are not recorded as measured results.
+implemented. A fixed-bed Azurite wire experiment proves that 24--32 MiB ranges
+reduce physical GETs by 64--65% and that the Azure SDK does not split them.
+The default-OFF exact-plan estimator now passes its exact-current BIGANN 1M
+and 10M paired gates: wire GET/query fell 24.1% and 20.2% respectively with
+identical aggregate recall, lower latency, and bounded bytes/RSS. The 3.3M
+point reduced wire GET/query by 24.3% but exceeded the predeclared peak-RSS
+ratio by 0.21 percentage points, and a serialized repeat reproduced that
+shape-specific miss. Under bounded concurrency, however, both the 3.3M and
+10M beds pass every gate at the concurrency-4 operating knee. No default is
+promoted yet; paired DRAM/persistent-disk cache validation remains open.
 
 | Priority
 | **P1.** Operation count is a direct Hot-tier Blob cost and latency multiplier.
@@ -49,7 +57,9 @@ That does **not** make bytes free:
 * ProximaDB's own scanned-byte KRU term still meters bytes;
 * Cool/Cold/Archive tiers add data-retrieval charges;
 * hierarchical-namespace/Data Lake endpoints can have different transaction
-  categorization and must not be conflated with the flat Blob endpoint.
+  categorization, but ProximaDB does not route to them: `az://`, `azure://`,
+  `adls://`, and `abfs://` are aliases for the same flat Blob backend. Path
+  spelling therefore cannot select a different range-cost policy.
 
 Therefore a merge is admissible only when the saved round trip is worth its
 bounded gap over-read. Optimizing GET count without a byte cap merely moves
@@ -115,25 +125,31 @@ over-read. Logical selected slices remain unchanged, so recall is invariant.
 
 === S1: physical GET accounting
 
-`CountingFileSystem::read_ranges(path, ranges)` now adds `ranges.len()` physical
-range operations because the trait's default implementation issues exactly
-that many `read_range()` calls. The recorder receives the physical count too.
-This fixes the unencrypted local/object-store benchmark route's under-counting.
-The encryption wrapper is a documented exception: an encrypted batch can
-materialize the encrypted object once and slice it locally. HTTP-boundary
-instrumentation is still required before calling this counter universally
-physical for encrypted deployments. A future true one-request multi-range
-backend likewise needs an explicit physical-operation report.
+`FileSystem::read_ranges(path, ranges)` now has an explicit plan/execute split
+(#1649). `plan_read_ranges()` converts logical ranges into physical reads plus
+an input-order slice mapping under an optional `RangeCoalescePolicy`; execution
+issues exactly the physical plan and reconstructs the original logical result
+vector. With no policy the plan is the byte-identical identity path.
+
+`CountingFileSystem` delegates policy lookup through its decorator chain and
+meters `plan.physical.len()`, not `ranges.len()`. It separately records
+coalesced over-read bytes so logical bytes returned and physical bytes fetched
+cannot be conflated. The counter remains a prediction from the same plan;
+`io_trace.range_gets` and the Azurite request log are the independent leaf/wire
+measurements required for promotion. The encryption wrapper remains a
+documented exception because it can materialize one encrypted object and slice
+locally.
 
 The invariant is:
 
 [source,text]
 ----
-unencrypted current backends:
-physical ranged requests == counted range operations
+unencrypted current backends with a stable policy:
+planned physical reads == counted range operations == leaf range_gets
 ----
 
-A Rust function call named `read_ranges` is not evidence of one cloud request.
+A Rust function call named `read_ranges` is still not evidence of one cloud
+request; the physical plan and leaf/wire observations are.
 
 === S2: bounded prefix read
 
@@ -219,6 +235,336 @@ are bounded, p50/p95/RSS do not materially regress, and the wire/application
 ratio proves one HTTP request per issued large range. Repeat only eligible caps
 on the natural `k_c=90` bed; use `k_c=200` afterward to measure the independent
 byte/selectivity trade-off.
+
+The harness snapshots the release binary into each run directory before
+starting any server process and verifies its SHA-256. Cargo atomically replaces
+profile binaries after a rebuild; launching later points from the mutable
+`target/` path could otherwise mix revisions while retaining the hash captured
+at startup. A pre-existing snapshot with a different hash now fails closed.
+
+=== S3b: measured wire range-cap knee
+
+The fixed-bed falsification experiment ran with an exact release binary from
+source revision `16712f1ac830556ebf3f62f41aabbb595ea838d9` (binary SHA-256
+`ff7675af778c04f280cf57fdf8093a49e51ec390a026baecc38de981b7996500`).
+Every point used the same one-segment 491,655-row, 768-dimensional `k_c=30`,
+width-32 bed, `nprobe=12`, 1,000 queries, a fresh process/cache, a 1 MiB gap
+cap, and the production Azure backend against Azurite. The isolated-port
+configuration SHA-256 was
+`f316a004ac4ff30a4114ba7d38662edf1845eded1b50ed5464423da854b88740`.
+
+The clean, caffeinated 4-versus-32 MiB run measured:
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| Range cap / top-k | Recall | Wire GET/q | App GET/q | MB/q | p50 / p95 ms | Peak RSS GB
+
+| 4 MiB / 10 | 0.9837 | 49.543 | 49.542 | 170.314 | 537.98 / 777.13 | 4.656
+| 32 MiB / 10 | 0.9837 | 17.084 | 17.083 | 176.132 | 200.15 / 252.32 | 5.228
+| 4 MiB / 20 | 0.9815 | 49.529 | 49.528 | 172.225 | 559.17 / 634.07 | 4.651
+| 32 MiB / 20 | 0.9815 | 17.169 | 17.168 | 178.973 | 208.53 / 256.69 | 5.158
+|===
+
+The wire counter saw exactly one HTTP range request per application-issued
+range at both caps. The extra approximately one wire GET per process is the
+non-range object request, amortized over 1,000 queries. Thus neither the SDK
+nor Azurite imposes a 4 MiB range split. At 32 MiB, GETs fell 65.3--65.5% and
+bytes rose only 3.4--3.9%, but peak RSS rose 10.9--12.3%. Top-10 therefore
+fails the experiment's predeclared `candidate/base <= 1.10` RSS gate; 32 MiB
+is not eligible for promotion.
+
+A focused 4-versus-24 MiB run then measured:
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| Range cap / top-k | Recall | Wire GET/q | App GET/q | MB/q | p50 / p95 ms | Peak RSS GB
+
+| 4 MiB / 10 | 0.9840 | 49.543 | 49.542 | 170.314 | 610.76 / 1197.05 | 4.654
+| 24 MiB / 10 | 0.9836 | 17.958 | 17.957 | 176.003 | 527.17 / 975.94 | 4.950
+| 4 MiB / 20 | 0.98155 | 49.529 | 49.528 | 172.225 | 604.23 / 849.99 | 4.658
+| 24 MiB / 20 | 0.98150 | 17.846 | 17.845 | 179.088 | 273.99 / 392.39 | 4.949
+|===
+
+This second run had unrelated host compilation and benchmark load. Its latency
+is therefore retained for provenance but is not accepted as isolated latency
+evidence. The operation shape, bytes, SDK ratio, and process RSS reproduced:
+24 MiB reduced wire GETs 63.8--64.0%, bounded bytes to +3.3--4.0%, and bounded
+RSS to +6.2--6.4%. It also crosses the `<=20 GET/query` economic threshold.
+
+Repeated 4 MiB controls span 0.9835--0.9840 at top-10, so requiring exact
+aggregate equality across fresh processes would mistake repeatability noise for
+a quality regression. The promotion gate instead requires candidate recall to
+remain at least 0.98 and permits at most 0.0005 absolute loss versus the paired
+4 MiB control. On 1,000 top-10 queries that margin is five ground-truth hits out
+of 10,000 and equals the observed control envelope; it does not lower the
+quality ratchet. The 24 MiB point satisfies this aggregate gate.
+
+Exact ordered result equality is diagnostic, not an acceptance requirement.
+The benchmark now records per-query ordered-ID, ID-set, recall-hit, and
+result-count hashes without retaining user IDs, plus total hit delta and counts
+of queries that gained or lost hits. An exact-current-binary rerun must rule out
+a systematic result-set shift and confirm the paired non-inferiority result
+before the default can change.
+
+These measurements invalidate two prior shortcuts: 4 MiB is neither a Blob
+billing quantum nor an SDK request quantum, and the `k_c=90` GET minimum
+measured under the 4 MiB cap is not yet a provider-independent geometry result.
+Repeat the eligible cap on `k_c=90` at iso-cap before choosing cell count.
+
+=== S3c: exact-current scale points and adaptive estimator contract
+
+The exact-current release binary from source revision
+`758fec2df1c995e8d909e4d9f45acf07b8d66394` (SHA-256
+`2feac49987aff4bda157b2473387cb5e78c185bdf4d710f2ef0a56b236609f5a`)
+closed the two immediate measurement gates through the production Azure backend
+against Azurite. Each point used one immutable PAX v3 segment, 1,000 diverse
+queries, a fresh process/cache, and one wire range request per application
+range.
+
+The 491,655-row, 768-dimensional, `k_c=90`, `nprobe=30` point measured 4 MiB
+versus 24 MiB as follows:
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| top-k / cap | Recall | Wire GET/q | MiB/q | p50 / p95 ms | Peak RSS GiB
+
+| 10 / 4 MiB | 0.9884 | 47.514 | 132.386 | 426.63 / 489.41 | 4.345
+| 10 / 24 MiB | 0.9883 | 26.790 | 137.653 | 215.37 / 268.10 | 4.787
+| 20 / 4 MiB | 0.9864 | 48.015 | 133.848 | 439.91 / 513.39 | 4.359
+| 20 / 24 MiB | 0.9864 | 26.929 | 140.304 | 223.76 / 279.81 | 4.710
+|===
+
+At top-10, 24 MiB reduced GETs by 43.6% and halved p50 while adding 4.0%
+bytes. Peak RSS was 10.176% above the baseline, missing the predeclared 10%
+bound by 0.176 percentage points; this remains an honest gate failure rather
+than being relabelled after the fact. Top-20 passed all declared gates.
+
+The separate BIGANN 1M, 128-dimensional, `k_c=30` bed ran at its measured
+top-10 quality knee, `nprobe=6`, and produced the cap curve below:
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| Cap | Recall@10 | Wire GET/q | MiB/q | p50 / p95 ms
+
+| 4 MiB | 0.9800 | 10.077 | 28.56 | 106.78 / 144.62
+| 8 MiB | 0.9800 | 8.177 | 33.11 | 76.30 / 104.03
+| 12 MiB | 0.9800 | 7.796 | 33.69 | 75.06 / 103.63
+| 16 MiB | 0.9800 | 7.657 | 33.71 | 74.64 / 103.67
+| 24 MiB | 0.9800 | 7.647 | 33.71 | 75.79 / 104.16
+|===
+
+The result disproves a universal range cap. At 1M, 8 MiB is the latency knee,
+16 MiB is the GET knee, and 24 MiB adds no material benefit. The 24 MiB point's
+18.0% byte amplification is not an Azure Hot retrieval charge, but it is 5.15
+MiB/query of additional NIC, cache, and memory traffic. At one million queries
+that is about 5 TiB of extra same-region traffic. A single-query latency win
+therefore needs a concurrency/RSS guard rather than an arbitrary requirement
+that bytes be identical.
+
+The implementation successor is a deterministic estimator at the shared
+engine-core read-planning seam:
+
+. Preserve explicit range/gap env overrides as the highest-precedence
+  diagnostic contract.
+. Under the existing default-OFF
+  `PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER`, enumerate provider-bounded caps:
+  Azure 4/8/12/16/24 MiB, S3/GCS 8/16 MiB, and local
+  1/2/3/4/6/8 MiB. This is read-only policy; writer block/cell geometry remains
+  unchanged.
+. Run the real Region-A/B/D coalescing state machine for each candidate. The
+  resulting `(cold-miss planned GETs, planned bytes)` are exact for the selected
+  cells/rows, so vector count and dimension need not match a benchmark lookup
+  table. Subsequent DRAM/disk hits can only remove canonical-store requests;
+  cache residency is measured separately rather than guessed by this planner.
+. Score `20*GETs + 5*MiB` for active Hot/standard cloud objects, matching the
+  neutral ADR-052 route-cost ordering. Reject candidates above 1.25x baseline
+  bytes. For retrieval-billed Cool/Cold/Archive objects, raise the byte weight
+  and tighten the guard to 1.10x. Local storage prices requests at zero and
+  admits no byte amplification.
+. Treat scores within 0.5% as the same knee and choose the smaller cap.
+  This selects 16 rather than 24 MiB for the measured 1M curve.
+. Emit baseline/chosen GETs, bytes, cap, gap, cost class, and candidate count.
+  Unset gate or an invalid/empty decision fails closed to the existing fixed
+  policy.
+
+The benchmark beds calibrate the latency/RSS weights and validate the policy;
+they are not a brittle table keyed by exact `(N, dimension, k_c)`. Once A0 has
+selected cells, their actual byte extents make the cold-miss plan exact.
+Regression/telemetry remains useful for concurrency latency and for choosing
+the recall-safe `nprobe`, which is a separate quality problem.
+
+This first estimator slice intentionally keeps the backend-derived gap fixed.
+Enumerating larger gaps would be mechanically easy but would optimize an
+unmeasured second variable that can add bystander bytes discontinuously. A
+paired gap sweep and concurrency/RSS evidence are required before admitting
+gap candidates.
+
+The engine-core contract accepts a canonical `ObjectAccessTier`, but the PAX
+search caller does not yet receive per-object tier metadata. This slice passes
+`None`, which deliberately resolves active object-store segments as
+Hot/standard. Plumbing actual Cool/Cold/Archive placement to this leaf is a
+prerequisite before enabling adaptive reads on retrieval-billed tiers; path
+aliases alone must never guess a billing tier.
+
+=== S3d: exact-current adaptive 1M checkpoint
+
+The release-server binary built from `4697205c2c1431f0f5a74a86c50119c8487a6259`
+(SHA-256
+`48a727e840fbf9858051ed65e888ddae103f9c9584d5775193391a3610445511`)
+ran the immutable one-segment BIGANN 1M bed (`d=128`, `k_c=30`, `nprobe=6`)
+for 1,000 top-10 queries. Each policy used a fresh process/cache and the
+Azurite wire observer reconciled one HTTP range request per application range.
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| Policy | Recall@10 | Wire GET/q | MiB/q | p50 / p95 ms | Peak RSS GiB
+
+| Fixed 4 MiB | 0.9800 | 10.077 | 28.56 | 99.93 / 133.49 | 4.348
+| Exact adaptive | 0.9800 | 7.647 | 33.71 | 68.44 / 94.63 | 4.571
+|===
+
+The estimator admitted query-local caps through 24 MiB (the largest observed
+wire range was 19.26 MiB), while the 0.5% knee rule prevents a larger cap from
+winning when its request benefit is negligible. Relative to the fixed policy it
+reduced wire
+GETs by 24.11%, reduced p50 by 31.51% and p95 by 29.11%, increased bytes by
+18.04%, and increased peak RSS by 5.15%. All predeclared gates passed. The
+ordered result and result-set identities matched for all 1,000 queries; recall
+hit totals were identical. This is sufficient to retain the implementation
+behind its default-OFF gate, not sufficient to flip the default across shapes.
+
+Raw external artifact:
+`/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-1m-4697205c2/matrix.json`
+(SHA-256
+`3e0f4484dc71c9e3e259ec01edaf3a459faa318c7ce8ba20cb65b5de137af718`).
+Azurite proves operation shape/count and relative localhost latency; it is not
+Azure service-latency evidence.
+
+=== S3e: exact-current 3.3M and 10M checkpoints
+
+The same immutable release-server binary and paired harness then measured two
+larger, one-segment BIGANN beds. The 3.3M bed used `d=128`, `k_c=100`,
+`nprobe=16`; the 10M bed used `d=128`, `k_c=305`, `nprobe=22`. Both ran 1,000
+top-10 queries per policy with fresh processes and exact-scope ground truth.
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| Shape / policy | Recall@10 | Wire GET/q | MiB/q | p50 / p95 ms | Peak RSS GiB | Gate
+
+| 3.3M fixed 4 MiB | 0.9817 | 33.360 | 85.21 | 296.39 / 372.96 | 4.342 | baseline
+| 3.3M exact adaptive | 0.9817 | 25.258 | 90.95 | 203.66 / 282.51 | 4.785 | RSS miss
+| 10M fixed 4 MiB | 0.9802 | 52.903 | 124.79 | 509.23 / 784.17 | 4.378 | baseline
+| 10M exact adaptive | 0.9802 | 42.232 | 126.84 | 414.79 / 593.99 | 4.702 | pass
+|===
+
+At 3.3M the estimator reduced wire GETs by 24.29%, p50 by 31.29%, and
+p95 by 24.25%, while increasing bytes by 6.73%. Its peak-RSS ratio was
+1.10209 against the predeclared maximum 1.10, so this point is correctly
+ineligible for promotion; the 0.2089-percentage-point excess is not rounded
+away. A serialized repeat measured a 1.10229 ratio, confirming a stable
+shape-specific serial memory cost rather than sampling variance. The fixed and
+adaptive processes had identical survivor/invariants resident bytes in both
+runs, localizing the extra roughly 455 MiB to transient range buffers or the
+allocator rather than persistent cache occupancy.
+
+The 3.3M full pair reported one result-set mismatch at query 233 despite
+identical aggregate recall and recall-hit totals. A focused fresh-process
+replay made fixed and adaptive produce the same ordered and set hashes for that
+query (and the replayed fixed result matched the earlier adaptive result).
+Therefore exact identity is retained as a diagnostic rather than
+mis-attributed to the read-range policy; the predeclared bounded recall gate is
+the correctness decision. Raw artifacts:
+
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-3m3-4697205c2/matrix.json`
+  (SHA-256
+  `71eb37c8f786842cc36cad62f372842ef825b32790bacee1d0ecc2213eaf1d7f`).
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-3m3-q233-4697205c2/matrix.json`
+  (SHA-256
+  `8c7ada84f4c0d6fbbc74acc5bd0231484adecc608d49831c4b23f8a611f4fb4e`).
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-3m3-repeat-4697205c2/matrix.json`
+  (SHA-256
+  `a166d20b68284b017a397666af88b62fd2683a30b7666472049d55510719d0d6`).
+
+At 10M the estimator reduced wire GETs by 20.17%, p50 by 18.55%, and p95 by
+24.25%, while increasing bytes by only 1.64% and peak RSS by 7.39%. All
+predeclared gates passed and all 1,000 ordered results, result sets, and recall
+hit counts matched. The largest observed adaptive wire range was 24 MiB and
+Azurite again reconciled exactly one HTTP range request per application range.
+Raw artifact:
+`/Users/vijaysingh/proximadb-bench-data/runs/range-cap-adaptive-10m-4697205c2/matrix.json`
+(SHA-256
+`3066919cc24561d84bbda137c376cc9c75009eeae6c1472ab7d639e5ebaddd9d`).
+
+These points establish that the exact estimator bends the operation curve
+without changing IVF geometry or recall, but do not justify an unconditional
+default. Paired DRAM/persistent-disk cache evidence remains the promotion gate.
+As elsewhere in this TD, Azurite supports wire
+operation shape/count and relative localhost latency, not Azure service
+latency.
+
+=== S3f: bounded-concurrency operating knee
+
+Serial latency and RSS are not a sufficient serving decision. A closed-loop,
+bounded-concurrency extension therefore replayed the same 1,000 distinct query
+indices at configured concurrency 1, 4, 8, and 16. Every fixed/adaptive point
+used a fresh server and cache state, and achieved its configured peak
+concurrency. Adjacent policy pairs limited host drift; a 10M fixed/concurrency-8
+attempt that observed an unrelated `rustc` process was rejected and rerun.
+
+[cols="1,1,1,1,1,1,1,1", options="header"]
+|===
+| Shape / concurrency / policy | Recall@10 | QPS | Wire GET/q | MiB/q
+| p50 / p95 ms | Peak RSS GiB | Paired gate
+
+| 3.3M / 1 / fixed | 0.9817 | 1.98 | 33.360 | 85.21 | 481 / 821 | 4.352 | baseline
+| 3.3M / 1 / adaptive | 0.9817 | 4.05 | 25.258 | 90.95 | 229 / 398 | 4.787 | RSS miss
+| 3.3M / 4 / fixed | 0.9817 | 4.53 | 33.162 | 85.38 | 900 / 1,142 | 4.461 | baseline
+| 3.3M / 4 / adaptive | 0.9817 | 7.40 | 24.742 | 90.72 | 547 / 719 | 4.816 | pass
+| 3.3M / 8 / fixed | 0.9817 | 4.59 | 32.951 | 85.36 | 1,777 / 2,220 | 4.525 | baseline
+| 3.3M / 8 / adaptive | 0.9817 | 7.63 | 24.360 | 90.34 | 1,058 / 1,381 | 4.920 | pass
+| 3.3M / 16 / fixed | 0.9817 | 4.44 | 33.924 | 88.79 | 3,661 / 4,722 | 4.684 | baseline
+| 3.3M / 16 / adaptive | 0.9817 | 7.56 | 24.637 | 91.46 | 2,152 / 2,729 | 5.047 | pass
+
+| 10M / 1 / fixed | 0.9801 | 2.37 | 52.903 | 124.79 | 434 / 519 | 4.378 | baseline
+| 10M / 1 / adaptive | 0.9803 | 2.91 | 42.232 | 126.84 | 338 / 476 | 4.702 | pass
+| 10M / 4 / fixed | 0.9801 | 3.05 | 51.880 | 124.14 | 1,348 / 1,621 | 4.506 | baseline
+| 10M / 4 / adaptive | 0.9804 | 4.36 | 41.170 | 126.11 | 919 / 1,226 | 4.793 | pass
+| 10M / 8 / fixed | 0.9802 | 3.02 | 51.411 | 124.13 | 2,691 / 3,364 | 4.610 | baseline
+| 10M / 8 / adaptive | 0.9803 | 4.33 | 40.735 | 125.81 | 1,876 / 2,391 | 4.855 | pass
+| 10M / 16 / fixed | 0.9801 | 2.44 | 51.209 | 124.69 | 6,240 / 10,677 | 4.758 | baseline
+| 10M / 16 / adaptive | 0.9804 | 2.42 | 39.967 | 125.69 | 6,564 / 9,280 | 5.060 | pass by declared gates; overloaded
+|===
+
+Concurrency 4 is the common operating knee. At 3.3M, adaptive ranges reduce
+wire GETs by 25.39%, improve QPS by 63.50%, reduce p50/p95 by 39.21%/37.00%,
+and use 7.96% more peak RSS with 6.25% more bytes. At 10M, they reduce wire
+GETs by 20.64%, improve QPS by 42.64%, reduce p50/p95 by 31.88%/24.41%, and
+use 6.37% more peak RSS with only 1.59% more bytes. Concurrency 8 provides no
+material QPS gain over 4 and roughly doubles latency; concurrency 16 is
+overload, most visibly at 10M where both policies fall below their
+concurrency-4 throughput.
+
+At the illustrative `$0.005/10K` Hot-Blob transaction rate, the
+concurrency-4 operation component falls from `$16.58` to `$12.37` per million
+queries at 3.3M and from `$25.94` to `$20.59` at 10M. This excludes bytes,
+compute, cache, and tier-dependent transfer charges and therefore is not a
+complete rate-card margin.
+
+Raw external artifacts:
+
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-concurrency-3m3-128bdd70d/matrix.json`
+  (SHA-256
+  `7dc0b3a11b1205b7981444630b388aee7172bee1adb6f226da530abd4d7144a6`).
+* `/Users/vijaysingh/proximadb-bench-data/runs/range-cap-concurrency-10m-128bdd70d/matrix.json`
+  (SHA-256
+  `76c4c61975358d40ba88551397bb7aa7cbee83b19d4a928c870d17d24b47795f`).
+
+The 10M adaptive points gained one to three aggregate recall hits and the 3.3M
+points had identical aggregate recall. A few result identities varied across
+fresh processes, consistent with the already isolated tie/nondeterminism
+diagnostic rather than range-policy data loss; no paired point lost more than
+the predeclared 0.0005 recall margin. These localhost results establish the
+relative concurrency knee and wire operation shape, not Azure service QPS.
 
 === S4: remove the redundant PAX-as-SST1 magic probe
 
@@ -407,6 +753,137 @@ link:../../_internal/status/BIGANN_NPROBE_GEOMETRY_100K_10M_2026_08_04.adoc[the
 five-scale partial evidence artifact] for source hashes, coverage, fits, charts,
 and remaining measurement gates.
 
+=== S3c: the k_c=90 eligible-cap repeat (2026-08-20) — 24 MiB is NOT eligible
+
+The `k_c=90` repeat this TD required is complete. Immutable bed
+`bge768-ncomp32-bed` (768-d BGE, 491,655 rows, `k_c=90`, `n_comp=32`, one
+segment, layout v3), binary `598232ff9`, paired 4 vs 24 MiB, fixed gap 1 MiB,
+fresh process per point, host-quiet guard armed (`--host-quiet-window-secs 120`,
+3 retries/point). Artifacts: `runs/kc90-eligible-cap-598232ff9` (nprobe 12) and
+`runs/kc90-eligible-cap-np25-598232ff9` (nprobe 25).
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| nprobe | top_k | recall | wire GET reduction | bytes | p50 | RSS
+| 12 | 10 | 0.9330 (below SLA) | −30.5% | 1.034 | 0.588 | 1.089
+| 12 | 20 | 0.9230 (below SLA) | −28.9% | 1.073 | 0.680 | 1.075
+| **25** | **10** | **0.9825 ✓** | **−40.8%** | 1.041 | 0.538 | **1.1019 ✗**
+| **25** | **20** | 0.9784 (below SLA) | −41.0% | 1.056 | 0.555 | 1.089
+|===
+
+**Verdict: `promotion_eligible = false` on every point.** Each fails for a
+different reason, and the distinction matters:
+
+* **nprobe=25 / top-10 fails ONLY on `rss_not_materially_regressed`** — 1.1019
+  against the 1.10 bound. This is the same guard that disqualified 32 MiB at
+  `k_c=30`, and it is the binding constraint at the natural cell count. The
+  `k_c=30` bed sat at 1.064; memory pressure rises with cell count and probe
+  count, so 24 MiB brushes the ceiling exactly where production geometry sits.
+* **The nprobe=12 rows fail `target_recall_maintained` by construction, not
+  because of the cap.** 12 probes of 90 cells is 13% coverage against 40% at
+  `k_c=30`; the recall floor for this bed is 25 (top-10). Recorded so the rows
+  are not mistaken for a cap defect.
+* **nprobe=25 / top-20 fails recall** because 25 is the top-10 floor; top-20
+  needs ~30. Not yet measured.
+
+**The headline reduction is a function of `(k_c, nprobe)`, not a constant.**
+−64% at `k_c=30`/nprobe 12, −30% at `k_c=90`/nprobe 12, −41% at
+`k_c=90`/nprobe 25. The widely-quoted −64% came from the most favourable corner
+of that space. Any COGS projection built on it overstates the gain roughly 2×
+at the natural cell count.
+
+**The cap still costs no recall.** `recall_delta` is +0.0003 and −0.0001, and the
+per-query identity diagnostics show 8 and 4 mismatches of 1000, bidirectional
+(+3 / −2 net hits) — the same noise-level signature as every prior run.
+
+**Consequence for the 24 MiB default: do not promote on this evidence.** The
+open question is no longer "does the win reproduce" — it does, at −41% — but
+"which cap is eligible under the RSS bound at production geometry". The natural
+follow-up is a ladder (4/8/16/24) on this bed at nprobe=25 to find the largest
+cap that holds RSS ≤ 1.10, which is what `read_range_cap_candidates` (#1671) was
+built to express.
+
+=== S3d: the cap ladder (2026-08-21) — the knee is 16 MiB, and RSS is what binds
+
+S3c established that 24 MiB fails only on RSS (1.1019 against the 1.10 bound) at
+production geometry. The obvious follow-up is not "is the win real" — it is
+"which cap is the largest that holds RSS", so the ladder was run on the same
+immutable bed (`bge768-ncomp32`, `k_c=90`, `n_comp=32`), same operating point
+(`nprobe=25`, top-10, 1000 queries, 1 MiB gap), binary `6bec1fde8`.
+
+[cols="1,1,1,1,1,1", options="header"]
+|===
+| cap | recall | GET/q | GET reduction | bytes ratio | RSS ratio
+| 4 MiB (baseline) | 0.9821 | 41.03 | — | — | 1.0000
+| **8 MiB** | 0.9823 | 29.63 | **−27.8%** | 1.0373 | **1.0339** ✓ eligible
+| **16 MiB** | 0.9819 | 25.24 | **−38.5%** | 1.0387 | **1.0549** ✓ eligible
+| 24 MiB | 0.9821 | 24.28 | −40.8% | 1.0407 | **1.1000** ✗ not eligible
+|===
+
+All four points are **same-run** (`runs/cap-ladder-20260820`, `status: pass`,
+4/4, zero measurement failures). `promotion_eligible` is the harness verdict, not
+a hand calculation: **8 MiB and 16 MiB both pass all nine checks**; 24 MiB fails
+exactly one, `rss_not_materially_regressed`, at **1.1000** — landing precisely on
+the bound. S3c measured the same point at 1.1019 in a separate run. **24 MiB does
+not sit under the guard with margin; it straddles it, and which side it lands on
+varies run to run.** That is a stronger reason to reject it than a single
+over-bound reading would have been.
+
+**The knee is 16 MiB.** What each step actually buys:
+
+* 4 → 8: −27.8% requests for +3.5% RSS
+* 8 → 16: a further −10.7 points for **+2.0** points RSS
+* 16 → 24: only **−2.3** more points, for **+4.7** points RSS — and that step is
+  the one that breaches the bound
+
+16 MiB captures **94% of the total available reduction at 55% of the memory
+cost**. Expressed as the ratio that matters — request-reduction points per RSS
+point — it is 8.0 at 4→8, 5.4 at 8→16, and **0.5** at 16→24. The economics
+collapse an order of magnitude past 16 MiB.
+
+==== The tension, named
+
+The four quantities do not trade off symmetrically, and only one of them binds:
+
+* **Recall is flat in the cap** — 0.9819–0.9825 across a 6× range, delta ±0.0002.
+  Coalescing changes which bytes are fetched, never which rows rank. Recall is a
+  constraint to satisfy, not a dimension to optimise; a recall-knee search over
+  cap would return noise, which is why none was run.
+* **Bytes are nearly flat** — ×1.037 to ×1.041 across the whole ladder. Gap
+  over-read saturates almost immediately.
+* **Requests fall steeply, then flatten** — the curve is essentially exhausted by
+  16 MiB.
+* **RSS rises super-linearly at the top** — +3.5, +2.0, then +4.7 points. It is
+  the only quantity that breaches a declared bound, and therefore the only one
+  that decides the answer.
+
+==== Recommendation: Azure read cap = 16 MiB
+
+Two arguments beyond the measurement:
+
+. **16 MiB is already the sanctioned ceiling for S3 and GCS**
+  (`IopsBudget::S3.max`, `IopsBudget::GCS.max`). Adopting it for Azure
+  *converges* the backend profiles instead of making Azure exceptional.
+. **It is already on the candidate ladder** `read_range_cap_candidates` emits for
+  Azure — `{4, 8, 12, 16, 24}` — so no new value has to be invented, and the
+  adaptive chooser can select it without a constant change.
+
+**Do not promote 24 MiB.** It fails the declared RSS guard at production
+geometry and buys 2.3 percentage points of request reduction for nearly the
+entire remaining memory budget.
+
+==== What is NOT established
+
+* **One bed, one operating point.** 768-d, `k_c=90`, `n_comp=32`, `nprobe=25`,
+  top-10. The *method* transfers; the constants are not claimed to.
+* **top-20 is unmeasured at this operating point** — `nprobe=25` is the top-10
+  floor; top-20 needs ≈30 and sits at 0.9784 here, below SLA for a reason
+  unrelated to the cap.
+* **RSS was measured by an external `ps` sampler on a shared host.** The ladder
+  was interrupted twice by other sessions' compilers and the harness failed
+  closed both times rather than measuring through contention; the banked points
+  are from quiet windows.
+
 == Remaining inefficiencies
 
 * The filesystem trait's generic `read_ranges()` is bounded-concurrent but
@@ -436,10 +913,12 @@ materialized segment geometry:
 . recall@10 (must not regress below the ratchet);
 . prefix disabled (`0`) versus 1 MiB versus a justified alternative.
 
-Before interpreting finer `k_c` as GET-optimal, additionally complete the S3a
-4/8/16/32 MiB sweep with Azurite wire counts. Keep any resulting policy
-tier-aware: Hot flat Blob in the same region may prefer fewer, larger requests;
-Cool/Cold/remote placement must jointly price bytes and requests.
+Before interpreting finer `k_c` as GET-optimal, repeat the adaptive policy on
+the settled 3.3M and 10M beds and measure its DRAM/persistent-disk cache
+interaction. Keep any
+resulting policy tier-aware: Hot flat Blob in the same region may prefer fewer,
+larger requests; Cool/Cold/remote placement must jointly price bytes and
+requests. The measured sweep does not authorize a production-default change.
 
 The benchmark must wait for flush/compaction quiescence and prove that all
 1M vectors are searchable from materialized segments before restarting.

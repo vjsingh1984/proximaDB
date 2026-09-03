@@ -100,6 +100,7 @@ fn validate_template(value: &str, field: &'static str) -> Result<(), CatalogMode
 
 /// Content-addressed reference to bytes held outside xCatalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogArtifactDescriptor {
     pub uri: String,
     pub digest: String,
@@ -134,6 +135,7 @@ impl CatalogArtifactDescriptor {
 
 /// Exact rendered-input and tokenizer budget consumed by an embedding runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogEmbeddingInputContract {
     pub model_revision: String,
     pub tokenizer_id: String,
@@ -217,6 +219,7 @@ impl CatalogEmbeddingInputContract {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogModelAccess {
     Open,
@@ -229,6 +232,7 @@ pub enum CatalogModelAccess {
 /// Supply-chain and runtime policy declared for an immutable model version.
 /// Approval decisions remain separate append-only audit records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogModelGovernance {
     #[serde(default = "unknown_license")]
     pub license_id: String,
@@ -288,6 +292,7 @@ impl CatalogModelGovernance {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogLineageInputKind {
     Dataset,
@@ -298,6 +303,7 @@ pub enum CatalogLineageInputKind {
 
 /// Digest-pinned input consumed by the execution that produced a model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogLineageInput {
     pub kind: CatalogLineageInputKind,
     pub name: String,
@@ -323,6 +329,7 @@ impl CatalogLineageInput {
 
 /// MLMD/OpenLineage-shaped producer execution and its declared inputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogModelLineage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub producer_execution_id: Option<String>,
@@ -352,14 +359,22 @@ impl CatalogModelLineage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct CatalogDimensionRange {
+    pub minimum: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogDimensionPolicy {
     Fixed,
     Discrete,
-    Range { minimum: u32 },
+    Range(CatalogDimensionRange),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogEmbeddingOutputContract {
     pub native_dimension: u32,
     pub dimension_policy: CatalogDimensionPolicy,
@@ -393,8 +408,8 @@ impl CatalogEmbeddingOutputContract {
         match self.dimension_policy {
             CatalogDimensionPolicy::Fixed => dimension == self.native_dimension,
             CatalogDimensionPolicy::Discrete => self.supported_dimensions.contains(&dimension),
-            CatalogDimensionPolicy::Range { minimum } => {
-                (minimum..=self.native_dimension).contains(&dimension)
+            CatalogDimensionPolicy::Range(range) => {
+                (range.minimum..=self.native_dimension).contains(&dimension)
             }
         }
     }
@@ -435,8 +450,8 @@ impl CatalogEmbeddingOutputContract {
                     reason: "discrete policy must include the native dimension".to_string(),
                 })
             }
-            CatalogDimensionPolicy::Range { minimum }
-                if minimum == 0 || minimum > self.native_dimension =>
+            CatalogDimensionPolicy::Range(range)
+                if range.minimum == 0 || range.minimum > self.native_dimension =>
             {
                 Err(CatalogModelContractError::InvalidDimensionPolicy {
                     reason: "range minimum must be between one and native dimension".to_string(),
@@ -449,6 +464,7 @@ impl CatalogEmbeddingOutputContract {
 
 /// Immutable executable contract for one registered model version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogEmbeddingModelVersion {
     pub version: u64,
     pub provider_model_id: String,
@@ -590,6 +606,7 @@ impl CatalogEmbeddingModelVersion {
 
 /// Append-only evaluation summary. Large row-level results remain external.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogEvaluationEvidence {
     pub evidence_id: String,
     pub version: u64,
@@ -639,6 +656,7 @@ impl CatalogEvaluationEvidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogModelDecisionKind {
     Approved,
@@ -675,6 +693,7 @@ impl CatalogModelUsePolicy {
 
 /// Immutable snapshot returned by the durable catalog resolution seam.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogResolvedEmbeddingModel {
     pub asset_id: u64,
     pub registry_name: String,
@@ -685,6 +704,7 @@ pub struct CatalogResolvedEmbeddingModel {
 
 /// Append-only policy/audit decision, intentionally separate from evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogModelDecision {
     pub decision_id: String,
     pub version: u64,
@@ -734,6 +754,7 @@ impl CatalogModelDecision {
 
 /// Mutable serving intent that always resolves to an immutable version/digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogDeploymentBinding {
     pub name: String,
     pub version: u64,
@@ -776,6 +797,7 @@ impl CatalogDeploymentBinding {
 /// Registered embedding model: immutable versions plus separately mutable or
 /// append-only lifecycle records.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogEmbeddingModelRegistry {
     pub schema_version: u32,
     /// Optimistic concurrency token for catalog/API mutations. Old rows default
@@ -797,22 +819,41 @@ pub struct CatalogEmbeddingModelRegistry {
     pub tags: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct CatalogModelAliasMutation {
+    pub alias: String,
+    pub version: u64,
+}
+
 /// Command-shaped mutations preserve version/evidence/decision immutability at
 /// the persistence boundary. API adapters lower into these commands instead
 /// of replacing a whole registry document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "operation", content = "payload", rename_all = "snake_case")]
 pub enum CatalogModelRegistryMutation {
+    #[cfg_attr(feature = "openapi", schema(title = "RegisterModelVersionMutation"))]
     RegisterVersion(Box<CatalogEmbeddingModelVersion>),
-    SetAlias { alias: String, version: u64 },
+    SetAlias(CatalogModelAliasMutation),
+    #[cfg_attr(feature = "openapi", schema(title = "AppendModelEvidenceMutation"))]
     AppendEvidence(CatalogEvaluationEvidence),
+    #[cfg_attr(feature = "openapi", schema(title = "RecordModelDecisionMutation"))]
     RecordDecision(CatalogModelDecision),
+    #[cfg_attr(feature = "openapi", schema(title = "UpsertModelDeploymentMutation"))]
     UpsertDeployment(CatalogDeploymentBinding),
 }
 
 impl CatalogModelRegistryMutation {
     pub fn register_version(version: CatalogEmbeddingModelVersion) -> Self {
         Self::RegisterVersion(Box::new(version))
+    }
+
+    pub fn set_alias(alias: impl Into<String>, version: u64) -> Self {
+        Self::SetAlias(CatalogModelAliasMutation {
+            alias: alias.into(),
+            version,
+        })
     }
 }
 
@@ -1107,8 +1148,8 @@ impl CatalogEmbeddingModelRegistry {
             CatalogModelRegistryMutation::RegisterVersion(version) => {
                 self.register_version(*version)
             }
-            CatalogModelRegistryMutation::SetAlias { alias, version } => {
-                self.set_alias(alias, version)
+            CatalogModelRegistryMutation::SetAlias(command) => {
+                self.set_alias(command.alias, command.version)
             }
             CatalogModelRegistryMutation::AppendEvidence(evidence) => {
                 self.append_evidence(evidence)

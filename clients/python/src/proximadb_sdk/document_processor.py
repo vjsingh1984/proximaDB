@@ -189,7 +189,68 @@ class ProcessorConfig:
     # Processing settings
     strategy: ProcessingStrategy = ProcessingStrategy.BALANCED
     include_metadata: bool = True
+    #: Label each text chunk with the heading path it lives under
+    #: (`heading_path`, `heading_title`, `heading_level`).
+    #:
+    #: This flag existed but was READ BY NOTHING, so it is being given the
+    #: meaning its name already implied rather than adding a third
+    #: structure-ish flag beside a dead one. Nothing depended on the old
+    #: (absent) behaviour, so no caller can break: `False` simply skips
+    #: annotation, which is what happens today.
     preserve_structure: bool = True
+
+    #: Drop near-duplicate chunks before they are embedded and stored.
+    #:
+    #: **Default OFF**, unlike heading annotation, and the difference is the
+    #: point: annotation only ADDS metadata, while this REMOVES chunks, so
+    #: enabling it changes what a tenant has stored. Measured safe (24-31%
+    #: fewer chunks with no eval answer lost) and still opt-in, per the
+    #: repo's ship-default-OFF-until-baked rule. Turning it on by default is a
+    #: product decision about stored data, not a code one.
+    #:
+    #: Removals are recorded on the chunk that absorbed them
+    #: (`duplicates_absorbed`, `duplicate_spans`), never silent.
+    deduplicate_chunks: bool = False
+
+    #: Jaccard similarity at or above which two chunks are the same. High by
+    #: design: keeping a duplicate costs a little money, while dropping a
+    #: distinct chunk removes content nothing downstream can detect is
+    #: missing. Measured: almost all of the available saving is at 1.0 (exact
+    #: duplicates), so a conservative threshold gives up very little.
+    deduplicate_threshold: float = 0.9
+
+    #: Prefix each chunk's EMBEDDED text with where it sits in the document
+    #: (title > heading path), leaving the stored span and text untouched.
+    #:
+    #: **Default OFF, and this is the only capability that costs money.**
+    #: Enrichment lengthens what is sent to the model, so KEU rises for every
+    #: chunk in the collection. TD-CHUNK-3 requires it to be gated on
+    #: recall-per-KEU rather than recall alone; `_last_pass_stats`
+    #: ["enrichment_tax"] reports the multiplier actually applied per document,
+    #: which is the denominator of that ratio.
+    enrich_context: bool = False
+
+    #: Small-to-big retrieval: group consecutive chunks into larger parent
+    #: spans, so a precise child matches and the roomier parent is returned.
+    #:
+    #: **Default OFF.** It adds parent chunks, so KSU rises; what it buys is
+    #: read cost and answer quality, and that trade has to be measured on the
+    #: caller's corpus rather than assumed. Parents are emitted ONCE and
+    #: referenced by `parent_id`, never copied onto each child.
+    link_parent_chunks: bool = False
+
+    #: Maximum characters a parent may span. ``None`` derives it as **twice
+    #: `chunk_size`**, which is the measured optimum rather than a round
+    #: number: on the eval corpus the containment gain (0.75 -> 0.88) is
+    #: already complete at 2x, while KSU is flat at ~1.74x for every window
+    #: tried (the parent layer is a second copy of the covered text either way)
+    #: and density degrades as the window grows (0.247 -> 0.229 at 8x). So a
+    #: bigger window costs the same and buys less. Derived rather than
+    #: hardcoded so it cannot drift when `chunk_size` changes.
+    #:
+    #: A parent also never crosses a heading-path change, because a parent
+    #: spanning two sections answers as neither.
+    parent_window: int | None = None
 
     # Code-specific settings
     include_docstrings: bool = True
@@ -438,6 +499,18 @@ class DocumentProcessor(ABC):
             "end_pos": chunk.end_pos,
             "text_length": len(chunk.text),
         }
+        # start_pos/end_pos are persisted from here, so their MEANING must be
+        # persisted alongside them. Strategies stamp this via add_chunk_metadata;
+        # a chunk that bypassed it (the deprecated byte-offset code path) is
+        # recorded as legacy rather than left ambiguous — an unmarked offset is
+        # indistinguishable from an exact one to a later reader.
+        from .chunking_strategies.base import (
+            OFFSET_BASIS_CHAR,
+            OFFSET_CONTRACT_LEGACY,
+        )
+
+        metadata.setdefault("offset_basis", OFFSET_BASIS_CHAR)
+        metadata.setdefault("offset_contract", OFFSET_CONTRACT_LEGACY)
 
         if source_metadata:
             metadata["source"] = source_metadata
@@ -546,24 +619,22 @@ class CodeDocumentProcessor(DocumentProcessor):
     Prepares code-specific embeddings with documentation context.
     """
 
-    # Language detection patterns
-    LANGUAGE_PATTERNS = {
-        "python": [".py"],
-        "rust": [".rs"],
-        "go": [".go"],
-        "java": [".java"],
-        "javascript": [".js", ".jsx", ".mjs"],
-        "typescript": [".ts", ".tsx"],
-        "cpp": [".cpp", ".cc", ".cxx", ".hpp", ".h"],
-        "c": [".c"],
-        "ruby": [".rb"],
-        "php": [".php"],
-        "swift": [".swift"],
-        "kotlin": [".kt", ".kts"],
-        "scala": [".scala"],
-        "go": [".go"],
-        "rust": [".rs"],
-    }
+    #: Extensions this processor CLAIMS, for routing only.
+    #:
+    #: Derived from the shared STATIC table rather than restated here. The
+    #: reasoning that used to live in this comment now lives with the table:
+    #: routing must stay wide so the capability check can fail loudly, which
+    #: means it must NOT depend on the optional `codegraph` extra. Keeping a
+    #: second literal copy is what let that decision be applied here and nowhere
+    #: else, so the same class of bug reappeared in code_knowledge.
+    @staticmethod
+    def _language_patterns() -> dict[str, list[str]]:
+        from .chunking_strategies.code import STATIC_EXTENSION_TO_LANGUAGE
+
+        out: dict[str, list[str]] = {}
+        for ext, lang in STATIC_EXTENSION_TO_LANGUAGE.items():
+            out.setdefault(lang, []).append(ext)
+        return out
 
     def __init__(self, config: ProcessorConfig | None = None):
         super().__init__(config)
@@ -581,7 +652,7 @@ class CodeDocumentProcessor(DocumentProcessor):
         """Check if content looks like source code"""
         if file_path:
             ext = Path(file_path).suffix.lower()
-            for lang, exts in self.LANGUAGE_PATTERNS.items():
+            for exts in self._language_patterns().values():
                 if ext in exts:
                     return True
 
@@ -722,6 +793,11 @@ class TextDocumentProcessor(DocumentProcessor):
     def __init__(self, config: ProcessorConfig | None = None):
         super().__init__(config)
         self._chunker = None
+        #: Per-document cost accounting from the last `chunk()` call, including
+        #: the KEU multiplier enrichment applied. Kept so enabling a pass is a
+        #: decision made against a measured number rather than an intuition.
+        self._last_pass_stats: dict[str, Any] = {}
+        self._last_chunk_edges: tuple[Any, ...] = ()
 
     @property
     def supported_types(self) -> list[DocumentType]:
@@ -739,17 +815,35 @@ class TextDocumentProcessor(DocumentProcessor):
         return True  # Default fallback
 
     def _get_chunker(self):
-        """Lazy initialization of text chunker"""
+        """Lazy initialization of text chunker.
+
+        Uses RECURSIVE rather than SEMANTIC. SEMANTIC was measured losing
+        between 4% and 100% of a document depending on its shape — on ordinary
+        header-dense Markdown it returned ZERO chunks — and this is the only
+        production caller in the SDK, so that loss reached every `.txt`, `.md`,
+        `.rst` and `.adoc` ingest, including anvaiops connector ingest, which
+        delegates here. RECURSIVE is clean across the whole conformance corpus
+        and is the only strategy with a cap-enforcing terminal fallback.
+
+        Revisit for `.md` specifically once SEMANTIC is rewritten and has
+        soaked — as a separate, measured decision rather than a default nobody
+        chose.
+        """
         if self._chunker is None:
             from .chunking_strategies.base import ChunkingConfig, ChunkingStrategy
-            from .chunking_strategies.semantic import SemanticStrategy
+            from .chunking_strategies.recursive import RecursiveStrategy
 
             config = ChunkingConfig(
-                strategy=ChunkingStrategy.SEMANTIC,
+                strategy=ChunkingStrategy.RECURSIVE,
                 chunk_size=self.config.chunk_size,
                 chunk_overlap=self.config.chunk_overlap,
+                # Previously dropped on the floor, so the chunker silently ran
+                # on ChunkingConfig's defaults (100/2048) instead of the
+                # processor's configured 50/4096.
+                min_chunk_size=self.config.min_chunk_size,
+                max_chunk_size=self.config.max_chunk_size,
             )
-            self._chunker = SemanticStrategy(config)
+            self._chunker = RecursiveStrategy(config)
 
         return self._chunker
 
@@ -761,14 +855,51 @@ class TextDocumentProcessor(DocumentProcessor):
 
         text_chunks = chunker.chunk(content, source_id, metadata)
 
+        # Imported here, alongside the chunker it complements, to keep
+        # `import proximadb_sdk` free of the chunking modules.
+        from .chunking_strategies.capabilities import PassPipeline
+        from .chunking_strategies.passes import embedded_text_of
+
+        # Everything that happens AFTER the partition runs through one seam.
+        #
+        # This used to be two `if` flags inline, each with a paragraph
+        # explaining why it ran where it did. Two more capabilities were coming
+        # (context enrichment, small-to-big), and four flags have twenty-four
+        # orderings and no rule. `run_passes` derives the order from the FACE
+        # each pass declares -- metadata, then selection, then embedded, then
+        # retrieved -- and verifies afterwards that each stayed inside it.
+        #
+        # Wired here because this is the SDK's only production text-ingest
+        # caller: every .txt/.md/.rst/.adoc arrives through it, and anvaiops's
+        # connector SDK delegates here too. A capability with no product caller
+        # is the exact defect the ADR-091 census documented.
+        title = (metadata or {}).get("title")
+        pipeline = PassPipeline.from_processor_config(self.config, source_title=title)
+        result = pipeline.run(content, list(text_chunks))
+        self._last_pass_stats = {
+            **result.stats,
+            "enrichment_tax": result.enrichment_tax,
+            "span_chars": result.span_chars,
+            "embedded_chars": result.embedded_chars,
+        }
+        # Parent/child links for a caller to materialise (ORION edges in the
+        # server). Held rather than written: chunking stays free of any client
+        # or transport, as its package docstring promises.
+        self._last_chunk_edges = result.edges
+
         processed = []
-        for chunk in text_chunks:
+        for chunk in result.chunks:
             processed_chunk = ProcessedChunk(
                 chunk_id=chunk.chunk_id,
                 text=chunk.text,
                 start_pos=chunk.start_pos,
                 end_pos=chunk.end_pos,
                 metadata=chunk.metadata,
+                # The one line that makes enrichment reach the model. Without
+                # it the pass would write `embedded_text` and the pipeline
+                # would embed `text` anyway -- built-but-never-called, which is
+                # the finding this whole program keeps re-deriving.
+                embedding_text=embedded_text_of(chunk),
             )
             processed.append(processed_chunk)
 

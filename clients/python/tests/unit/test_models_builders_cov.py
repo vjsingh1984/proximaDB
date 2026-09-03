@@ -372,7 +372,8 @@ def test_collection_model_props():
     assert coll.dimension == 8
     assert coll.distance_metric == models.DistanceMetric.COSINE
     assert coll.storage_engine == models.StorageEngine.SST
-    assert coll.vector_count == 0
+    # No stats were supplied, so the count is unknown rather than zero.
+    assert coll.vector_count is None
     assert coll.timestamp == coll.created_at_ms // 1000
     coll.created_at = 7
     coll.updated_at = 8

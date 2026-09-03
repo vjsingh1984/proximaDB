@@ -167,6 +167,17 @@ pub struct OrionGraphEngine {
 
     /// Persistence manager (optional)
     persistence: Option<Arc<persistence::OrionPersistence>>,
+
+    /// When set, `add_edge_to_csr` accumulates into the CSR temp buffer and
+    /// skips the per-edge rebuild, leaving one explicit `rebuild_csr` to the
+    /// caller. A rebuild is O(V+E), so paying it per edge makes a bulk apply
+    /// O(E^2); WAL replay knows its whole frame set up front and has no reader
+    /// to serve until it finishes, so it can defer. Mirrors the `replaying`
+    /// flag that suppresses WAL re-appends over the same scope.
+    /// `Arc` because the engine is `Clone` and every clone must observe the
+    /// same deferral: replay sets it on one handle while inserts may run
+    /// through another.
+    csr_rebuild_deferred: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Backwards-compat alias for [`OrionEngineStats`].
@@ -214,6 +225,7 @@ impl OrionGraphEngine {
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(OrionEngineStats::default())),
+            csr_rebuild_deferred: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             persistence: None,
         }
     }
@@ -228,6 +240,7 @@ impl OrionGraphEngine {
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(OrionEngineStats::default())),
+            csr_rebuild_deferred: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             persistence: None,
         }
     }
@@ -254,6 +267,7 @@ impl OrionGraphEngine {
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(OrionEngineStats::default())),
+            csr_rebuild_deferred: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             persistence: Some(persistence),
         })
     }
@@ -304,6 +318,7 @@ impl OrionGraphEngine {
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(OrionEngineStats::default())),
+            csr_rebuild_deferred: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             persistence: Some(persistence),
         })
     }
@@ -413,22 +428,60 @@ impl OrionGraphEngine {
         let from_index = self.get_or_create_node_index(&edge.from_node_id).await?;
         let to_index = self.get_or_create_node_index(&edge.to_node_id).await?;
 
+        // `rebuild()` commits temp_edges into the main structure and is O(V+E),
+        // so a caller inserting E edges one at a time pays O(E^2). When the
+        // caller has told us it will rebuild once at the end (WAL replay), skip
+        // it here: `add_edge` alone is O(1) and `remove_edge` sees temp entries,
+        // so the deferred window stays correct — only reads are stale, and the
+        // deferring caller has no reader until it finishes.
+        let defer = self
+            .csr_rebuild_deferred
+            .load(std::sync::atomic::Ordering::Acquire);
+
         // Add to outgoing CSR (from -> to)
         {
             let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
             csr_out.add_edge(from_index, to_index, edge.id.clone())?;
-            // CRITICAL: Rebuild CSR to commit temp_edges to main structure!
-            csr_out.rebuild()?;
+            if !defer {
+                csr_out.rebuild()?;
+            }
         }
 
         // Add to incoming CSR (to <- from)
         {
             let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
             csr_in.add_edge(to_index, from_index, edge.id.clone())?;
-            // CRITICAL: Rebuild CSR to commit temp_edges to main structure!
-            csr_in.rebuild()?;
+            if !defer {
+                csr_in.rebuild()?;
+            }
         }
 
+        Ok(())
+    }
+
+    /// Accumulate CSR edits without rebuilding until [`Self::rebuild_csr`].
+    ///
+    /// Only safe where the caller serves no reads for the duration: edges added
+    /// while deferred live in the temp buffer and are invisible to traversal
+    /// until the rebuild lands. WAL replay is the intended caller — it runs
+    /// before the server binds a listener.
+    pub fn set_csr_rebuild_deferred(&self, deferred: bool) {
+        self.csr_rebuild_deferred
+            .store(deferred, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Commit every deferred CSR edit in one pass. Cheap when nothing is
+    /// pending — `rebuild()` returns immediately on an empty temp buffer — so
+    /// callers may invoke it unconditionally on their exit paths.
+    pub fn rebuild_csr(&self) -> Result<()> {
+        {
+            let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
+            csr_out.rebuild()?;
+        }
+        {
+            let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
+            csr_in.rebuild()?;
+        }
         Ok(())
     }
 
@@ -894,10 +947,19 @@ impl GraphEngine for OrionGraphEngine {
             return Ok(Vec::new());
         }
 
-        // WAL durability: single batch entry to reduce WAL overhead
-        // IMPORTANT: Synchronous WAL write for data durability and acknowledgement
-        // Server mode: MUST wait for WAL before acknowledging insert
-        // Embedded mode: Configurable via PersistenceConfig (default: sync)
+        // WAL: one batch frame per request to bound WAL overhead.
+        //
+        // DURABILITY CONTRACT (what actually happens, not what earlier comments
+        // claimed): the frame is appended to the writer's buffer and is fsynced
+        // only when the entry sets `requires_fsync` — which no graph write path
+        // currently does — or when the segment rotates at its size cap. An
+        // acknowledged batch therefore survives a process CRASH only after
+        // rotation or a later flush; it always survives a clean shutdown. The
+        // earlier comment here ("Synchronous WAL write... MUST wait for WAL
+        // before acknowledging") described intent, not behaviour; fixing the
+        // comment rather than silently flipping every graph write to fsync,
+        // because per-batch fsync is a throughput/durability trade needing its
+        // own decision (and a config surface), not a drive-by.
         // TEST MODE: Set PROXIMADB_DISABLE_WAL=1 to skip WAL writes for benchmarking
         let disable_wal = std::env::var("PROXIMADB_DISABLE_WAL").unwrap_or_default() == "1";
         if !disable_wal {
@@ -1015,10 +1077,19 @@ impl GraphEngine for OrionGraphEngine {
         }
         let validate_time = validate_start.elapsed();
 
-        // WAL durability: single batch entry to reduce WAL overhead
-        // IMPORTANT: Synchronous WAL write for data durability and acknowledgement
-        // Server mode: MUST wait for WAL before acknowledging insert
-        // Embedded mode: Configurable via PersistenceConfig (default: sync)
+        // WAL: one batch frame per request to bound WAL overhead.
+        //
+        // DURABILITY CONTRACT (what actually happens, not what earlier comments
+        // claimed): the frame is appended to the writer's buffer and is fsynced
+        // only when the entry sets `requires_fsync` — which no graph write path
+        // currently does — or when the segment rotates at its size cap. An
+        // acknowledged batch therefore survives a process CRASH only after
+        // rotation or a later flush; it always survives a clean shutdown. The
+        // earlier comment here ("Synchronous WAL write... MUST wait for WAL
+        // before acknowledging") described intent, not behaviour; fixing the
+        // comment rather than silently flipping every graph write to fsync,
+        // because per-batch fsync is a throughput/durability trade needing its
+        // own decision (and a config surface), not a drive-by.
         // TEST MODE: Set PROXIMADB_DISABLE_WAL=1 to skip WAL writes for benchmarking
         let wal_start = std::time::Instant::now();
         let disable_wal = std::env::var("PROXIMADB_DISABLE_WAL").unwrap_or_default() == "1";
@@ -1498,5 +1569,173 @@ mod tests {
             .expect("get_neighbors should succeed");
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].id, "node2");
+    }
+
+    // --- Deferred CSR rebuild (#1673) ------------------------------------
+    //
+    // `add_edge_to_csr` committed every edge with a full `rebuild()`, which is
+    // O(V+E). Applying E edges therefore cost O(E^2), and WAL replay — which
+    // applies every frame through this path — inherited it: a 177k-edge graph
+    // never finished reopening. These tests pin the deferral contract rather
+    // than a wall-clock number, which would be flaky and machine-dependent.
+
+    fn test_node(id: &str) -> Node {
+        Node {
+            id: id.to_string(),
+            labels: vec!["Symbol".to_string()],
+            properties: std::collections::HashMap::new(),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    fn test_edge(id: &str, from: &str, to: &str) -> Edge {
+        Edge {
+            id: id.to_string(),
+            from_node_id: from.to_string(),
+            to_node_id: to.to_string(),
+            edge_type: "CALLS".to_string(),
+            properties: std::collections::HashMap::new(),
+            weight: Some(1.0),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    async fn engine_with_hub(edge_count: usize) -> (OrionGraphEngine, Vec<String>) {
+        let engine = OrionGraphEngine::new();
+        engine
+            .insert_node(test_node("hub"))
+            .await
+            .expect("insert hub");
+        let mut targets = Vec::new();
+        for i in 0..edge_count {
+            let target = format!("callee_{i}");
+            engine
+                .insert_node(test_node(&target))
+                .await
+                .expect("insert target");
+            targets.push(target);
+        }
+        (engine, targets)
+    }
+
+    fn pending_temp_edges(engine: &OrionGraphEngine) -> usize {
+        engine
+            .csr_outgoing
+            .read()
+            .expect("csr_outgoing read lock")
+            .temp_edge_count()
+    }
+
+    #[tokio::test]
+    async fn undeferred_inserts_commit_each_edge_immediately() {
+        // The default path must keep committing per edge: a reader may arrive
+        // between two writes, so nothing may sit uncommitted in the temp buffer.
+        let (engine, targets) = engine_with_hub(3).await;
+
+        for (i, target) in targets.iter().enumerate() {
+            engine
+                .insert_edge(test_edge(&format!("e{i}"), "hub", target))
+                .await
+                .expect("insert_edge");
+            assert_eq!(
+                pending_temp_edges(&engine),
+                0,
+                "edge {i} left work uncommitted without deferral"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn deferred_inserts_accumulate_and_commit_once() {
+        // The fix: with deferral on, every edge stays in the temp buffer, so
+        // exactly one rebuild is paid for the whole batch. Before the fix this
+        // asserted 0 after each insert, because each one rebuilt.
+        let edges = 8;
+        let (engine, targets) = engine_with_hub(edges).await;
+
+        engine.set_csr_rebuild_deferred(true);
+        for (i, target) in targets.iter().enumerate() {
+            engine
+                .insert_edge(test_edge(&format!("e{i}"), "hub", target))
+                .await
+                .expect("insert_edge");
+        }
+        assert_eq!(
+            pending_temp_edges(&engine),
+            edges,
+            "deferral should leave every edge pending exactly one rebuild"
+        );
+
+        engine.set_csr_rebuild_deferred(false);
+        engine.rebuild_csr().expect("rebuild_csr");
+        assert_eq!(
+            pending_temp_edges(&engine),
+            0,
+            "rebuild must drain the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn deferred_and_undeferred_reach_identical_topology() {
+        // Deferral is an ordering change, not a semantic one. Whatever the walk
+        // sees afterwards must match what per-edge commits would have produced.
+        let edges = 6;
+
+        let (eager, targets) = engine_with_hub(edges).await;
+        for (i, target) in targets.iter().enumerate() {
+            eager
+                .insert_edge(test_edge(&format!("e{i}"), "hub", target))
+                .await
+                .expect("eager insert");
+        }
+        let mut eager_targets = eager
+            .get_outgoing_targets(&"hub".to_string())
+            .await
+            .expect("eager targets");
+        eager_targets.sort();
+
+        let (deferred, targets) = engine_with_hub(edges).await;
+        deferred.set_csr_rebuild_deferred(true);
+        for (i, target) in targets.iter().enumerate() {
+            deferred
+                .insert_edge(test_edge(&format!("e{i}"), "hub", target))
+                .await
+                .expect("deferred insert");
+        }
+        deferred.set_csr_rebuild_deferred(false);
+        deferred.rebuild_csr().expect("rebuild_csr");
+        let mut deferred_targets = deferred
+            .get_outgoing_targets(&"hub".to_string())
+            .await
+            .expect("deferred targets");
+        deferred_targets.sort();
+
+        assert_eq!(eager_targets.len(), edges);
+        assert_eq!(deferred_targets, eager_targets);
+    }
+
+    #[tokio::test]
+    async fn rebuild_csr_is_safe_to_call_with_nothing_pending() {
+        // Callers invoke it unconditionally on their exit paths, so a no-op
+        // rebuild must not error or disturb committed topology.
+        let (engine, targets) = engine_with_hub(2).await;
+        for (i, target) in targets.iter().enumerate() {
+            engine
+                .insert_edge(test_edge(&format!("e{i}"), "hub", target))
+                .await
+                .expect("insert_edge");
+        }
+
+        engine.rebuild_csr().expect("first rebuild");
+        engine.rebuild_csr().expect("second rebuild");
+
+        let found = engine
+            .get_outgoing_targets(&"hub".to_string())
+            .await
+            .expect("targets");
+        assert_eq!(found.len(), 2);
     }
 }

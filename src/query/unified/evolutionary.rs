@@ -98,10 +98,12 @@ mod tests {
             model: DataModel::Vector,
             operation: ModelOperation::VectorSearch(VectorSearchExpr {
                 collection: format!("c{}", id),
+                vector_column: None,
                 query_vector: vec![],
                 top_k: 10,
                 threshold: None,
                 metric: DistanceMetric::Cosine,
+                filter: None,
                 params: VectorSearchParams::default(),
             }),
             filters: vec![],

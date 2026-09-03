@@ -101,15 +101,9 @@ pub struct DecompressionResult {
     pub decompression_time: Duration,
 }
 
-/// Type of data being compressed
-#[derive(Debug, Clone)]
-pub enum CompressionData {
-    Vector,
-    Metadata,
-    Index,
-    BloomFilter,
-    Mixed,
-}
+// `CompressionData` hoisted to `proximadb-compression` (TD-DECOMP-81);
+// re-exported so existing `metrics::compression::CompressionData` paths resolve.
+pub use proximadb_compression::CompressionData;
 
 /// Global compression stats tracker
 pub struct CompressionMetricsTracker {

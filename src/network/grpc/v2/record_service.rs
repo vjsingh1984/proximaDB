@@ -1723,52 +1723,84 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 let mut acked_sequences: Vec<u64> = Vec::with_capacity(batch_size);
                 let mut batch_errors: Vec<BatchError> = Vec::new();
 
-                // Process each record in the batch
-                for (idx, stream_record) in batch.records.iter().enumerate() {
-                    let record_start = Instant::now();
+                // Process the batch with OPTIMISTIC GROUPING: consecutive
+                // records with the same write mode go through the write
+                // pipeline as ONE call. The pipeline's fixed per-call costs
+                // (tenant-context load, collection resolution, schema
+                // validation, WAL-lane gate, lease check, cache
+                // invalidation) were previously paid PER RECORD — O(N)
+                // round-trips of fixed work. The batch API is aggregate-only
+                // (no per-record attribution on failure), so any group that
+                // fails is retried record-by-record below, reproducing the
+                // exact per-record outcomes of the old one-call-per-record
+                // path; every mode is idempotent by oid, so a retry after a
+                // partially-applied group failure converges to the same
+                // state.
+                let records = &batch.records;
+                let mut run_start = 0usize;
+                while run_start < records.len() {
+                    let run_mode = BatchWriteMode::try_from(records[run_start].write_mode);
+                    let mut run_end = run_start + 1;
+                    while run_end < records.len()
+                        && BatchWriteMode::try_from(records[run_end].write_mode) == run_mode
+                    {
+                        run_end += 1;
+                    }
+                    let run = &records[run_start..run_end];
 
-                    let record = match &stream_record.record {
-                        Some(r) => r,
-                        None => {
-                            batch_errors.push(BatchError {
-                                record_index: idx as i32,
-                                record_id: String::new(),
-                                error_code: "MISSING_RECORD".to_string(),
-                                error_message: "StreamWriteRecord has no record".to_string(),
-                            });
-                            failed_count.fetch_add(1, Ordering::SeqCst);
-                            continue;
+                    // Convert the run's records up front; MISSING_RECORD and
+                    // INVALID_RECORD keep their per-record errors exactly as
+                    // the one-call-per-record path produced them.
+                    let mut envelopes: Vec<(usize, proximadb_records::ProximaRecord)> =
+                        Vec::with_capacity(run.len());
+                    for (offset, stream_record) in run.iter().enumerate() {
+                        let idx = run_start + offset;
+                        total_processed.fetch_add(1, Ordering::SeqCst);
+                        match &stream_record.record {
+                            None => {
+                                batch_errors.push(BatchError {
+                                    record_index: idx as i32,
+                                    record_id: String::new(),
+                                    error_code: "MISSING_RECORD".to_string(),
+                                    error_message: "StreamWriteRecord has no record".to_string(),
+                                });
+                                failed_count.fetch_add(1, Ordering::SeqCst);
+                            }
+                            Some(record) => match proto_record_to_envelope(record) {
+                                Ok(envelope) => envelopes.push((idx, envelope)),
+                                Err(e) => {
+                                    batch_errors.push(BatchError {
+                                        record_index: idx as i32,
+                                        record_id: record.id.clone(),
+                                        error_code: "INVALID_RECORD".to_string(),
+                                        error_message: e.to_string(),
+                                    });
+                                    failed_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                            },
                         }
-                    };
+                    }
 
-                    let rich_record = match proto_record_to_envelope(record) {
-                        Ok(record) => record,
-                        Err(e) => {
-                            batch_errors.push(BatchError {
-                                record_index: idx as i32,
-                                record_id: record.id.clone(),
-                                error_code: "INVALID_RECORD".to_string(),
-                                error_message: e.to_string(),
-                            });
-                            failed_count.fetch_add(1, Ordering::SeqCst);
-                            continue;
-                        }
-                    };
+                    if envelopes.is_empty() {
+                        run_start = run_end;
+                        continue;
+                    }
 
-                    let rich_batch = RichRecordBatchRequest {
-                        collection_id: batch.collection_id.clone(),
-                        records: vec![rich_record],
-                    };
-
-                    // Execute the write based on mode
-                    let result = match BatchWriteMode::try_from(stream_record.write_mode) {
+                    // ONE pipeline call for the whole run (moves the
+                    // envelopes — no per-record clones on the happy path).
+                    let member_indices: Vec<usize> =
+                        envelopes.iter().map(|(idx, _)| *idx).collect();
+                    let group_result = match run_mode {
                         Ok(BatchWriteMode::Insert)
                         | Ok(BatchWriteMode::Unspecified)
                         | Ok(BatchWriteMode::Upsert)
                         | Ok(BatchWriteMode::Update) => {
                             record_ops
                                 .handle_record_batch_for_tenant(
-                                    rich_batch,
+                                    RichRecordBatchRequest {
+                                        collection_id: batch.collection_id.clone(),
+                                        records: envelopes.into_iter().map(|(_, e)| e).collect(),
+                                    },
                                     Some(tenant_id.as_str()),
                                 )
                                 .await
@@ -1778,7 +1810,12 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                                 .handle_record_delete_batch_for_tenant(
                                     RichRecordDeleteBatchRequest {
                                         collection_id: batch.collection_id.clone(),
-                                        record_ids: vec![record.id.clone()],
+                                        record_ids: member_indices
+                                            .iter()
+                                            .filter_map(|idx| {
+                                                records[*idx].record.as_ref().map(|r| r.id.clone())
+                                            })
+                                            .collect(),
                                     },
                                     Some(tenant_id.as_str()),
                                 )
@@ -1786,45 +1823,111 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         }
                         Err(_) => Err(anyhow::anyhow!(
                             "Invalid write_mode: {}",
-                            stream_record.write_mode
+                            records[run_start].write_mode
                         )),
                     };
 
-                    match result {
-                        Ok(resp) if resp.success => {
-                            acked_sequences.push(stream_record.client_sequence);
+                    if matches!(&group_result, Ok(resp) if resp.success) {
+                        // Whole run acknowledged at once.
+                        for idx in &member_indices {
+                            acked_sequences.push(records[*idx].client_sequence);
                             success_count.fetch_add(1, Ordering::SeqCst);
-                            trace!(
-                                "V2 gRPC: Record '{}' written successfully in {:?}",
-                                record.id,
-                                record_start.elapsed()
-                            );
                         }
-                        Ok(resp) => {
-                            batch_errors.push(BatchError {
-                                record_index: idx as i32,
-                                record_id: record.id.clone(),
-                                error_code: "WRITE_FAILED".to_string(),
-                                error_message: if resp.errors.is_empty() {
-                                    "Unknown error".to_string()
-                                } else {
-                                    resp.errors.join("; ")
-                                },
-                            });
-                            failed_count.fetch_add(1, Ordering::SeqCst);
-                        }
-                        Err(e) => {
-                            batch_errors.push(BatchError {
-                                record_index: idx as i32,
-                                record_id: record.id.clone(),
-                                error_code: "INTERNAL_ERROR".to_string(),
-                                error_message: e.to_string(),
-                            });
-                            failed_count.fetch_add(1, Ordering::SeqCst);
+                        trace!(
+                            "V2 gRPC: batched {} same-mode records in one pipeline call",
+                            member_indices.len()
+                        );
+                    } else {
+                        // Aggregate failure — the batch API carries no
+                        // per-record attribution, so retry each member
+                        // individually. This reproduces the previous
+                        // one-call-per-record outcomes exactly; every mode is
+                        // idempotent by oid, so re-applying records after a
+                        // partially-applied group failure converges to the
+                        // same state.
+                        for idx in &member_indices {
+                            let stream_record = &records[*idx];
+                            let Some(record) = &stream_record.record else {
+                                // Conversion succeeded above, so this arm is
+                                // unreachable; fail loudly rather than ack.
+                                batch_errors.push(BatchError {
+                                    record_index: *idx as i32,
+                                    record_id: String::new(),
+                                    error_code: "INTERNAL_ERROR".to_string(),
+                                    error_message: "record vanished during retry".to_string(),
+                                });
+                                failed_count.fetch_add(1, Ordering::SeqCst);
+                                continue;
+                            };
+                            let single_result = match run_mode {
+                                Ok(BatchWriteMode::Insert)
+                                | Ok(BatchWriteMode::Unspecified)
+                                | Ok(BatchWriteMode::Upsert)
+                                | Ok(BatchWriteMode::Update) => {
+                                    match proto_record_to_envelope(record) {
+                                        Ok(envelope) => {
+                                            record_ops
+                                                .handle_record_batch_for_tenant(
+                                                    RichRecordBatchRequest {
+                                                        collection_id: batch.collection_id.clone(),
+                                                        records: vec![envelope],
+                                                    },
+                                                    Some(tenant_id.as_str()),
+                                                )
+                                                .await
+                                        }
+                                        Err(e) => Err(anyhow::anyhow!(e.to_string())),
+                                    }
+                                }
+                                Ok(BatchWriteMode::Delete) => {
+                                    record_ops
+                                        .handle_record_delete_batch_for_tenant(
+                                            RichRecordDeleteBatchRequest {
+                                                collection_id: batch.collection_id.clone(),
+                                                record_ids: vec![record.id.clone()],
+                                            },
+                                            Some(tenant_id.as_str()),
+                                        )
+                                        .await
+                                }
+                                Err(_) => Err(anyhow::anyhow!(
+                                    "Invalid write_mode: {}",
+                                    stream_record.write_mode
+                                )),
+                            };
+
+                            match single_result {
+                                Ok(resp) if resp.success => {
+                                    acked_sequences.push(stream_record.client_sequence);
+                                    success_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                                Ok(resp) => {
+                                    batch_errors.push(BatchError {
+                                        record_index: *idx as i32,
+                                        record_id: record.id.clone(),
+                                        error_code: "WRITE_FAILED".to_string(),
+                                        error_message: if resp.errors.is_empty() {
+                                            "Unknown error".to_string()
+                                        } else {
+                                            resp.errors.join("; ")
+                                        },
+                                    });
+                                    failed_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                                Err(e) => {
+                                    batch_errors.push(BatchError {
+                                        record_index: *idx as i32,
+                                        record_id: record.id.clone(),
+                                        error_code: "INTERNAL_ERROR".to_string(),
+                                        error_message: e.to_string(),
+                                    });
+                                    failed_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                            }
                         }
                     }
 
-                    total_processed.fetch_add(1, Ordering::SeqCst);
+                    run_start = run_end;
                 }
 
                 // Record processing time for the batch

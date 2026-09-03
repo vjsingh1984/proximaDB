@@ -1,3 +1,4 @@
+# isort: skip_file
 """
 Offline unit tests for embedding_providers.providers.{local,testing}.
 
@@ -34,13 +35,19 @@ class _FakeSentenceTransformer:
     last_kwargs = None
 
     def __init__(
-        self, model_name, device=None, trust_remote_code=False, cache_folder=None
+        self,
+        model_name,
+        device=None,
+        trust_remote_code=False,
+        cache_folder=None,
+        local_files_only=False,
     ):
         type(self).last_kwargs = {
             "model_name": model_name,
             "device": device,
             "trust_remote_code": trust_remote_code,
             "cache_folder": cache_folder,
+            "local_files_only": local_files_only,
         }
         self.model_name = model_name
         self.encode_calls = []
@@ -101,22 +108,22 @@ from proximadb_sdk.embedding_providers.core import (  # noqa: E402
     ModelMetadata,
     ProviderConfig,
 )
-from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.local import (
     bge as bge_mod,
-)
+)  # noqa: E402
 from proximadb_sdk.embedding_providers.providers.local import e5 as e5_mod  # noqa: E402
-from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.local import (
     gte_qwen as gte_qwen_mod,
-)
+)  # noqa: E402
 from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
     sentence_transformer as st_mod,
 )
-from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.local import (
     sfr as sfr_mod,
-)
-from proximadb_sdk.embedding_providers.providers.testing import (  # noqa: E402
+)  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.testing import (
     simulated as sim_mod,
-)
+)  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -272,7 +279,11 @@ def test_st_load_model_passes_config_through():
     """_load_model forwards device/trust_remote_code/cache_dir to the model ctor."""
     model = ModelMetadata(name="custom-model", dimension=4)
     cfg = ProviderConfig(
-        model=model, device="cpu", trust_remote_code=True, cache_dir="/tmp/x"
+        model=model,
+        device="cpu",
+        trust_remote_code=True,
+        cache_dir="/tmp/x",
+        extra={"local_files_only": True},
     )
     provider = st_mod.SentenceTransformerProvider(cfg)
     provider.embed(["x"])
@@ -281,6 +292,7 @@ def test_st_load_model_passes_config_through():
     assert kw["device"] == "cpu"
     assert kw["trust_remote_code"] is True
     assert kw["cache_folder"] == "/tmp/x"
+    assert kw["local_files_only"] is True
 
 
 def test_model_catalogs_are_populated():

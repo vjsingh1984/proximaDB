@@ -208,7 +208,9 @@ impl FileSystem for AzureBlobFileSystem {
             .bytes()
             .await
             .map_err(|e| Self::net("Azure body", e))?;
-        Ok(bytes.to_vec())
+        let bytes = bytes.to_vec();
+        super::record_physical_full_read(bytes.len() as u64);
+        Ok(bytes)
     }
 
     /// ADR-023 cold path: a TRUE ranged blob GET — fetches only `[offset, +length)`.
@@ -224,8 +226,7 @@ impl FileSystem for AzureBlobFileSystem {
             .map_err(|e| Self::net("Azure get_range", e))?;
         // ADR-030 / TD-158: physical GET boundary — feed the per-query I/O accumulator
         // (task-local; no-op outside a query scope). Always-on core counters.
-        crate::observability::io_trace::record_range_gets(1);
-        crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
+        super::record_physical_range_read(bytes.len() as u64);
         Ok(bytes.to_vec())
     }
 

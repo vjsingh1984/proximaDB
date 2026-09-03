@@ -46,6 +46,12 @@
 //! - Requires Delta log for all operations
 //! - Partitioned tables use Hive-style layout
 
+// TD-CAT-8: module-level gate, matching `unity.rs` / `polaris.rs`. The
+// `delta-lake` feature already existed and is off by default, but this module
+// compiled into EVERY build anyway — `lib.rs`'s `pub mod` line does not show a
+// module's own inner attribute, which is how that went unnoticed.
+#![cfg(feature = "delta-lake")]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -770,7 +776,7 @@ impl Catalog for DeltaCatalog {
     // Table Operations
     // ========================
 
-    async fn create_table(
+    async fn create_table_inner(
         &self,
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
@@ -799,10 +805,10 @@ impl Catalog for DeltaCatalog {
             .iter()
             .map(|col| {
                 let mut metadata = col.properties.clone();
-                if matches!(col.data_type, ProximaType::DenseVector { .. }) {
-                    if let Some(dim) = col.properties.get("dimension") {
-                        metadata.insert("delta.proximadb.dimension".to_string(), dim.clone());
-                    }
+                if matches!(col.data_type, ProximaType::DenseVector { .. })
+                    && let Some(dim) = col.properties.get("dimension")
+                {
+                    metadata.insert("delta.proximadb.dimension".to_string(), dim.clone());
                 }
                 if let Some(comment) = &col.comment {
                     metadata.insert("comment".to_string(), comment.clone());
@@ -869,7 +875,10 @@ impl Catalog for DeltaCatalog {
                 operation: "CREATE TABLE".to_string(),
                 operation_parameters: Some(HashMap::from([
                     ("isManaged".to_string(), "false".to_string()),
-                    ("description".to_string(), format!("Created by ProximaDB")),
+                    (
+                        "description".to_string(),
+                        "Created by ProximaDB".to_string(),
+                    ),
                 ])),
             },
         ];
@@ -1073,10 +1082,10 @@ impl Catalog for DeltaCatalog {
             .iter()
             .map(|col| {
                 let mut metadata = col.properties.clone();
-                if matches!(col.data_type, ProximaType::DenseVector { .. }) {
-                    if let Some(dim) = col.properties.get("dimension") {
-                        metadata.insert("delta.proximadb.dimension".to_string(), dim.clone());
-                    }
+                if matches!(col.data_type, ProximaType::DenseVector { .. })
+                    && let Some(dim) = col.properties.get("dimension")
+                {
+                    metadata.insert("delta.proximadb.dimension".to_string(), dim.clone());
                 }
                 if let Some(comment) = &col.comment {
                     metadata.insert("comment".to_string(), comment.clone());
@@ -1268,10 +1277,10 @@ impl Catalog for DeltaCatalog {
 
         let mut indexes = Vec::new();
         for (k, v) in &table.properties {
-            if k.starts_with("delta.proximadb.index.") {
-                if let Ok(index) = serde_json::from_str::<CatalogIndex>(v) {
-                    indexes.push(index);
-                }
+            if k.starts_with("delta.proximadb.index.")
+                && let Ok(index) = serde_json::from_str::<CatalogIndex>(v)
+            {
+                indexes.push(index);
             }
         }
 

@@ -16,6 +16,8 @@ path = "src/lib.rs"
 [dependencies]
 async-trait.workspace = true
 proximadb-distance-types.workspace = true
+proximadb-filter-expression.workspace = true
+proximadb-search-types.workspace = true
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-records = { workspace = true }
 # NOTE: this crate intentionally does NOT depend on proximadb-proto.

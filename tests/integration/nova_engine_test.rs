@@ -3,14 +3,19 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
+use proximadb::proto::proximadb_v1::{
+    Collection, DistanceMetric, FilterableDataType, StorageEngine,
+};
 use proximadb::services::collection::manager::CollectionService;
 use proximadb::services::operations::vectors::VectorOperationsService;
 use proximadb::storage::engines::nova::NovaEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
-use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
-use proximadb_records::ProximaRecord;
+use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine, UnifiedStorageFormat};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{
+    EmbeddingCell, EmbeddingValues, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode,
+};
 use std::collections::HashMap;
 
 // Import test utilities
@@ -42,6 +47,80 @@ async fn create_test_setup() -> (Arc<NovaEngine>, Arc<CollectionService>, TempDi
 /// REFACTORED: Now uses vector_generator::sequential()
 fn create_test_vectors(count: usize) -> Vec<ProximaRecord> {
     sequential("nova_test_collection", count, 128)
+}
+
+/// Build a single `ProximaRecord` with explicit `record_version`/`valid_to_ns`
+/// (TD-DSEFF-2 MVCC/tombstone tests need full control over these — the
+/// shared `vector_generator` helpers always default them to `1`/`None`).
+fn versioned_record(
+    oid: &str,
+    dim: usize,
+    version: u64,
+    valid_to_ns: Option<i64>,
+) -> ProximaRecord {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as i64;
+    let vector: Vec<f32> = (0..dim).map(|d| (version as f32) + d as f32).collect();
+    ProximaRecord {
+        schema_version: proximadb_records::schema_version::default_schema_version(),
+        oid: oid.to_string(),
+        local_id: None,
+        tid: None,
+        variation_id: None,
+        record_version: version,
+        spec_version: 1,
+        tenant_id: String::new(),
+        permitted_principals: Vec::new(),
+        rls_policy_id: None,
+        created_at_ns: now,
+        updated_at_ns: now,
+        valid_from_ns: None,
+        valid_to_ns,
+        origin: None,
+        actor: None,
+        method: Some("test".to_string()),
+        memory_type: None,
+        props: ProximaTree::new(),
+        refs: Vec::new(),
+        edge: None,
+        embeddings: vec![EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "dense_vector".to_string(),
+            dim: dim as u32,
+            values: EmbeddingValues::Fp32(vector),
+            ..Default::default()
+        }],
+        sequence: None,
+        labels: LabelSet::new(),
+        branch_id: None,
+    }
+}
+
+/// Flush a single record as its own batch (its own Parquet file) — used to
+/// simulate multiple flushes of the same oid landing in separate files,
+/// exactly as NOVA's real flush path does per-batch (TD-DSEFF-2).
+async fn flush_one(
+    nova_engine: &NovaEngine,
+    collection_id: &str,
+    collection: &Collection,
+    record: ProximaRecord,
+) {
+    let flush_params = FlushParameters {
+        collection_id: Some(collection_id.to_string()),
+        vector_records: vec![record],
+        batch_ids: vec![],
+        force: true,
+        synchronous: true,
+        hints: HashMap::new(),
+        timeout_ms: Some(30000),
+        trigger_compaction: false,
+        collection_config: Some(collection.clone()),
+        estimated_size: 1024,
+    };
+    let result = nova_engine.flush(flush_params).await.unwrap();
+    assert!(result.success, "flush must succeed");
 }
 
 #[tokio::test]
@@ -356,4 +435,329 @@ async fn test_nova_compact_basic() {
     );
 
     assert!(compact_result.success, "Compaction should succeed");
+}
+
+// ---------------------------------------------------------------------------
+// TD-DSEFF-2: `vector_by_id` MVCC resolution + tombstone/TTL filtering.
+//
+// NOVA's flush path writes a brand-new uniquely-named Parquet file per flush
+// (`NovaFlushOperations::write_nova_file_to_disk`) — nothing merges by id
+// until compaction runs, so an id updated across two flushes genuinely
+// exists in two files simultaneously. Before this fix, `vector_by_id`
+// returned the first file/row match with no version comparison and no
+// dead-record filtering at all.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_nova_vector_by_id_returns_latest_version_across_flushes() {
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_mvcc_version";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    // v1 flushed first, v2 (same oid, higher version) flushed second — into
+    // a SEPARATE file, since each flush call writes its own file.
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("mvcc_vec", 4, 1, None),
+    )
+    .await;
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("mvcc_vec", 4, 2, None),
+    )
+    .await;
+
+    let found = nova_engine
+        .vector_by_id(collection_id, &base_location, "mvcc_vec")
+        .await
+        .unwrap()
+        .expect("the record must be found");
+    assert_eq!(
+        found.record_version, 2,
+        "vector_by_id must return the HIGHER version across files, not the first match"
+    );
+    let vector = found.embeddings[0].values.to_fp32_owned();
+    assert_eq!(
+        vector[0], 2.0,
+        "returned vector data must belong to the v2 record, not v1"
+    );
+}
+
+#[tokio::test]
+async fn test_nova_vector_by_id_hides_tombstoned_record() {
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_mvcc_tombstone";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    // A live v1, then a tombstone at v2 (higher version, valid_to_ns =
+    // Some(0)) in a LATER flush — the tombstone must shadow the live
+    // version (CLAUDE.md invariant 16d), not be skipped in favor of it.
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("tombstoned_vec", 4, 1, None),
+    )
+    .await;
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("tombstoned_vec", 4, 2, Some(0)),
+    )
+    .await;
+
+    let found = nova_engine
+        .vector_by_id(collection_id, &base_location, "tombstoned_vec")
+        .await
+        .unwrap();
+    assert!(
+        found.is_none(),
+        "a tombstoned record (higher version, valid_to_ns=Some(0)) must not be returned"
+    );
+}
+
+#[tokio::test]
+async fn test_nova_vector_by_id_filters_ttl_expired_and_returns_live() {
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_mvcc_ttl";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as i64;
+    let one_hour_ns = 3_600_000_000_000i64;
+
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("expired_vec", 4, 1, Some(now_ns - one_hour_ns)),
+    )
+    .await;
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("future_vec", 4, 1, Some(now_ns + one_hour_ns)),
+    )
+    .await;
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("forever_vec", 4, 1, None),
+    )
+    .await;
+
+    assert!(
+        nova_engine
+            .vector_by_id(collection_id, &base_location, "expired_vec")
+            .await
+            .unwrap()
+            .is_none(),
+        "a record with a past valid_to_ns must not be returned"
+    );
+    assert!(
+        nova_engine
+            .vector_by_id(collection_id, &base_location, "future_vec")
+            .await
+            .unwrap()
+            .is_some(),
+        "a record with a future valid_to_ns must be returned"
+    );
+    assert!(
+        nova_engine
+            .vector_by_id(collection_id, &base_location, "forever_vec")
+            .await
+            .unwrap()
+            .is_some(),
+        "a record with no valid_to_ns must be returned"
+    );
+}
+
+#[tokio::test]
+async fn test_nova_vector_by_id_preserves_metadata_types_and_origin() {
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_point_read_metadata";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .with_filterable_column("category", FilterableDataType::FilterableString)
+        .with_filterable_column("count", FilterableDataType::FilterableInteger)
+        .with_filterable_column("score", FilterableDataType::FilterableFloat)
+        .with_filterable_column("active", FilterableDataType::FilterableBoolean)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    let mut record = versioned_record("metadata_vec", 4, 1, None);
+    record.origin = Some("fixture-origin".to_string());
+    record.props.insert(
+        "category".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String("books".to_string())),
+    );
+    record.props.insert(
+        "count".to_string(),
+        ProximaTreeNode::Value(ProximaValue::Int64(7)),
+    );
+    record.props.insert(
+        "score".to_string(),
+        ProximaTreeNode::Value(ProximaValue::Float64(9.5)),
+    );
+    record.props.insert(
+        "active".to_string(),
+        ProximaTreeNode::Value(ProximaValue::Boolean(true)),
+    );
+    record.props.insert(
+        "note".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String("extra".to_string())),
+    );
+    flush_one(&nova_engine, collection_id, &collection, record).await;
+
+    let found = nova_engine
+        .vector_by_id(collection_id, &base_location, "metadata_vec")
+        .await
+        .unwrap()
+        .expect("record must exist");
+
+    assert_eq!(found.origin.as_deref(), Some("fixture-origin"));
+    assert_eq!(
+        found.props.get("category"),
+        Some(&ProximaTreeNode::Value(ProximaValue::String(
+            "books".to_string()
+        )))
+    );
+    assert_eq!(
+        found.props.get("count"),
+        Some(&ProximaTreeNode::Value(ProximaValue::Int64(7)))
+    );
+    assert_eq!(
+        found.props.get("score"),
+        Some(&ProximaTreeNode::Value(ProximaValue::Float64(9.5)))
+    );
+    assert_eq!(
+        found.props.get("active"),
+        Some(&ProximaTreeNode::Value(ProximaValue::Boolean(true)))
+    );
+    assert_eq!(
+        found.props.get("note"),
+        Some(&ProximaTreeNode::Value(ProximaValue::String(
+            "extra".to_string()
+        )))
+    );
+    assert!(
+        !found.props.contains_key("source"),
+        "source is record provenance, not user metadata"
+    );
+}
+
+#[tokio::test]
+async fn test_nova_vector_by_id_fails_closed_on_unreadable_candidate_file() {
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_point_read_corrupt_file";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("uncertain_vec", 4, 1, None),
+    )
+    .await;
+    let data_dir = _temp.path().join(collection_id).join("data");
+    std::fs::write(data_dir.join("unknown-newer.parquet"), b"not parquet").unwrap();
+
+    let result = nova_engine
+        .vector_by_id(collection_id, &base_location, "uncertain_vec")
+        .await;
+    assert!(
+        result.is_err(),
+        "point reads must not return a stale candidate when another data file is unreadable"
+    );
+}
+
+#[tokio::test]
+async fn test_nova_vector_by_id_does_not_serve_cached_pre_update_version() {
+    use proximadb::storage::cache::orchestrator::CrossCacheOrchestrator;
+    use proximadb::storage::cache::specialized::vector_cache::VectorCache;
+
+    let orchestrator = Arc::new(
+        CrossCacheOrchestrator::new(1024 * 1024).with_vector_cache(Arc::new(VectorCache::new(1))),
+    );
+    CrossCacheOrchestrator::register_global(orchestrator);
+
+    let nova_engine = NovaEngine::new().await.unwrap();
+    let collection_id = "test_point_read_cache_freshness";
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(4)
+        .with_engine(StorageEngine::Nova)
+        .build();
+    let base_location = _temp.path().to_str().unwrap().to_string();
+
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("cached_vec", 4, 1, None),
+    )
+    .await;
+    let first = nova_engine
+        .vector_by_id(collection_id, &base_location, "cached_vec")
+        .await
+        .unwrap()
+        .expect("v1 must exist");
+    assert_eq!(first.record_version, 1);
+
+    flush_one(
+        &nova_engine,
+        collection_id,
+        &collection,
+        versioned_record("cached_vec", 4, 2, None),
+    )
+    .await;
+    let second = nova_engine
+        .vector_by_id(collection_id, &base_location, "cached_vec")
+        .await
+        .unwrap()
+        .expect("v2 must exist");
+    assert_eq!(
+        second.record_version, 2,
+        "an uninvalidated point-read cache must not hide a newer flushed version"
+    );
 }

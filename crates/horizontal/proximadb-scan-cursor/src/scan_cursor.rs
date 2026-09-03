@@ -36,6 +36,13 @@ pub struct ScanCursor {
     pub last_oid: String,
     /// Issue-time nanoseconds (server clock). Stale cursors rejected.
     pub epoch_ns: i64,
+    /// Collection revision observed on the first page. Optional so cursors
+    /// minted by older servers remain readable during a mixed-version rollout.
+    #[serde(default)]
+    pub content_revision: Option<u64>,
+    /// Opaque validator that also changes across server incarnations.
+    #[serde(default)]
+    pub content_revision_token: Option<String>,
 }
 
 /// Decode errors are protocol-agnostic so the REST and embedded
@@ -63,6 +70,17 @@ pub enum ScanCursorDecodeError {
     /// client error (HTTP 400 / typed "malformed").
     #[error("malformed scan cursor: {0}")]
     Malformed(String),
+    /// The collection was mutated after the page that issued this cursor.
+    #[error(
+        "collection changed during scan ({cursor_revision} -> {current_revision}); restart pagination"
+    )]
+    ContentRevisionMismatch {
+        cursor_revision: u64,
+        current_revision: u64,
+    },
+    /// The database/server owning the scan was closed or restarted.
+    #[error("database incarnation changed during scan; restart pagination")]
+    IncarnationMismatch,
 }
 
 impl ScanCursor {
@@ -95,6 +113,34 @@ impl ScanCursor {
             return Err(ScanCursorDecodeError::Expired);
         }
         Ok(cursor)
+    }
+
+    /// Fence a continuation against writes and owner restart. Legacy cursors
+    /// without either optional field remain readable for mixed-version rollout.
+    pub fn validate_content_revision(
+        &self,
+        current_revision: u64,
+        current_token: &str,
+    ) -> Result<(), ScanCursorDecodeError> {
+        if let Some(cursor_revision) = self.content_revision
+            && cursor_revision != current_revision
+        {
+            return Err(ScanCursorDecodeError::ContentRevisionMismatch {
+                cursor_revision,
+                current_revision,
+            });
+        }
+        if let Some(token) = self.content_revision_token.as_deref()
+            && token != current_token
+        {
+            return Err(ScanCursorDecodeError::IncarnationMismatch);
+        }
+        Ok(())
+    }
+
+    pub fn stamp_content_revision(&mut self, revision: u64, token: String) {
+        self.content_revision = Some(revision);
+        self.content_revision_token = Some(token);
     }
 }
 
@@ -145,6 +191,8 @@ pub fn derive_next_cursor(
             last_updated_at_ns: last.updated_at_ns,
             last_oid: last.oid.clone(),
             epoch_ns: now_ns,
+            content_revision: None,
+            content_revision_token: None,
         })
     } else {
         None
@@ -176,6 +224,8 @@ mod tests {
             last_updated_at_ns: 1_700_000_000_000_000_000,
             last_oid: "rec-077".to_string(),
             epoch_ns: 1_700_000_000_000_000_000,
+            content_revision: Some(7),
+            content_revision_token: Some("epoch-a:7".to_string()),
         }
     }
 
@@ -199,6 +249,8 @@ mod tests {
             last_updated_at_ns: 10,
             last_oid: "a".to_string(),
             epoch_ns: 0,
+            content_revision: None,
+            content_revision_token: None,
         };
         let now = 999;
 
@@ -229,6 +281,48 @@ mod tests {
         assert_eq!(decoded.last_updated_at_ns, cursor.last_updated_at_ns);
         assert_eq!(decoded.last_oid, cursor.last_oid);
         assert_eq!(decoded.epoch_ns, cursor.epoch_ns);
+        assert_eq!(decoded.content_revision, cursor.content_revision);
+        assert_eq!(
+            decoded.content_revision_token,
+            cursor.content_revision_token
+        );
+    }
+
+    #[test]
+    fn older_cursor_without_content_revision_still_decodes() {
+        #[derive(Serialize)]
+        struct LegacyScanCursor<'a> {
+            collection_id: &'a str,
+            last_updated_at_ns: i64,
+            last_oid: &'a str,
+            epoch_ns: i64,
+        }
+        let legacy = LegacyScanCursor {
+            collection_id: "col-a",
+            last_updated_at_ns: 10,
+            last_oid: "rec-1",
+            epoch_ns: 20,
+        };
+        let bytes = rmp_serde::to_vec_named(&legacy).expect("legacy encode");
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        let decoded = ScanCursor::decode(&raw, "col-a", 20).expect("mixed-version decode");
+        assert_eq!(decoded.content_revision, None);
+        assert_eq!(decoded.content_revision_token, None);
+    }
+
+    #[test]
+    fn revision_validation_distinguishes_write_from_restart() {
+        let mut cursor = fixture_cursor();
+        cursor.stamp_content_revision(7, "open-a:7".to_string());
+        assert!(cursor.validate_content_revision(7, "open-a:7").is_ok());
+        assert!(matches!(
+            cursor.validate_content_revision(8, "open-a:8"),
+            Err(ScanCursorDecodeError::ContentRevisionMismatch { .. })
+        ));
+        assert_eq!(
+            cursor.validate_content_revision(7, "open-b:7"),
+            Err(ScanCursorDecodeError::IncarnationMismatch)
+        );
     }
 
     #[test]

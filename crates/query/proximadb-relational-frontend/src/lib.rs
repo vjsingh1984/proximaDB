@@ -150,14 +150,18 @@ fn classify_unsupported(msg: &str) -> &'static str {
 
 /// Resolve a table name to its schema. The frontend stays pure
 /// — no catalog crate dependency — by taking this trait object.
+///
+/// Returns a shared `Arc` so hot implementors (per-connection snapshot
+/// catalogs) can serve lookups by refcount instead of deep-cloning the
+/// schema's column list per call.
 pub trait CatalogLookup {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema>;
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>>;
 }
 
 /// Simple in-memory catalog for tests and standalone use.
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryCatalog {
-    tables: std::collections::HashMap<String, RelationalSchema>,
+    tables: std::collections::HashMap<String, std::sync::Arc<RelationalSchema>>,
 }
 
 impl InMemoryCatalog {
@@ -165,13 +169,51 @@ impl InMemoryCatalog {
         Self::default()
     }
     pub fn register(&mut self, name: impl Into<String>, schema: RelationalSchema) {
-        self.tables.insert(name.into(), schema);
+        self.tables.insert(name.into(), std::sync::Arc::new(schema));
     }
 }
 
 impl CatalogLookup for InMemoryCatalog {
-    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
-        self.tables.get(name).cloned()
+    fn lookup_table(&self, name: &str) -> Option<std::sync::Arc<RelationalSchema>> {
+        if let Some(s) = self.tables.get(name) {
+            return Some(std::sync::Arc::clone(s));
+        }
+        // TD-OLAP-18: quoted spellings arrive as `"Name"` (ObjectName::to_string
+        // keeps the quotes) — they match the declared name case-exactly only.
+        let trimmed = name.trim_matches('"');
+        if name != trimmed {
+            return self.tables.get(trimmed).cloned();
+        }
+        // Unquoted spellings fold: a unique case-insensitive match resolves.
+        if !ident_case_fold_enabled() {
+            return None;
+        }
+        let mut hit: Option<&std::sync::Arc<RelationalSchema>> = None;
+        for (k, v) in &self.tables {
+            if k.eq_ignore_ascii_case(trimmed) {
+                if hit.is_some() {
+                    return None; // ambiguous across case-variants — stay strict
+                }
+                hit = Some(v);
+            }
+        }
+        hit.cloned()
+    }
+}
+
+/// TD-OLAP-18: ANSI/PostgreSQL identifier case-folding. Unquoted identifiers
+/// resolve case-insensitively (an exact/declared-case match always wins first);
+/// quoted identifiers stay case-exact. The fold only turns previously-failing
+/// lookups into successes, so it defaults ON; `PROXIMADB_IDENT_CASE_FOLD=0`
+/// restores the legacy case-exact resolution. Consulted only on the exact-miss
+/// cold path, so it costs nothing on today's working queries.
+pub fn ident_case_fold_enabled() -> bool {
+    match std::env::var("PROXIMADB_IDENT_CASE_FOLD") {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        Err(_) => true,
     }
 }
 
@@ -1088,14 +1130,19 @@ fn lower_table_factor(
             let schema = catalog
                 .lookup_table(&table_name)
                 .ok_or_else(|| FrontendError::TableNotFound(table_name.clone()))?;
+            // Scope names carry no quote characters: a quoted `FROM "CaseTbl"`
+            // serializes with its quotes in `table_name`, but qualified column
+            // references compare against the bare identifier value.
             let scope_name = alias
                 .as_ref()
                 .map(|a| a.name.value.clone())
-                .unwrap_or_else(|| table_name.clone());
+                .unwrap_or_else(|| table_name.trim_matches('"').to_string());
             let scope = Scope::from_table(&scope_name, &schema);
             let plan = LogicalNode::Scan {
                 table: TableId::new(table_name),
-                table_schema: schema,
+                // The plan IR owns its schema; one clone at plan-build time
+                // (the trait's Arc already saved the per-lookup deep clone).
+                table_schema: (*schema).clone(),
                 projected_columns: None,
                 predicate: None,
             };
@@ -1551,7 +1598,9 @@ fn strip_nested(expr: &SqlExpr) -> &SqlExpr {
 fn lower_expr(expr: &SqlExpr, scope: &Scope, ctx: &mut LoweringCtx) -> Result<Expr, FrontendError> {
     match expr {
         SqlExpr::Nested(inner) => lower_expr(inner, scope, ctx),
-        SqlExpr::Identifier(id) => scope.resolve_unqualified(&id.value).map(Expr::column),
+        SqlExpr::Identifier(id) => scope
+            .resolve_unqualified(&id.value, id.quote_style.is_some())
+            .map(Expr::column),
         SqlExpr::CompoundIdentifier(parts) => {
             if parts.len() < 2 {
                 return Err(FrontendError::ColumnNotFound(
@@ -1564,7 +1613,9 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope, ctx: &mut LoweringCtx) -> Result<Ex
             }
             let table = &parts[0].value;
             let column = &parts[1].value;
-            scope.resolve_qualified(table, column).map(Expr::column)
+            scope
+                .resolve_qualified(table, column, parts[1].quote_style.is_some())
+                .map(Expr::column)
         }
         SqlExpr::Value(v) => Ok(Expr::literal(lower_value(&v.value)?)),
         // `DATE 'YYYY-MM-DD'` typed literal → the canonical `ProximaValue::Date`
@@ -2540,7 +2591,10 @@ fn apply_order_by(
             (Err(FrontendError::ColumnNotFound(_)), SqlExpr::CompoundIdentifier(parts))
                 if !parts.is_empty() =>
             {
-                Expr::column(scope.resolve_unqualified(&parts[parts.len() - 1].value)?)
+                Expr::column(scope.resolve_unqualified(
+                    &parts[parts.len() - 1].value,
+                    parts[parts.len() - 1].quote_style.is_some(),
+                )?)
             }
             (Err(e), _) => return Err(e),
         };
@@ -2713,7 +2767,40 @@ impl Scope {
             .collect()
     }
 
-    fn resolve_unqualified(&self, name: &str) -> Result<ColumnRef, FrontendError> {
+    /// Resolve an unqualified column reference. Exact (declared-case) match
+    /// wins; when the reference was UNQUOTED and nothing matched exactly, a
+    /// unique case-insensitive match resolves (TD-OLAP-18 ANSI folding).
+    fn resolve_unqualified(&self, name: &str, quoted: bool) -> Result<ColumnRef, FrontendError> {
+        match self.resolve_unqualified_exact(name) {
+            Err(FrontendError::ColumnNotFound(_)) if !quoted && ident_case_fold_enabled() => {
+                self.resolve_unqualified_folded(name)
+            }
+            other => other,
+        }
+    }
+
+    /// Case-insensitive resolution for an unquoted reference that had no exact
+    /// match. Distinct case-variant column names (`Foo` AND `foo` in scope) are
+    /// ambiguous — resolution stays strict rather than guessing.
+    fn resolve_unqualified_folded(&self, name: &str) -> Result<ColumnRef, FrontendError> {
+        let mut declared: Option<&str> = None;
+        for c in &self.columns {
+            if c.column.name.eq_ignore_ascii_case(name) {
+                match declared {
+                    Some(d) if d != c.column.name => {
+                        return Err(FrontendError::AmbiguousColumn(name.into()));
+                    }
+                    _ => declared = Some(&c.column.name),
+                }
+            }
+        }
+        match declared {
+            Some(d) => self.resolve_unqualified_exact(d),
+            None => Err(FrontendError::ColumnNotFound(name.into())),
+        }
+    }
+
+    fn resolve_unqualified_exact(&self, name: &str) -> Result<ColumnRef, FrontendError> {
         let mut hits: Vec<&ScopeColumn> = self
             .columns
             .iter()
@@ -2747,17 +2834,53 @@ impl Scope {
         }
     }
 
-    fn resolve_qualified(&self, table: &str, column: &str) -> Result<ColumnRef, FrontendError> {
-        self.columns
+    /// Resolve a qualified `table.column` reference. Exact match wins; when the
+    /// COLUMN part was unquoted and nothing matched exactly, the pair resolves
+    /// case-insensitively if unique (TD-OLAP-18 ANSI folding — the table/alias
+    /// part always folds, matching `normalize_table_key`'s table semantics).
+    fn resolve_qualified(
+        &self,
+        table: &str,
+        column: &str,
+        column_quoted: bool,
+    ) -> Result<ColumnRef, FrontendError> {
+        if let Some(c) = self
+            .columns
             .iter()
             .find(|c| c.table == table && c.column.name == column)
-            .map(|c| ColumnRef {
+        {
+            return Ok(ColumnRef {
                 name: c.column.name.clone(),
                 ordinal: c.ordinal,
                 ty: c.column.ty.clone(),
                 nullable: c.column.nullable,
-            })
-            .ok_or_else(|| FrontendError::ColumnNotFound(format!("{table}.{column}")))
+            });
+        }
+        if !column_quoted && ident_case_fold_enabled() {
+            let mut hit: Option<&ScopeColumn> = None;
+            for c in &self.columns {
+                if c.table.eq_ignore_ascii_case(table) && c.column.name.eq_ignore_ascii_case(column)
+                {
+                    match hit {
+                        Some(h) if h.column.name != c.column.name => {
+                            return Err(FrontendError::AmbiguousColumn(format!(
+                                "{table}.{column}"
+                            )));
+                        }
+                        _ => hit = Some(c),
+                    }
+                }
+            }
+            if let Some(c) = hit {
+                return Ok(ColumnRef {
+                    name: c.column.name.clone(),
+                    ordinal: c.ordinal,
+                    ty: c.column.ty.clone(),
+                    nullable: c.column.nullable,
+                });
+            }
+        }
+        Err(FrontendError::ColumnNotFound(format!("{table}.{column}")))
     }
 }
 

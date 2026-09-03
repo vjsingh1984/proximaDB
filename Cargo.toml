@@ -22,7 +22,6 @@ members = [
     "apps/proximadb-bench",
     "apps/proximadb-migrate",
     "apps/proximadb-server",
-    "apps/proximadb-vectordb-compare",
     ".",
     "clients/rust",
     "crates/foundation/proximadb-cache",
@@ -56,6 +55,7 @@ members = [
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
     "crates/foundation/proximadb-catalog-schema",
+    "crates/horizontal/proximadb-multimodel-codec",
     "crates/control/proximadb-abac",
     "crates/control/proximadb-catalog",
     "crates/control/proximadb-metrics",
@@ -86,7 +86,6 @@ members = [
     "crates/horizontal/proximadb-document-compression",
     "crates/horizontal/proximadb-arrow-block-index",
     "crates/horizontal/proximadb-geo-queries",
-    "crates/horizontal/proximadb-auth-sso",
     "crates/horizontal/proximadb-catapult",
     "crates/horizontal/proximadb-axis-tunnel",
     "crates/horizontal/proximadb-filterable-metadata",
@@ -141,6 +140,7 @@ members = [
     "crates/storage/proximadb-storage-filesystem-types",
     "crates/storage/proximadb-storage-strategy",
     "crates/storage/proximadb-storage-tenant",
+    "crates/storage/proximadb-sst-engine",
     "crates/storage/proximadb-storage-transaction",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
@@ -206,18 +206,18 @@ anyhow = "1.0"
 # dep at the workspace level. Same pin as the root `[dependencies]`
 # entry.
 sqlparser = { version = "0.59", features = ["visitor"] }
-arrow = { version = "58", features = ["prettyprint"] }
-arrow-array = { version = "58", default-features = false }
+arrow = { version = "59", features = ["prettyprint", "ffi"] }
+arrow-array = { version = "59", default-features = false }
 # Workspace-level so the root crate and `proximadb-embedded` resolve the SAME
 # datafusion. The embedded Python binding passes `SessionContext`/`DataFrame`
 # across the crate boundary, so two independently-specified versions would be two
 # distinct types and fail to compile in a way that is tedious to diagnose.
-datafusion = { version = "54.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions", "datetime_expressions", "math_expressions"] }
+datafusion = { version = "55.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions", "datetime_expressions", "math_expressions"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bincode = "1.3"
-arrow-flight = { version = "58", features = ["flight-sql-experimental"] }
-arrow-schema = { version = "58", default-features = false }
-parquet = { version = "58", default-features = false, features = ["arrow", "object_store", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
+arrow-flight = { version = "59", features = ["flight-sql-experimental"] }
+arrow-schema = { version = "59", default-features = false }
+parquet = { version = "59", default-features = false, features = ["arrow", "object_store", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
 object_store = "0.13"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["json", "ws"] }
@@ -229,6 +229,7 @@ proximadb-graph-model = { path = "crates/foundation/proximadb-graph-model" }
 proximadb-graph-engine-traits = { path = "crates/foundation/proximadb-graph-engine-traits" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
+proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
@@ -262,6 +263,7 @@ proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine
 proximadb-abac = { path = "crates/control/proximadb-abac" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-catalog-schema = { path = "crates/foundation/proximadb-catalog-schema" }
+proximadb-multimodel-codec = { path = "crates/horizontal/proximadb-multimodel-codec" }
 proximadb-cdc = { path = "crates/integrations/proximadb-cdc" }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
 arc-swap = "1.7"
@@ -283,6 +285,8 @@ serde = { version = "1.0", features = ["derive"] }
 # nested plans (TD-EXEC-2 §1.a). Same primitive rustc/Servo use.
 stacker = "0.1"
 tempfile = "3.0"
+ipnet = "2.12" # CIDR matching (KOU client-locality, TD-TENANT-4 trusted proxies)
+prometheus = "0.14" # metric export (network-middleware counters)
 thiserror = "2.0"
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }
@@ -305,7 +309,6 @@ proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
-proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
@@ -330,7 +333,6 @@ proximadb-implicit-id-generator = { path = "crates/horizontal/proximadb-implicit
 proximadb-document-compression = { path = "crates/horizontal/proximadb-document-compression" }
 proximadb-arrow-block-index = { path = "crates/horizontal/proximadb-arrow-block-index" }
 proximadb-geo-queries = { path = "crates/horizontal/proximadb-geo-queries" }
-proximadb-auth-sso = { path = "crates/horizontal/proximadb-auth-sso" }
 proximadb-catapult = { path = "crates/horizontal/proximadb-catapult" }
 proximadb-axis-tunnel = { path = "crates/horizontal/proximadb-axis-tunnel" }
 proximadb-filterable-metadata = { path = "crates/horizontal/proximadb-filterable-metadata" }
@@ -342,6 +344,8 @@ proximadb-montecarlo = { path = "crates/horizontal/proximadb-montecarlo" }
 proximadb-kafka-deserializer = { path = "crates/horizontal/proximadb-kafka-deserializer" }
 proximadb-network-middleware = { path = "crates/platform/proximadb-network-middleware" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-engine-core = { path = "crates/storage/proximadb-engine-core" }
+proximadb-sst-engine = { path = "crates/storage/proximadb-sst-engine" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
@@ -360,7 +364,7 @@ rmp-serde = "1.1"
 tonic-prost = "0.14"
 # Compression libraries (workspace-inheritable for modality/horizontal crates)
 brotli = "6.0"
-bzip2 = "0.5"
+bzip2 = "0.6"
 flate2 = { version = "1.0", default-features = true }
 lz4_flex = "0.11"
 snap = "1.1"
@@ -368,8 +372,8 @@ xz2 = "0.1"
 zstd = "0.13"
 
 # Language bindings
-pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }  # abi3 floor = CPython 3.10 (our minimum supported Python); one wheel (cp310-abi3) installs on 3.10+
-numpy = { version = "0.28" }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }  # abi3 floor = CPython 3.10 (our minimum supported Python); one wheel (cp310-abi3) installs on 3.10+
+numpy = { version = "0.29" }
 
 # TurboQuant numerics (ADR-021, gated by `experimental-turboquant`).
 # Kept here so future modality + benchmark consumers share a single version.
@@ -398,8 +402,9 @@ serde_json = "1.0"
 # Sandhi neutral usage parsers (TD-SANDHI-2 / ADR-0047 D10a): single-sourced, fixture-proven
 # (Sandhi TD-0001 W1) usage/cache-split extraction adopted by the generation LLM path — not a
 # hand-rolled 4th extractor. `sandhi-core` is serde-only (no reqwest/tokio); dependency direction
-# one-way (ProximaDB → Sandhi, ADR-060). Registry release since sandhi v0.1.1.
-sandhi-core = "0.1"
+# one-way (ProximaDB → Sandhi, ADR-060). Registry release since sandhi v0.1.1; 0.2.0 (the S2
+# release) adds only a std-only usage-event sink module — wire types identical to 0.1.6.
+sandhi-core = "0.2"
 
 # OpenAPI spec-from-code (TD-126 Phase 1). The `ToSchema`/`IntoParams`/`path`
 # derives annotate the v2 REST DTOs + handlers so `docs/openapi/proximadb-openapi.yaml`
@@ -417,6 +422,7 @@ proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-document-query = { path = "crates/query/proximadb-document-query" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
+proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
@@ -441,8 +447,9 @@ proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-quantization-model = { path = "crates/foundation/proximadb-quantization-model" }
-proximadb-catalog = { path = "crates/control/proximadb-catalog", features = ["fc-metamodel"] }
+proximadb-catalog = { path = "crates/control/proximadb-catalog", features = ["fc-metamodel", "openapi"] }
 proximadb-catalog-schema = { workspace = true }
+proximadb-multimodel-codec = { workspace = true }
 proximadb-cdc = { workspace = true }
 proximadb-abac = { path = "crates/control/proximadb-abac", optional = true }
 proximadb-metrics = { path = "crates/control/proximadb-metrics" }
@@ -451,7 +458,6 @@ proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-mcp = { path = "crates/platform/proximadb-mcp" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
-proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-common" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
@@ -478,7 +484,6 @@ proximadb-implicit-id-generator = { workspace = true }
 proximadb-document-compression = { workspace = true }
 proximadb-arrow-block-index = { workspace = true }
 proximadb-geo-queries = { workspace = true }
-proximadb-auth-sso = { workspace = true }
 proximadb-catapult = { workspace = true }
 proximadb-axis-tunnel = { workspace = true }
 proximadb-filterable-metadata = { workspace = true }
@@ -490,6 +495,7 @@ proximadb-montecarlo = { workspace = true }
 proximadb-kafka-deserializer = { workspace = true }
 proximadb-network-middleware = { workspace = true }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-sst-engine = { path = "crates/storage/proximadb-sst-engine" }
 proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-traits = { path = "crates/storage/proximadb-storage-traits" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
@@ -605,22 +611,22 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "tls-native-tls", "json",
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
-parquet = { version = "58", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
+parquet = { version = "59", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
 # Arrow dependencies matching parquet v57
-arrow = { version = "58", features = ["prettyprint"] }
-arrow-array = { version = "58", default-features = false }
-arrow-buffer = { version = "58", default-features = false }
-arrow-schema = { version = "58", default-features = false }
-arrow-data = { version = "58", default-features = false }
-arrow-ipc = { version = "58", default-features = false, features = ["lz4", "zstd"] }
-arrow-select = { version = "58", default-features = false }
-arrow-ord = { version = "58", default-features = false }
-arrow-flight = { version = "58", features = ["flight-sql-experimental"] }
-arrow-cast = { version = "58", default-features = false }
+arrow = { version = "59", features = ["prettyprint", "ffi"] }
+arrow-array = { version = "59", default-features = false }
+arrow-buffer = { version = "59", default-features = false }
+arrow-schema = { version = "59", default-features = false }
+arrow-data = { version = "59", default-features = false }
+arrow-ipc = { version = "59", default-features = false, features = ["lz4", "zstd"] }
+arrow-select = { version = "59", default-features = false }
+arrow-ord = { version = "59", default-features = false }
+arrow-flight = { version = "59", features = ["flight-sql-experimental"] }
+arrow-cast = { version = "59", default-features = false }
 
 # DataFusion for SQL and compute engine compatibility (Arrow 57 compatible)
-datafusion = { version = "54.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions", "datetime_expressions", "math_expressions"], optional = true }
-datafusion-common = { version = "54.0", optional = true }
+datafusion = { version = "55.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions", "datetime_expressions", "math_expressions"], optional = true }
+datafusion-common = { version = "55.0", optional = true }
 # ADR-059: DuckDB-Local as a plugin OLAP engine (in-process, behind the
 # `duckdb` feature, default OFF). `bundled` builds libduckdb from source so no
 # system DuckDB is required. Used by the perf-ledger harnesses for an
@@ -688,7 +694,7 @@ time = { version = "0.3", features = ["std"] }  # Time handling for certificates
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-prometheus = "0.14"
+prometheus.workspace = true
 metrics = "0.21"
 
 # Configuration
@@ -729,7 +735,7 @@ nom = "7"
 hostname = "0.3"  # Get hostname for leader election
 
 # Multi-model storage (Document + Observability)
-tantivy = "0.22"  # Full-text search for documents
+tantivy = "0.26"  # Full-text search for documents
 jsonpath-rust = "0.5"  # JSON path queries for document filtering (actively maintained)
 flume = "0.12"  # High-performance MPSC channels for observability
 
@@ -782,7 +788,7 @@ proptest = "1.0"
 # consumption counters live (tests/documents_convergence_bake.rs measures the
 # metering delta at the registry, not just the /metrics/prometheus endpoint —
 # same pin as the root [dependencies] entry).
-prometheus = "0.14"
+prometheus.workspace = true
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
 walkdir = "2"
@@ -880,7 +886,15 @@ rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 # without it the BGE route returns ModelUnavailable (synthetic fallback is
 # forbidden in production paths). Tests that exercise real embedding are gated
 # on this feature.
-onnx = ["proximadb-embedding/onnx"]
+onnx = [
+  "proximadb-embedding/onnx",
+  # TD-SELECTOR-1 gate 5: the root `onnx` surface now includes the rank
+  # cross-encoder path, so the cloud-full+onnx Feature-Matrix job compiles
+  # (and env-gate-skips) the ONNX parity tests instead of letting the gated
+  # code rot unbuilt (the enterprise-catalogs lesson).
+  "proximadb-rank-onnx/real-onnx",
+  "proximadb-rank-onnx/bert-tokenizer",
+]
 
 # Cloud storage features (optional to avoid linking issues during testing)
 aws = ["object_store/aws", "proximadb-catalog/aws"]
@@ -1029,10 +1043,13 @@ enterprise-catalogs = ["unity-catalog", "polaris-catalog", "delta-lake"]
 # OLTP catalog backends — metadata-only; record data stays in ProximaDB engines.
 # Supports PostgreSQL / Neon / Supabase / CockroachDB (postgres wire),
 # MariaDB / MySQL / TiDB (mysql wire), and embedded SQLite.
-oltp-catalog = ["dep:sqlx"]
-oltp-catalog-postgres = ["oltp-catalog", "sqlx/postgres"]
-oltp-catalog-mysql    = ["oltp-catalog", "sqlx/mysql"]
-oltp-catalog-sqlite   = ["oltp-catalog", "sqlx/sqlite"]
+# Forward to the catalog crate: without it the root feature enabled sqlx here
+# but left the OltpCatalog module compiled OUT — unreachable from the server
+# in every configuration (found by the 2026-09-01 adversarial review).
+oltp-catalog = ["dep:sqlx", "proximadb-catalog/oltp-catalog"]
+oltp-catalog-postgres = ["oltp-catalog", "sqlx/postgres", "proximadb-catalog/oltp-catalog-postgres"]
+oltp-catalog-mysql    = ["oltp-catalog", "sqlx/mysql", "proximadb-catalog/oltp-catalog-mysql"]
+oltp-catalog-sqlite   = ["oltp-catalog", "sqlx/sqlite", "proximadb-catalog/oltp-catalog-sqlite"]
 oltp-catalog-full     = ["oltp-catalog-postgres", "oltp-catalog-mysql", "oltp-catalog-sqlite"]
 
 # TLS/mTLS support (enabled by default)

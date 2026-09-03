@@ -71,10 +71,14 @@ anyhow.workspace = true
 clap.workspace = true
 proximadb = { path = "../../", default-features = false }
 proximadb-embedding = { path = "../../crates/modalities/proximadb-embedding" }
+proximadb-runtime-common.workspace = true
 tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde.workspace = true
+serde_json.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 reqwest = { version = "0.11", features = ["json"] }

@@ -28,17 +28,17 @@ class CapabilitiesResponse:
     """
     Attributes:
         api_version (str | Unset):
-        error_envelope (CapabilitiesResponseErrorEnvelope | Unset):
+        surface (str | Unset):
         features (list[str] | Unset):
         limits (CapabilitiesResponseLimits | Unset):
-        surface (str | Unset):
+        error_envelope (CapabilitiesResponseErrorEnvelope | Unset):
     """
 
     api_version: str | Unset = UNSET
-    error_envelope: CapabilitiesResponseErrorEnvelope | Unset = UNSET
+    surface: str | Unset = UNSET
     features: list[str] | Unset = UNSET
     limits: CapabilitiesResponseLimits | Unset = UNSET
-    surface: str | Unset = UNSET
+    error_envelope: CapabilitiesResponseErrorEnvelope | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,9 +49,7 @@ class CapabilitiesResponse:
 
         api_version = self.api_version
 
-        error_envelope: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.error_envelope, Unset):
-            error_envelope = self.error_envelope.to_dict()
+        surface = self.surface
 
         features: list[str] | Unset = UNSET
         if not isinstance(self.features, Unset):
@@ -61,21 +59,23 @@ class CapabilitiesResponse:
         if not isinstance(self.limits, Unset):
             limits = self.limits.to_dict()
 
-        surface = self.surface
+        error_envelope: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.error_envelope, Unset):
+            error_envelope = self.error_envelope.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
         if api_version is not UNSET:
             field_dict["api_version"] = api_version
-        if error_envelope is not UNSET:
-            field_dict["error_envelope"] = error_envelope
+        if surface is not UNSET:
+            field_dict["surface"] = surface
         if features is not UNSET:
             field_dict["features"] = features
         if limits is not UNSET:
             field_dict["limits"] = limits
-        if surface is not UNSET:
-            field_dict["surface"] = surface
+        if error_envelope is not UNSET:
+            field_dict["error_envelope"] = error_envelope
 
         return field_dict
 
@@ -89,14 +89,7 @@ class CapabilitiesResponse:
         d = dict(src_dict)
         api_version = d.pop("api_version", UNSET)
 
-        _error_envelope = d.pop("error_envelope", UNSET)
-        error_envelope: CapabilitiesResponseErrorEnvelope | Unset
-        if isinstance(_error_envelope, Unset):
-            error_envelope = UNSET
-        else:
-            error_envelope = CapabilitiesResponseErrorEnvelope.from_dict(
-                _error_envelope
-            )
+        surface = d.pop("surface", UNSET)
 
         features = cast(list[str], d.pop("features", UNSET))
 
@@ -107,14 +100,21 @@ class CapabilitiesResponse:
         else:
             limits = CapabilitiesResponseLimits.from_dict(_limits)
 
-        surface = d.pop("surface", UNSET)
+        _error_envelope = d.pop("error_envelope", UNSET)
+        error_envelope: CapabilitiesResponseErrorEnvelope | Unset
+        if isinstance(_error_envelope, Unset):
+            error_envelope = UNSET
+        else:
+            error_envelope = CapabilitiesResponseErrorEnvelope.from_dict(
+                _error_envelope
+            )
 
         capabilities_response = cls(
             api_version=api_version,
-            error_envelope=error_envelope,
+            surface=surface,
             features=features,
             limits=limits,
-            surface=surface,
+            error_envelope=error_envelope,
         )
 
         capabilities_response.additional_properties = d

@@ -176,6 +176,20 @@ impl FileSystem for EncryptedFilesystem {
         self.underlying.read_range(path, offset, length).await
     }
 
+    fn range_coalesce_policy(
+        &self,
+    ) -> Option<proximadb_storage_filesystem_types::RangeCoalescePolicy> {
+        // Delegate so the policy query reaches whichever layer holds it.
+        //
+        // Known divergence, pre-existing and NOT introduced by coalescing: for an
+        // encrypted file the branch below issues ONE whole-object read and slices
+        // it, while a `CountingFileSystem` above records one physical read per
+        // planned range. The plan describes the unencrypted path; encryption
+        // short-circuits it. Tracked separately — do not read the physical-GET
+        // meter as truth for encrypted collections.
+        self.underlying.range_coalesce_policy()
+    }
+
     async fn read_ranges(
         &self,
         path: &str,

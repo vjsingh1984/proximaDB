@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use proximadb_rank_core::{RankError, RankResult};
+use proximadb_search_types::search_params::LexicalQueryMode;
 
 use crate::core::search::hybrid::{BM25Result, TextHighlight, VectorResult};
 use crate::network::hybrid_search::HybridFullTextIndexMap;
@@ -78,8 +79,13 @@ impl HybridSearchBackend for ProductionHybridBackend {
         let Some(index) = indexes.get(collection) else {
             return Ok(Vec::new());
         };
-        Ok(index
-            .search(trimmed, self.recall_pool)
+        let hits = index
+            .search_with_mode(trimmed, self.recall_pool, LexicalQueryMode::NaturalLanguage)
+            .map_err(|err| RankError::ModelInference {
+                model_id: "production_hybrid_backend.bm25".to_string(),
+                reason: format!("bm25 search failed for '{collection}': {err}"),
+            })?;
+        Ok(hits
             .into_iter()
             .map(|hit| BM25Result {
                 doc_id: hit.doc_id,

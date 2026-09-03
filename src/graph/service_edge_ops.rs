@@ -504,6 +504,100 @@ mod tests {
         );
     }
 
+    /// #1524 follow-up, measured on the Victor repo-scale corpus: ONE edge
+    /// referencing a nonexistent node must reject ITSELF — not abort the batch
+    /// and throw away the other valid edges (the old behavior dropped 292 of
+    /// 293). The rejection is reported per-edge; the valid rest lands in the
+    /// engine, the adjacency projection, and the counters.
+    #[tokio::test]
+    async fn batch_create_edges_skips_bad_edges_and_lands_the_rest() {
+        let graph_id = format!("batch_partial_test_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let service = GraphOperationsService::new();
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        for node_id in ["n1", "n2", "n3"] {
+            service
+                .create_node(
+                    graph_id,
+                    Node {
+                        id: node_id.to_string(),
+                        labels: vec!["Sym".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                    },
+                )
+                .await
+                .expect("create node");
+        }
+
+        let mk = |id: &str, from: &str, to: &str| Edge {
+            id: id.to_string(),
+            from_node_id: from.to_string(),
+            to_node_id: to.to_string(),
+            edge_type: "CALLS".to_string(),
+            properties: HashMap::new(),
+            weight: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+
+        let outcome = service
+            .batch_create_edges(
+                graph_id,
+                vec![
+                    mk("e1", "n1", "n2"),
+                    // Dangling source — must reject only itself.
+                    mk("e_bad", "ghost", "n2"),
+                    mk("e2", "n2", "n3"),
+                    // Dangling target — must reject only itself.
+                    mk("e_bad2", "n1", "ghost"),
+                    // Duplicate composite of e1 within the batch.
+                    mk("e_dup", "n1", "n2"),
+                ],
+            )
+            .await
+            .expect("partial batch must not error");
+
+        let created_ids: Vec<&str> = outcome.created.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(created_ids, vec!["e1", "e2"], "valid edges land");
+        assert_eq!(outcome.rejected.len(), 3, "each bad edge rejects itself");
+        let rejected_ids: Vec<&str> = outcome
+            .rejected
+            .iter()
+            .map(|r| r.edge_id.as_str())
+            .collect();
+        assert_eq!(rejected_ids, vec!["e_bad", "e_bad2", "e_dup"]);
+        assert!(
+            outcome.rejected[0].reason.contains("ghost"),
+            "reason names the missing node: {}",
+            outcome.rejected[0].reason
+        );
+
+        // The landed edges are fully wired: projection + engine reads see them.
+        assert_eq!(
+            service
+                .adjacency_projection_edge_count(graph_id)
+                .expect("projection count"),
+            2
+        );
+        let stats = service.get_stats(graph_id).await.expect("stats");
+        assert_eq!(stats.total_edges, 2, "counters reflect only landed edges");
+    }
+
     #[tokio::test]
     async fn endpoint_bound_query_served_from_adjacency_projection() {
         use crate::graph::EdgeQuery;

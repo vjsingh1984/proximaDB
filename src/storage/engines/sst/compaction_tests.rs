@@ -5,8 +5,11 @@ use crate::storage::engines::sst::blocks::SstRecord;
 use crate::storage::engines::sst::{
     Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,
 };
+use std::collections::HashMap as StdHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use crate::testing::InMemoryTestCatalog;
 
 #[tokio::test]
 async fn test_compaction_basic() {
@@ -40,6 +43,7 @@ async fn test_compaction_task_scheduling() {
         block_size_kb: None,
         compression_config: None,
         precision_hint: None,
+        rg_layout: None,
     };
 
     assert!(manager.schedule_compaction(task).await.is_ok());
@@ -65,6 +69,7 @@ async fn td_compact6_schedule_dedups_same_output_at_enqueue() {
         block_size_kb: None,
         compression_config: None,
         precision_hint: None,
+        rg_layout: None,
     };
     assert!(manager.schedule_compaction(mk_task()).await.unwrap());
     // Second schedule for the same output file is deduped at enqueue (the
@@ -105,6 +110,7 @@ async fn compaction_morsel_admission_rejects_overlapping_inputs() {
         block_size_kb: None,
         compression_config: None,
         precision_hint: None,
+        rg_layout: None,
     };
 
     assert!(manager.schedule_compaction(task(1)).await.unwrap());
@@ -156,6 +162,7 @@ async fn td_compact6_worker_clears_training_in_flight_after_completion() {
         block_size_kb: None,
         compression_config: None,
         precision_hint: None,
+        rg_layout: None,
     };
     manager.schedule_compaction(task).await.unwrap();
 
@@ -296,6 +303,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> anyhow::Result<()> {
         block_size_kb: None,
         compression_config: None,
         precision_hint: None,
+        rg_layout: None,
     };
 
     // Create config and perform compaction
@@ -668,6 +676,7 @@ async fn canonical_compaction_round_trips_real_pax_inputs() -> anyhow::Result<()
         block_size_kb: None,
         compression_config: None,
         precision_hint: None,
+        rg_layout: None,
     };
     let stats = compaction
         .perform_compaction_enhanced(&task, &config, None, None)
@@ -826,6 +835,7 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
         block_size_kb: Some(1),
         compression_config: None,
         precision_hint: None,
+        rg_layout: None,
     };
     let assert_no_task_scratch = |root: &std::path::Path| -> anyhow::Result<()> {
         for owner in std::fs::read_dir(root)? {
@@ -896,22 +906,12 @@ async fn forced_local_spill_compacts_real_pax_with_mvcc_and_reclaims_scratch() -
 async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
     use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
-    use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
 
     // Stand up an in-memory catalog with a fp16 collection.
     let cache = Arc::new(CatalogCache::new(1000, 60));
-    let cat: Arc<OltpCatalog> = Arc::new(
-        OltpCatalog::new(
-            "compaction-test",
-            OltpCatalogConfig::sqlite("sqlite::memory:"),
-            cache.clone(),
-        )
-        .await
-        .unwrap(),
-    );
+    let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new("compaction-test".to_string()));
     cat.create_namespace(&["default".to_string()], StdHashMap::new())
         .await
         .unwrap();
@@ -980,21 +980,12 @@ async fn td_global_precision_resolver_stamps_hint_without_per_instance_wiring() 
     use crate::storage::engines::sst::compaction::set_global_precision_resolver;
     use proximadb_catalog::cache::CatalogCache;
     use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-    use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
-    use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
-    use std::collections::HashMap as StdHashMap;
+    use proximadb_catalog::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
     use std::sync::Arc;
-
     let cache = Arc::new(CatalogCache::new(1000, 60));
-    let cat: Arc<OltpCatalog> = Arc::new(
-        OltpCatalog::new(
-            "compaction-test-global",
-            OltpCatalogConfig::sqlite("sqlite::memory:"),
-            cache.clone(),
-        )
-        .await
-        .unwrap(),
-    );
+    let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new(
+        "compaction-test-global".to_string(),
+    ));
     cat.create_namespace(&["default".to_string()], StdHashMap::new())
         .await
         .unwrap();

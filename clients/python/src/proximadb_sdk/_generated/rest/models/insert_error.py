@@ -21,20 +21,20 @@ class InsertError:
     """Error details for a failed record insertion
 
     Attributes:
-        error (str): Error message
         index (int): Index of the record in the request
+        error (str): Error message
         id (None | str | Unset): Record ID (if provided)
     """
 
-    error: str
     index: int
+    error: str
     id: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        error = self.error
-
         index = self.index
+
+        error = self.error
 
         id: None | str | Unset
         if isinstance(self.id, Unset):
@@ -46,8 +46,8 @@ class InsertError:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "error": error,
                 "index": index,
+                "error": error,
             }
         )
         if id is not UNSET:
@@ -58,9 +58,9 @@ class InsertError:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        error = d.pop("error")
-
         index = d.pop("index")
+
+        error = d.pop("error")
 
         def _parse_id(data: object) -> None | str | Unset:
             if data is None:
@@ -72,8 +72,8 @@ class InsertError:
         id = _parse_id(d.pop("id", UNSET))
 
         insert_error = cls(
-            error=error,
             index=index,
+            error=error,
             id=id,
         )
 

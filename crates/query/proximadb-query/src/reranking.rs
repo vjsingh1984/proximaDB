@@ -511,6 +511,13 @@ impl CrossModalReranker {
         Self::new(RerankConfig::default())
     }
 
+    /// The configured head size for reranking: records past this bound are
+    /// preserved in input order rather than re-scored. Exposed so adapters can
+    /// stamp phase ids head-vs-tail without duplicating config plumbing.
+    pub fn rerank_top_k(&self) -> usize {
+        self.config.rerank_top_k
+    }
+
     /// Rerank query results using cross-modal signals.
     pub fn rerank(&self, result: QueryResult, context: &QueryContext) -> Result<RerankedResult> {
         if result.records.is_empty() {
@@ -534,11 +541,22 @@ impl CrossModalReranker {
             });
         }
 
-        let records_to_rerank: Vec<UnifiedRecord> = result
-            .records
-            .into_iter()
+        // TD-SELECTOR-1 gate 3: reorder the head, PRESERVE the tail. Records past
+        // `rerank_top_k` keep their input order instead of being dropped, so the
+        // output cardinality equals the input cardinality — the same
+        // prefix-rerank + tail-append semantics as the bench pipeline's
+        // `materialize_run` and the second-phase scorer, and consistent with the
+        // disabled path above (which also returns the full input). Measured on
+        // the #1726 NFCorpus dev protocol: reordering is recall-neutral while
+        // dropping the tail is what loses Recall@100 the pool already held.
+        // The sole production consumer truncates to its own top-k downstream,
+        // so callers that want exactly k records still get exactly k.
+        let mut records_iter = result.records.into_iter();
+        let records_to_rerank: Vec<UnifiedRecord> = records_iter
+            .by_ref()
             .take(self.config.rerank_top_k)
             .collect();
+        let untouched_tail: Vec<UnifiedRecord> = records_iter.collect();
 
         debug!("Reranking {} records", records_to_rerank.len());
 
@@ -568,7 +586,9 @@ impl CrossModalReranker {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let records: Vec<UnifiedRecord> = scored_records.into_iter().map(|sr| sr.record).collect();
+        let mut records: Vec<UnifiedRecord> =
+            scored_records.into_iter().map(|sr| sr.record).collect();
+        records.extend(untouched_tail);
         let diversity_score = self.compute_diversity_score(&records);
         let quality_score = self.compute_quality_score(&records);
 
@@ -1101,6 +1121,76 @@ mod tests {
         assert_eq!(reranked.records[0].id, "vector");
         assert_eq!(reranked.records[1].id, "graph");
         assert!(reranked.explanations.is_empty());
+    }
+
+    /// TD-SELECTOR-1 gate 3: the enabled reranker must PRESERVE the tail past
+    /// `rerank_top_k` in input order (output cardinality == input cardinality),
+    /// matching the disabled path, the bench pipeline's `materialize_run`, and
+    /// the second-phase scorer's prefix-rerank + tail-append convention. Before
+    /// this, `take(rerank_top_k)` silently dropped the tail — the exact shape
+    /// that lost Recall@100 on the #1726 NFCorpus dev protocol.
+    #[test]
+    fn enabled_reranker_preserves_tail_past_rerank_top_k_in_input_order() {
+        // 5 records, head bound 2: base scores deliberately anti-correlate with
+        // input order so the head reorder is observable.
+        let config = RerankConfig {
+            enabled: true,
+            rerank_top_k: 2,
+            ..Default::default()
+        };
+        let reranker = CrossModalReranker::new(config);
+        let records = vec![
+            make_record("doc0", 0.10, DataModel::Vector),
+            make_record("doc1", 0.90, DataModel::Vector),
+            make_record("doc2", 0.80, DataModel::Vector),
+            make_record("doc3", 0.70, DataModel::Vector),
+            make_record("doc4", 0.60, DataModel::Vector),
+        ];
+        let result = QueryResult {
+            records,
+            total_count: Some(5),
+            metrics: Default::default(),
+        };
+
+        let reranked = reranker.rerank(result, &QueryContext::default()).unwrap();
+
+        // Full cardinality — the tail is preserved, not dropped.
+        assert_eq!(reranked.records.len(), 5, "tail must survive the reranker");
+        // Head (top-2 by score, reordered).
+        assert_eq!(reranked.records[0].id, "doc1");
+        assert_eq!(reranked.records[1].id, "doc0");
+        // Tail: input order, untouched.
+        assert_eq!(reranked.records[2].id, "doc2");
+        assert_eq!(reranked.records[3].id, "doc3");
+        assert_eq!(reranked.records[4].id, "doc4");
+    }
+
+    /// Membership preservation is order-only: the output SET equals the input
+    /// set for any head bound.
+    #[test]
+    fn reranker_output_membership_equals_input_membership() {
+        let config = RerankConfig {
+            enabled: true,
+            rerank_top_k: 1,
+            ..Default::default()
+        };
+        let reranker = CrossModalReranker::new(config);
+        let records: Vec<_> = (0..8)
+            .map(|i| make_record(&format!("doc{i}"), 1.0 - i as f64 / 10.0, DataModel::Vector))
+            .collect();
+        let result = QueryResult {
+            records,
+            total_count: Some(8),
+            metrics: Default::default(),
+        };
+
+        let reranked = reranker.rerank(result, &QueryContext::default()).unwrap();
+        let mut out_ids: Vec<String> = reranked.records.iter().map(|r| r.id.clone()).collect();
+        out_ids.sort();
+        let mut want: Vec<String> = (0..8).map(|i| format!("doc{i}")).collect();
+        want.sort();
+        assert_eq!(out_ids, want, "reordering must never change membership");
+        assert_eq!(reranked.records.len(), 8);
     }
 
     #[test]

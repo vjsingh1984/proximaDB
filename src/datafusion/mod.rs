@@ -161,7 +161,7 @@ use datafusion::prelude::*;
 /// - Custom vector distance functions (cosine, euclidean, dot_product)
 /// - Optimizer rules for predicate pushdown
 pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
-    build_session_context(None, None, None)
+    build_session_context(None, None, proximadb_runtime::OwnedPortIdentity::default())
 }
 
 /// Like [`create_session_context`] but also registers the live `vector_search` table function
@@ -171,7 +171,11 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
 pub fn create_session_context_with_vector_ops(
     vector_ops: std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>,
 ) -> datafusion::error::Result<SessionContext> {
-    build_session_context(Some(vector_ops), None, None)
+    build_session_context(
+        Some(vector_ops),
+        None,
+        proximadb_runtime::OwnedPortIdentity::default(),
+    )
 }
 
 /// Like [`create_session_context_with_vector_ops`] but also registers the live `graph_traverse`
@@ -181,22 +185,20 @@ pub fn create_session_context_with_vector_ops(
 pub fn create_session_context_with_ports(
     vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
     graph_ops: Option<std::sync::Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
-    tenant: Option<String>,
+    identity: proximadb_runtime::OwnedPortIdentity,
 ) -> datafusion::error::Result<SessionContext> {
-    build_session_context(vector_ops, graph_ops, tenant)
+    build_session_context(vector_ops, graph_ops, identity)
 }
 
-/// `tenant` is the resolved pgwire connection tenant (`pgwire_resolve_read_tenant`). It is
-/// applied structurally to ALL three cross-modal UDTFs so a read hits the same tenant scope the
-/// write path wrote (otherwise the read is unscoped and returns 0 rows for tenant data,
-/// TD-XMODAL-6): `vector_search` (as the search `tenant_id`), `timeseries_range` (selects the
-/// tenant's per-tenant engine), and `graph_traverse` (composes the same `{tenant}/{graph_id}`
-/// scope `TenantGraphOps` uses on the graph write path).
+/// `identity` is the canonical pgwire request carrier. `vector_search` retains
+/// every field for ABAC; the other cross-modal UDTFs derive their structural
+/// tenant scope from the same carrier (TD-XMODAL-6 / ADR-087).
 fn build_session_context(
     vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
     graph_ops: Option<std::sync::Arc<dyn proximadb_graph_query::service::GraphQueryReadService>>,
-    tenant: Option<String>,
+    identity: proximadb_runtime::OwnedPortIdentity,
 ) -> datafusion::error::Result<SessionContext> {
+    let tenant = identity.tenant_id.clone();
     let config = SessionConfig::new()
         .with_batch_size(8192)
         .with_target_partitions(num_cpus::get());
@@ -232,9 +234,9 @@ fn build_session_context(
     if let Some(ops) = vector_ops {
         ctx.register_udtf(
             "vector_search",
-            std::sync::Arc::new(cross_modal::VectorSearchTableFunction::with_tenant(
+            std::sync::Arc::new(cross_modal::VectorSearchTableFunction::with_identity(
                 ops,
-                tenant.clone(),
+                identity.clone(),
             )),
         );
     }
@@ -444,3 +446,7 @@ mod tests {
         assert_eq!(config.statistics_cache_ttl_seconds, 60);
     }
 }
+
+// TDD tests for PAX-Native OLAP Scan (TD-OLAP-1)
+#[cfg(test)]
+mod pax_olap_tests;

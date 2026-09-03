@@ -88,8 +88,18 @@ class FakeAsyncClient:
     init_kwargs = []
     responder = staticmethod(lambda verb, url, **kw: FakeResp({"success": True}))
 
+    #: `_http_client` pools one client per instance and re-creates it when the
+    #: pooled one is closed, so it reads `.is_closed` on the way out. A fake
+    #: standing in for `httpx.AsyncClient` has to carry the attributes the code
+    #: under test reads, or it stops being a drop-in and starts being a source
+    #: of AttributeErrors that look like product bugs.
+    is_closed = False
+
     def __init__(self, *a, **kw):
         FakeAsyncClient.init_kwargs.append(kw)
+
+    async def aclose(self):
+        type(self).is_closed = True
 
     async def __aenter__(self):
         return self
@@ -339,7 +349,8 @@ def test_generate_config_writes_toml(tmp_path):
     path = db._generate_config()
     text = E.Path(path).read_text()
     assert "[server]" in text
-    assert "embedded-node" in text
+    assert f"embedded-{db._instance_id}" in text
+    assert E.Path(path).name == f"embedded-{db._instance_id}.toml"
     assert 'transport = "uds"' in text
     assert "socket_dir" in text
     assert "arrow_flight_port" in text
@@ -363,11 +374,19 @@ def test_find_binary_on_path(monkeypatch):
 
 
 class _FakeProcess:
-    def __init__(self):
+    def __init__(self, returncode=None):
         self.pid = 4321
         self.waited = False
         self.terminated = False
         self.killed = False
+        self.stderr = None
+        # Mirrors subprocess.Popen: None while the child is running, and the
+        # exit status once it has exited. Startup polls this to fail fast on a
+        # child that died instead of waiting out the ceiling.
+        self.returncode = returncode
+
+    def poll(self):
+        return self.returncode
 
     def wait(self, timeout=None):
         self.waited = True
@@ -446,6 +465,7 @@ def test_start_full_flow_then_timeout(monkeypatch, tmp_path):
 
     def fake_popen(args, **kw):
         spawned["args"] = args
+        spawned["kwargs"] = kw
         return _FakeProcess()
 
     monkeypatch.setattr(E.subprocess, "Popen", fake_popen)
@@ -461,10 +481,61 @@ def test_start_full_flow_then_timeout(monkeypatch, tmp_path):
             return FakeResp({}, 200)
 
     monkeypatch.setattr(db, "_sync_http_client", lambda **kw: HealthClient())
+    monkeypatch.setattr(
+        E,
+        "read_runtime_state",
+        lambda _data_dir: {"pid": 4321, "phase": "serving"},
+    )
 
     run(db.start(timeout=5.0))
     assert db._started is True
     assert spawned["args"][0] == "/bin/true"
+    assert spawned["kwargs"]["stderr"] is E.subprocess.STDOUT
+    assert spawned["kwargs"]["stdout"] is not E.subprocess.PIPE
+    assert spawned["kwargs"]["cwd"] == str(db._data_dir)
+    assert spawned["kwargs"]["env"]["PROXIMADB_CORPUS_VERSION_PATH"] == str(
+        db._data_dir / "corpus-versions.json"
+    )
+    assert db._server_log_path.exists()
+
+
+def test_start_rejects_health_from_a_different_process(monkeypatch, tmp_path):
+    db = EmbeddedProximaDB(data_dir=str(tmp_path / "owner-mismatch"))
+    monkeypatch.setattr(db, "_find_binary", lambda: "/bin/true")
+    monkeypatch.setattr(E.subprocess, "Popen", lambda args, **kw: _FakeProcess())
+
+    class ExistingServerHealthClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, *a, **kw):
+            return FakeResp({}, 200)
+
+    monkeypatch.setattr(
+        db, "_sync_http_client", lambda **kw: ExistingServerHealthClient()
+    )
+    monkeypatch.setattr(
+        E,
+        "read_runtime_state",
+        lambda _data_dir: {"pid": 9999, "phase": "serving"},
+    )
+    killed = {"v": False}
+    monkeypatch.setattr(db, "_kill_process", lambda: killed.__setitem__("v", True))
+    times = iter([0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 100.0, 100.0])
+    monkeypatch.setattr(E.time, "time", lambda: next(times, 100.0))
+
+    async def no_sleep(*a, **kw):
+        return None
+
+    monkeypatch.setattr(E.asyncio, "sleep", no_sleep)
+
+    with pytest.raises(TimeoutError):
+        run(db.start(timeout=1.0))
+    assert db._started is False
+    assert killed["v"] is True
 
 
 def test_start_timeout_kills(monkeypatch, tmp_path):

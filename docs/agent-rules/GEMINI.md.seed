@@ -88,6 +88,9 @@ ProximaDB uses a **Unified Storage Interface** allowing pluggable engines.
 - `make clippy`: Run linter (warnings are errors in local dev).
 - `make check`: Chain `fmt` + `clippy` + `test`.
 
+### PR Verification Regime (before any merge)
+Stale PRs drift: green CI on an old base is evidence about that commit, not about the PR on current `develop`. Before requesting or granting merge for a PR open past the rebase-daily window or touching cross-cutting seams (proto, port traits, feature gates, workflow outputs): (1) **rebase onto current `origin/develop` and reconcile ALL integration drift** — GitHub `MERGEABLE` is textual only; hand-maintained mirrors of generated code (`proximadb.v1.rs`), renamed CI gate outputs, and TD/ADR id collisions break silently; fix every consumer, not the first error; (2) **build the feature lanes you touch** (`--features …`, `--benches`, `--examples`) — default `cargo check` is blind to gated code; (3) **fresh zero-context adversarial review as FIRST reviewer** (a general-purpose subagent without the author's reasoning): enumerate every consumer of touched invariants, hunt silent-failure shapes and missing negative controls; findings fixed or refuted before approval, outcome (findings→fixes or CLEAR) attached to the PR so the human approves evidence. A subsumed PR (zero remaining delta vs develop) is closed with a pointer, not force-pushed; `--admin` past required review only with explicit human authorization for that PR.
+
 ### Testing Strategy
 - **Unit Tests:** In-line `#[cfg(test)]` modules in `src/`.
 - **Integration Tests:** Standalone files in `tests/` for cross-module logic.

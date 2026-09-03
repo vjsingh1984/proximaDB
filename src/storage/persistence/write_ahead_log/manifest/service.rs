@@ -448,6 +448,28 @@ impl GlobalManifestService {
         // Load checkpoint
         self.load_checkpoint().await?;
 
+        // Reaped entries must STAY reaped across restarts. Segment cleanup
+        // deletes only segments whose max LSN is below the watermark, but a
+        // surviving status-update segment (written at a later LSN) can still
+        // carry records for entries the reaper removed — which resurrected
+        // them here as Flushed. Apply the reaper's exact retention predicate
+        // at load so the rewritten manifest + checkpoint stay authoritative.
+        if let Some(checkpoint) = self.latest_checkpoint.read().await.clone() {
+            let mut entries = self.entries.write().await;
+            let before = entries.len();
+            entries.retain(|e| {
+                e.global_lsn >= checkpoint.safe_to_delete_before_lsn
+                    || e.status == WalEntryStatus::Active
+            });
+            let dropped = before - entries.len();
+            if dropped > 0 {
+                info!(
+                    "🧹 Dropped {} pre-checkpoint entries resurrected by surviving segments",
+                    dropped
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -580,12 +602,16 @@ impl GlobalManifestService {
         // on the next boot.
         self.drain_pending().await;
 
+        // Batch-id membership as a set (was: a linear scan per manifest
+        // entry on every flush acknowledgement).
+        let batch_id_set: std::collections::HashSet<&String> = batch_ids.iter().collect();
+
         // Update in-memory state
         let mut entries = self.entries.write().await;
         let mut status_updates = Vec::new();
 
         for entry in entries.iter_mut() {
-            if batch_ids.contains(&entry.batch_id) && entry.status == WalEntryStatus::Active {
+            if batch_id_set.contains(&entry.batch_id) && entry.status == WalEntryStatus::Active {
                 entry.status = WalEntryStatus::Flushed;
 
                 // Create status update entry for append-only cloud storage
@@ -627,12 +653,17 @@ impl GlobalManifestService {
         // L0_recovery segment.
         self.drain_pending().await;
 
+        // Batch-id membership as a set (was: a linear scan per manifest entry).
+        let batch_id_set: std::collections::HashSet<&String> = batch_ids.iter().collect();
+
         // Collect file URLs before marking as flushed (need Active status entries)
         let file_urls: Vec<String> = {
             let entries = self.entries.read().await;
             entries
                 .iter()
-                .filter(|e| batch_ids.contains(&e.batch_id) && e.status == WalEntryStatus::Active)
+                .filter(|e| {
+                    batch_id_set.contains(&e.batch_id) && e.status == WalEntryStatus::Active
+                })
                 .map(|e| {
                     // Construct full file URL from storage_url + file_path
                     format!("{}/{}", e.storage_url.trim_end_matches('/'), e.file_path)
@@ -1266,6 +1297,131 @@ mod barrier_tests {
             lsn2,
             "the returned LSN must match the manifest's current_lsn"
         );
+    }
+
+    /// WAL-retention slice: the reaper (checkpoint + cleanup) — which
+    /// previously had ZERO production callers, so `data/wal` grew one
+    /// `manifest_*.jsonl` per append for the life of the data dir — must
+    /// (1) drop checkpointed/flushed entries, (2) shrink the on-disk
+    /// segment count, and (3) survive a restart without duplicating or
+    /// resurrecting entries that appear in both the rewritten manifest and
+    /// a surviving segment.
+    #[tokio::test]
+    async fn reaper_reclaims_segments_and_restart_dedups() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_url = format!("file://{}", temp_dir.path().display());
+        let fs_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .expect("fs factory"),
+        );
+        let count_segments = |dir: &std::path::Path| -> usize {
+            std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| {
+                            let name = e.file_name();
+                            let name = name.to_string_lossy();
+                            name.starts_with("manifest_") && name.ends_with(".jsonl")
+                        })
+                        .count()
+                })
+                .unwrap_or(0)
+        };
+
+        let mk_entry = |batch_id: &str| GlobalManifestEntry {
+            global_lsn: 0,
+            collection_id: "c1".to_string(),
+            batch_id: batch_id.to_string(),
+            file_path: format!("c1/wal/{batch_id}.bcwal"),
+            storage_url: wal_url.clone(),
+            size_bytes: 42,
+            checksum_crc32: 0,
+            timestamp_ms: 1,
+            format: SerializationFormat::Bincode,
+            vector_count: 1,
+            status: WalEntryStatus::Active,
+            checkpoint_id: None,
+        };
+
+        {
+            let service = GlobalManifestService::new(
+                GlobalManifestServiceConfig::default(),
+                fs_factory.clone(),
+                wal_url.clone(),
+            )
+            .await
+            .expect("service");
+            // append_sync: one durable segment per append, so the segments
+            // land with distinct LSN ranges and the watermark can strand the
+            // oldest one (append_async may coalesce all three into a single
+            // segment, which then legitimately cannot be reclaimed).
+            for id in ["b1", "b2", "b3"] {
+                service.append_sync(mk_entry(id)).await.expect("append");
+            }
+            // Flush b1 and b2 (their .bcwal files don't exist; deletion of
+            // missing files is tolerated), leaving b3 active.
+            service
+                .mark_flushed_and_delete_files(&["b1".to_string(), "b2".to_string()])
+                .await
+                .expect("mark+delete");
+            let before = count_segments(temp_dir.path());
+            // The write-behind worker may coalesce appends into fewer files;
+            // the property under test is monotonic growth WITHOUT the reaper
+            // and shrinkage WITH it, not an exact per-append count.
+            assert!(
+                before >= 2,
+                "appends + status updates write segments, saw {before}"
+            );
+
+            service.create_checkpoint().await.expect("checkpoint");
+            let removed = service
+                .cleanup_checkpointed_entries()
+                .await
+                .expect("cleanup");
+            // Designed semantics: `safe_to_delete_before_lsn` is the HIGHEST
+            // flushed LSN and cleanup retains entries at/above it, so the
+            // newest flushed entry (b2) survives as the checkpoint watermark
+            // and only strictly-older flushed entries (b1) are reaped.
+            assert!(
+                removed >= 1,
+                "flushed entries below the watermark must be reaped, got {removed}"
+            );
+            let after = count_segments(temp_dir.path());
+            assert!(
+                after < before,
+                "on-disk manifest segments must shrink ({before} -> {after})"
+            );
+        }
+
+        // Restart: a fresh service over the same dir must see exactly the one
+        // still-active entry — never a duplicate or a resurrected flushed one.
+        let reopened =
+            GlobalManifestService::new(GlobalManifestServiceConfig::default(), fs_factory, wal_url)
+                .await
+                .expect("reopen");
+        let entries = reopened.get_collection_entries("c1").await;
+        let active: Vec<_> = entries
+            .iter()
+            .filter(|e| e.status == WalEntryStatus::Active)
+            .collect();
+        assert_eq!(
+            active.len(),
+            1,
+            "exactly b3 must survive as active: {entries:?}"
+        );
+        assert_eq!(active[0].batch_id, "b3");
+        assert!(
+            !entries.iter().any(|e| e.batch_id == "b1"),
+            "b1 (below the watermark) must stay reaped after restart: {entries:?}"
+        );
+        for id in ["b2", "b3"] {
+            assert!(
+                entries.iter().filter(|e| e.batch_id == id).count() <= 1,
+                "no duplicate {id} after reap+restart: {entries:?}"
+            );
+        }
     }
 }
 

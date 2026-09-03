@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use proximadb_embedding::{
     EmbeddingError, EmbeddingScalarType, EmbeddingValues,
-    config::{ChunkConfig, EmbedRoute, EmbeddingConfig},
+    config::{EmbedRoute, EmbeddingConfig},
     scheduler::EmbedSchedulerConfig,
     scheduler::IngestMode,
     service::{EmbedBatch, EmbedRecord, EmbeddingService},
@@ -35,7 +35,6 @@ fn initialize() -> Arc<EmbeddingService> {
     EmbeddingService::initialize(
         EmbeddingConfig {
             route: EmbedRoute::BgeSmall,
-            chunk: ChunkConfig::default(),
         },
         EmbedSchedulerConfig::default(),
     )

@@ -395,6 +395,15 @@ impl RaptorReader {
 
         let mut results = Vec::new();
 
+        // ONE metadata read + ONE file read for the whole call. The previous
+        // shape re-read the ENTIRE file (twice — a speculative cache probe
+        // whose result was discarded, then the real read) plus the metadata
+        // PER SELECTED ROW GROUP: R selected groups cost R×(2·filesize)
+        // bytes of I/O for what one read + R slices needs. Row-group files
+        // are immutable once written, so a single read is equivalent.
+        let metadata = self.read_metadata(file_path).await?;
+        let full_file_data = self.filesystem.read(file_path).await?;
+
         if let Some(selection) = &rowgroup_selection {
             for &rg_idx in selection {
                 // Use zero-copy filesystem with integrated caching
@@ -402,25 +411,13 @@ impl RaptorReader {
                 self.cache
                     .track_access(cache_key.clone(), CacheKind::VectorData);
 
-                // Try zero-copy cached read first
-                if let Ok(_cached_data) = self.filesystem.read(file_path).await {
-                    // Check if we have cached row group data
-                    debug!("✅ Zero-copy cache hit for row group {}", rg_idx);
-                    // Deferred: Extract specific row group from cached data
-                }
-
-                // Cache miss - DIRECT storage read
                 debug!("📥 Loading row group {} from storage", rg_idx);
 
-                // DIRECT metadata read - no wrapper
-                let metadata = self.read_metadata(file_path).await?;
                 let rg_metadata = metadata
                     .row_groups
                     .get(rg_idx)
                     .context("Row group index out of bounds")?;
 
-                // DIRECT filesystem read - no wrapper
-                let full_file_data = self.filesystem.read(file_path).await?;
                 let start = rg_metadata.offset;
                 let end = start + rg_metadata.compressed_size;
                 let compressed_data = &full_file_data[start as usize..end as usize];
@@ -445,10 +442,7 @@ impl RaptorReader {
             }
         } else {
             // Load all row groups - DIRECT operations
-            let metadata = self.read_metadata(file_path).await?;
             for rg_metadata in metadata.row_groups.iter() {
-                // DIRECT filesystem read
-                let full_file_data = self.filesystem.read(file_path).await?;
                 let start = rg_metadata.offset;
                 let end = start + rg_metadata.compressed_size;
                 let compressed_data = &full_file_data[start as usize..end as usize];
@@ -1712,20 +1706,26 @@ impl RaptorReader {
 
             candidate_distances.push(boosted_distance);
 
-            // Update dynamic threshold
+            // Keep the running top-ef WITHOUT re-sorting on every accepted
+            // candidate (was: a full sort+truncate per insertion once the
+            // pool filled — O(n·ef·log ef)). Evict the max by scan; ef is a
+            // small beam, so the scan is the cheaper side of the trade.
+            if candidate_distances.len() > ef
+                && let Some(max_pos) = candidate_distances
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                    .map(|(pos, _)| pos)
+            {
+                candidate_distances.swap_remove(max_pos);
+            }
             if candidate_distances.len() >= ef {
-                candidate_distances.sort_by(|a, b| a.total_cmp(b));
-                candidate_distances.truncate(ef);
-                threshold = candidate_distances
-                    .last()
-                    .copied()
-                    .map_or(f32::MAX, |d| d * 1.2);
+                threshold = candidate_distances.iter().copied().fold(f32::MIN, f32::max) * 1.2;
             }
         }
 
-        // Sort and return top distances
+        // Sort and return top distances (≤ ef elements — cheap).
         candidate_distances.sort_by(|a, b| a.total_cmp(b));
-        candidate_distances.truncate(ef);
 
         tracing::debug!(
             "P×K filtered search in rowgroup {}: {} candidates, filtered {}/{} ({:.0}%)",

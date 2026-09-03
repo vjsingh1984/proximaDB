@@ -55,6 +55,7 @@ use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::common::Statistics;
 use datafusion::common::config::ConfigOptions;
+use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::expressions::DynamicFilterPhysicalExpr;
@@ -370,6 +371,20 @@ impl ExecutionPlan for ProximaScanExec {
         vec![] // Leaf node - no children
     }
 
+    // DataFusion 55 split this out of `children()`: report this node's
+    // physical expression roots. The absorbed TD-OLAP-3 join runtime filters
+    // (`dynamic_filters`) MUST be reported: `HashJoinExec::execute` detects
+    // consumers via `plan_contains_expression_id`, which walks these roots —
+    // omitting them makes the join skip the dynamic filter entirely (no
+    // bounds published, never marked complete) and this scan then waits out
+    // its full runtime-filter budget per partition while pruning nothing.
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DFResult<TreeNodeRecursion>,
+    ) -> DFResult<TreeNodeRecursion> {
+        datafusion::physical_plan::apply_expression_roots(&self.dynamic_filters, f)
+    }
+
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn ExecutionPlan>>,
@@ -490,9 +505,21 @@ impl ExecutionPlan for ProximaScanExec {
                         );
                         return Ok(empty);
                     }
-                    reader
-                        .read_split(&split, projection.as_deref(), batch_size)
-                        .await
+                    // TD-CACHE-10 / attribution closeout: rebind the captured
+                    // query trace around the split read. This closure runs on
+                    // a DataFusion-spawned partition task where the io_trace
+                    // task-local is absent; without the rebind, every physical
+                    // read inside `read_split` records NOWHERE (ambient
+                    // snapshots saw 0 bytes — the measured attribution gap).
+                    // `scope_with_handle` is the documented rebind seam.
+                    let read_fut = reader.read_split(&split, projection.as_deref(), batch_size);
+                    match &trace {
+                        Some(t) => {
+                            crate::observability::io_trace::scope_with_handle(t.clone(), read_fut)
+                                .await
+                        }
+                        None => read_fut.await,
+                    }
                 }
             })
             .try_flatten();

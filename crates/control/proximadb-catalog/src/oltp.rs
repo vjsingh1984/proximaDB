@@ -7,6 +7,18 @@
 //! - **MariaDB / MySQL / TiDB / PlanetScale** — via `oltp-catalog-mysql` feature
 //! - **SQLite** — via `oltp-catalog-sqlite` feature (embedded / dev)
 //!
+//! # TD-CAT-10: Retirement (2026-08-23)
+//!
+//! This module is gated behind the `oltp-catalog` feature and is **not maintained**.
+//! It is unusable in both configurations:
+//!
+//! * **Feature OFF (default):** silent no-op, persists nothing, reports success
+//! * **Feature ON:** does not compile (sqlx injection lint at `:291`, `:317`)
+//!
+//! See the TD for evidence and migration path for the three affected tests.
+//!
+#![cfg(feature = "oltp-catalog")]
+//!
 //! ## Stacked Durability Mandate
 //!
 //! The OLTP catalog stores ONLY catalog metadata (schema, stats, snapshots).
@@ -700,7 +712,7 @@ impl Catalog for OltpCatalog {
         Ok(())
     }
 
-    async fn create_table(
+    async fn create_table_inner(
         &self,
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,

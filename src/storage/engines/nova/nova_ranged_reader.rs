@@ -20,6 +20,9 @@ use anyhow::Result;
 use futures::StreamExt;
 use object_store::ObjectStore;
 use object_store::ObjectStoreExt;
+// arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+// apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+#[allow(deprecated)]
 use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 use proximadb_records::ProximaRecord;
 use url::Url;
@@ -75,6 +78,9 @@ pub(crate) async fn read_selected_row_groups(
         }
     };
 
+    // arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+    // apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+    #[allow(deprecated)]
     let reader = ParquetObjectReader::new(store, path).with_file_size(file_size);
     let stream_builder = match ParquetRecordBatchStreamBuilder::new(reader).await {
         Ok(b) => b,
@@ -127,6 +133,9 @@ pub(crate) async fn read_row_group_row_counts(file_path: &str) -> Result<Option<
         Ok(meta) => meta.size,
         Err(_) => return Ok(None),
     };
+    // arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+    // apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+    #[allow(deprecated)]
     let reader = ParquetObjectReader::new(store, path).with_file_size(file_size);
     let builder = match ParquetRecordBatchStreamBuilder::new(reader).await {
         Ok(b) => b,

@@ -416,23 +416,40 @@ async fn execute_component_with_context_full(
 
 /// Execute a vector search query
 ///
-/// Uses VectorOperationsService to perform the actual search when available.
-/// Returns empty results if VectorOperationsService is not provided.
+/// Uses VectorOperationsService to perform the actual search. Missing wiring
+/// and authority failures are errors: neither is semantically equivalent to a
+/// successful search with zero matches.
 async fn execute_vector_search(
     expr: &VectorSearchExpr,
     vector_ops: Option<Arc<VectorOperationsService>>,
 ) -> Result<SubQueryResult> {
-    let Some(vector_ops) = vector_ops else {
-        debug!(
-            "Vector search on collection {} skipped - no VectorOperationsService",
+    expr.validate().map_err(anyhow::Error::msg)?;
+    let vector_ops = vector_ops.ok_or_else(|| {
+        anyhow::anyhow!(
+            "vector search on collection '{}' requires a wired VectorOperationsService",
             expr.collection
-        );
-        return Ok(SubQueryResult::empty(DataModel::Vector));
-    };
+        )
+    })?;
 
     info!(
         "Executing vector search on collection: {} (top_k={})",
         expr.collection, expr.top_k
+    );
+
+    let route = crate::query::compute_scheduler::ComputeScheduler::new().route_vector_search(
+        crate::query::compute_scheduler::VectorQueryShape {
+            dimensions: expr.query_vector.len(),
+            top_k: expr.top_k,
+            has_filter: expr.filter.is_some(),
+            requested_mode: expr.params.search_mode.clone(),
+        },
+    );
+    trace!(
+        target: "proximadb::vector_route",
+        strategy = route.strategy_label(),
+        reason = %route.reason,
+        "{}",
+        route.explain_line()
     );
 
     // Perform actual vector search using the operations service
@@ -441,8 +458,12 @@ async fn execute_vector_search(
             &expr.collection,
             expr.query_vector.clone(),
             expr.top_k as usize,
-            None, // No filter for now - could add threshold filter later
-            None, // Use default search config
+            expr.filter.clone(),
+            Some(crate::services::operations::vectors::UnifiedSearchConfig {
+                distance_metric: Some(expr.metric),
+                search_mode: route.search_mode,
+                ..Default::default()
+            }),
             #[cfg(feature = "abac-policy")]
             &proximadb_abac::ReadContext::system(
                 proximadb_abac::SystemReadReason::Statistics,
@@ -455,6 +476,7 @@ async fn execute_vector_search(
         Ok(results) => {
             let records: Vec<UnifiedRecord> = results
                 .into_iter()
+                .filter(|record| expr.matches_similarity_threshold(record.score))
                 .map(|record| {
                     let metadata = build_vector_metadata(&record.metadata);
                     build_vector_search_record(&record.id, record.score, metadata)
@@ -473,12 +495,11 @@ async fn execute_vector_search(
                 records_scanned: count,
             })
         }
-        Err(e) => {
-            warn!("Vector search failed: {}", e);
-            // Return empty result instead of propagating error
-            // This allows fusion to continue with other model results
-            Ok(SubQueryResult::empty(DataModel::Vector))
-        }
+        Err(error) => Err(anyhow::anyhow!(
+            "vector search failed for collection '{}': {}",
+            expr.collection,
+            error
+        )),
     }
 }
 
@@ -1065,15 +1086,37 @@ mod tests {
     fn test_vector_search_expr() {
         let expr = VectorSearchExpr {
             collection: "test".to_string(),
+            vector_column: None,
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 10,
             threshold: Some(0.8),
             metric: DistanceMetric::Cosine,
+            filter: None,
             params: VectorSearchParams::default(),
         };
 
         assert_eq!(expr.collection, "test");
         assert_eq!(expr.top_k, 10);
+    }
+
+    #[tokio::test]
+    async fn vector_search_requires_a_wired_authority() {
+        let expr = VectorSearchExpr {
+            collection: "embeddings".to_string(),
+            vector_column: None,
+            query_vector: vec![0.1, 0.2, 0.3],
+            top_k: 10,
+            threshold: None,
+            metric: DistanceMetric::Cosine,
+            filter: None,
+            params: VectorSearchParams::default(),
+        };
+
+        let error = execute_vector_search(&expr, None)
+            .await
+            .expect_err("an unwired vector authority must not look like an empty result");
+
+        assert!(error.to_string().contains("VectorOperationsService"));
     }
 
     #[test]

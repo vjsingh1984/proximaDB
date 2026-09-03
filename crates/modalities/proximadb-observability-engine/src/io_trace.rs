@@ -168,6 +168,38 @@ pub struct IoTrace {
     /// for. Cache hits contribute zero.
     ivf_region_a_bytes: AtomicU64,
     ivf_region_b_bytes: AtomicU64,
+    /// PAX Stage-F footer-stat fetch prunes (TD-FPRUNE-1 P2): how many D-blocks
+    /// the segment footer's `FooterBlockStats` provably ruled out (dropped from
+    /// the FETCH plan before any body GET) out of the blocks considered.
+    /// Attribution counter — the physical savings already land in the universal
+    /// `get_ops`/`bytes_read` as unfetched reads.
+    pax_footer_total_blocks: AtomicU64,
+    pax_footer_pruned_blocks: AtomicU64,
+    /// General bounded-concurrent `read_ranges` metrics (TD-RDSTRAT-12).
+    /// Populated by any `read_ranges` or `read_ranges_prefetch` call with
+    /// `parallel > 1` / `inflight > 1`. Unlike IVF-specific fields, these
+    /// cover ALL ranged-read paths: footer fetches, Region-A/B reads, and
+    /// general multi-range reads (not just IVF coarse probe).
+    read_ranges_fetch_rounds: AtomicU64,
+    read_ranges_max_inflight: AtomicU64,
+    /// TD-RDSTRAT-13 C1: per-tier physical-GET attribution for the SST PAX
+    /// cascade. Index = the SST `CacheTier` declaration order (fixed contract):
+    /// 0=InvariantIndex(IdxA), 1=SearchControl(Ctl), 2=InvariantMeta(Meta),
+    /// 3=ProbeIndex(ProbeA), 4=SurvivorPayload(Surv), 5=ResultPayload(OID).
+    /// Always-on (like the `ivf_*` fields); recorded 1:1 with physical ranged
+    /// GETs at the read sites, so `Σ tier_get_ops == range_gets` for a query
+    /// whose GETs all come from the PAX cascade. Makes the "unwaved metadata
+    /// GETs" the S3 campaign decomposed observable per query.
+    tier_get_ops: [AtomicU64; 6],
+    tier_get_bytes: [AtomicU64; 6],
+    /// Object-storage metadata ops (`fs.metadata` HEAD) on the search path
+    /// (TD-RDSTRAT-13 C3 removes the per-segment HEAD; this counter is how the
+    /// removal is proven — `metadata_ops == 0` on the known-size path).
+    metadata_ops: AtomicU64,
+    /// Coarse-probe rank wall microseconds including any morsel join
+    /// (TD-RDSTRAT-13 C2) — the user-visible Compute term of the
+    /// waves-not-sums model `T ≈ Σ rounds×RTT + bytes/BW + Compute`.
+    ivf_probe_rank_us: AtomicU64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): how often the probe scan's
     /// `wait_complete()` rendezvous resolved with the filter arrived (pruning
     /// enabled) vs timed out (filterless, conservative), plus the wall ms spent
@@ -181,6 +213,11 @@ pub struct IoTrace {
     /// Footer/metadata cache outcomes (Dimension 3 — the highest-ROI cache).
     footer_hits: AtomicU64,
     footer_misses: AtomicU64,
+    /// In-process DRAM cache outcomes. These are logical request outcomes,
+    /// recorded once per requested immutable range rather than once per
+    /// implementation-key probe (exact key plus optional parent key).
+    survivor_l1_hits: AtomicU64,
+    survivor_l1_misses: AtomicU64,
     /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
     /// Distinct from the in-memory footer cache: an L2 hit serves bytes that
     /// survived process restart/L1 eviction without a billed ranged GET, so a
@@ -265,6 +302,17 @@ pub struct IoTrace {
     /// engine* — without io_trace depending on any query-layer type. `None` until
     /// a route is chosen.
     route: Mutex<Option<(String, String)>>,
+    /// Physical vector access methods completed inside this query. Unlike the
+    /// containing compute route, a SQL query may contain multiple vector
+    /// sources, so this is an ordered list rather than a last-write-wins slot.
+    /// Samples are bounded primitives/labels only — never vectors, predicates,
+    /// collection names, or user data.
+    vector_accesses: Mutex<Vec<VectorAccessTrace>>,
+    /// Query-local proof counter used by a physical engine to distinguish an
+    /// ANN path that actually engaged from a non-exact request that fell back
+    /// to exact execution. Internal coordination only; the durable fact is the
+    /// resulting `VectorAccessTrace`, not this counter.
+    vector_ann_proofs: AtomicU64,
     /// The resolved per-collection storage profile (`append_bulk`/`churn`) this
     /// query read under (ADR-061 D6 / TD-WLP-6), stamped at the search boundary
     /// so a query's projection strategy is observable per-tenant. `None` until
@@ -327,6 +375,153 @@ pub struct ExecOpTrace {
     pub spill: bool,
 }
 
+/// Caller intent presented to a physical vector engine. This is deliberately
+/// independent of the query-layer `SearchMode` type so the observability layer
+/// remains dependency-inverted and the durable labels stay bounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorSearchIntent {
+    Exact,
+    Approximate,
+    Adaptive,
+}
+
+impl VectorSearchIntent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Approximate => "approximate",
+            Self::Adaptive => "adaptive",
+        }
+    }
+}
+
+/// Physical access method that actually served a successful vector operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorAccessPath {
+    Exact,
+    Ann,
+}
+
+impl VectorAccessPath {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Ann => "ann",
+        }
+    }
+}
+
+/// Coarse physical locality of the storage that served a vector access.
+///
+/// This intentionally describes only what the read path can prove from its
+/// storage URL. It does not claim an object access tier (`hot`/`cool`/`cold`):
+/// that write-side property is not currently available at vector-read time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorStorageScope {
+    /// A local path or `file://` filesystem.
+    Local,
+    /// A network/object filesystem supported by the canonical filesystem port.
+    Remote,
+    /// The scheme is absent from the current filesystem vocabulary.
+    #[default]
+    Unknown,
+}
+
+impl VectorStorageScope {
+    /// Classify the physical read locality from a canonical storage URL.
+    /// Unknown schemes fail closed instead of being priced as local or remote.
+    pub fn from_storage_url(storage_url: &str) -> Self {
+        let Some((scheme, _)) = storage_url.split_once("://") else {
+            return Self::Local;
+        };
+        match scheme.to_ascii_lowercase().as_str() {
+            "file" => Self::Local,
+            "s3" | "gcs" | "gs" | "az" | "azure" | "adls" | "abfs" | "hdfs" | "http" | "https" => {
+                Self::Remote
+            }
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Remote => "remote",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Query-side cache policy visible before a vector access is routed.
+///
+/// This records which of SST's two warm-tier dependencies are available. It
+/// does not predict whether a particular query will hit them; completed
+/// `cold`/`warm`/`mixed`/`bypass` outcomes remain derived from the query-local
+/// I/O counters. Keeping policy and outcome separate lets Exact and ANN share a
+/// truthful route-time cell even when Exact bypasses a cache that ANN consults.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorCachePolicy {
+    Disabled,
+    InvariantsOnly,
+    SurvivorOnly,
+    Full,
+    /// Legacy or uninstrumented access. Unknown policy is durable evidence but
+    /// must not train an automatic route decision.
+    #[default]
+    Unknown,
+}
+
+impl VectorCachePolicy {
+    /// Derive the bounded policy from the two existing SST cache seams.
+    pub fn from_tiers(invariants_enabled: bool, survivor_enabled: bool) -> Self {
+        match (invariants_enabled, survivor_enabled) {
+            (false, false) => Self::Disabled,
+            (true, false) => Self::InvariantsOnly,
+            (false, true) => Self::SurvivorOnly,
+            (true, true) => Self::Full,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::InvariantsOnly => "invariants_only",
+            Self::SurvivorOnly => "survivor_only",
+            Self::Full => "full",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn is_admissible(self) -> bool {
+        self != Self::Unknown
+    }
+}
+
+/// One successfully completed physical vector access. Exact numeric geometry
+/// is retained for offline analysis; it is not emitted as a metrics label.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VectorAccessTrace {
+    /// Stable physical engine label (for example `sst`).
+    pub engine: String,
+    pub dimensions: u64,
+    pub top_k: u64,
+    pub has_filter: bool,
+    pub requested_mode: VectorSearchIntent,
+    pub actual_path: VectorAccessPath,
+    /// Read-time locality, derived from the storage URL at the engine boundary.
+    /// Defaulted so traces written before this field remain readable.
+    #[serde(default)]
+    pub storage_scope: VectorStorageScope,
+    /// Cache availability known before execution. Defaulted so traces written
+    /// before this additive field remain readable and fail closed for learning.
+    #[serde(default)]
+    pub cache_policy: VectorCachePolicy,
+}
+
 impl IoTrace {
     /// Create an empty trace.
     pub fn new() -> Self {
@@ -380,6 +575,24 @@ impl IoTrace {
     pub fn record_route(&self, shape_class: &str, backend_label: &str) {
         *self.route.lock().unwrap_or_else(|p| p.into_inner()) =
             Some((shape_class.to_string(), backend_label.to_string()));
+    }
+
+    /// Append one successfully completed physical vector operator access.
+    pub fn record_vector_access(&self, sample: VectorAccessTrace) {
+        self.vector_accesses
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(sample);
+    }
+
+    /// Mark one physical ANN mechanism as successfully engaged.
+    pub fn record_vector_ann_proof(&self) {
+        self.vector_ann_proofs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current number of physical ANN engagement proofs in this query.
+    pub fn vector_ann_proofs(&self) -> u64 {
+        self.vector_ann_proofs.load(Ordering::Relaxed)
     }
 
     /// The stamped route, if any.
@@ -489,6 +702,53 @@ impl IoTrace {
             .fetch_add(region_b, Ordering::Relaxed);
     }
 
+    /// Record a PAX Stage-F footer-stat fetch-prune outcome (TD-FPRUNE-1 P2):
+    /// `total` D-blocks considered by the filtered allow-set build, `pruned`
+    /// dropped by footer-resident min/max before any body GET. `pruned > 0`
+    /// proves the zero-GET prune engaged (vs a stats-free conservative fetch).
+    pub fn record_pax_footer_prune(&self, total: u64, pruned: u64) {
+        self.pax_footer_total_blocks
+            .fetch_add(total, Ordering::Relaxed);
+        self.pax_footer_pruned_blocks
+            .fetch_add(pruned, Ordering::Relaxed);
+    }
+
+    /// Record a general bounded-concurrent `read_ranges` outcome (TD-RDSTRAT-12):
+    /// `fetch_rounds` = number of parallel rounds issued, `max_inflight` = peak
+    /// in-flight reads in any round. Covers ALL ranged-read paths (footer fetches,
+    /// Region-A/B reads, and general multi-range reads), not just IVF probe.
+    pub fn record_read_ranges(&self, fetch_rounds: u64, max_inflight: u64) {
+        self.read_ranges_fetch_rounds
+            .fetch_add(fetch_rounds, Ordering::Relaxed);
+        self.read_ranges_max_inflight
+            .fetch_max(max_inflight, Ordering::Relaxed);
+    }
+
+    /// Record one physical ranged GET attributed to PAX cascade tier
+    /// `tier_idx` (contract: the SST `CacheTier` declaration order, 0..6 —
+    /// see the field docs). Out-of-range indices are dropped: a tier added on
+    /// the SST side without widening this array must fail the drift test, not
+    /// silently fold into another tier.
+    pub fn record_tier_get(&self, tier_idx: usize, bytes: u64) {
+        if tier_idx < 6 {
+            self.tier_get_ops[tier_idx].fetch_add(1, Ordering::Relaxed);
+            self.tier_get_bytes[tier_idx].fetch_add(bytes, Ordering::Relaxed);
+        }
+    }
+
+    /// Record one object-storage metadata op (HEAD / `fs.metadata`) on the
+    /// search path (TD-RDSTRAT-13 C3).
+    pub fn record_metadata_op(&self) {
+        self.metadata_ops.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record the coarse-probe rank wall duration in microseconds, including
+    /// any morsel join (TD-RDSTRAT-13 C2). Additive across segments so a
+    /// multi-segment query's compute term sums like its I/O terms do.
+    pub fn record_ivf_probe_rank_us(&self, us: u64) {
+        self.ivf_probe_rank_us.fetch_add(us, Ordering::Relaxed);
+    }
+
     /// Record a runtime-filter wait outcome (ADR-056 AQE-S11): `arrived` = the
     /// filter completed within the wait budget (pruning enabled); otherwise it
     /// timed out (splits read filterless, conservative). `waited_ms` = the wall
@@ -524,6 +784,12 @@ impl IoTrace {
     pub fn record_footers(&self, hits: u64, misses: u64) {
         self.footer_hits.fetch_add(hits, Ordering::Relaxed);
         self.footer_misses.fetch_add(misses, Ordering::Relaxed);
+    }
+
+    /// Record logical in-process DRAM cache outcomes.
+    pub fn record_survivor_l1s(&self, hits: u64, misses: u64) {
+        self.survivor_l1_hits.fetch_add(hits, Ordering::Relaxed);
+        self.survivor_l1_misses.fetch_add(misses, Ordering::Relaxed);
     }
 
     /// Record a batch of persistent-L2 cache probe outcomes (ADR-085 tier).
@@ -683,12 +949,22 @@ impl IoTrace {
             ivf_whole_region_fallback: self.ivf_whole_region_fallback.load(Ordering::Relaxed),
             ivf_region_a_bytes: self.ivf_region_a_bytes.load(Ordering::Relaxed),
             ivf_region_b_bytes: self.ivf_region_b_bytes.load(Ordering::Relaxed),
+            pax_footer_total_blocks: self.pax_footer_total_blocks.load(Ordering::Relaxed),
+            pax_footer_pruned_blocks: self.pax_footer_pruned_blocks.load(Ordering::Relaxed),
+            read_ranges_fetch_rounds: self.read_ranges_fetch_rounds.load(Ordering::Relaxed),
+            read_ranges_max_inflight: self.read_ranges_max_inflight.load(Ordering::Relaxed),
+            tier_get_ops: std::array::from_fn(|i| self.tier_get_ops[i].load(Ordering::Relaxed)),
+            tier_get_bytes: std::array::from_fn(|i| self.tier_get_bytes[i].load(Ordering::Relaxed)),
+            metadata_ops: self.metadata_ops.load(Ordering::Relaxed),
+            ivf_probe_rank_us: self.ivf_probe_rank_us.load(Ordering::Relaxed),
             runtime_filter_arrived: self.runtime_filter_arrived.load(Ordering::Relaxed),
             runtime_filter_timed_out: self.runtime_filter_timed_out.load(Ordering::Relaxed),
             runtime_filter_wait_ms: self.runtime_filter_wait_ms.load(Ordering::Relaxed),
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
+            survivor_l1_hits: self.survivor_l1_hits.load(Ordering::Relaxed),
+            survivor_l1_misses: self.survivor_l1_misses.load(Ordering::Relaxed),
             l2_hits: self.l2_hits.load(Ordering::Relaxed),
             l2_misses: self.l2_misses.load(Ordering::Relaxed),
             egress_bytes: self.egress_bytes.load(Ordering::Relaxed),
@@ -719,6 +995,11 @@ impl IoTrace {
                 .clone(),
             stack_hwm_bytes: self.stack_hwm_bytes.load(Ordering::Relaxed),
             route: self.route(),
+            vector_accesses: self
+                .vector_accesses
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone(),
             storage_profile: self.storage_profile(),
             exec_ops: self
                 .exec_ops
@@ -782,6 +1063,34 @@ pub struct IoTraceSnapshot {
     pub ivf_region_a_bytes: u64,
     #[serde(default)]
     pub ivf_region_b_bytes: u64,
+    /// PAX Stage-F footer-stat fetch prunes (TD-FPRUNE-1 P2): D-blocks the
+    /// footer's `FooterBlockStats` ruled out before any body GET, over the
+    /// blocks considered. `pruned > 0` proves the zero-GET prune engaged.
+    #[serde(default)]
+    pub pax_footer_total_blocks: u64,
+    #[serde(default)]
+    pub pax_footer_pruned_blocks: u64,
+    /// General bounded-concurrent `read_ranges` metrics (TD-RDSTRAT-12).
+    /// Populated by any `read_ranges` or `read_ranges_prefetch` call with
+    /// `parallel > 1` / `inflight > 1`. Unlike IVF-specific fields, these
+    /// cover ALL ranged-read paths: footer fetches, Region-A/B reads, and
+    /// general multi-range reads (not just IVF coarse probe).
+    #[serde(default)]
+    pub read_ranges_fetch_rounds: u64,
+    /// TD-RDSTRAT-13 C1: per-tier physical-GET attribution (index contract on
+    /// [`IoTrace::tier_get_ops`]).
+    #[serde(default)]
+    pub tier_get_ops: [u64; 6],
+    #[serde(default)]
+    pub tier_get_bytes: [u64; 6],
+    /// Object-storage metadata ops (HEAD) on the search path (C3).
+    #[serde(default)]
+    pub metadata_ops: u64,
+    /// Coarse-probe rank wall microseconds incl. morsel join (C2).
+    #[serde(default)]
+    pub ivf_probe_rank_us: u64,
+    #[serde(default)]
+    pub read_ranges_max_inflight: u64,
     /// Runtime-filter wait outcomes (ADR-056 AQE-S11): arrived vs timed-out +
     /// the wall ms spent waiting. `arrived / (arrived + timed_out)` is the
     /// per-workload signal the route cost model learns to tune the wait budget.
@@ -794,6 +1103,12 @@ pub struct IoTraceSnapshot {
     pub bytes_written: u64,
     pub footer_hits: u64,
     pub footer_misses: u64,
+    /// In-process DRAM cache outcomes. `serde(default)` keeps snapshots
+    /// serialized before this additive evidence readable.
+    #[serde(default)]
+    pub survivor_l1_hits: u64,
+    #[serde(default)]
+    pub survivor_l1_misses: u64,
     /// Persistent local-disk L2 cache probe outcomes (ADR-085 / TD-IOTRACE-4).
     /// `serde(default)` keeps snapshots serialized before this field readable.
     #[serde(default)]
@@ -813,6 +1128,10 @@ pub struct IoTraceSnapshot {
     /// top dispatch dimension (which engine). `None` if no route was stamped.
     #[serde(default)]
     pub route: Option<(String, String)>,
+    /// Successfully completed vector accesses in execution order. Additive and
+    /// defaulted so snapshots emitted before TD-XMODAL-4 S2 remain readable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vector_accesses: Vec<VectorAccessTrace>,
     /// The resolved per-collection storage profile (`append_bulk`/`churn`) this
     /// query read under (ADR-061 D6 / TD-WLP-6). `None` if unstamped.
     #[serde(default)]
@@ -917,6 +1236,8 @@ impl IoTraceSnapshot {
             && self.bytes_written == 0
             && self.footer_hits == 0
             && self.footer_misses == 0
+            && self.survivor_l1_hits == 0
+            && self.survivor_l1_misses == 0
             && self.l2_hits == 0
             && self.l2_misses == 0
             && self.egress_bytes == 0
@@ -924,6 +1245,11 @@ impl IoTraceSnapshot {
             && self.embedding_input_tokens == 0
             && self.embedding_output_tokens == 0
             && self.compute_ms.is_empty()
+            && self.vector_accesses.is_empty()
+            // TD-RDSTRAT-12 §2: wave-only queries (bounded-concurrent
+            // read_ranges with no other metered I/O) are NOT empty — a trace
+            // carrying only wave metrics must still reach the billing observer.
+            && self.read_ranges_fetch_rounds == 0
     }
 
     /// Total embedding tokens (input + output).
@@ -962,6 +1288,8 @@ impl IoTraceSnapshot {
             footer_hits = self.footer_hits,
             footer_misses = self.footer_misses,
             footer_hit_ratio = self.footer_hit_ratio().unwrap_or(f64::NAN),
+            survivor_l1_hits = self.survivor_l1_hits,
+            survivor_l1_misses = self.survivor_l1_misses,
             l2_hits = self.l2_hits,
             l2_misses = self.l2_misses,
             egress_bytes = self.egress_bytes,
@@ -1062,6 +1390,59 @@ pub fn record_pax_region_bytes(region_a: u64, region_b: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_pax_region_bytes(region_a, region_b));
 }
 
+/// Record a PAX Stage-F footer-stat fetch-prune outcome for the active query
+/// (TD-FPRUNE-1 P2): `total` D-blocks considered, `pruned` dropped by
+/// footer-resident min/max before any body GET. No-ops outside a query scope.
+/// See [`IoTrace::record_pax_footer_prune`].
+pub fn record_pax_footer_prune(total: u64, pruned: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_pax_footer_prune(total, pruned));
+}
+
+/// Record general bounded-concurrent `read_ranges` metrics for the active query
+/// (TD-RDSTRAT-12). No-ops outside a query scope. See [`IoTrace::record_read_ranges`].
+pub fn record_read_ranges(fetch_rounds: u64, max_inflight: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_read_ranges(fetch_rounds, max_inflight));
+}
+
+/// Record one physical ranged GET attributed to PAX cascade tier `tier_idx`
+/// (TD-RDSTRAT-13 C1; index contract on [`IoTrace::record_tier_get`]).
+/// No-ops outside a query scope.
+pub fn record_tier_get(tier_idx: usize, bytes: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_tier_get(tier_idx, bytes));
+}
+
+/// Record one object-storage metadata op (HEAD) on the search path
+/// (TD-RDSTRAT-13 C3). No-ops outside a query scope.
+pub fn record_metadata_op() {
+    let _ = IO_TRACE.try_with(|t| t.record_metadata_op());
+}
+
+/// Record the coarse-probe rank wall duration in microseconds for the active
+/// query (TD-RDSTRAT-13 C2). No-ops outside a query scope.
+pub fn record_ivf_probe_rank_us(us: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_ivf_probe_rank_us(us));
+}
+
+/// Drain general bounded-concurrent `read_ranges` metrics from the storage layer
+/// and forward to the active query trace (TD-RDSTRAT-12).
+///
+/// This bridges the layer boundary: the storage layer records metrics globally
+/// (avoiding upward dependencies), and this function (in the observability layer)
+/// drains them and forwards to the per-query io_trace. Call this after operations
+/// that use `FileSystem::read_ranges` with parallelism enabled.
+///
+/// Scope-gated BY DESIGN: outside an active io_trace scope the FS slot is left
+/// untouched so no-scope callers (unit tests, background scans) keep the
+/// last-wave visibility the raw slot always provided — `record_read_ranges`
+/// would no-op anyway, so draining there would only destroy the metrics.
+pub fn drain_and_forward_read_ranges_metrics() {
+    use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
+    let in_scope = IO_TRACE.try_with(|_| true).is_ok();
+    if in_scope && let Some(metrics) = drain_read_ranges_metrics() {
+        record_read_ranges(metrics.fetch_rounds, metrics.max_inflight);
+    }
+}
+
 /// Record a runtime-filter wait outcome for the active query (ADR-056 AQE-S11).
 pub fn record_runtime_filter_wait(arrived: bool, waited_ms: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_runtime_filter_wait(arrived, waited_ms));
@@ -1091,6 +1472,16 @@ pub fn record_footers(hits: u64, misses: u64) {
 #[cfg(not(feature = "io-trace"))]
 #[inline(always)]
 pub fn record_footers(_hits: u64, _misses: u64) {}
+
+/// Record logical in-process DRAM cache outcomes for the active query.
+/// Compile-time gated with the other performance/geometry trace fields.
+#[cfg(feature = "io-trace")]
+pub fn record_survivor_l1s(hits: u64, misses: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_survivor_l1s(hits, misses));
+}
+#[cfg(not(feature = "io-trace"))]
+#[inline(always)]
+pub fn record_survivor_l1s(_hits: u64, _misses: u64) {}
 
 /// Record a batch of persistent-L2 cache probe outcomes for the active query
 /// (ADR-085 / TD-IOTRACE-4). (TD-160: perf/geometry trace class —
@@ -1184,6 +1575,26 @@ pub fn record_route(shape_class: &str, backend_label: &str) {
     let _ = IO_TRACE.try_with(|t| t.record_route(shape_class, backend_label));
 }
 
+/// Append one successfully completed physical vector access to the active
+/// query trace. Silently no-ops outside an active scope.
+pub fn record_vector_access(sample: VectorAccessTrace) {
+    let _ = IO_TRACE.try_with(|t| t.record_vector_access(sample));
+}
+
+/// Mark physical ANN engagement in the active query. This is an internal
+/// attribution signal; callers emit the durable access sample only after the
+/// enclosing vector operation succeeds.
+pub fn record_vector_ann_proof() {
+    let _ = IO_TRACE.try_with(|t| t.record_vector_ann_proof());
+}
+
+/// Read the active query's physical ANN proof count, or zero outside a scope.
+pub fn vector_ann_proof_count() -> u64 {
+    IO_TRACE
+        .try_with(|t| t.vector_ann_proofs())
+        .unwrap_or_default()
+}
+
 /// Stamp the resolved storage profile (`append_bulk`/`churn`) onto the active
 /// query trace (ADR-061 D6 / TD-WLP-6). Silently no-ops outside an active
 /// scope. Neutral label string — io_trace never depends on `StorageProfile`.
@@ -1249,6 +1660,31 @@ fn notify_route_observer(snap: &IoTraceSnapshot, shape_class: &str, backend_labe
         .as_ref()
     {
         obs(snap, shape_class, backend_label);
+    }
+}
+
+/// Observer invoked once at query completion when at least one physical vector
+/// access was recorded. Separate from `RouteObserver`: the latter is the one
+/// containing compute backend, while this dimension may repeat per query.
+type VectorAccessObserver = dyn Fn(&IoTraceSnapshot) + Send + Sync;
+
+static VECTOR_ACCESS_OBSERVER: Mutex<Option<Box<VectorAccessObserver>>> = Mutex::new(None);
+
+/// Install or clear the vector-access observer. The query layer uses this
+/// dependency-inversion seam to feed observe-only access-path cost cells.
+pub fn set_vector_access_observer(observer: Option<Box<VectorAccessObserver>>) {
+    *VECTOR_ACCESS_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = observer;
+}
+
+fn notify_vector_access_observer(snap: &IoTraceSnapshot) {
+    if let Some(observer) = VECTOR_ACCESS_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        observer(snap);
     }
 }
 
@@ -1347,6 +1783,17 @@ pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
     IO_TRACE.scope(Arc::new(IoTrace::new()), future).await
 }
 
+/// Bind an existing query trace to a child future. `tokio::task_local!` does
+/// not cross `tokio::spawn`; engine schedulers capture [`current_handle`] before
+/// spawning and rebind it with this function so child I/O remains attributable
+/// to the owning query rather than disappearing from its cost cell.
+pub async fn scope_with_handle<F: std::future::Future>(
+    trace: Arc<IoTrace>,
+    future: F,
+) -> F::Output {
+    IO_TRACE.scope(trace, future).await
+}
+
 /// Wrap a query future in a fresh trace, run it, then emit the captured
 /// snapshot as a [`TARGET`] event labelled by `tenant_id`/`route`. This is the
 /// one call a request handler adds at the query boundary — co-locate it with
@@ -1408,6 +1855,9 @@ where
                     && let Some((shape_class, backend_label)) = stamped_route
                 {
                     notify_route_observer(&snap, &shape_class, &backend_label);
+                }
+                if !snap.vector_accesses.is_empty() {
+                    notify_vector_access_observer(&snap);
                 }
                 // T2.2 ingestion: feed the cache orchestrator for trace-driven sizing.
                 // Skip empty traces to avoid wasteful cache budget updates.
@@ -1638,6 +2088,174 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn vector_accesses_preserve_every_physical_operator_in_order() {
+        record_vector_access(VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: VectorSearchIntent::Adaptive,
+            actual_path: VectorAccessPath::Exact,
+            storage_scope: VectorStorageScope::Unknown,
+            cache_policy: VectorCachePolicy::Unknown,
+        }); // outside scope: no-op
+
+        let snap = scope(async {
+            record_vector_access(VectorAccessTrace {
+                engine: "sst".to_string(),
+                dimensions: 384,
+                top_k: 10,
+                has_filter: false,
+                requested_mode: VectorSearchIntent::Adaptive,
+                actual_path: VectorAccessPath::Exact,
+                storage_scope: VectorStorageScope::Local,
+                cache_policy: VectorCachePolicy::Disabled,
+            });
+            record_vector_access(VectorAccessTrace {
+                engine: "sst".to_string(),
+                dimensions: 768,
+                top_k: 25,
+                has_filter: true,
+                requested_mode: VectorSearchIntent::Approximate,
+                actual_path: VectorAccessPath::Ann,
+                storage_scope: VectorStorageScope::Remote,
+                cache_policy: VectorCachePolicy::Full,
+            });
+            IO_TRACE.try_with(|t| t.snapshot()).unwrap()
+        })
+        .await;
+
+        assert_eq!(snap.vector_accesses.len(), 2);
+        assert_eq!(snap.vector_accesses[0].actual_path, VectorAccessPath::Exact);
+        assert_eq!(snap.vector_accesses[1].dimensions, 768);
+        assert_eq!(snap.vector_accesses[1].actual_path, VectorAccessPath::Ann);
+        assert_eq!(
+            snap.vector_accesses[1].cache_policy,
+            VectorCachePolicy::Full
+        );
+        assert!(!snap.is_empty(), "an access-only trace is durable evidence");
+    }
+
+    #[test]
+    fn vector_storage_scope_classifies_urls_without_claiming_access_tier() {
+        assert_eq!(
+            VectorStorageScope::from_storage_url("file:///var/lib/proximadb/data"),
+            VectorStorageScope::Local
+        );
+        assert_eq!(
+            VectorStorageScope::from_storage_url("/var/lib/proximadb/data"),
+            VectorStorageScope::Local
+        );
+        for url in [
+            "s3://bucket/data",
+            "gs://bucket/data",
+            "az://container/data",
+            "azure://container/data",
+            "adls://container/data",
+            "abfs://container/data",
+            "hdfs://namenode/data",
+            "https://object-gateway.example/data",
+        ] {
+            assert_eq!(
+                VectorStorageScope::from_storage_url(url),
+                VectorStorageScope::Remote,
+                "{url}"
+            );
+        }
+        assert_eq!(
+            VectorStorageScope::from_storage_url("future-store://bucket/data"),
+            VectorStorageScope::Unknown
+        );
+    }
+
+    #[test]
+    fn vector_cache_policy_maps_both_route_time_tier_seams() {
+        assert_eq!(
+            VectorCachePolicy::from_tiers(false, false),
+            VectorCachePolicy::Disabled
+        );
+        assert_eq!(
+            VectorCachePolicy::from_tiers(true, false),
+            VectorCachePolicy::InvariantsOnly
+        );
+        assert_eq!(
+            VectorCachePolicy::from_tiers(false, true),
+            VectorCachePolicy::SurvivorOnly
+        );
+        assert_eq!(
+            VectorCachePolicy::from_tiers(true, true),
+            VectorCachePolicy::Full
+        );
+        assert!(!VectorCachePolicy::Unknown.is_admissible());
+    }
+
+    #[test]
+    fn legacy_vector_access_defaults_route_time_dimensions_to_unknown() {
+        let legacy = r#"{
+            "engine":"sst",
+            "dimensions":384,
+            "top_k":10,
+            "has_filter":false,
+            "requested_mode":"exact",
+            "actual_path":"exact"
+        }"#;
+        let access: VectorAccessTrace = serde_json::from_str(legacy).expect("legacy access");
+        assert_eq!(access.storage_scope, VectorStorageScope::Unknown);
+        assert_eq!(access.cache_policy, VectorCachePolicy::Unknown);
+    }
+
+    #[tokio::test]
+    async fn flush_feeds_vector_observer_without_a_compute_route_stamp() {
+        use std::sync::Arc;
+
+        let seen: Arc<Mutex<Vec<IoTraceSnapshot>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        set_vector_access_observer(Some(Box::new(move |snap| {
+            sink.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(snap.clone());
+        })));
+
+        instrument(None, "rest.v2.records.search", async {
+            record_vector_access(VectorAccessTrace {
+                engine: "sst".to_string(),
+                dimensions: 384,
+                top_k: 10,
+                has_filter: false,
+                requested_mode: VectorSearchIntent::Exact,
+                actual_path: VectorAccessPath::Exact,
+                storage_scope: VectorStorageScope::Local,
+                cache_policy: VectorCachePolicy::Disabled,
+            });
+        })
+        .await;
+        set_vector_access_observer(None);
+
+        let got = seen.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].vector_accesses.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn existing_handle_rebinds_trace_across_spawn() {
+        let snap = scope(async {
+            let trace = current_handle().expect("active trace handle");
+            tokio::spawn(scope_with_handle(trace, async {
+                record_range_gets(1);
+                record_bytes_read(4096);
+                record_vector_ann_proof();
+            }))
+            .await
+            .expect("child task");
+            snapshot().expect("outer snapshot")
+        })
+        .await;
+
+        assert_eq!(snap.range_gets, 1);
+        assert_eq!(snap.bytes_read, 4096);
+    }
+
+    #[tokio::test]
     async fn floor_fall_through_attributes_route_to_the_floor_not_the_primary() {
         // ADR-064 / TD-TRACE-1: when a primary engine declines and the DataFusion
         // FLOOR serves the query, the dispatch re-stamps the route
@@ -1832,6 +2450,26 @@ mod tests {
         obj.remove("l2_misses");
         let legacy: IoTraceSnapshot = serde_json::from_value(v).unwrap();
         assert_eq!((legacy.l2_hits, legacy.l2_misses), (0, 0));
+    }
+
+    /// The survivor cache is an in-process L1 above the filesystem. Its
+    /// outcomes must remain distinct from persistent L2 and physical GETs,
+    /// while old snapshots remain readable after the additive fields land.
+    #[test]
+    fn l1_probes_record_snapshot_and_default_from_legacy_json() {
+        let t = IoTrace::new();
+        t.record_survivor_l1s(2, 1);
+        t.record_survivor_l1s(3, 0);
+        let s = t.snapshot();
+        assert_eq!((s.survivor_l1_hits, s.survivor_l1_misses), (5, 1));
+        assert!(!s.is_empty(), "an L1-only trace is not empty");
+
+        let mut v = serde_json::to_value(IoTraceSnapshot::default()).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("survivor_l1_hits");
+        obj.remove("survivor_l1_misses");
+        let legacy: IoTraceSnapshot = serde_json::from_value(v).unwrap();
+        assert_eq!((legacy.survivor_l1_hits, legacy.survivor_l1_misses), (0, 0));
     }
 
     #[tokio::test]

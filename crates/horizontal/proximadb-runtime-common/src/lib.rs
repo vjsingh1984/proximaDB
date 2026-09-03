@@ -8,6 +8,7 @@
 pub mod btree;
 pub mod cache;
 pub mod disk_cache;
+pub mod file_lock;
 pub mod pool;
 pub mod query_cache;
 pub mod skiplist;
@@ -16,6 +17,7 @@ pub mod vector_ops;
 pub use btree::{BPlusTree, BTreeError, BTreeIterator, BTreeStats, DiskNodeInfo};
 pub use cache::{CacheEntry, CacheError, CacheStats, LruCache, ThreadSafeLruCache};
 pub use disk_cache::{DiskCacheManager, DiskCacheStatistics};
+pub use file_lock::{AccessMode, FileLockError, FileLockManager, FileLockSet, LockOwner};
 pub use pool::{Pool, PoolConfig, PoolStats, PooledItem, VectorMemoryPool, VectorPoolStats};
 pub use query_cache::{Cache, ShardedMapCache};
 pub use skiplist::{SkipList, SkipListIterator};

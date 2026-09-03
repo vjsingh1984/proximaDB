@@ -90,6 +90,33 @@ impl RowAllow {
         }
         false
     }
+
+    /// Count of allowed rows in `range` — the number of predicate-matching rows
+    /// in a contiguous global-row range (an A0 cell). TD-FPRUNE-1 M3 uses this to
+    /// size the ADAPTIVE probe: walk cells nearest-first, accumulate matching
+    /// rows, and stop once enough matching candidates are covered — all in RAM
+    /// (cell row-ranges + this bitset), so no extra I/O.
+    pub fn count_in_range(&self, range: std::ops::Range<usize>) -> usize {
+        let start = range.start.min(self.n_slots);
+        let end = range.end.min(self.n_slots);
+        if start >= end {
+            return 0;
+        }
+        let (first_w, last_w) = (start / 64, (end - 1) / 64);
+        let mut count = 0usize;
+        for w in first_w..=last_w {
+            let mut word = self.words[w];
+            if w == first_w {
+                word &= u64::MAX << (start % 64);
+            }
+            if w == last_w {
+                let tail = (end - 1) % 64;
+                word &= u64::MAX >> (63 - tail);
+            }
+            count += word.count_ones() as usize;
+        }
+        count
+    }
 }
 
 impl FromIterator<usize> for RowAllow {
@@ -137,5 +164,18 @@ mod tests {
         assert!(s.any_in_range(128..201));
         assert!(!s.any_in_range(201..500)); // beyond slots
         assert!(!s.any_in_range(10..10)); // empty range
+    }
+
+    #[test]
+    fn count_in_range_across_word_boundaries() {
+        // Rows spanning three 64-bit words: 5, 63, 64, 130, 200.
+        let s: RowAllow = [5usize, 63, 64, 130, 200].into_iter().collect();
+        assert_eq!(s.count_in_range(0..201), 5); // all
+        assert_eq!(s.count_in_range(0..64), 2); // 5, 63
+        assert_eq!(s.count_in_range(64..131), 2); // 64, 130
+        assert_eq!(s.count_in_range(63..65), 2); // 63, 64 across the word edge
+        assert_eq!(s.count_in_range(6..63), 0); // gap
+        assert_eq!(s.count_in_range(200..500), 1); // 200 (clamped past slots)
+        assert_eq!(s.count_in_range(10..10), 0); // empty range
     }
 }

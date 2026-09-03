@@ -306,15 +306,24 @@ docs/log/
 !config.json
 # Versioned wire contracts (e.g. statistics-envelope.v1) must track without -f.
 !docs/12-design/contracts/*.json
+# Pinned-model parity fixtures and the model catalog are hand-versioned test
+# sources (TD-SELECTOR-1 gate 5) — include_str! requires them in-tree.
+!crates/modalities/proximadb-rank-onnx/tests/fixtures/*.json
+# Recorded chunking output snapshot: a committed test fixture, not generated
+# runtime data. It is the oracle proving a refactor changed no output, so it must
+# track without -f or a regeneration silently stops being committed.
+!clients/python/tests/chunking/golden_chunk_output.json
 !config/tier-config.json
 !config/tier-config.example.json
 !docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
 !docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json
+!docs/_internal/roadmap/SILENT_FAILURE_BASELINE.json
 !clients/**/package.json
 !clients/**/tsconfig.json
 !clients/**/tsconfig.*.json
 !clients/python/tests/unit/grpc_drift_baseline.json
 !clients/**/package-lock.json
+!ui/package-lock.json
 !examples/**/*.json
 bert_*.json
 msmarco_*.json

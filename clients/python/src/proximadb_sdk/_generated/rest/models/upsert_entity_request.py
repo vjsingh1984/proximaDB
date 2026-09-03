@@ -29,16 +29,16 @@ T = TypeVar("T", bound="UpsertEntityRequest")
 class UpsertEntityRequest:
     """
     Attributes:
-        embeddings (list[EntityEmbeddingInput] | Unset):
-        flexible_metadata (UpsertEntityRequestFlexibleMetadata | Unset):
         id (str | Unset): Empty ⇒ the server generates a UUID.
+        flexible_metadata (UpsertEntityRequestFlexibleMetadata | Unset):
+        embeddings (list[EntityEmbeddingInput] | Unset):
         provenance (EntityProvenanceInput | None | Unset):
         relations (list[EntityRelationInput] | Unset):
     """
 
-    embeddings: list[EntityEmbeddingInput] | Unset = UNSET
-    flexible_metadata: UpsertEntityRequestFlexibleMetadata | Unset = UNSET
     id: str | Unset = UNSET
+    flexible_metadata: UpsertEntityRequestFlexibleMetadata | Unset = UNSET
+    embeddings: list[EntityEmbeddingInput] | Unset = UNSET
     provenance: EntityProvenanceInput | None | Unset = UNSET
     relations: list[EntityRelationInput] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -51,18 +51,18 @@ class UpsertEntityRequest:
             UpsertEntityRequestFlexibleMetadata,
         )
 
+        id = self.id
+
+        flexible_metadata: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.flexible_metadata, Unset):
+            flexible_metadata = self.flexible_metadata.to_dict()
+
         embeddings: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.embeddings, Unset):
             embeddings = []
             for embeddings_item_data in self.embeddings:
                 embeddings_item = embeddings_item_data.to_dict()
                 embeddings.append(embeddings_item)
-
-        flexible_metadata: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.flexible_metadata, Unset):
-            flexible_metadata = self.flexible_metadata.to_dict()
-
-        id = self.id
 
         provenance: dict[str, Any] | None | Unset
         if isinstance(self.provenance, Unset):
@@ -82,12 +82,12 @@ class UpsertEntityRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if embeddings is not UNSET:
-            field_dict["embeddings"] = embeddings
-        if flexible_metadata is not UNSET:
-            field_dict["flexible_metadata"] = flexible_metadata
         if id is not UNSET:
             field_dict["id"] = id
+        if flexible_metadata is not UNSET:
+            field_dict["flexible_metadata"] = flexible_metadata
+        if embeddings is not UNSET:
+            field_dict["embeddings"] = embeddings
         if provenance is not UNSET:
             field_dict["provenance"] = provenance
         if relations is not UNSET:
@@ -105,14 +105,7 @@ class UpsertEntityRequest:
         )
 
         d = dict(src_dict)
-        _embeddings = d.pop("embeddings", UNSET)
-        embeddings: list[EntityEmbeddingInput] | Unset = UNSET
-        if _embeddings is not UNSET:
-            embeddings = []
-            for embeddings_item_data in _embeddings:
-                embeddings_item = EntityEmbeddingInput.from_dict(embeddings_item_data)
-
-                embeddings.append(embeddings_item)
+        id = d.pop("id", UNSET)
 
         _flexible_metadata = d.pop("flexible_metadata", UNSET)
         flexible_metadata: UpsertEntityRequestFlexibleMetadata | Unset
@@ -123,7 +116,14 @@ class UpsertEntityRequest:
                 _flexible_metadata
             )
 
-        id = d.pop("id", UNSET)
+        _embeddings = d.pop("embeddings", UNSET)
+        embeddings: list[EntityEmbeddingInput] | Unset = UNSET
+        if _embeddings is not UNSET:
+            embeddings = []
+            for embeddings_item_data in _embeddings:
+                embeddings_item = EntityEmbeddingInput.from_dict(embeddings_item_data)
+
+                embeddings.append(embeddings_item)
 
         def _parse_provenance(data: object) -> EntityProvenanceInput | None | Unset:
             if data is None:
@@ -152,9 +152,9 @@ class UpsertEntityRequest:
                 relations.append(relations_item)
 
         upsert_entity_request = cls(
-            embeddings=embeddings,
-            flexible_metadata=flexible_metadata,
             id=id,
+            flexible_metadata=flexible_metadata,
+            embeddings=embeddings,
             provenance=provenance,
             relations=relations,
         )

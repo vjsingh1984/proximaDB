@@ -105,6 +105,22 @@ pub fn canonical_replay_scope_enabled() -> bool {
     std::env::var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE").as_deref() == Ok("1")
 }
 
+/// Graph WAL segment size in bytes (`PROXIMADB_GRAPH_WAL_SEGMENT_MB`, default
+/// 64, clamped to [1, 64]). Truncation-through-checkpoint deletes only whole
+/// segments strictly below the marker's segment, so a WAL smaller than one
+/// segment can never be reclaimed — embedded profiles set this to 8 so a
+/// modest graph WAL spans several segments and checkpointing reclaims the
+/// bulk. Server default is unchanged (64 = the previous hardcoded value).
+pub fn graph_wal_segment_size_bytes() -> usize {
+    const DEFAULT_MB: usize = 64;
+    let mb = std::env::var("PROXIMADB_GRAPH_WAL_SEGMENT_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_MB)
+        .clamp(1, DEFAULT_MB);
+    mb * 1024 * 1024
+}
+
 /// TD-066 (c) Part 2 — canonical-store recovery re-population (default OFF).
 /// Graph recovery replays the engine WAL into the in-memory engine only; the
 /// canonical/cold record store (a write-time projection, and a *buffered* one for
@@ -533,7 +549,7 @@ impl UnifiedWALWriter {
             filesystem,
             current_segment_path: None,
             current_segment_data: Vec::new(),
-            max_segment_size: 64 * 1024 * 1024, // 64MB segments
+            max_segment_size: graph_wal_segment_size_bytes(),
             segment_counter,
         })
     }
@@ -1036,6 +1052,37 @@ impl UnifiedWALReader {
 
 #[cfg(test)]
 mod tests {
+
+    /// WAL-retention slice: `PROXIMADB_GRAPH_WAL_SEGMENT_MB` parsing + clamp.
+    /// Runs under nextest process isolation, so the env mutation is contained.
+    #[test]
+    fn graph_wal_segment_size_env_knob_clamps() {
+        // SAFETY: process-local env mutation; nextest isolates test processes.
+        unsafe { std::env::remove_var("PROXIMADB_GRAPH_WAL_SEGMENT_MB") };
+        assert_eq!(super::graph_wal_segment_size_bytes(), 64 * 1024 * 1024);
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "8") };
+        assert_eq!(super::graph_wal_segment_size_bytes(), 8 * 1024 * 1024);
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "9999") };
+        assert_eq!(
+            super::graph_wal_segment_size_bytes(),
+            64 * 1024 * 1024,
+            "values above the previous hardcoded 64MB clamp down"
+        );
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "0") };
+        assert_eq!(
+            super::graph_wal_segment_size_bytes(),
+            1024 * 1024,
+            "zero clamps up to the 1MB minimum"
+        );
+        unsafe { std::env::set_var("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "garbage") };
+        assert_eq!(
+            super::graph_wal_segment_size_bytes(),
+            64 * 1024 * 1024,
+            "unparsable values fall back to the default"
+        );
+        unsafe { std::env::remove_var("PROXIMADB_GRAPH_WAL_SEGMENT_MB") };
+    }
+
     use super::*;
     use crate::graph::Node;
     use proximadb_records::EmbeddingCell;

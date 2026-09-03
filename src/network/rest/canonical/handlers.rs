@@ -38,6 +38,11 @@ use serde::{Deserialize, Serialize};
 /// (deleted) root `UnifiedHandlers` boot-adapter. Built via
 /// [`RestCoreServices::from_shared_services`] at the boot call sites.
 pub struct RestCoreServices {
+    /// Shared xCatalog manager used by catalog-backed control-plane routes.
+    pub catalog_manager: Arc<crate::catalog::CatalogManager>,
+    /// Same model-registry service instance exposed by every native transport.
+    pub model_registry_service:
+        Arc<proximadb_catalog::model_registry_service::CatalogModelRegistryService>,
     /// Vector CRUD/search — same `Arc` as `SharedServices.vector_operations_service`.
     pub vector_operations_service: Arc<crate::services::VectorOperationsService>,
     /// Document storage — same `Arc` as `SharedServices.document_service`.
@@ -97,6 +102,8 @@ impl RestCoreServices {
         services: &crate::network::shared_services::SharedServices,
     ) -> Self {
         Self {
+            catalog_manager: services.catalog_manager.clone(),
+            model_registry_service: services.model_registry_service.clone(),
             vector_operations_service: services.vector_operations_service.clone(),
             document_service: services.document_service.clone(),
             collection_service: services.collection_service.clone(),
@@ -174,6 +181,9 @@ pub struct AppState {
     pub fulltext_indexes: Option<FullTextIndexMap>,
     /// Catalog manager for external catalog integration
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
+    /// Tenant-scoped model-registry lifecycle authority shared with gRPC.
+    pub model_registry_service:
+        Arc<proximadb_catalog::model_registry_service::CatalogModelRegistryService>,
     /// Phase 6: per-collection pinning registry. Set from
     /// `SharedServices.pin_registry` so the REST handlers and the
     /// AxisTieringManager consumer share the same Arc.
@@ -321,6 +331,8 @@ impl AppState {
         // (built once from `SharedServices` at the boot call site) instead of
         // being pulled out of the deleted root `UnifiedHandlers` here.
         let RestCoreServices {
+            catalog_manager,
+            model_registry_service,
             vector_operations_service,
             document_service,
             collection_service,
@@ -370,7 +382,8 @@ impl AppState {
             data_dir,
             query_adapter,
             fulltext_indexes: Some(fulltext_indexes),
-            catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
+            catalog_manager,
+            model_registry_service,
             // Default: standalone pin registry. Production wires
             // SharedServices.pin_registry via `with_pin_registry` so
             // REST handlers and the eventual AxisTieringManager
@@ -572,7 +585,14 @@ impl AppState {
 
     /// Inject the shared xCatalog manager from the server composition root.
     pub fn with_catalog_manager(mut self, manager: Arc<crate::catalog::CatalogManager>) -> Self {
-        self.catalog_manager = manager;
+        if !Arc::ptr_eq(&self.catalog_manager, &manager) {
+            self.model_registry_service = Arc::new(
+                proximadb_catalog::model_registry_service::CatalogModelRegistryService::new(
+                    manager.clone(),
+                ),
+            );
+            self.catalog_manager = manager;
+        }
         self
     }
 
@@ -1786,8 +1806,14 @@ pub fn create_router(state: AppState) -> axum::Router {
             let catalog_state = CatalogApiState::new(state.catalog_manager.clone());
             catalog::configure_routes().with_state(catalog_state)
         };
-        router = router.nest("/api/v1/catalogs", catalog_router);
-        info!("✅ External Catalog API endpoints enabled at /api/v1/catalogs");
+        // Nested under /api/v2 (the sole canonical prefix, SUPPORTED_SURFACE):
+        // this surface previously lived at /api/v1/catalogs, where the v1_sunset
+        // middleware 410'd it by default (TD-V1SUNSET-1 census finding 4) —
+        // dead-on-arrival whenever the feature was on. Clean cut, no alias: the
+        // surface was never reachable in a default deployment (double-prefix bug
+        // until TD-CAT-8, then 410), and no SDK or client references the path.
+        router = router.nest("/api/v2/catalogs", catalog_router);
+        info!("✅ External Catalog API endpoints enabled at /api/v2/catalogs");
     }
 
     // Iceberg REST Catalog server — always on, no feature gate needed.
@@ -1985,9 +2011,11 @@ pub fn create_router(state: AppState) -> axum::Router {
     );
     // NOTE: the legacy /api/v1 vector/collection/search/hybrid REST surfaces were
     // removed in the API-standardization hard-rename; those paths now fall through
-    // to a migration hint redirecting to /api/v2 (see `v1_replacement_for`). The
-    // only live /api/v1 mount is the Iceberg REST catalog adapter at
-    // /api/v1/catalogs. Do not re-advertise the removed routes here — that misleads
+    // to a migration hint redirecting to /api/v2 (see `v1_replacement_for`). There
+    // is NO live /api/v1 mount: the enterprise catalog surface moved to
+    // /api/v2/catalogs (2026-08-29; it was 410'd at its old /api/v1/catalogs home
+    // by the default-off sunset), and the Iceberg REST catalog serves at
+    // /iceberg/v1. Do not re-advertise removed routes here — that misleads
     // callers into thinking v1 REST is still served.
     // (/api/v1/experimental/hybrid/search was removed 2026-05-26; it was
     // mock-backed. The real hybrid path is /api/v2/hybrid/search.)
@@ -2556,6 +2584,7 @@ mod tests {
             url: file_url(&storage_path),
             weight: 1,
             tags: vec!["test".to_string()],
+            io_budget: None,
         }];
 
         let (shared_services, _) = crate::network::multi_server::SharedServices::new(

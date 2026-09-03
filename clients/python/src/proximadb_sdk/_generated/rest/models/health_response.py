@@ -21,31 +21,31 @@ class HealthResponse:
     """
     Attributes:
         status (str | Unset):
-        uptime_seconds (float | Unset):
         version (str | Unset):
+        uptime_seconds (float | Unset):
     """
 
     status: str | Unset = UNSET
-    uptime_seconds: float | Unset = UNSET
     version: str | Unset = UNSET
+    uptime_seconds: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         status = self.status
 
-        uptime_seconds = self.uptime_seconds
-
         version = self.version
+
+        uptime_seconds = self.uptime_seconds
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
         if status is not UNSET:
             field_dict["status"] = status
-        if uptime_seconds is not UNSET:
-            field_dict["uptime_seconds"] = uptime_seconds
         if version is not UNSET:
             field_dict["version"] = version
+        if uptime_seconds is not UNSET:
+            field_dict["uptime_seconds"] = uptime_seconds
 
         return field_dict
 
@@ -54,14 +54,14 @@ class HealthResponse:
         d = dict(src_dict)
         status = d.pop("status", UNSET)
 
-        uptime_seconds = d.pop("uptime_seconds", UNSET)
-
         version = d.pop("version", UNSET)
+
+        uptime_seconds = d.pop("uptime_seconds", UNSET)
 
         health_response = cls(
             status=status,
-            uptime_seconds=uptime_seconds,
             version=version,
+            uptime_seconds=uptime_seconds,
         )
 
         health_response.additional_properties = d

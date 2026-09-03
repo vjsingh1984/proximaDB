@@ -358,6 +358,7 @@ fn create_test_config(temp_dir: &TempDir) -> Config {
                 url: format!("file://{}", temp_dir.path().display()),
                 weight: 1,
                 tags: vec!["test".to_string()],
+                io_budget: None,
             }],
             metadata_url: format!("file://{}/metadata", temp_dir.path().display()),
             ..Default::default()

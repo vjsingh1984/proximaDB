@@ -76,6 +76,58 @@ pub mod property_value {
     }
 }
 
+/// Ergonomic constructors so callers write `with_property("line", 42)` and get
+/// a TYPED value. Absent these, every boundary invented its own conversion and
+/// the path of least resistance was stringification — which is how the
+/// embedded PyO3 layer came to store `line: "42"` as a StringValue, leaving
+/// the engine's numeric property index permanently empty and making numeric
+/// range filters lexicographic (`"9" > "42"`). See proximaDB#1698.
+impl From<&str> for PropertyValue {
+    fn from(v: &str) -> Self {
+        PropertyValue {
+            value: Some(property_value::Value::StringValue(v.to_string())),
+        }
+    }
+}
+
+impl From<String> for PropertyValue {
+    fn from(v: String) -> Self {
+        PropertyValue {
+            value: Some(property_value::Value::StringValue(v)),
+        }
+    }
+}
+
+impl From<i64> for PropertyValue {
+    fn from(v: i64) -> Self {
+        PropertyValue {
+            value: Some(property_value::Value::IntValue(v)),
+        }
+    }
+}
+
+impl From<i32> for PropertyValue {
+    fn from(v: i32) -> Self {
+        PropertyValue::from(i64::from(v))
+    }
+}
+
+impl From<f64> for PropertyValue {
+    fn from(v: f64) -> Self {
+        PropertyValue {
+            value: Some(property_value::Value::DoubleValue(v)),
+        }
+    }
+}
+
+impl From<bool> for PropertyValue {
+    fn from(v: bool) -> Self {
+        PropertyValue {
+            value: Some(property_value::Value::BoolValue(v)),
+        }
+    }
+}
+
 /// Ordered list of property values.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PropertyArray {

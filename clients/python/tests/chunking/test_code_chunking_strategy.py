@@ -25,9 +25,7 @@ CodeRelation = code_module.CodeRelationType
 ParsedCode = code_module.ParsedCode
 SourceLocation = code_module.SourceLocation
 create_code_chunker = code_module.create_code_chunker
-LANGUAGE_PARSERS = code_module.LANGUAGE_PARSERS
 EXTENSION_TO_LANGUAGE = code_module.EXTENSION_TO_LANGUAGE
-PythonParser = code_module.PythonParser
 
 # Get TextChunk from base
 base_module = sys.modules.get("proximadb.chunking_strategies.base")
@@ -82,23 +80,29 @@ class TestCodeChunkingStrategy:
         assert strategy is not None
         assert isinstance(strategy.config, CodeChunkingConfig)
 
-    def test_strategy_has_parsers(self, strategy):
-        """Test strategy exposes the lazy parser cache and allowed languages."""
-        assert hasattr(strategy, "_parsers")
-        assert isinstance(strategy._parsers, dict)
-        # Parsers are instantiated lazily on first chunk(), so the cache starts
-        # empty, but the allowed-language set is populated at construction.
-        assert strategy._parsers == {}
+    def test_strategy_has_an_allowed_language_set(self, strategy):
+        """The in-SDK parser cache is gone (TD-CG2 S4); the language set remains.
+
+        `_parsers` was a cache of tree-sitter parser instances this module owned.
+        Those are deleted; the set of languages the strategy may parse now comes
+        from the installed package, so it cannot name a language nothing can
+        actually parse.
+        """
+        assert isinstance(strategy._allowed_languages, set)
         assert len(strategy._allowed_languages) > 0
 
     def test_strategy_with_limited_languages(self, python_strategy):
-        """Test strategy with limited languages restricts the allowed set."""
+        """A configured language list restricts the allowed set and still chunks.
+
+        The `_parsers` cache this used to inspect is gone with the in-SDK
+        parsers (TD-CG2 S4), so the observable behaviour is asserted instead:
+        the set is scoped, and chunking a file of that language still yields
+        symbols through the delegated path.
+        """
         assert python_strategy._allowed_languages == {"python"}
-        # Nothing instantiated until the first chunk() call.
-        assert python_strategy._parsers == {}
-        python_strategy.chunk("def f():\n    return 1\n", "x.py")
-        assert "python" in python_strategy._parsers
-        assert set(python_strategy._parsers) == {"python"}
+        chunks = python_strategy.chunk("def f():\n    return 1\n", "x.py")
+        assert chunks
+        assert any(c.metadata.get("symbol_id") for c in chunks)
 
     def test_chunk_python_code(self, strategy):
         """Test chunking Python code."""
@@ -323,209 +327,6 @@ class TestChunkingAllLanguages:
             assert isinstance(chunks, list)
 
 
-class TestPythonParserDetailed:
-    """Detailed tests for the Python parser to increase coverage."""
-
-    @pytest.fixture
-    def parser(self):
-        return PythonParser()
-
-    def test_parse_simple_function(self, parser):
-        """Test parsing a simple function."""
-        code = "def hello(): pass"
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-        assert result.language == "python"
-
-    def test_parse_function_with_args(self, parser):
-        """Test parsing a function with arguments."""
-        code = '''
-def greet(name: str, greeting: str = "Hello") -> str:
-    """Greet someone."""
-    return f"{greeting}, {name}!"
-'''
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-        assert len(result.symbols) > 0
-
-    def test_parse_class_with_inheritance(self, parser):
-        """Test parsing a class with inheritance."""
-        code = """
-class Parent:
-    pass
-
-class Child(Parent):
-    def method(self):
-        pass
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-        class_symbols = [
-            s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS
-        ]
-        assert len(class_symbols) >= 2
-
-    def test_parse_decorated_class(self, parser):
-        """Test parsing a decorated class."""
-        code = """
-@dataclass
-class User:
-    name: str
-    age: int
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_static_method(self, parser):
-        """Test parsing static methods."""
-        code = """
-class MyClass:
-    @staticmethod
-    def static_method():
-        pass
-
-    @classmethod
-    def class_method(cls):
-        pass
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_property(self, parser):
-        """Test parsing properties."""
-        code = """
-class Person:
-    def __init__(self, name):
-        self._name = name
-
-    @property
-    def name(self):
-        return self._name
-
-    @name.setter
-    def name(self, value):
-        self._name = value
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_nested_class(self, parser):
-        """Test parsing nested classes."""
-        code = """
-class Outer:
-    class Inner:
-        def inner_method(self):
-            pass
-
-    def outer_method(self):
-        pass
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_async_function(self, parser):
-        """Test parsing async functions."""
-        code = """
-async def fetch_data(url: str):
-    async with aiohttp.ClientSession() as session:
-        async for chunk in response.content:
-            yield chunk
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_lambda(self, parser):
-        """Test parsing lambda expressions."""
-        code = """
-square = lambda x: x ** 2
-add = lambda a, b: a + b
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_comprehensions(self, parser):
-        """Test parsing list/dict/set comprehensions."""
-        code = """
-def process():
-    squares = [x**2 for x in range(10)]
-    even_squares = {x: x**2 for x in range(10) if x % 2 == 0}
-    unique = {x for x in items}
-    gen = (x for x in range(100))
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_imports(self, parser):
-        """Test parsing various import statements."""
-        code = """
-import os
-import sys as system
-from typing import List, Dict, Optional
-from pathlib import Path
-from . import local_module
-from ..parent import something
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-        assert len(result.imports) > 0
-
-    def test_parse_global_variables(self, parser):
-        """Test parsing global variables."""
-        code = """
-MAX_SIZE = 100
-DEFAULT_NAME = "Unknown"
-CONFIG = {"debug": True, "timeout": 30}
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_type_hints(self, parser):
-        """Test parsing type hints."""
-        code = """
-from typing import List, Dict, Optional, Union, Callable
-
-def process(
-    items: List[str],
-    config: Dict[str, Any],
-    callback: Optional[Callable[[int], bool]] = None
-) -> Union[str, int]:
-    pass
-"""
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-
-    def test_parse_docstrings(self, parser):
-        """Test parsing docstrings."""
-        code = '''
-"""Module docstring."""
-
-def func():
-    """
-    Function docstring.
-
-    Args:
-        None
-
-    Returns:
-        Nothing
-    """
-    pass
-
-class MyClass:
-    """Class docstring."""
-
-    def method(self):
-        """Method docstring."""
-        pass
-'''
-        result = parser.parse(code, "test.py")
-        assert isinstance(result, ParsedCode)
-        # Check that docstrings are captured
-        for symbol in result.symbols:
-            if symbol.documentation:
-                assert isinstance(symbol.documentation, str)
-
-
 class TestEdgeCasesDetailed:
     """Detailed edge case tests."""
 
@@ -680,9 +481,15 @@ class TestExtensionMappings:
         assert strategy._detect_language("test.cjs") == "javascript"
 
     def test_typescript_extensions(self, strategy):
-        """Test TypeScript extensions."""
+        """`.tsx` is its own language, not TypeScript (TD-CG2 R7).
+
+        This module used to map `.tsx -> typescript` and force it on the parser,
+        overriding the package's own detection and costing HALF the symbols in
+        the file (measured 2 of 4). The mapping is now derived, so `.tsx`
+        resolves to the grammar that actually parses JSX.
+        """
         assert strategy._detect_language("test.ts") == "typescript"
-        assert strategy._detect_language("test.tsx") == "typescript"
+        assert strategy._detect_language("test.tsx") == "tsx"
 
     def test_cpp_extensions(self, strategy):
         """Test C++ extensions."""
@@ -727,11 +534,19 @@ class TestExtensionMappings:
         assert strategy._detect_language("test.ksh") == "bash"
         assert strategy._detect_language("test.fish") == "bash"
 
-    def test_perl_extensions(self, strategy):
-        """Test Perl extensions."""
-        assert strategy._detect_language("test.pl") == "perl"
-        assert strategy._detect_language("test.pm") == "perl"
-        assert strategy._detect_language("test.t") == "perl"
+    def test_perl_is_no_longer_advertised(self):
+        """perl is not in the advertised map, because nothing can parse it.
+
+        TD-CG2 S4 derives the extension map from the installed parser package
+        instead of hand-maintaining one. Perl has no grammar
+        there, so advertising it would be the "20+ languages" overclaim this
+        slice removed. These files are still chunked -- by the labelled text
+        fallback -- they simply carry no symbols.
+        """
+        from proximadb_sdk.chunking_strategies.code import EXTENSION_TO_LANGUAGE
+
+        for extension in [".pl", ".pm", ".t"]:
+            assert EXTENSION_TO_LANGUAGE.get(extension) != "perl"
 
     def test_sql_extensions(self, strategy):
         """Test SQL extensions."""
@@ -739,110 +554,33 @@ class TestExtensionMappings:
         assert strategy._detect_language("test.psql") == "sql"
         assert strategy._detect_language("test.mysql") == "sql"
 
-    def test_yaml_extensions(self, strategy):
-        """Test YAML extensions."""
-        assert strategy._detect_language("test.yaml") == "yaml"
-        assert strategy._detect_language("test.yml") == "yaml"
+    def test_yaml_is_no_longer_advertised(self):
+        """yaml is not in the advertised map, because nothing can parse it.
 
-    def test_json_extensions(self, strategy):
-        """Test JSON extensions."""
-        assert strategy._detect_language("test.json") == "json"
-        assert strategy._detect_language("test.jsonc") == "json"
-        assert strategy._detect_language("test.json5") == "json"
+        TD-CG2 S4 derives the extension map from the installed parser package
+        instead of hand-maintaining one. Yaml has no grammar
+        there, so advertising it would be the "20+ languages" overclaim this
+        slice removed. These files are still chunked -- by the labelled text
+        fallback -- they simply carry no symbols.
+        """
+        from proximadb_sdk.chunking_strategies.code import EXTENSION_TO_LANGUAGE
 
+        for extension in [".yaml", ".yml"]:
+            assert EXTENSION_TO_LANGUAGE.get(extension) != "yaml"
 
-class TestParserLanguageMethods:
-    """Test parser language attribute."""
+    def test_json_is_no_longer_advertised(self):
+        """json is not in the advertised map, because nothing can parse it.
 
-    def test_python_parser_language(self):
-        """Test PythonParser language."""
-        parser = code_module.PythonParser()
-        assert parser.language == "python"
+        TD-CG2 S4 derives the extension map from the installed parser package
+        instead of hand-maintaining one. Json has no grammar
+        there, so advertising it would be the "20+ languages" overclaim this
+        slice removed. These files are still chunked -- by the labelled text
+        fallback -- they simply carry no symbols.
+        """
+        from proximadb_sdk.chunking_strategies.code import EXTENSION_TO_LANGUAGE
 
-    def test_rust_parser_language(self):
-        """Test RustParser language."""
-        parser = code_module.RustParser()
-        assert parser.language == "rust"
-
-    def test_go_parser_language(self):
-        """Test GoParser language."""
-        parser = code_module.GoParser()
-        assert parser.language == "go"
-
-    def test_java_parser_language(self):
-        """Test JavaParser language."""
-        parser = code_module.JavaParser()
-        assert parser.language == "java"
-
-    def test_javascript_parser_language(self):
-        """Test JavaScriptParser language."""
-        parser = code_module.JavaScriptParser()
-        assert parser.language == "javascript"
-
-    def test_typescript_parser_language(self):
-        """Test TypeScript uses JavaScript parser."""
-        # TypeScript is handled by JavaScript parser in the registry
-        if hasattr(code_module, "TypeScriptParser"):
-            parser = code_module.TypeScriptParser()
-            assert parser.language == "typescript"
-        else:
-            # Check that typescript is mapped
-            assert EXTENSION_TO_LANGUAGE.get(".ts") == "typescript"
-
-    def test_cpp_parser_language(self):
-        """Test CppParser language."""
-        parser = code_module.CppParser()
-        assert parser.language == "cpp"
-
-    def test_c_parser_language(self):
-        """Test C parser language."""
-        # C is handled by CppParser in the registry
-        if hasattr(code_module, "CParser"):
-            parser = code_module.CParser()
-            assert parser.language == "c"
-        else:
-            # Check that c is mapped
-            assert EXTENSION_TO_LANGUAGE.get(".c") == "c"
-
-    def test_csharp_parser_language(self):
-        """Test CSharpParser language."""
-        parser = code_module.CSharpParser()
-        assert parser.language == "csharp"
-
-    def test_ruby_parser_language(self):
-        """Test RubyParser language."""
-        parser = code_module.RubyParser()
-        assert parser.language == "ruby"
-
-    def test_php_parser_language(self):
-        """Test PhpParser language."""
-        parser = code_module.PhpParser()
-        assert parser.language == "php"
-
-    def test_kotlin_parser_language(self):
-        """Test KotlinParser language."""
-        parser = code_module.KotlinParser()
-        assert parser.language == "kotlin"
-
-    def test_scala_parser_language(self):
-        """Test ScalaParser language."""
-        parser = code_module.ScalaParser()
-        assert parser.language == "scala"
-
-    def test_swift_parser_language(self):
-        """Test SwiftParser language."""
-        parser = code_module.SwiftParser()
-        assert parser.language == "swift"
-
-    def test_bash_parser_language(self):
-        """Test BashParser language."""
-        parser = code_module.BashParser()
-        assert parser.language == "bash"
-
-    def test_sql_parser_language(self):
-        """Test SqlParser language."""
-        parser = code_module.SqlParser()
-        assert parser.language == "sql"
+        for extension in [".json", ".json5", ".jsonc"]:
+            assert EXTENSION_TO_LANGUAGE.get(extension) != "json"
 
 
 class TestRegistryFunctions:
@@ -981,117 +719,6 @@ class TestSymbolTypeValues:
         assert CodeSymbolType.ENUM
         assert CodeSymbolType.STRUCT
         assert CodeSymbolType.TRAIT
-
-
-class TestMoreParserTests:
-    """Additional parser tests for better coverage."""
-
-    def test_rust_parser_with_complex_code(self):
-        """Test Rust parser with complex code."""
-        parser = code_module.RustParser()
-        code = """
-use std::collections::HashMap;
-
-#[derive(Debug, Clone)]
-pub struct Config {
-    name: String,
-    values: HashMap<String, i32>,
-}
-
-impl Config {
-    pub fn new(name: &str) -> Self {
-        Config {
-            name: name.to_string(),
-            values: HashMap::new(),
-        }
-    }
-}
-
-trait Configurable {
-    fn configure(&mut self);
-}
-
-enum Status {
-    Active,
-    Inactive,
-    Pending(String),
-}
-"""
-        result = parser.parse(code, "test.rs")
-        assert isinstance(result, ParsedCode)
-        assert result.language == "rust"
-
-    def test_go_parser_with_complex_code(self):
-        """Test Go parser with complex code."""
-        parser = code_module.GoParser()
-        code = """
-package main
-
-import (
-    "fmt"
-    "sync"
-)
-
-type Server struct {
-    mu sync.Mutex
-    connections int
-}
-
-func NewServer() *Server {
-    return &Server{}
-}
-
-func (s *Server) Connect() {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    s.connections++
-}
-
-type Handler interface {
-    Handle(data []byte) error
-}
-"""
-        result = parser.parse(code, "test.go")
-        assert isinstance(result, ParsedCode)
-        assert result.language == "go"
-
-    def test_java_parser_with_complex_code(self):
-        """Test Java parser with complex code."""
-        parser = code_module.JavaParser()
-        code = """
-package com.example;
-
-import java.util.List;
-import java.util.ArrayList;
-
-@Service
-public class UserService implements IUserService {
-    private final UserRepository repository;
-
-    @Autowired
-    public UserService(UserRepository repository) {
-        this.repository = repository;
-    }
-
-    @Override
-    public List<User> findAll() {
-        return repository.findAll();
-    }
-
-    private static final String DEFAULT_NAME = "Unknown";
-}
-
-interface IUserService {
-    List<User> findAll();
-}
-
-enum UserStatus {
-    ACTIVE, INACTIVE, PENDING
-}
-"""
-        result = parser.parse(code, "Test.java")
-        assert isinstance(result, ParsedCode)
-        assert result.language == "java"
 
 
 if __name__ == "__main__":

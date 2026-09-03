@@ -29,37 +29,41 @@ class CollectionV2Response:
 
     Attributes:
         collection_id (str): Collection ID
-        created_at (str): Creation timestamp
-        dimension (int): Vector dimension
-        distance_metric (str): Distance metric
-        engine (str): Storage engine
-        index_specs (list[IndexSpecOutput]): Per-index config (HNSW/IVF params, is_primary) as persisted at create
-            time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
         name (str): Collection name
+        dimension (int): Vector dimension
+        engine (str): Storage engine
+        distance_metric (str): Distance metric
         proxima_record_enabled (bool): Whether ProximaRecord is enabled
         stats (CollectionStatsV2): Collection statistics for v2 API
+        content_revision (int): Monotonic server-owned content revision for cache revalidation.
+        content_revision_token (str): Opaque validator that also fences server restarts.
+        index_specs (list[IndexSpecOutput]): Per-index config (HNSW/IVF params, is_primary) as persisted at create
+            time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
+        created_at (str): Creation timestamp
         canonical_embedding_precision (None | str | Unset): Canonical embedding precision label for stored vectors.
 
             Stable string matching the proto `EmbeddingPrecision::as_str_name()`
             (e.g. "EMBEDDING_PRECISION_FP16"). `None` when the collection didn't
             set a non-default (Unspecified/Fp32) precision.
-        quantization (None | QuantizationConfigOutput | Unset):
         schema (None | SchemaDefinition | Unset):
+        quantization (None | QuantizationConfigOutput | Unset):
         updated_at (None | str | Unset): Last update timestamp
     """
 
     collection_id: str
-    created_at: str
-    dimension: int
-    distance_metric: str
-    engine: str
-    index_specs: list[IndexSpecOutput]
     name: str
+    dimension: int
+    engine: str
+    distance_metric: str
     proxima_record_enabled: bool
     stats: CollectionStatsV2
+    content_revision: int
+    content_revision_token: str
+    index_specs: list[IndexSpecOutput]
+    created_at: str
     canonical_embedding_precision: None | str | Unset = UNSET
-    quantization: None | QuantizationConfigOutput | Unset = UNSET
     schema: None | SchemaDefinition | Unset = UNSET
+    quantization: None | QuantizationConfigOutput | Unset = UNSET
     updated_at: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -71,38 +75,34 @@ class CollectionV2Response:
 
         collection_id = self.collection_id
 
-        created_at = self.created_at
+        name = self.name
 
         dimension = self.dimension
 
+        engine = self.engine
+
         distance_metric = self.distance_metric
 
-        engine = self.engine
+        proxima_record_enabled = self.proxima_record_enabled
+
+        stats = self.stats.to_dict()
+
+        content_revision = self.content_revision
+
+        content_revision_token = self.content_revision_token
 
         index_specs = []
         for index_specs_item_data in self.index_specs:
             index_specs_item = index_specs_item_data.to_dict()
             index_specs.append(index_specs_item)
 
-        name = self.name
-
-        proxima_record_enabled = self.proxima_record_enabled
-
-        stats = self.stats.to_dict()
+        created_at = self.created_at
 
         canonical_embedding_precision: None | str | Unset
         if isinstance(self.canonical_embedding_precision, Unset):
             canonical_embedding_precision = UNSET
         else:
             canonical_embedding_precision = self.canonical_embedding_precision
-
-        quantization: dict[str, Any] | None | Unset
-        if isinstance(self.quantization, Unset):
-            quantization = UNSET
-        elif isinstance(self.quantization, QuantizationConfigOutput):
-            quantization = self.quantization.to_dict()
-        else:
-            quantization = self.quantization
 
         schema: dict[str, Any] | None | Unset
         if isinstance(self.schema, Unset):
@@ -111,6 +111,14 @@ class CollectionV2Response:
             schema = self.schema.to_dict()
         else:
             schema = self.schema
+
+        quantization: dict[str, Any] | None | Unset
+        if isinstance(self.quantization, Unset):
+            quantization = UNSET
+        elif isinstance(self.quantization, QuantizationConfigOutput):
+            quantization = self.quantization.to_dict()
+        else:
+            quantization = self.quantization
 
         updated_at: None | str | Unset
         if isinstance(self.updated_at, Unset):
@@ -123,22 +131,24 @@ class CollectionV2Response:
         field_dict.update(
             {
                 "collection_id": collection_id,
-                "created_at": created_at,
-                "dimension": dimension,
-                "distance_metric": distance_metric,
-                "engine": engine,
-                "index_specs": index_specs,
                 "name": name,
+                "dimension": dimension,
+                "engine": engine,
+                "distance_metric": distance_metric,
                 "proxima_record_enabled": proxima_record_enabled,
                 "stats": stats,
+                "content_revision": content_revision,
+                "content_revision_token": content_revision_token,
+                "index_specs": index_specs,
+                "created_at": created_at,
             }
         )
         if canonical_embedding_precision is not UNSET:
             field_dict["canonical_embedding_precision"] = canonical_embedding_precision
-        if quantization is not UNSET:
-            field_dict["quantization"] = quantization
         if schema is not UNSET:
             field_dict["schema"] = schema
+        if quantization is not UNSET:
+            field_dict["quantization"] = quantization
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
 
@@ -154,13 +164,21 @@ class CollectionV2Response:
         d = dict(src_dict)
         collection_id = d.pop("collection_id")
 
-        created_at = d.pop("created_at")
+        name = d.pop("name")
 
         dimension = d.pop("dimension")
 
+        engine = d.pop("engine")
+
         distance_metric = d.pop("distance_metric")
 
-        engine = d.pop("engine")
+        proxima_record_enabled = d.pop("proxima_record_enabled")
+
+        stats = CollectionStatsV2.from_dict(d.pop("stats"))
+
+        content_revision = d.pop("content_revision")
+
+        content_revision_token = d.pop("content_revision_token")
 
         index_specs = []
         _index_specs = d.pop("index_specs")
@@ -169,11 +187,7 @@ class CollectionV2Response:
 
             index_specs.append(index_specs_item)
 
-        name = d.pop("name")
-
-        proxima_record_enabled = d.pop("proxima_record_enabled")
-
-        stats = CollectionStatsV2.from_dict(d.pop("stats"))
+        created_at = d.pop("created_at")
 
         def _parse_canonical_embedding_precision(data: object) -> None | str | Unset:
             if data is None:
@@ -185,6 +199,23 @@ class CollectionV2Response:
         canonical_embedding_precision = _parse_canonical_embedding_precision(
             d.pop("canonical_embedding_precision", UNSET)
         )
+
+        def _parse_schema(data: object) -> None | SchemaDefinition | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                schema_type_1 = SchemaDefinition.from_dict(data)
+
+                return schema_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | SchemaDefinition | Unset, data)
+
+        schema = _parse_schema(d.pop("schema", UNSET))
 
         def _parse_quantization(
             data: object,
@@ -205,23 +236,6 @@ class CollectionV2Response:
 
         quantization = _parse_quantization(d.pop("quantization", UNSET))
 
-        def _parse_schema(data: object) -> None | SchemaDefinition | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, dict):
-                    raise TypeError()
-                schema_type_1 = SchemaDefinition.from_dict(data)
-
-                return schema_type_1
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(None | SchemaDefinition | Unset, data)
-
-        schema = _parse_schema(d.pop("schema", UNSET))
-
         def _parse_updated_at(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -233,17 +247,19 @@ class CollectionV2Response:
 
         collection_v2_response = cls(
             collection_id=collection_id,
-            created_at=created_at,
-            dimension=dimension,
-            distance_metric=distance_metric,
-            engine=engine,
-            index_specs=index_specs,
             name=name,
+            dimension=dimension,
+            engine=engine,
+            distance_metric=distance_metric,
             proxima_record_enabled=proxima_record_enabled,
             stats=stats,
+            content_revision=content_revision,
+            content_revision_token=content_revision_token,
+            index_specs=index_specs,
+            created_at=created_at,
             canonical_embedding_precision=canonical_embedding_precision,
-            quantization=quantization,
             schema=schema,
+            quantization=quantization,
             updated_at=updated_at,
         )
 

@@ -102,6 +102,23 @@ lazy_static! {
         "Armed v3 probes that fell back to a whole Region-A scan (TD-RDSTRAT-8)",
         &["tenant_id"]
     );
+    /// TD-RDSTRAT-12: per-tenant parallel read-rounds counter — the count of
+    /// concurrent rounds issued by `FileSystem::read_ranges` when bounded parallelism
+    /// is enabled (`PROXIMADB_FS_READ_RANGES_PARALLEL > 1`). Surface for the
+    /// "waves-not-sums" latency model: `latency ≈ rounds × RTT + ...`.
+    pub static ref READ_RANGES_FETCH_ROUNDS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_read_ranges_fetch_rounds_total",
+        "Parallel read-rounds issued by bounded-concurrent FileSystem::read_ranges (TD-RDSTRAT-12)",
+        &["tenant_id"]
+    );
+    /// TD-RDSTRAT-12: per-tenant max-inflight gauge — peak concurrent reads in
+    /// a single `read_ranges` call. Shows the actual parallelism achieved vs the
+    /// `PROXIMADB_FS_READ_RANGES_PARALLEL` cap.
+    pub static ref READ_RANGES_MAX_INFLIGHT: GaugeVec = registered_gauge_vec(
+        "proximadb_read_ranges_max_inflight",
+        "Peak concurrent reads in a FileSystem::read_ranges call (TD-RDSTRAT-12)",
+        &["tenant_id"]
+    );
     pub static ref STORAGE_BYTES_SECONDS: GaugeVec = registered_gauge_vec(
         "proximadb_storage_bytes_seconds",
         "GB-seconds or raw bytes stored per tenant",
@@ -765,11 +782,33 @@ pub fn install_billing_observer() {
                 &*IVF_WHOLE_REGION_FALLBACK_TOTAL,
                 snap.ivf_whole_region_fallback,
             ),
+            // TD-RDSTRAT-12 §2: bounded-concurrent wave meters. Wave sites bridge
+            // the FS single-slot metrics into this scope additively (see
+            // `drain_and_forward_read_ranges_metrics` callers); the closure drain
+            // below is the catch-all for waves no site bridged.
+            (
+                &*READ_RANGES_FETCH_ROUNDS_TOTAL,
+                snap.read_ranges_fetch_rounds,
+            ),
         ] {
             if value > 0 {
                 counter.with_label_values(&[t_id]).inc_by(value as f64);
             }
         }
+        // GaugeVec cannot join the CounterVec tuple above: set it separately and
+        // never clobber a previously-observed peak with 0.
+        if snap.read_ranges_max_inflight > 0 {
+            READ_RANGES_MAX_INFLIGHT
+                .with_label_values(&[t_id])
+                .set(snap.read_ranges_max_inflight as f64);
+        }
+        // Production caller for the FS→Prometheus drain (TD-RDSTRAT-12 §2): the
+        // FS single-slot metrics are `take()`-drained exactly once — either a
+        // wave site already forwarded them into this scope via
+        // `drain_and_forward_read_ranges_metrics` (which `take()`s first), or
+        // this catch-all emits them here. Mutually exclusive per metric
+        // instance by `take()` semantics.
+        drain_and_emit_read_ranges_metrics(t_id);
     })));
 }
 
@@ -875,6 +914,34 @@ pub fn record_cache_tenant_stats(cache: &str, stats: &[proximadb_cache::TenantCa
         g("misses", s.misses as f64);
         g("evictions", s.evictions as f64);
         g("hit_ratio", s.hit_ratio);
+    }
+}
+
+/// TD-RDSTRAT-12: Record bounded-concurrent `FileSystem::read_ranges` metrics.
+///
+/// Called by the SST engine (or other callers with tenant context) after draining
+/// the thread-local `read_ranges` metrics via `drain_read_ranges_metrics()`.
+/// Emits to the per-tenant Prometheus counters.
+pub fn record_read_ranges_metrics(tenant_id: &str, fetch_rounds: u64, max_inflight: u64) {
+    READ_RANGES_FETCH_ROUNDS_TOTAL
+        .with_label_values(&[tenant_id])
+        .inc_by(fetch_rounds as f64);
+    READ_RANGES_MAX_INFLIGHT
+        .with_label_values(&[tenant_id])
+        .set(max_inflight as f64);
+}
+
+/// TD-RDSTRAT-12: Drain and emit bounded-concurrent `FileSystem::read_ranges` metrics.
+///
+/// Convenience function that combines `drain_read_ranges_metrics()` (from
+/// `proximadb_storage_filesystem_types`) and `record_read_ranges_metrics()`.
+/// Call this after operations that use `FileSystem::read_ranges` with parallelism
+/// enabled (`PROXIMADB_FS_READ_RANGES_PARALLEL > 1`). No-op if no metrics were
+/// recorded (e.g., sequential reads or no `read_ranges` calls since last drain).
+pub fn drain_and_emit_read_ranges_metrics(tenant_id: &str) {
+    use proximadb_storage_filesystem_types::drain_read_ranges_metrics;
+    if let Some(metrics) = drain_read_ranges_metrics() {
+        record_read_ranges_metrics(tenant_id, metrics.fetch_rounds, metrics.max_inflight);
     }
 }
 
@@ -1360,5 +1427,35 @@ mod tests {
         assert_eq!(snap.embedding_input_tokens, 100);
         assert_eq!(snap.embedding_output_tokens, 200);
         assert_eq!(snap.egress_bytes, 1000);
+    }
+
+    /// TD-RDSTRAT-12 §2: the billing observer must surface the wave metrics —
+    /// `read_ranges_fetch_rounds` as a counter and `read_ranges_max_inflight`
+    /// as a guarded gauge — at scope close. Teeth: breaks if the tuple/gauge
+    /// wiring regresses or `is_empty()` drops wave-only traces again.
+    #[tokio::test]
+    async fn billing_observer_emits_read_ranges_wave_metrics() {
+        use crate::observability::io_trace;
+
+        install_billing_observer();
+        let tenant = "rdstrat12_wave_obs";
+
+        io_trace::instrument(Some(tenant.to_string()), "test.read_ranges_wave", async {
+            io_trace::record_read_ranges(3, 8);
+        })
+        .await;
+
+        assert_eq!(
+            READ_RANGES_FETCH_ROUNDS_TOTAL
+                .with_label_values(&[tenant])
+                .get(),
+            3.0,
+            "wave fetch-rounds must reach the per-tenant counter at scope close"
+        );
+        assert_eq!(
+            READ_RANGES_MAX_INFLIGHT.with_label_values(&[tenant]).get(),
+            8.0,
+            "wave peak-inflight must reach the per-tenant gauge at scope close"
+        );
     }
 }

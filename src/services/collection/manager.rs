@@ -385,7 +385,7 @@ impl CollectionService {
     /// (single-tenant / anonymous deployments). Reads of the same
     /// corpus-version-keyed caches use the same bucket, so invalidation stays
     /// consistent regardless of whether a tenant context is present.
-    pub(crate) const DEFAULT_VERSION_TENANT: &str = "default";
+    pub(crate) const DEFAULT_VERSION_TENANT: &str = crate::catalog::DEFAULT_CORPUS_VERSION_TENANT;
 
     /// The tenant id to key corpus-version (cache-invalidation) bumps by. Falls
     /// back to [`DEFAULT_VERSION_TENANT`](Self::DEFAULT_VERSION_TENANT) so the
@@ -2439,9 +2439,27 @@ impl CollectionService {
     /// with catalog/schema UUID fields across SDKs and embedded mode.
     async fn generate_unique_collection_id(&self) -> Result<String> {
         // ADR-031: the collection ID is the stable object_id (u64) as a decimal
-        // string — NOT a UUID. The monotonic allocator guarantees uniqueness by
-        // construction (no retry loop needed). base62 is reserved for path
-        // segments only (DrCollectionPath), not the collection.id variable.
+        // string — NOT a UUID. When xCatalog is wired, its object-id sequence is
+        // the one authority shared with relational DDL. This avoids the
+        // time-of-check/time-of-use race inherent in sampling max_object_id and
+        // then minting from an independent collection allocator.
+        if let Some(catalog_manager) = &self.catalog_manager {
+            let catalog = catalog_manager.default_catalog().await?;
+            if let Some(object_id) = catalog.allocate_object_id().await? {
+                return Ok(object_id.to_string());
+            }
+
+            // Compatibility for federated/external catalogs that do not own a
+            // native object-id sequence. Refresh the legacy allocator from any
+            // observable persisted floor before minting locally.
+            if let Some(max_object_id) = catalog.max_object_id().await? {
+                recover_collection_id_floor(max_object_id);
+            }
+        }
+
+        // No native catalog authority: retain the legacy monotonic allocator.
+        // base62 is reserved for path segments only (DrCollectionPath), not the
+        // collection.id variable.
         Ok(generate_numeric_collection_id())
     }
 }
@@ -3060,6 +3078,80 @@ mod tests {
             "delete must bump ({v_update} -> {v_delete})"
         );
 
+        Ok(())
+    }
+
+    /// Regression for the pgwire graph failure where relational DDL and the
+    /// backing collection each minted `object_id = 1` from independent
+    /// allocators. A collection created after any catalog object must reserve
+    /// from the live catalog sequence, even while tenant-prefixed collection
+    /// namespaces remain default-OFF and the two logical table names differ.
+    #[tokio::test]
+    async fn collection_id_comes_from_live_catalog_object_id_authority() -> Result<()> {
+        use crate::catalog::{Catalog, CatalogColumn, CatalogTableSchema};
+        use crate::services::canonical_wal::MemoryTableWalAppender;
+        use crate::services::system_catalog::SystemCatalog;
+        use crate::services::system_catalog_state::SystemCatalogState;
+        use proximadb_data_model::ProximaType;
+
+        let catalog_manager = Arc::new(CatalogManager::new());
+        let catalog: Arc<dyn Catalog> = Arc::new(SystemCatalog::new(
+            "default",
+            SystemCatalogState::new(),
+            Arc::new(MemoryTableWalAppender::new()),
+        ));
+        catalog_manager.register(catalog.clone()).await?;
+
+        // Model the pgwire DDL namespace. Use a deliberately high imported id
+        // so this test deterministically fails if CollectionService falls back
+        // to its independent process-global allocator, regardless of test order.
+        let ddl_namespace = vec!["proximadb".to_string(), "default".to_string()];
+        catalog
+            .create_namespace(&ddl_namespace, std::collections::HashMap::new())
+            .await?;
+        let relational_id = 9_000_000_000_u64;
+        let relational_identifier = TableIdentifier::new(ddl_namespace, "gperson");
+        let mut relational_schema = CatalogTableSchema::new("gperson")
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64));
+        relational_schema.object_id = Some(relational_id);
+        catalog
+            .create_table(&relational_identifier, relational_schema)
+            .await?;
+
+        let service = CollectionService::new(StorageConfig::default())
+            .await?
+            .with_catalog_manager(catalog_manager);
+        service.set_tenant_namespaces_for_test(false);
+        let config = CollectionConfig {
+            name: "gperson".to_string(),
+            dimension: 1,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+
+        let response = service.create_collection(&config).await?;
+        assert!(
+            response.success,
+            "backing collection create failed: {:?}",
+            response.error_code
+        );
+        let collection = response.collection.context("created collection")?;
+        let collection_id = collection.id.parse::<u64>().context("numeric object id")?;
+        assert!(
+            collection_id > relational_id,
+            "collection id {collection_id} must follow the live catalog floor {relational_id}"
+        );
+
+        let collection_identifier =
+            crate::storage::metadata::collection_mapping::collection_table_identifier(&config);
+        let collection_schema = catalog.get_table(&collection_identifier).await?;
+        assert_eq!(collection_schema.object_id, Some(collection_id));
+        assert_eq!(
+            catalog.get_table(&relational_identifier).await?.object_id,
+            Some(relational_id),
+            "collection registration must not overwrite relational oid identity"
+        );
         Ok(())
     }
 

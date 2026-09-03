@@ -366,13 +366,21 @@ impl SstCompactor {
             stats.updated_vector_ids.len()
         );
 
-        // Delete input files after successful compaction
-        let fs = self.filesystem_factory.get_filesystem("file:///")?;
+        // Delete input files after successful compaction.
+        // TD-COMPACT-13: route by the INPUT's scheme (the previous hardcoded
+        // `file:///` lookup silently deleted nothing on object-store beds).
+        // NotFound is idempotent success; other errors are warn-logged (this
+        // path has no pending-retirement ledger — it is unreachable from the
+        // live chain today).
         for input_file in &input_files {
-            if let Err(e) = fs.delete(input_file).await {
-                warn!("Failed to delete input file {}: {}", input_file, e);
-            } else {
-                debug!("🗑️ Deleted input file: {}", input_file);
+            match self.filesystem_factory.delete(input_file).await {
+                Ok(()) => {
+                    debug!("🗑️ Deleted input file: {}", input_file);
+                }
+                Err(crate::storage::persistence::filesystem::FilesystemError::NotFound(_)) => {}
+                Err(e) => {
+                    warn!("Failed to delete input file {}: {}", input_file, e);
+                }
             }
         }
 

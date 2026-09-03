@@ -83,6 +83,7 @@ fn transport_security_config() -> SecurityConfig {
                 user_id: user_id.to_string(),
                 tenant_id: Some(TENANT.to_string()),
                 permissions: vec!["*".to_string()],
+                roles: vec![],
                 created_at: None,
                 expires_at: None,
                 rate_limit_per_minute: None,
@@ -112,10 +113,9 @@ fn transport_security_config() -> SecurityConfig {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         },
         rbac: RBACConfig::default(),
@@ -685,6 +685,128 @@ async fn provision_live_record_policy(
     policy_path
 }
 
+/// Same shape as [`provision_live_record_policy`], except the stored predicate
+/// compares against `$subject.dept` instead of the literal `"eng"`.
+///
+/// ADR-090 L2.1: the placeholder must resolve to alice's SERVER-RESOLVED `dept`
+/// attribute at compile time, so the visible rows are identical to the literal
+/// case. The unit tests in `proximadb-abac` prove the substitution; this proves
+/// it survives the real provisioning API and the real read path — an attribute
+/// stored as a claim rather than server-resolved would deny here, and no unit
+/// test could tell us that.
+async fn provision_live_subject_parameterized_policy(
+    client: &HttpClient,
+    server: &LiveServer,
+    predicate_object_id: u64,
+) -> String {
+    let operator_auth = format!("Api-Key {OPERATOR_KEY}");
+    let response = client
+        .post(server.admin_url("/api/v2/abac/attribute-bindings"))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "subject_id": "alice",
+            "tenant": TENANT,
+            "attrs": {"dept": {"Str": "eng"}}
+        }))
+        .send()
+        .await
+        .expect("provision alice attributes");
+    assert_admin_success(response, "provision alice attributes").await;
+
+    let response = client
+        .put(server.admin_url(&format!(
+            "/api/v2/abac/predicate-objects/{predicate_object_id}"
+        )))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "Comparison": {
+                "field": "dept",
+                "operator": "Equals",
+                "value": "$subject.dept"
+            }
+        }))
+        .send()
+        .await
+        .expect("provision subject-parameterized predicate");
+    assert_admin_success(response, "provision subject-parameterized predicate").await;
+
+    let policy_path = format!(
+        "/api/v2/abac/policy-bindings/{TENANT}/{}",
+        predicate_object_id + 1
+    );
+    let response = client
+        .put(server.admin_url(&policy_path))
+        .header(reqwest::header::AUTHORIZATION, &operator_auth)
+        .json(&json!({
+            "scope": {"Namespace": 0},
+            "effect": "Permit",
+            "predicate_ref": predicate_object_id
+        }))
+        .send()
+        .await
+        .expect("provision record permit");
+    assert_admin_success(response, "provision record permit").await;
+    policy_path
+}
+
+/// ADR-090 L2.1 end to end: a `$subject.<attr>` predicate selects exactly the
+/// rows the equivalent literal predicate selects, through the real REST
+/// provisioning API and the real read path.
+///
+/// The negative half matters as much as the positive: `hr_id` must stay hidden.
+/// A substitution that silently failed would compare `dept` against the literal
+/// string `"$subject.dept"`, match nothing, and hide BOTH rows — which reads as
+/// "the policy is just restrictive" unless the admitted row is asserted too.
+#[test]
+fn rest_records_follow_a_subject_parameterized_predicate() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    runtime.block_on(rest_records_follow_a_subject_parameterized_predicate_inner());
+}
+
+async fn rest_records_follow_a_subject_parameterized_predicate_inner() {
+    let server = LiveServer::start().await.expect("start live server");
+    let http = HttpClient::builder()
+        .timeout(Duration::from_secs(5))
+        .no_proxy()
+        .build()
+        .expect("HTTP client");
+    let fixture = create_live_record_fixture(&http, &server, "abac_subject_param").await;
+
+    let policy_path =
+        provision_live_subject_parameterized_policy(&http, &server, 7_000_000_000).await;
+
+    assert_eq!(
+        rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection).await,
+        vec![fixture.eng_id.to_string()],
+        "`$subject.dept` must resolve to alice's server-resolved dept and admit her row"
+    );
+    assert_eq!(
+        rest_record_get_status(
+            &http,
+            &server,
+            ALICE_KEY,
+            &fixture.collection,
+            fixture.hr_id
+        )
+        .await,
+        StatusCode::NOT_FOUND,
+        "the substituted predicate must still exclude a row from another dept"
+    );
+
+    revoke_live_policy(&http, &server, &policy_path).await;
+    assert!(
+        rest_record_search_ids(&http, &server, ALICE_KEY, &fixture.collection)
+            .await
+            .is_empty(),
+        "a subject-parameterized policy must observe the hot revoke like any other"
+    );
+}
+
 async fn revoke_live_policy(client: &HttpClient, server: &LiveServer, policy_path: &str) {
     let response = client
         .delete(server.admin_url(policy_path))
@@ -703,7 +825,6 @@ async fn revoke_live_policy(client: &HttpClient, server: &LiveServer, policy_pat
 /// 8 MiB integration-test runtime so the test measures the transport contract,
 /// not debug-frame size (see `tpch_pgwire_e2e`).
 #[test]
-#[ignore = "TD-AUTHZ-2: xcatalog.tables returns an EMPTY object_id for SQL-created relational tables, so table_object_id() fails to parse. Pre-existing breakage surfaced when this suite was first wired into CI (#1544) after never having run. Not caused by, and not in scope for, that PR."]
 fn pgwire_reads_follow_live_rest_policy_provision_and_revoke() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -820,7 +941,6 @@ async fn pgwire_reads_follow_live_rest_policy_provision_and_revoke_inner() {
 /// from a verified API key and therefore proves the load-bearing authenticated
 /// carrier, not pgwire's deliberately trust-asserted user name.
 #[test]
-#[ignore = "TD-AUTHZ-2: xcatalog.tables returns an EMPTY object_id for SQL-created relational tables, so table_object_id() fails to parse. Pre-existing breakage surfaced when this suite was first wired into CI (#1544) after never having run. Not caused by, and not in scope for, that PR."]
 fn grpc_reads_follow_live_rest_policy_provision_and_revoke() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -946,7 +1066,6 @@ async fn grpc_reads_follow_live_rest_policy_provision_and_revoke_inner() {
 /// The canonical SQL-over-REST surface must carry the same verified identity
 /// and reach the same ABAC-protected relational scan as pgwire and gRPC.
 #[test]
-#[ignore = "TD-AUTHZ-2: xcatalog.tables returns an EMPTY object_id for SQL-created relational tables, so table_object_id() fails to parse. Pre-existing breakage surfaced when this suite was first wired into CI (#1544) after never having run. Not caused by, and not in scope for, that PR."]
 fn rest_sql_reads_follow_live_policy_provision_and_revoke() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)

@@ -47,23 +47,23 @@ class UpdateSchemaRequest:
 
         Attributes:
             columns (list[RestColumnDefinition]): Column definitions
-            allow_additional_fields (bool | None | Unset): Allow additional fields not defined in schema
-
-                Only applies in "hybrid" mode.
-                Default: true
             enforcement (None | str | Unset): Schema enforcement mode
 
                 - "strict": All columns must match schema exactly
                 - "flexible": Schema on read, no validation at insert
                 - "hybrid": Core columns enforced, additional fields allowed (default)
+            allow_additional_fields (bool | None | Unset): Allow additional fields not defined in schema
+
+                Only applies in "hybrid" mode.
+                Default: true
             force (bool | None | Unset): Force update even if validation warnings exist
 
                 Use with caution - may cause data compatibility issues.
     """
 
     columns: list[RestColumnDefinition]
-    allow_additional_fields: bool | None | Unset = UNSET
     enforcement: None | str | Unset = UNSET
+    allow_additional_fields: bool | None | Unset = UNSET
     force: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -75,17 +75,17 @@ class UpdateSchemaRequest:
             columns_item = columns_item_data.to_dict()
             columns.append(columns_item)
 
-        allow_additional_fields: bool | None | Unset
-        if isinstance(self.allow_additional_fields, Unset):
-            allow_additional_fields = UNSET
-        else:
-            allow_additional_fields = self.allow_additional_fields
-
         enforcement: None | str | Unset
         if isinstance(self.enforcement, Unset):
             enforcement = UNSET
         else:
             enforcement = self.enforcement
+
+        allow_additional_fields: bool | None | Unset
+        if isinstance(self.allow_additional_fields, Unset):
+            allow_additional_fields = UNSET
+        else:
+            allow_additional_fields = self.allow_additional_fields
 
         force: bool | None | Unset
         if isinstance(self.force, Unset):
@@ -100,10 +100,10 @@ class UpdateSchemaRequest:
                 "columns": columns,
             }
         )
-        if allow_additional_fields is not UNSET:
-            field_dict["allow_additional_fields"] = allow_additional_fields
         if enforcement is not UNSET:
             field_dict["enforcement"] = enforcement
+        if allow_additional_fields is not UNSET:
+            field_dict["allow_additional_fields"] = allow_additional_fields
         if force is not UNSET:
             field_dict["force"] = force
 
@@ -121,6 +121,15 @@ class UpdateSchemaRequest:
 
             columns.append(columns_item)
 
+        def _parse_enforcement(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        enforcement = _parse_enforcement(d.pop("enforcement", UNSET))
+
         def _parse_allow_additional_fields(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -131,15 +140,6 @@ class UpdateSchemaRequest:
         allow_additional_fields = _parse_allow_additional_fields(
             d.pop("allow_additional_fields", UNSET)
         )
-
-        def _parse_enforcement(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        enforcement = _parse_enforcement(d.pop("enforcement", UNSET))
 
         def _parse_force(data: object) -> bool | None | Unset:
             if data is None:
@@ -152,8 +152,8 @@ class UpdateSchemaRequest:
 
         update_schema_request = cls(
             columns=columns,
-            allow_additional_fields=allow_additional_fields,
             enforcement=enforcement,
+            allow_additional_fields=allow_additional_fields,
             force=force,
         )
 

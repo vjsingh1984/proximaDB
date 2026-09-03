@@ -41,6 +41,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -75,6 +76,11 @@ METRICS = (
     "proximadb_ivf_region_b_bytes_read_total",
     "proximadb_ivf_fetch_rounds_total",
     "proximadb_ivf_whole_region_fallback_total",
+    "proximadb_read_ranges_fetch_rounds_total",
+    "proximadb_read_ranges_max_inflight",
+    "proximadb_pax_metadata_ops_agg_total",
+    "proximadb_ivf_probe_rank_us_agg_total",
+    "proximadb_ivf_probe_rank_calls_agg_total",
 )
 
 
@@ -659,10 +665,17 @@ def parse_pax(path: Path, root: Path) -> dict:
     if header[:4] != PAX_HEADER_MAGIC:
         raise RuntimeError(f"{path}: legacy PAX layout cannot prove row count")
     coarse = {}
-    if header[4] == 3:
-        a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+    a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+    if a0_length > 0:
         if a0_length < 48:
             raise RuntimeError(f"{path}: invalid A0 length {a0_length}")
+        if a0_offset + a0_length > size:
+            raise RuntimeError(
+                f"{path}: A0 extents [{a0_offset}+{a0_length}] exceed the "
+                f"segment ({size} B) — offsets 56..72 are body bytes on the "
+                "pre-collapse 56-byte-header v1 layout (legacy layouts "
+                "unsupported; harness beds are always freshly written)"
+            )
         with path.open("rb") as segment:
             segment.seek(a0_offset)
             a0 = segment.read(a0_length)
@@ -683,6 +696,75 @@ def pax_geometry(root: Path) -> dict:
     segments = [
         parse_pax(path, root) for path in sorted(root.rglob("*.pax")) if path.is_file()
     ]
+    return {
+        "segment_count": len(segments),
+        "row_count": sum(item["rows"] for item in segments),
+        "bytes": sum(item["bytes"] for item in segments),
+        "segments": segments,
+    }
+
+
+def materialize_footer_geometry(fetch_range, inventory: dict) -> dict:
+    """TD-BENCH-2 fix: footer-only remote geometry, shared by the Azure and
+    S3 readers. Proving a segment's row count needs the 72-byte header, the
+    16-byte tail (footer length + PAX magic), the 9-byte footer prefix (row
+    count), and optionally the small A0 directory — KBs of ranged reads per
+    segment instead of whole-segment downloads (~267 MB), so settle cannot
+    lose a materialize-vs-deadline race at high RTT. ``fetch_range(name,
+    start, end)`` is the backend's inclusive byte-range primitive.
+    """
+    segments = []
+    for blob in inventory["segments"]:
+        name = blob["path"]
+        size = int(blob["bytes"])
+        if size < 25:
+            raise RuntimeError(f"{name}: too short for a coalesced PAX segment")
+        header = fetch_range(name, 0, 71)
+        if header[:4] != PAX_HEADER_MAGIC:
+            raise RuntimeError(f"{name}: legacy PAX layout cannot prove row count")
+        tail = fetch_range(name, size - 16, size - 1)
+        if tail[8:] != PAX_MAGIC:
+            raise RuntimeError(f"{name}: missing coalesced PAX tail")
+        footer_len = struct.unpack_from("<Q", tail, 0)[0]
+        if footer_len < 9 or footer_len + 16 > size:
+            raise RuntimeError(f"{name}: invalid footer length {footer_len}")
+        footer_start = size - (16 + footer_len)
+        footer_prefix = fetch_range(name, footer_start, footer_start + 8)
+        if footer_prefix[0] != 1:
+            raise RuntimeError(f"{name}: unsupported footer version {footer_prefix[0]}")
+        coarse = {}
+        # A0 presence is authoritative from the header's a0 extents (same
+        # offsets in every layout version; the post-collapse v1 writer emits
+        # the coarse directory in v1 segments — header[4]==3 is the retired
+        # two-level marker).
+        a0_offset, a0_length = struct.unpack_from("<QQ", header, 56)
+        if a0_length >= 48:
+            if a0_offset + a0_length > size:
+                # Offsets 56..72 hold segment BODY bytes on the pre-collapse
+                # 56-byte-header v1 layout (SEG_HEADER_PREFIX_LEN was 56 at
+                # 47bef62e); a junk u64 there means a legacy/misread header.
+                # Fresh-prefix beds are always written by the current binary,
+                # so reaching this is a provenance bug — fail loudly.
+                raise RuntimeError(
+                    f"{name}: A0 extents [{a0_offset}+{a0_length}] exceed the "
+                    f"object ({size} B) — offsets 56..72 are body bytes, i.e. a "
+                    "pre-collapse 56-byte-header v1 segment (legacy layouts "
+                    "unsupported; harness beds are always freshly written)"
+                )
+            a0 = fetch_range(name, a0_offset, a0_offset + a0_length - 1)
+            if len(a0) == a0_length:
+                coarse = parse_a0_geometry(a0)
+        segments.append(
+            {
+                "path": name,
+                "bytes": size,
+                "rows": struct.unpack_from("<Q", footer_prefix, 1)[0],
+                "layout_version": header[4],
+                "mtime_ns": 0,
+                "blob_etag": str(blob.get("etag", "")),
+                **coarse,
+            }
+        )
     return {
         "segment_count": len(segments),
         "row_count": sum(item["rows"] for item in segments),
@@ -712,6 +794,33 @@ class AzureCliPaxGeometry:
         self.container = parsed.netloc
         self.prefix = parsed.path.strip("/")
         self.snapshot_root = snapshot_root
+
+    _AZ_TIMEOUT_SECS = 300
+
+    @staticmethod
+    def _run_bounded(command: list[str], timeout: int) -> str:
+        """TD-RDSTRAT-12 §3 defensive: az CLI calls are bounded — a hung
+        subprocess (telemetry/DNS/proxy stall) previously froze the settle
+        loop forever with no error and no progress. Timeouts surface as
+        RuntimeError, which the settle loop already treats as transient."""
+        try:
+            completed = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"az CLI timed out after {timeout}s: {command[2:4]}"
+            ) from error
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(
+                f"az CLI failed ({error.returncode}): "
+                f"{(error.stderr or '')[:400]}"
+            ) from error
+        return completed.stdout
 
     @staticmethod
     def _authentication_args() -> list[str]:
@@ -744,15 +853,21 @@ class AzureCliPaxGeometry:
         if self.prefix:
             command.extend(["--prefix", self.prefix])
         command.extend(self._authentication_args())
-        completed = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        payload = json.loads(completed.stdout)
+        payload = json.loads(self._run_bounded(command, self._AZ_TIMEOUT_SECS))
         if not isinstance(payload, list):
             raise RuntimeError("Azure CLI blob inventory was not a JSON list")
+        # Azure's server-side prefix match is lexical, not path-segment aware:
+        # requesting ``run-3m3`` also returns ``run-3m3-ncomp128``. Enforce the
+        # canonical object-prefix boundary locally so geometry, empty-prefix
+        # checks, and evidence snapshots cannot mix sibling benchmark beds.
+        if self.prefix:
+            descendant_prefix = f"{self.prefix}/"
+            payload = [
+                item
+                for item in payload
+                if str(item.get("name", "")) == self.prefix
+                or str(item.get("name", "")).startswith(descendant_prefix)
+            ]
         return payload
 
     def require_empty_prefix(self) -> None:
@@ -808,49 +923,212 @@ class AzureCliPaxGeometry:
             for item in inventory["segments"]
         )
 
-    def materialize(self, inventory: dict) -> dict:
+    def _download_range(self, blob_name: str, start: int, end: int) -> bytes:
+        """TD-BENCH-2 fix: inclusive byte-range fetch (KBs) instead of
+        whole-segment downloads (~267 MB) — removes the
+        materialize-vs-deadline race that silently discarded high-RTT arms."""
+        target = self.snapshot_root / "range-scratch.bin"
         self.snapshot_root.mkdir(parents=True, exist_ok=True)
-        segments = []
-        for blob in inventory["segments"]:
-            target = self._snapshot_target(blob["path"])
-            target.parent.mkdir(parents=True, exist_ok=True)
-            command = [
-                    "az",
-                    "storage",
-                    "blob",
-                    "download",
-                    "--container-name",
-                    self.container,
-                    "--name",
-                    blob["path"],
-                    "--file",
-                    str(target),
-                    "--overwrite",
-                    "true",
-                    "--no-progress",
-                    "--output",
-                    "none",
-                ]
-            command.extend(self._authentication_args())
+        command = [
+            "az", "storage", "blob", "download",
+            "--container-name", self.container,
+            "--name", blob_name,
+            "--file", str(target),
+            "--overwrite", "true",
+            "--start-range", str(start),
+            "--end-range", str(end),
+            "--no-progress", "--output", "none",
+        ]
+        command.extend(self._authentication_args())
+        try:
             subprocess.run(
-                command,
-                check=True,
+                command, check=True, capture_output=True,
+                text=True, timeout=300,
             )
-            if target.stat().st_size != blob["bytes"]:
-                raise RuntimeError(
-                    f"Azure snapshot size mismatch for {blob['path']}: "
-                    f"{target.stat().st_size} != {blob['bytes']}"
-                )
-            parsed = parse_pax(target, self.snapshot_root)
-            parsed["path"] = blob["path"]
-            parsed["blob_etag"] = blob["etag"]
-            segments.append(parsed)
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"az ranged download timed out after 300s: {blob_name}[{start},{end}]"
+            ) from error
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(
+                f"az ranged download failed ({error.returncode}) for "
+                f"{blob_name}[{start},{end}]: {(error.stderr or '')[:400]}"
+            ) from error
+        return target.read_bytes()
+
+    def materialize(self, inventory: dict) -> dict:
+        return materialize_footer_geometry(self._download_range, inventory)
+
+
+class S3PaxGeometry:
+    """Read final PAX geometry from an S3-shaped endpoint (e.g. MinIO) via
+    boto3, without touching server metrics.
+
+    Same out-of-process contract as ``AzureCliPaxGeometry``: inventory and
+    footer reads here cannot inflate or warm the measured ProximaDB process's
+    cache counters. boto3 calls carry explicit connect/read timeouts so a hung
+    endpoint fails the settle loop loudly instead of freezing it (the
+    TD-BENCH-2 defensive posture, ported from the az CLI runner).
+    """
+
+    _CONNECT_TIMEOUT_SECS = 10
+    _READ_TIMEOUT_SECS = 120
+
+    def __init__(
+        self,
+        storage_url: str,
+        snapshot_root: Path,
+        endpoint_url: str,
+        region: str = "us-east-1",
+    ):
+        parsed = urlparse(storage_url)
+        if parsed.scheme != "s3":
+            raise RuntimeError(
+                f"S3 geometry requires canonical s3:// storage, got {storage_url}"
+            )
+        if not parsed.netloc:
+            raise RuntimeError(f"S3 storage URL has no bucket: {storage_url}")
+        if not endpoint_url:
+            raise RuntimeError("S3 geometry requires an explicit endpoint URL")
+        self.bucket = parsed.netloc
+        self.prefix = parsed.path.strip("/")
+        self.endpoint_url = endpoint_url
+        self.region = region
+        self.snapshot_root = snapshot_root
+        try:
+            import boto3
+            import botocore.config
+        except ImportError as error:
+            raise RuntimeError(
+                "S3 geometry requires boto3; run the harness with the "
+                "repository Python environment"
+            ) from error
+        access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        if not access_key or not secret_key:
+            raise RuntimeError(
+                "S3 geometry requires AWS_ACCESS_KEY_ID and "
+                "AWS_SECRET_ACCESS_KEY in the environment"
+            )
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            region_name=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=botocore.config.Config(
+                s3={"addressing_style": "path"},
+                connect_timeout=self._CONNECT_TIMEOUT_SECS,
+                read_timeout=self._READ_TIMEOUT_SECS,
+                retries={"max_attempts": 2},
+            ),
+        )
+
+    def _list_objects(self) -> list[dict]:
+        """Paginated key inventory under the configured prefix."""
+        objects: list[dict] = []
+        paginator = self._client.get_paginator("list_objects_v2")
+        try:
+            pages = (
+                paginator.paginate(Bucket=self.bucket, Prefix=self.prefix)
+                if self.prefix
+                else paginator.paginate(Bucket=self.bucket)
+            )
+            for page in pages:
+                for item in page.get("Contents", []):
+                    objects.append(
+                        {
+                            "name": str(item["Key"]),
+                            "size": int(item["Size"]),
+                            "etag": str(item.get("ETag", "")).strip('"'),
+                        }
+                    )
+        except Exception as error:
+            raise RuntimeError(f"S3 list_objects_v2 failed: {error}") from error
+        # S3's server-side prefix match is lexical, not path-segment aware:
+        # prefix "run-1" also returns "run-10/...". Enforce the canonical
+        # object-prefix boundary locally so geometry, empty-prefix checks,
+        # and evidence snapshots cannot mix sibling benchmark beds (same
+        # defense as the Azure reader).
+        if self.prefix:
+            descendant_prefix = f"{self.prefix}/"
+            objects = [
+                item
+                for item in objects
+                if item["name"] == self.prefix
+                or item["name"].startswith(descendant_prefix)
+            ]
+        return objects
+
+    def require_empty_prefix(self) -> None:
+        objects = self._list_objects()
+        if objects:
+            names = [item["name"] for item in objects[:5]]
+            raise RuntimeError(
+                f"S3 benchmark prefix is not empty: s3://{self.bucket}/{self.prefix}, "
+                f"first_objects={names}"
+            )
+
+    def inventory(self) -> dict:
+        segments = [
+            {
+                "path": item["name"],
+                "bytes": item["size"],
+                "etag": item["etag"],
+            }
+            for item in self._list_objects()
+            if item["name"].endswith(".pax")
+        ]
+        segments.sort(key=lambda item: item["path"])
         return {
             "segment_count": len(segments),
-            "row_count": sum(item["rows"] for item in segments),
             "bytes": sum(item["bytes"] for item in segments),
             "segments": segments,
         }
+
+    @staticmethod
+    def stable_signature(inventory: dict) -> tuple:
+        return tuple(
+            (item["path"], item["bytes"], item["etag"])
+            for item in inventory["segments"]
+        )
+
+    def _download_range(self, key: str, start: int, end: int) -> bytes:
+        """TD-BENCH-2 ranged fetch: inclusive byte range, KBs per read."""
+        try:
+            self.snapshot_root.mkdir(parents=True, exist_ok=True)
+            response = self._client.get_object(
+                Bucket=self.bucket, Key=key, Range=f"bytes={start}-{end}"
+            )
+            with response["Body"] as stream:
+                return stream.read()
+        except Exception as error:
+            raise RuntimeError(
+                f"S3 ranged read failed for {key}[{start},{end}]: {error}"
+            ) from error
+
+    def materialize(self, inventory: dict) -> dict:
+        return materialize_footer_geometry(self._download_range, inventory)
+
+
+class LocalPaxGeometry:
+    """file:// adapter for the explicit-flush epoch proof: the same
+    inventory / stable_signature contract as the remote readers, backed by
+    the local PAX footer parser. Out-of-process by construction (reads the
+    settle root, not server metrics)."""
+
+    def __init__(self, sst_root: Path):
+        self.sst_root = sst_root
+
+    def require_empty_prefix(self) -> None:
+        pass  # the fresh-root check is require_empty_directory(root)
+
+    def inventory(self) -> dict:
+        return pax_geometry(self.sst_root)
+
+    @staticmethod
+    def stable_signature(inventory: dict) -> tuple:
+        return stable_signature(inventory)
 
 
 def stable_signature(geometry: dict) -> tuple:
@@ -889,8 +1167,15 @@ def layout_candidate_is_ready(
         return True
     segments = geometry.get("segments", [])
     if segments and all("layout_version" in segment for segment in segments):
+        # A settled segment must ALSO carry a coarse A0 directory: the
+        # required-layout-version=1 default retired the L0-filename gate, and
+        # an untrained flush artifact is a v1 segment with a valid row count —
+        # only the missing coarse directory distinguishes it from a trained
+        # one. Untrained segments are transient (training compaction replaces
+        # them), so not-ready keeps the settle loop polling.
         return all(
             segment["layout_version"] == required_layout_version
+            and segment.get("coarse_cells")
             for segment in segments
         )
     if not azure_inventory or required_layout_version <= 1:
@@ -911,7 +1196,7 @@ def wait_for_materialization(
     max_segments: int,
     timeout_seconds: int,
     stable_seconds: int,
-    azure_geometry: AzureCliPaxGeometry | None = None,
+    azure_geometry: AzureCliPaxGeometry | S3PaxGeometry | None = None,
     required_layout_version: int | None = None,
 ) -> dict:
     deadline = time.monotonic() + timeout_seconds
@@ -919,6 +1204,12 @@ def wait_for_materialization(
     prior = None
     last_report = 0.0
     last_parse_error = None
+    # TD-RDSTRAT-13 campaign finding: geometry can settle on the training-
+    # compaction chain's INTERMEDIATE level (2×L2) and the chain then publishes
+    # a higher level (L3) AFTER the stable window, leaving overlapping segments
+    # that double-serve rows at query time. A stable window is only trustworthy
+    # when the compaction counter is quiet for its whole duration.
+    compactions_at_window_start = None
     while time.monotonic() < deadline:
         now = time.monotonic()
         try:
@@ -945,12 +1236,24 @@ def wait_for_materialization(
             if azure_geometry is not None
             else stable_signature(geometry)
         )
+        metrics_text = scrape_text(server)
         wal_bytes = labelled_metric(
-            scrape_text(server),
+            metrics_text,
             "proximadb_wal_size_bytes",
             "collection",
             collection_id,
         )
+        # Unlabeled aggregate counter (sst::metrics) — plain token parse, the
+        # labelled helper only matches `name{...}` lines.
+        compactions_total = None
+        for raw_line in metrics_text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("proximadb_compactions_total"):
+                try:
+                    compactions_total = float(line.split()[1])
+                except (ValueError, IndexError):
+                    compactions_total = None
+                break
         observed_rows = geometry.get("row_count")
         row_status = (
             f"{observed_rows:,}/{expected_rows:,}"
@@ -982,6 +1285,19 @@ def wait_for_materialization(
         )
         if complete and signature == prior:
             stable_since = stable_since or now
+            if compactions_at_window_start is None:
+                compactions_at_window_start = compactions_total
+            if compactions_total != compactions_at_window_start:
+                # A compaction ran during the window: the settled geometry is
+                # an intermediate artifact of an in-flight chain. Restart the
+                # window on the post-compaction geometry.
+                print(
+                    f"settle: compaction advanced ({compactions_at_window_start} -> "
+                    f"{compactions_total}); restarting stable window",
+                    flush=True,
+                )
+                stable_since = now
+                compactions_at_window_start = compactions_total
             if now - stable_since >= stable_seconds:
                 if azure_geometry is not None:
                     geometry = azure_geometry.materialize(geometry)
@@ -1003,6 +1319,7 @@ def wait_for_materialization(
                 return geometry
         else:
             stable_since = now if complete else None
+            compactions_at_window_start = None
         prior = signature
         time.sleep(3)
     try:
@@ -1157,6 +1474,29 @@ def prefix_quality_checkpoints(
     return result
 
 
+def query_result_identity(returned_ids: list[str]) -> dict[str, object]:
+    """Hash one query's result IDs without persisting corpus identifiers.
+
+    Both forms are needed when a behavior-neutral storage experiment changes
+    an aggregate recall value: the ordered digest detects rank changes, while
+    the set digest distinguishes membership changes from tie-only reordering.
+    Each query is hashed separately so the evidence can localize divergence
+    without retaining corpus identifiers.
+    """
+    ordered_json = json.dumps(
+        returned_ids, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    set_json = json.dumps(
+        sorted(set(returned_ids)), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    return {
+        "ordered_ids_sha256": hashlib.sha256(ordered_json).hexdigest(),
+        "set_ids_sha256": hashlib.sha256(set_json).hexdigest(),
+        "result_count": len(returned_ids),
+        "unique_result_count": len(set(returned_ids)),
+    }
+
+
 def run_query_sweep(
     server: str,
     collection_id: str,
@@ -1168,7 +1508,11 @@ def run_query_sweep(
     phase: str,
     query_format: str = "fvecs",
     groundtruth_format: str = "ivecs",
+    progress_guard=None,
+    concurrency: int = 1,
 ) -> dict:
+    if concurrency <= 0:
+        raise RuntimeError("query concurrency must be positive")
     queries = read_vectors(query_path, query_format, query_start, query_count)
     groundtruth = read_truth_ids(
         groundtruth_path, groundtruth_format, query_start, query_count
@@ -1176,18 +1520,78 @@ def run_query_sweep(
     before = scrape(server)
     latencies = []
     recalls = []
-    for offset, query in enumerate(queries):
-        started = time.perf_counter()
-        response = request_json(
-            f"{server}/api/v2/collections/{collection_id}/search",
-            method="POST",
-            body={"vector": query, "top_k": top_k},
-            timeout=300,
-        )
-        latencies.append((time.perf_counter() - started) * 1000)
-        returned = {item.get("id") for item in response.get("results", [])}
+    ordered_result_digests = []
+    set_result_digests = []
+    result_counts = []
+    unique_result_counts = []
+    recall_hits_by_query = []
+    in_flight = 0
+    peak_in_flight = 0
+    in_flight_lock = threading.Lock()
+
+    def execute_query(indexed_query):
+        nonlocal in_flight, peak_in_flight
+        offset, query = indexed_query
+        if progress_guard is not None:
+            progress_guard()
+        with in_flight_lock:
+            in_flight += 1
+            peak_in_flight = max(peak_in_flight, in_flight)
+        try:
+            started = time.perf_counter()
+            response = request_json(
+                f"{server}/api/v2/collections/{collection_id}/search",
+                method="POST",
+                body={"vector": query, "top_k": top_k},
+                timeout=300,
+            )
+            latency_ms = (time.perf_counter() - started) * 1000
+            return offset, latency_ms, response
+        finally:
+            with in_flight_lock:
+                in_flight -= 1
+
+    wall_started = time.perf_counter()
+    indexed_queries = list(enumerate(queries))
+    if concurrency == 1:
+        outcomes = [execute_query(item) for item in indexed_queries]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=concurrency,
+            thread_name_prefix="pax-query",
+        ) as executor:
+            # Map returns in input order. Recall and result hashes therefore
+            # remain tied to query index, not nondeterministic completion order.
+            outcomes = list(executor.map(execute_query, indexed_queries))
+    wall_seconds = time.perf_counter() - wall_started
+
+    for expected_offset, (offset, latency_ms, response) in enumerate(outcomes):
+        if offset != expected_offset:
+            raise RuntimeError(f"{phase}: concurrent query order was not preserved")
+        latencies.append(latency_ms)
+        response_results = response.get("results")
+        if not isinstance(response_results, list):
+            raise RuntimeError(f"{phase}: query {offset} returned no result list")
+        returned_ids = []
+        for item in response_results:
+            oid = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(oid, str):
+                raise RuntimeError(
+                    f"{phase}: query {offset} returned a result without a string id"
+                )
+            returned_ids.append(oid)
+        identity = query_result_identity(returned_ids)
+        ordered_result_digests.append(identity["ordered_ids_sha256"])
+        set_result_digests.append(identity["set_ids_sha256"])
+        result_counts.append(identity["result_count"])
+        unique_result_counts.append(identity["unique_result_count"])
+        returned = set(returned_ids)
         expected = {f"v{row}" for row in groundtruth[offset][:top_k]}
-        recalls.append(len(returned & expected) / top_k)
+        recall_hits = len(returned & expected)
+        recall_hits_by_query.append(recall_hits)
+        recalls.append(recall_hits / top_k)
+    if progress_guard is not None:
+        progress_guard()
     after = scrape(server)
     quality_checkpoints = prefix_quality_checkpoints(recalls, latencies)
     latencies.sort()
@@ -1218,14 +1622,44 @@ def run_query_sweep(
     ivf_whole_region_fallbacks = metric_delta(
         before, after, "proximadb_ivf_whole_region_fallback_total"
     )
+    # TD-RDSTRAT-12 §2: bounded-concurrent wave meters. fetch_rounds is a
+    # counter delta across the phase; max_inflight is a GAUGE, so its "delta"
+    # is the value after the phase = the LAST wave's peak width (not a sum).
+    rr_fetch_rounds = metric_delta(
+        before, after, "proximadb_read_ranges_fetch_rounds_total"
+    )
+    rr_max_inflight = after.get("proximadb_read_ranges_max_inflight", 0.0)
+    # TD-RDSTRAT-13: per-query metadata ops (HEAD — C3 removes it) and the
+    # coarse-probe rank compute term (mean us = total/calls — C2 parallelizes it).
+    metadata_ops = metric_delta(before, after, "proximadb_pax_metadata_ops_agg_total")
+    rank_us_total = metric_delta(before, after, "proximadb_ivf_probe_rank_us_agg_total")
+    rank_calls = metric_delta(before, after, "proximadb_ivf_probe_rank_calls_agg_total")
+    rank_us_mean = rank_us_total / rank_calls if rank_calls else 0.0
     survivor_total = survivor_hits + survivor_misses
     invariant_total = invariant_hits + invariant_misses
     result = {
         "phase": phase,
         "query_start": query_start,
         "query_count": query_count,
+        "load": {
+            "model": "closed_loop_bounded",
+            "configured_concurrency": concurrency,
+            "peak_in_flight": peak_in_flight,
+            "wall_seconds": wall_seconds,
+            "qps": query_count / wall_seconds,
+        },
         "top_k": top_k,
         "recall_at_k": sum(recalls) / len(recalls),
+        "recall_hits_total": sum(recall_hits_by_query),
+        "recall_denominator": query_count * top_k,
+        "result_identity": {
+            "schema": "sha256-query-result-ids-v1",
+            "ordered_ids_sha256_by_query": ordered_result_digests,
+            "set_ids_sha256_by_query": set_result_digests,
+            "recall_hits_by_query": recall_hits_by_query,
+            "result_count_by_query": result_counts,
+            "unique_result_count_by_query": unique_result_counts,
+        },
         "prefix_quality_checkpoints": quality_checkpoints,
         "latency_ms": {
             "p50": percentile(latencies, 0.50),
@@ -1270,6 +1704,41 @@ def run_query_sweep(
             "fetch_rounds_per_query": ivf_fetch_rounds / query_count,
             "whole_region_fallbacks": ivf_whole_region_fallbacks,
         },
+        "rank_and_head": {
+            "metadata_ops_per_query": metadata_ops / query_count,
+            "probe_rank_us_mean": rank_us_mean,
+            "probe_rank_calls": rank_calls,
+        },
+        "read_ranges_wave": {
+            # TD-RDSTRAT-12 §2: observable proof the bounded-concurrent wave
+            # fired (fetch_rounds > 0) and its width (max_inflight). Without
+            # this, "the wave fired" is an inference, not a measurement.
+            "fetch_rounds": rr_fetch_rounds,
+            "fetch_rounds_per_query": rr_fetch_rounds / query_count,
+            "max_inflight_last": rr_max_inflight,
+        },
+        # TD-RDSTRAT-12 §3 round 4: the settled bed's 100 overlapping queries
+        # mix a genuinely cold first cohort with warm repeats — the aggregate
+        # p50 hides the wave's effect. The cold cohort is the fair verdict
+        # population for the >=2x acceptance.
+        "cold_cohort": {
+            "query_count": min(10, query_count),
+            "latency_ms": {
+                "p50": percentile(sorted(latencies[: min(10, len(latencies))]), 0.50),
+                "p95": percentile(sorted(latencies[: min(10, len(latencies))]), 0.95),
+                "mean": (
+                    sum(latencies[: min(10, len(latencies))])
+                    / min(10, len(latencies))
+                    if latencies
+                    else 0.0
+                ),
+            },
+            "recall_at_k": (
+                sum(recalls[: min(10, len(recalls))]) / min(10, len(recalls))
+                if recalls
+                else 0.0
+            ),
+        },
     }
     print(
         f"{phase}: recall@{top_k}={result['recall_at_k']:.4f} "
@@ -1277,6 +1746,7 @@ def run_query_sweep(
         f"bytes/q={result['bytes_per_query'] / 1_000_000:.2f}MB "
         f"p50={result['latency_ms']['p50']:.2f}ms "
         f"p95={result['latency_ms']['p95']:.2f}ms "
+        f"c={concurrency} qps={result['load']['qps']:.2f} "
         f"cells/q={result['ivf']['cells_probed_per_query']:.2f} "
         f"rows/q={result['ivf']['probed_rows_per_query']:.0f} "
         f"rounds/q={result['ivf']['fetch_rounds_per_query']:.2f} "
@@ -1414,11 +1884,18 @@ class OwnedServer:
         log_path: Path,
         local_disk_path: Path | None,
         ivf_k: int | None = None,
+        n_comp: int | None = None,
         nprobe: int | None = None,
         training_compaction_min_mb: int | None = None,
         azure_emulator: bool = False,
+        s3_endpoint: str | None = None,
+        s3_region: str = "us-east-1",
         coalesce_gap_bytes: int = AZURE_COALESCE_GAP_BYTES,
         coalesce_range_bytes: int = AZURE_COALESCE_RANGE_BYTES,
+        adaptive_read_strategy: bool = False,
+        read_ranges_inflight: int = 0,
+        read_ranges_wave_split_mb: int = 0,
+        rank_degree: int = 0,
     ):
         self.binary = binary
         self.config = config
@@ -1426,13 +1903,20 @@ class OwnedServer:
         self.log_path = log_path
         self.local_disk_path = local_disk_path
         self.ivf_k = ivf_k
+        self.n_comp = n_comp
         self.nprobe = nprobe
         self.training_compaction_min_mb = training_compaction_min_mb
         self.azure_emulator = azure_emulator
+        self.s3_endpoint = s3_endpoint
+        self.s3_region = s3_region
         if coalesce_gap_bytes < 0 or coalesce_range_bytes <= 0:
             raise RuntimeError("coalescing gap must be non-negative and range positive")
         self.coalesce_gap_bytes = coalesce_gap_bytes
         self.coalesce_range_bytes = coalesce_range_bytes
+        self.adaptive_read_strategy = adaptive_read_strategy
+        self.read_ranges_inflight = read_ranges_inflight
+        self.read_ranges_wave_split_mb = read_ranges_wave_split_mb
+        self.rank_degree = rank_degree
         self.process: subprocess.Popen | None = None
         self.log_file = None
 
@@ -1444,12 +1928,6 @@ class OwnedServer:
                 "PROXIMADB_CACHE_PREFILL": "0",
                 "PROXIMADB_CACHE_ON_WRITE": "all",
                 "PROXIMADB_L0_COMPACTION_ENABLED": "1",
-                # Keep the planner fixed across local and Azure profiles so
-                # backend choice does not silently change the read geometry.
-                "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(self.coalesce_gap_bytes),
-                "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(self.coalesce_range_bytes),
-                "PROXIMADB_PAX_COALESCE_GAP": str(self.coalesce_gap_bytes),
-                "PROXIMADB_PAX_COALESCE_RANGE": str(self.coalesce_range_bytes),
             }
         )
         # The diagnostic object-cold phase must remain cold even when the
@@ -1460,12 +1938,90 @@ class OwnedServer:
             "PROXIMADB_CACHE_NVME_PATH",
             "PROXIMADB_CACHE_NVME_MAX_GB",
             "PROXIMADB_IVF_K",
+            "PROXIMADB_IVF_NCOMP",
             "PROXIMADB_PAX_READ_COARSE_NPROBE",
             "PROXIMADB_TRAINING_COMPACTION_MIN_MB",
+            "PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER",
+            "PROXIMADB_PAX_VECTOR_COALESCE_GAP",
+            "PROXIMADB_PAX_VECTOR_COALESCE_RANGE",
+            "PROXIMADB_PAX_COALESCE_GAP",
+            "PROXIMADB_PAX_COALESCE_RANGE",
+            # TD-RDSTRAT-12 §3: arm gates must come from the CLI flags only —
+            # an invoking shell's exports would silently merge arms.
+            "PROXIMADB_READ_RANGES_INFLIGHT",
+            "PROXIMADB_READ_RANGES_WAVE_SPLIT_MB",
+            "PROXIMADB_SEARCH_MORSEL_DEGREE",
+            # S3 endpoint identity comes from --s3-endpoint/--s3-region only;
+            # ambient AWS_* (SDK convention files, endpoint-url variants,
+            # session tokens) and PROXIMADB_S3_* overrides would silently
+            # re-point or re-auth the backend.
+            "PROXIMADB_S3_ENDPOINT",
+            "PROXIMADB_S3_REGION",
+            "PROXIMADB_S3_FORCE_PATH_STYLE",
+            "AWS_ENDPOINT",
+            "AWS_ENDPOINT_URL",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_ALLOW_HTTP",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
         ):
             environment.pop(inherited_gate, None)
+        if self.s3_endpoint is not None:
+            # The server's AwsS3FileSystem reads PROXIMADB_S3_ENDPOINT /
+            # PROXIMADB_S3_FORCE_PATH_STYLE (mod.rs aws_s3_config_from_env);
+            # MinIO requires path-style (no bucket DNS under the endpoint
+            # host). AWS_ENDPOINT/creds additionally cover the object_store
+            # parse_url_opts path, and plain HTTP needs the explicit allow
+            # flag there.
+            environment.update(
+                {
+                    "PROXIMADB_S3_ENDPOINT": self.s3_endpoint,
+                    "PROXIMADB_S3_FORCE_PATH_STYLE": "1",
+                    "AWS_ENDPOINT": self.s3_endpoint,
+                    "AWS_REGION": self.s3_region,
+                    "AWS_ACCESS_KEY_ID": os.environ["AWS_ACCESS_KEY_ID"],
+                    "AWS_SECRET_ACCESS_KEY": os.environ["AWS_SECRET_ACCESS_KEY"],
+                    **(
+                        {"AWS_ALLOW_HTTP": "true"}
+                        if self.s3_endpoint.startswith("http://")
+                        else {}
+                    ),
+                }
+            )
+        if self.read_ranges_inflight > 0:
+            environment["PROXIMADB_READ_RANGES_INFLIGHT"] = str(
+                self.read_ranges_inflight
+            )
+        if self.read_ranges_wave_split_mb > 0:
+            environment["PROXIMADB_READ_RANGES_WAVE_SPLIT_MB"] = str(
+                self.read_ranges_wave_split_mb
+            )
+        if self.rank_degree > 0:
+            environment["PROXIMADB_SEARCH_MORSEL_DEGREE"] = str(self.rank_degree)
+        if self.adaptive_read_strategy:
+            environment["PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER"] = "1"
+        else:
+            # Keep the planner fixed across local and Azure profiles so
+            # backend choice does not silently change controlled sweeps.
+            environment.update(
+                {
+                    "PROXIMADB_PAX_VECTOR_COALESCE_GAP": str(
+                        self.coalesce_gap_bytes
+                    ),
+                    "PROXIMADB_PAX_VECTOR_COALESCE_RANGE": str(
+                        self.coalesce_range_bytes
+                    ),
+                    "PROXIMADB_PAX_COALESCE_GAP": str(self.coalesce_gap_bytes),
+                    "PROXIMADB_PAX_COALESCE_RANGE": str(self.coalesce_range_bytes),
+                }
+            )
         if self.ivf_k is not None:
             environment["PROXIMADB_IVF_K"] = str(self.ivf_k)
+        if self.n_comp is not None:
+            environment["PROXIMADB_IVF_NCOMP"] = str(self.n_comp)
         if self.nprobe is not None:
             environment["PROXIMADB_PAX_READ_COARSE_NPROBE"] = str(self.nprobe)
         if self.training_compaction_min_mb is not None:
@@ -2086,9 +2642,35 @@ def main() -> int:
     parser.add_argument("--queries", type=int, default=1_000)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--settle-timeout-secs", type=int, default=1_200)
+    parser.add_argument(
+        "--read-ranges-inflight",
+        type=int,
+        default=0,
+        help="Arm PROXIMADB_READ_RANGES_INFLIGHT (bounded-concurrent wave width); 0 keeps the sequential default",
+    )
+    parser.add_argument(
+        "--read-ranges-wave-split-mb",
+        type=int,
+        default=0,
+        help="Arm PROXIMADB_READ_RANGES_WAVE_SPLIT_MB (opt-in Region-B mega-GET wave split); 0 keeps the single-GET default",
+    )
+    parser.add_argument(
+        "--rank-degree",
+        type=int,
+        default=0,
+        help="Set PROXIMADB_SEARCH_MORSEL_DEGREE (coarse-probe rank workers, TD-RDSTRAT-13); 0 keeps the server default (adaptive)",
+    )
     parser.add_argument("--stable-secs", type=int, default=30)
     parser.add_argument("--max-segments", type=int, default=2)
-    parser.add_argument("--require-layout-version", type=int, default=3)
+    parser.add_argument(
+        "--require-layout-version",
+        type=int,
+        default=1,
+        help=(
+            "expected on-disk segment layout version asserted against settled "
+            "footers; the current writer emits 1 (post-collapse single layout)"
+        ),
+    )
     parser.add_argument("--post-write-max-gets", type=float, default=5.0)
     parser.add_argument("--local-warm-max-gets", type=float, default=10.0)
     parser.add_argument("--object-cold-max-gets", type=float, default=20.0)
@@ -2111,6 +2693,18 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--s3-endpoint",
+        help=(
+            "S3-shaped endpoint URL for --storage-url s3://... (e.g. "
+            "http://minio-host:9000); forwarded to the server as AWS_ENDPOINT"
+        ),
+    )
+    parser.add_argument(
+        "--s3-region",
+        default="us-east-1",
+        help="S3 region sentinel forwarded to the server as AWS_REGION (default us-east-1)",
+    )
+    parser.add_argument(
         "--local-warm-max-p50-ms",
         type=float,
         help=(
@@ -2131,6 +2725,16 @@ def main() -> int:
         "--ivf-k",
         type=int,
         help="force compaction-time coarse cell count (scale experiments only)",
+    )
+    parser.add_argument(
+        "--n-comp",
+        type=int,
+        help=(
+            "force compaction-time coarse-PCA projection width (width "
+            "experiments only). Forced AND verified against the persisted A0 "
+            "model, unlike a bare PROXIMADB_IVF_NCOMP env var, whose value the "
+            "bed never recorded (TD-IVF-3)"
+        ),
     )
     parser.add_argument(
         "--nprobe",
@@ -2181,6 +2785,8 @@ def main() -> int:
             )
     if args.ivf_k is not None and args.ivf_k <= 0:
         raise RuntimeError("--ivf-k must be positive")
+    if args.n_comp is not None and args.n_comp <= 0:
+        raise RuntimeError("--n-comp must be positive")
     if args.nprobe is not None and args.nprobe <= 0:
         raise RuntimeError("--nprobe must be positive")
     if (
@@ -2203,6 +2809,19 @@ def main() -> int:
     if args.azurite and not os.environ.get("AZURE_STORAGE_CONNECTION_STRING"):
         raise RuntimeError(
             "--azurite requires AZURE_STORAGE_CONNECTION_STRING for geometry"
+        )
+    if (
+        urlparse(args.storage_url or "").scheme == "s3"
+    ) and args.s3_endpoint is None:
+        raise RuntimeError(
+            "--storage-url s3://... requires --s3-endpoint (e.g. http://minio-host:9000)"
+        )
+    if args.s3_endpoint is not None and not (
+        os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")
+    ):
+        raise RuntimeError(
+            "S3 storage requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
+            "in the harness environment; they are forwarded to the server"
         )
 
     binary = args.binary.resolve()
@@ -2256,18 +2875,13 @@ def main() -> int:
             capture_output=True,
             text=True,
         ).stdout.splitlines()
+        # Python harness tests cannot alter the Rust release executable. Keep
+        # the provenance boundary language-based instead of maintaining a
+        # filename allowlist every time a new benchmark protocol lands.
         unsafe_changes = [
             path
             for path in changed_since_build
-            if not path.startswith(("docs/", "scripts/"))
-            and path
-            not in {
-                "tests/python/test_sift_get_reduction_harness.py",
-                "tests/python/test_bigann_prefix_groundtruth.py",
-                "tests/python/test_nprobe_geometry_analysis.py",
-                "tests/python/test_nprobe_sweep.py",
-                "tests/python/test_range_cap_sweep.py",
-            }
+            if not path.startswith(("docs/", "scripts/", "tests/python/"))
         ]
         if unsafe_changes:
             raise RuntimeError(
@@ -2346,22 +2960,37 @@ def main() -> int:
     )
     storage_url = args.storage_url or f"file://{root / 'data' / 'sst'}"
     storage_scheme = urlparse(storage_url).scheme
-    if storage_scheme not in {"file", "adls", "az", "azure"}:
+    if storage_scheme not in {"file", "adls", "az", "azure", "s3"}:
         raise RuntimeError(
             f"unsupported benchmark storage URL scheme: {storage_scheme}"
         )
-    azure_geometry = (
-        AzureCliPaxGeometry(storage_url, root / "azure-pax-snapshot")
-        if storage_scheme in {"adls", "az", "azure"}
-        else None
-    )
-    if azure_geometry is not None:
-        azure_geometry.require_empty_prefix()
-    if args.explicit_flush_every_rows is not None and azure_geometry is None:
-        raise RuntimeError(
-            "--explicit-flush-every-rows requires Azure/Azurite storage so "
-            "each durable PAX epoch can be proven by blob identity"
+    # Remote geometry reader, duck-typed across backends: inventory /
+    # require_empty_prefix / stable_signature / materialize. Azure uses the
+    # az CLI; S3-shaped endpoints use boto3. Both read out-of-process and
+    # cannot touch the measured server's counters.
+    remote_geometry = None
+    if storage_scheme in {"adls", "az", "azure"}:
+        remote_geometry = AzureCliPaxGeometry(storage_url, root / "azure-pax-snapshot")
+    elif storage_scheme == "s3":
+        remote_geometry = S3PaxGeometry(
+            storage_url, root / "s3-pax-snapshot", args.s3_endpoint, args.s3_region
         )
+    if remote_geometry is not None:
+        remote_geometry.require_empty_prefix()
+    # Epoch proof for --explicit-flush-every-rows: remote readers use object
+    # identity; a local (file://) bed proves the same epochs from the PAX
+    # footers via the LocalPaxGeometry adapter (same inventory/signature
+    # contract), so the deterministic settle protocol is not remote-only.
+    epoch_geometry = remote_geometry
+    if args.explicit_flush_every_rows is not None and epoch_geometry is None:
+        if storage_url.startswith("file://"):
+            epoch_geometry = LocalPaxGeometry(root / "data" / "sst")
+        else:
+            raise RuntimeError(
+                "--explicit-flush-every-rows requires Azure/S3 remote storage "
+                "or a local file:// bed so each durable PAX epoch can be "
+                "proven by object identity"
+            )
     config = root / "benchmark.toml"
     write_config(
         config,
@@ -2385,7 +3014,11 @@ def main() -> int:
     backend_profile = (
         "azure_blob_azurite"
         if args.azurite
-        else ("azure_blob" if azure_geometry is not None else "local_file")
+        else (
+            "s3_endpoint"
+            if storage_scheme == "s3"
+            else ("azure_blob" if remote_geometry is not None else "local_file")
+        )
     )
     filesystem_note = (
         "Azure backend and HTTP request-path evidence against Azurite. "
@@ -2397,10 +3030,20 @@ def main() -> int:
         else (
             "GET count is physical-I/O-seam evidence. Latency is local "
             "filesystem evidence, not Azure WAN evidence."
-            if azure_geometry is None
+            if remote_geometry is None
             else (
-                "Azure backend evidence. Out-of-process Azure CLI inventory/"
-                "footer reads are excluded from the measured server counters."
+                "S3-shaped backend (e.g. MinIO) over HTTP; GET counters are "
+                "emitted by the measured ProximaDB process. Out-of-process "
+                "boto3 inventory/footer reads are excluded from those "
+                "counters but may warm the endpoint's host page cache; "
+                "latency is endpoint-network evidence, not production-cloud "
+                "evidence."
+                if storage_scheme == "s3"
+                else (
+                    "Azure backend evidence. Out-of-process Azure CLI "
+                    "inventory/footer reads are excluded from the measured "
+                    "server counters."
+                )
             )
         )
     )
@@ -2449,9 +3092,14 @@ def main() -> int:
             "segment_backend": backend_profile,
             "storage_url": storage_url,
             "azurite": args.azurite,
+            "s3_endpoint": args.s3_endpoint,
             "geometry_evidence": (
-                "azure_cli_inventory_and_footer_snapshot"
-                if azure_geometry is not None
+                (
+                    "s3_boto3_inventory_and_footer_snapshot"
+                    if storage_scheme == "s3"
+                    else "azure_cli_inventory_and_footer_snapshot"
+                )
+                if remote_geometry is not None
                 else "local_pax_footer"
             ),
             "local_disk_path": str(local_disk),
@@ -2464,6 +3112,7 @@ def main() -> int:
         },
         "probe_policy": {
             "ivf_k_override": args.ivf_k,
+            "n_comp_override": args.n_comp,
             "nprobe_override": args.nprobe,
             "training_compaction_min_mb_override": (
                 args.training_compaction_min_mb
@@ -2536,9 +3185,15 @@ def main() -> int:
             log_path=root / "server-ingest.log",
             local_disk_path=local_disk,
             ivf_k=args.ivf_k,
+            n_comp=args.n_comp,
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            s3_endpoint=args.s3_endpoint,
+            s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
+            read_ranges_inflight=args.read_ranges_inflight,
+            read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
         active.start()
         if args.compaction_spill:
@@ -2565,7 +3220,7 @@ def main() -> int:
             args.port,
             args.ingest_transport,
             args.explicit_flush_every_rows,
-            azure_geometry,
+            epoch_geometry,
         )
         result["collection_id"] = collection_id
         result["ingest"] = {
@@ -2583,7 +3238,7 @@ def main() -> int:
             args.max_segments,
             args.settle_timeout_secs,
             args.stable_secs,
-            azure_geometry,
+            remote_geometry,
             required_layout_version=args.require_layout_version,
         )
         wrong_layouts = [
@@ -2596,6 +3251,16 @@ def main() -> int:
                 "settled segment layout mismatch: "
                 f"required v{args.require_layout_version}, got {wrong_layouts}"
             )
+        untrained = [
+            segment["path"]
+            for segment in geometry["segments"]
+            if not segment.get("coarse_cells")
+        ]
+        if untrained:
+            raise RuntimeError(
+                "settled segment(s) lack a coarse A0 directory "
+                f"(untrained flush artifact?): {untrained}"
+            )
         if args.ivf_k is not None:
             wrong_cells = [
                 segment
@@ -2605,6 +3270,16 @@ def main() -> int:
             if wrong_cells:
                 raise RuntimeError(
                     f"forced ivf_k={args.ivf_k} was not persisted: {wrong_cells}"
+                )
+        if args.n_comp is not None:
+            wrong_width = [
+                segment
+                for segment in geometry["segments"]
+                if segment.get("coarse_components") != args.n_comp
+            ]
+            if wrong_width:
+                raise RuntimeError(
+                    f"forced n_comp={args.n_comp} was not persisted: {wrong_width}"
                 )
         result["settled_geometry"] = geometry
         if resource_sampler is not None:
@@ -2658,6 +3333,11 @@ def main() -> int:
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            s3_endpoint=args.s3_endpoint,
+            s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
+            read_ranges_inflight=args.read_ranges_inflight,
+            read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
         active.start()
         local_warm = run_query_sweep(
@@ -2695,6 +3375,11 @@ def main() -> int:
             nprobe=args.nprobe,
             training_compaction_min_mb=args.training_compaction_min_mb,
             azure_emulator=args.azurite,
+            s3_endpoint=args.s3_endpoint,
+            s3_region=args.s3_region,
+            rank_degree=args.rank_degree,
+            read_ranges_inflight=args.read_ranges_inflight,
+            read_ranges_wave_split_mb=args.read_ranges_wave_split_mb,
         )
         active.start()
         object_cold = run_query_sweep(

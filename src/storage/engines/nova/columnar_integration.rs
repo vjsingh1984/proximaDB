@@ -388,9 +388,17 @@ impl NovaUnifiedEngine {
         // Create common columnar configuration optimized for NOVA
         let common_config = Self::create_nova_optimized_config(&nova_config);
 
-        // Initialize common operations
-        let common_ops =
-            Arc::new(CommonColumnarOperations::new(common_config, filesystem_factory).await?);
+        // Initialize common operations. The concrete quantization engine is
+        // constructed root-side (composition root, TD-DECOMP-80) and injected
+        // through the port — engine-core cannot name the modality kernel.
+        let common_ops = Arc::new(
+            CommonColumnarOperations::with_quantization_engine(
+                common_config,
+                filesystem_factory,
+                crate::storage::engines::core::formats::columnar::hybrid_writer::root_storage_quantization_engine(),
+            )
+            .await?,
+        );
 
         // Initialize NOVA-specific components
         let hierarchical_stats = Arc::new(HierarchicalStatsManager::new(nova_config.clone()));

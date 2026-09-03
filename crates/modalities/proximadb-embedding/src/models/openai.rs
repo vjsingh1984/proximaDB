@@ -82,16 +82,23 @@ pub(crate) fn parse_embed_response(
                 .collect()
         })
         .unwrap_or_default();
-    let usage = body.get("usage").map(|u| EmbedUsage {
-        input_tokens: u
-            .get("prompt_tokens")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        total_tokens: u
-            .get("total_tokens")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-    });
+    // TD-SANDHI-3: an all-zero usage object is no measurement (an empty object, `null`, or
+    // wrong-typed values all land here) — treat it as absent so metering falls back to the
+    // count×512 heuristic with an `estimated` basis instead of certifying a zero as
+    // provider-reported (same hardening as the Cohere parser).
+    let usage = body
+        .get("usage")
+        .map(|u| EmbedUsage {
+            input_tokens: u
+                .get("prompt_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+            total_tokens: u
+                .get("total_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+        })
+        .filter(|u| u.input_tokens > 0);
     (vectors, usage)
 }
 
@@ -122,5 +129,28 @@ mod tests {
         let (vectors, usage) = parse_embed_response(&body);
         assert_eq!(vectors, vec![vec![1.0]]);
         assert!(usage.is_none());
+    }
+
+    /// TD-SANDHI-3: an all-zero usage object must parse as `None` (no measurement), not as a
+    /// provider-reported zero — otherwise a half-implemented OpenAI-compatible gateway bills
+    /// real work as 0 tokens with `provider_reported`+`final` provenance.
+    #[test]
+    fn all_zero_usage_is_none() {
+        for usage_value in [
+            serde_json::json!({}),
+            serde_json::json!({ "prompt_tokens": 0, "total_tokens": 0 }),
+            serde_json::json!("not-an-object"),
+            serde_json::json!({ "prompt_tokens": "42" }),
+            // total-only reports carry no splittable input count either — a `Some(0, 42)`
+            // would re-create the certified-zero class (provider_reported + tokens_in 0).
+            serde_json::json!({ "total_tokens": 42 }),
+        ] {
+            let body = serde_json::json!({
+                "data": [{ "embedding": [1.0] }],
+                "usage": usage_value
+            });
+            let (_, usage) = parse_embed_response(&body);
+            assert!(usage.is_none(), "expected None for usage = {usage_value}");
+        }
     }
 }

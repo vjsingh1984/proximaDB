@@ -23,15 +23,15 @@ class ImpactAnalysisRequest:
         node_id (str): Start symbol node id.
         direction (None | str | Unset): `"forward"` (default — what X impacts) or `"backward"` (what impacts X).
         edge_types (list[str] | Unset):
-        limit (int | Unset):
         max_depth (int | Unset):
+        limit (int | Unset):
     """
 
     node_id: str
     direction: None | str | Unset = UNSET
     edge_types: list[str] | Unset = UNSET
-    limit: int | Unset = UNSET
     max_depth: int | Unset = UNSET
+    limit: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,9 +47,9 @@ class ImpactAnalysisRequest:
         if not isinstance(self.edge_types, Unset):
             edge_types = self.edge_types
 
-        limit = self.limit
-
         max_depth = self.max_depth
+
+        limit = self.limit
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -62,10 +62,10 @@ class ImpactAnalysisRequest:
             field_dict["direction"] = direction
         if edge_types is not UNSET:
             field_dict["edge_types"] = edge_types
-        if limit is not UNSET:
-            field_dict["limit"] = limit
         if max_depth is not UNSET:
             field_dict["max_depth"] = max_depth
+        if limit is not UNSET:
+            field_dict["limit"] = limit
 
         return field_dict
 
@@ -85,16 +85,16 @@ class ImpactAnalysisRequest:
 
         edge_types = cast(list[str], d.pop("edge_types", UNSET))
 
-        limit = d.pop("limit", UNSET)
-
         max_depth = d.pop("max_depth", UNSET)
+
+        limit = d.pop("limit", UNSET)
 
         impact_analysis_request = cls(
             node_id=node_id,
             direction=direction,
             edge_types=edge_types,
-            limit=limit,
             max_depth=max_depth,
+            limit=limit,
         )
 
         impact_analysis_request.additional_properties = d

@@ -36,8 +36,7 @@ mod tests {
 
         // Write data
         let config = ParquetWriterConfig::default();
-        let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
-            .await
+        let mut writer = crate::storage::engines::core::formats::columnar::writer_port_helpers::make_streaming_writer(&file_path, 128, config).await
             .unwrap();
         writer.write_batch(&test_records).await.unwrap();
         writer.finalize().await.unwrap();

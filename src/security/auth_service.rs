@@ -1,13 +1,11 @@
 //! Unified Authentication Service for ProximaDB
 //!
 //! Consolidates authentication logic from multiple sources:
-//! - EnterpriseAuthManager (src/auth/mod.rs)
 //! - Network Auth Service (src/network/auth/mod.rs)
 //! - Auth Middleware (src/network/middleware/auth.rs)
 
 use super::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
-use crate::auth::{EnterpriseAuthManager, EnterpriseUserContext, SSOToken};
 use crate::network::auth::{JwtService, TokenPair};
 use proximadb_catalog::principal_registry::{
     FileSystemPrincipalRegistry, KEY_PREFIX as REGISTRY_KEY_PREFIX,
@@ -43,6 +41,12 @@ pub struct AuthenticationConfig {
     /// deployments that must never serve unaudited traffic opt in here.
     #[serde(default)]
     pub audit_fail_closed: bool,
+    /// Generic OIDC provider (TD-SSO-1): bearer-token validation against an
+    /// external IdP's JWKS, with role-claim sanitization at the seam. Absent
+    /// ⇒ inert; RS*/ES* bearer tokens then fail closed (no local asymmetric
+    /// verifier exists).
+    #[serde(default)]
+    pub oidc: Option<crate::network::auth::oidc::OidcProviderConfig>,
 }
 
 /// Count of audit writes that failed on the authentication path. Exposed so an
@@ -71,6 +75,15 @@ pub struct ApiKeyInfo {
     pub user_id: String,
     pub tenant_id: Option<String>,
     pub permissions: Vec<String>,
+    /// TD-TENANT-1 follow-up (a): optional role claims for this key. The
+    /// `gateway`/`operator` roles make the credential a gateway principal
+    /// (`is_gateway_principal`), enabling `GatewayOnly` tenant delegation for
+    /// API-key gateways — previously structurally impossible (roles were
+    /// hardcoded to `api_user`). Delegation-ONLY: a role here grants NO
+    /// `UnifiedPermission` (authz stays permission-driven), and only the
+    /// exact strings `gateway`/`operator` match — a typo grants nothing.
+    #[serde(default)]
+    pub roles: Vec<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
     pub rate_limit_per_minute: Option<u32>,
@@ -95,25 +108,12 @@ pub struct SSOConfig {
     pub enabled: bool,
     pub providers: Vec<String>,
     pub token_cache_ttl_minutes: u64,
-    pub aws_iam: Option<AWSIAMConfig>,
-    pub azure_ad: Option<AzureADConfig>,
-}
-
-/// AWS IAM configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AWSIAMConfig {
-    pub role_arn: String,
-    pub session_duration_minutes: u64,
-    pub region: String,
-}
-
-/// Azure AD configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AzureADConfig {
-    pub tenant_id: String,
-    pub client_id: String,
-    pub client_secret: String,
-    pub scope: Vec<String>,
+    // NOTE (provider portability): the former `aws_iam`/`azure_ad` fields and
+    // their types were REMOVED — they had zero production readers (every
+    // construction set them `None` inside `#[cfg(test)]`) and the backing
+    // `azure_ad.rs` stub returned `system_admin()` for any unexpired token
+    // with no signature verification (a latent privilege escalation). Generic
+    // OIDC covers AWS/Azure via `[security.authentication.oidc]`.
 }
 
 /// mTLS configuration for client certificate authentication
@@ -158,11 +158,11 @@ pub type SecurityAuthenticationResult = AuthenticationResult;
 
 /// Unified authentication service
 pub struct UnifiedAuthService {
-    /// Enterprise auth manager for SSO
-    enterprise_auth: Option<Arc<EnterpriseAuthManager>>,
-
     /// JWT service for token authentication
     jwt_service: Option<Arc<JwtService>>,
+    /// Generic OIDC bearer verifier (TD-SSO-1). Present only when
+    /// `[security.authentication.oidc]` is configured AND enabled.
+    oidc_verifier: Option<Arc<crate::network::auth::oidc::OidcTokenVerifier>>,
 
     /// API key store
     api_keys: Arc<DashMap<String, ApiKeyInfo>>,
@@ -188,7 +188,6 @@ pub struct UnifiedAuthService {
 impl std::fmt::Debug for UnifiedAuthService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnifiedAuthService")
-            .field("has_enterprise_auth", &self.enterprise_auth.is_some())
             .field("has_jwt_service", &self.jwt_service.is_some())
             .field("api_key_count", &self.api_keys.len())
             .field("has_principal_registry", &self.principal_registry.is_some())
@@ -212,8 +211,8 @@ impl UnifiedAuthService {
         };
 
         let mut service = Self {
-            enterprise_auth: None,
             jwt_service: None,
+            oidc_verifier: None,
             api_keys: Arc::new(DashMap::new()),
             principal_registry: None,
             rate_limiter: None,
@@ -231,10 +230,45 @@ impl UnifiedAuthService {
                 refresh_expiration_secs: config.jwt.refresh_token_expiration_days * 24 * 3600,
                 issuer: config.jwt.issuer.clone(),
                 audience: config.jwt.audience.clone(),
-                algorithm: crate::network::auth::config::JwtAlgorithm::HS256, // Default to HS256
+                algorithm: match config.jwt.algorithm.as_str() {
+                    "HS256" => crate::network::auth::config::JwtAlgorithm::HS256,
+                    "HS384" => crate::network::auth::config::JwtAlgorithm::HS384,
+                    "HS512" => crate::network::auth::config::JwtAlgorithm::HS512,
+                    other => {
+                        return Err(anyhow!(
+                            "invalid [security.authentication.jwt] algorithm {other:?}: \
+                             HS256/HS384/HS512 supported (use [security.authentication.oidc] \
+                             for RS256/ES256)"
+                        ));
+                    }
+                },
             };
             let jwt_service = JwtService::new(network_jwt_config)?;
             service.jwt_service = Some(Arc::new(jwt_service));
+        }
+
+        // TD-SSO-1: build the OIDC verifier when configured. Construction
+        // never contacts the IdP (lazy JWKS) — boot-order robustness.
+        if let Some(oidc_cfg) = config.oidc.as_ref()
+            && oidc_cfg.enabled
+        {
+            let verifier = crate::network::auth::oidc::OidcTokenVerifier::new(oidc_cfg.clone())
+                .map_err(|e| anyhow!("invalid [security.authentication.oidc]: {e}"))?;
+            // F8: the OIDC branch is reachable only via the `jwt` method —
+            // warn loudly when the operator enabled the provider but not the
+            // method, or every bearer token will read "JWT authentication
+            // disabled".
+            if !config.methods.contains(&AuthenticationMethod::JWT) {
+                warn!(
+                    "[security.authentication.oidc] is enabled but methods lacks \"jwt\" — OIDC bearer tokens will be rejected until it is added"
+                );
+            }
+            info!(
+                issuer = %oidc_cfg.issuer_url,
+                "OIDC bearer validation enabled (TD-SSO-1; roles sanitize at the seam; \
+                 delegation roles default OFF pending allow_delegation_roles)"
+            );
+            service.oidc_verifier = Some(Arc::new(verifier));
         }
 
         // Load API keys
@@ -243,11 +277,6 @@ impl UnifiedAuthService {
         }
 
         Ok(service)
-    }
-
-    /// Set enterprise auth manager for SSO integration
-    pub fn set_enterprise_auth(&mut self, enterprise_auth: Arc<EnterpriseAuthManager>) {
-        self.enterprise_auth = Some(enterprise_auth);
     }
 
     /// Set audit logger
@@ -263,7 +292,18 @@ impl UnifiedAuthService {
         let start_time = Utc::now();
 
         let result = match &auth_data {
-            AuthenticationData::SSOToken(token) => self.authenticate_sso_token(token).await,
+            AuthenticationData::SSOToken(_) => Ok(AuthenticationResult {
+                user_context: UnifiedUserContext::anonymous(),
+                auth_method: UnifiedAuthMethod::SSO {
+                    provider: "removed".to_string(),
+                },
+                success: false,
+                error_message: Some(
+                    "Legacy SSO removed: use [security.authentication.oidc] for any OIDC IdP"
+                        .to_string(),
+                ),
+                requires_mfa: false,
+            }),
             AuthenticationData::JWTToken(token) => self.authenticate_jwt_token(token).await,
             AuthenticationData::ApiKey(key) => self.authenticate_api_key(key).await,
             AuthenticationData::ClientCertificate(cert_data) => {
@@ -329,55 +369,6 @@ impl UnifiedAuthService {
         result
     }
 
-    /// Authenticate SSO token
-    async fn authenticate_sso_token(&self, token: &SSOToken) -> Result<AuthenticationResult> {
-        if !self.config.methods.contains(&AuthenticationMethod::SSO) {
-            return Ok(AuthenticationResult {
-                user_context: UnifiedUserContext::anonymous(),
-                auth_method: UnifiedAuthMethod::SSO {
-                    provider: "disabled".to_string(),
-                },
-                success: false,
-                error_message: Some("SSO authentication disabled".to_string()),
-                requires_mfa: false,
-            });
-        }
-
-        match &self.enterprise_auth {
-            Some(enterprise_auth) => {
-                match enterprise_auth.validate_and_resolve_token(token).await {
-                    Ok(enterprise_user) => {
-                        let user_context = self.convert_enterprise_user_to_unified(enterprise_user);
-                        Ok(AuthenticationResult {
-                            user_context,
-                            auth_method: UnifiedAuthMethod::SSO {
-                                provider: format!("{:?}", token.provider),
-                            },
-                            success: true,
-                            error_message: None,
-                            requires_mfa: false,
-                        })
-                    }
-                    Err(e) => {
-                        warn!("SSO authentication failed: {}", e);
-                        Ok(AuthenticationResult {
-                            user_context: UnifiedUserContext::anonymous(),
-                            auth_method: UnifiedAuthMethod::SSO {
-                                provider: format!("{:?}", token.provider),
-                            },
-                            success: false,
-                            error_message: Some(e.to_string()),
-                            requires_mfa: false,
-                        })
-                    }
-                }
-            }
-            None => Err(anyhow!(
-                "SSO authentication enabled but enterprise auth manager not configured"
-            )),
-        }
-    }
-
     /// Authenticate JWT token
     async fn authenticate_jwt_token(&self, token: &str) -> Result<AuthenticationResult> {
         if !self.config.methods.contains(&AuthenticationMethod::JWT) {
@@ -388,6 +379,49 @@ impl UnifiedAuthService {
                 error_message: Some("JWT authentication disabled".to_string()),
                 requires_mfa: false,
             });
+        }
+
+        // TD-SSO-1 dispatch: the UNAUTHENTICATED header `alg` only ROUTES —
+        // it selects a verifier that either cryptographically validates or
+        // rejects; it never authorizes. RS*/ES* goes to the OIDC verifier
+        // when configured (the local service is HMAC-only); HS* stays local.
+        let is_asymmetric = jsonwebtoken::decode_header(token)
+            .map(|header| {
+                matches!(
+                    header.alg,
+                    jsonwebtoken::Algorithm::RS256
+                        | jsonwebtoken::Algorithm::RS384
+                        | jsonwebtoken::Algorithm::RS512
+                        | jsonwebtoken::Algorithm::ES256
+                        | jsonwebtoken::Algorithm::ES384
+                )
+            })
+            .unwrap_or(false);
+
+        if is_asymmetric && let Some(verifier) = &self.oidc_verifier {
+            return match verifier.verify(token).await {
+                Ok(claims) => {
+                    let user_context =
+                        self.convert_oidc_claims_to_unified(claims, verifier.config());
+                    Ok(AuthenticationResult {
+                        user_context,
+                        auth_method: UnifiedAuthMethod::JWT,
+                        success: true,
+                        error_message: None,
+                        requires_mfa: false,
+                    })
+                }
+                Err(e) => {
+                    warn!("OIDC bearer validation failed: {}", e);
+                    Ok(AuthenticationResult {
+                        user_context: UnifiedUserContext::anonymous(),
+                        auth_method: UnifiedAuthMethod::JWT,
+                        success: false,
+                        error_message: Some(e.to_string()),
+                        requires_mfa: false,
+                    })
+                }
+            };
         }
 
         match &self.jwt_service {
@@ -416,6 +450,45 @@ impl UnifiedAuthService {
             None => Err(anyhow!(
                 "JWT authentication enabled but JWT service not configured"
             )),
+        }
+    }
+
+    /// TD-SSO-1: verified OIDC claims → UnifiedUserContext. Roles cross ONLY
+    /// through `sanitize_idp_roles` (the #1791 invariant, uniform); the
+    /// optional tenant claim maps to tenant_id; ZERO permissions are derived
+    /// from IdP claims (RBAC stays permission-driven).
+    fn convert_oidc_claims_to_unified(
+        &self,
+        claims: crate::network::auth::oidc::OidcClaims,
+        cfg: &crate::network::auth::oidc::OidcProviderConfig,
+    ) -> UnifiedUserContext {
+        let raw_roles = crate::network::auth::oidc::roles_raw_to_strings(&claims.roles_raw);
+        let roles = crate::network::auth::oidc::sanitize_idp_roles(&raw_roles, cfg);
+        let tenant_id = crate::network::auth::oidc::tenant_raw_to_option(&claims.tenant_raw);
+        // F3 (adversarial review): the IdP's issuer-scoped `sub` must NOT be
+        // the raw local join key — get_effective_permissions looks up
+        // user_role_assignments[user_id], so a colliding sub (email-as-sub
+        // providers; a local principal named "admin") would INHERIT that
+        // principal's locally granted permissions. Namespace it: local role
+        // assignments targeting OIDC users must use the `oidc:{sub}` form.
+        let oidc_user_id = format!("oidc:{}", claims.sub);
+        let oidc_session = format!("oidc_{}", claims.sub);
+        let mut metadata = HashMap::new();
+        // N3 (adversarial review pass 2): mark the principal's provenance so
+        // the tenant middleware can exclude IdP-asserted tenant claims from
+        // the system_tenants compat fallback (a token whose `tenant` claim
+        // lands in system_tenants must not become a gateway-class principal).
+        metadata.insert("oidc".to_string(), "true".to_string());
+        UnifiedUserContext {
+            user_id: oidc_user_id,
+            tenant_id,
+            roles,
+            effective_permissions: HashSet::new(),
+            auth_method: UnifiedAuthMethod::JWT,
+            session_id: oidc_session,
+            expires_at: DateTime::from_timestamp(claims.exp, 0),
+            created_at: DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(Utc::now),
+            metadata,
         }
     }
 
@@ -806,33 +879,6 @@ impl UnifiedAuthService {
     }
 
     /// Convert enterprise user context to unified context
-    fn convert_enterprise_user_to_unified(
-        &self,
-        enterprise_user: EnterpriseUserContext,
-    ) -> UnifiedUserContext {
-        // Determine SSO provider from provider_context
-        let provider_name = match &enterprise_user.provider_context {
-            crate::auth::sso::types::ProviderUserContext::AWS { .. } => "aws_iam",
-            crate::auth::sso::types::ProviderUserContext::Azure { .. } => "azure_ad",
-            crate::auth::sso::types::ProviderUserContext::Generic { .. } => "generic",
-        };
-
-        UnifiedUserContext {
-            user_id: enterprise_user.user_id,
-            tenant_id: Some(enterprise_user.tenant_id),
-            roles: enterprise_user.roles,
-            effective_permissions: HashSet::new(), // Will be populated by RBAC manager
-            auth_method: UnifiedAuthMethod::SSO {
-                provider: provider_name.to_string(),
-            },
-            session_id: enterprise_user.session_id,
-            expires_at: None, // SSO tokens handle their own expiration
-            created_at: enterprise_user.login_timestamp,
-            metadata: HashMap::new(), // No direct metadata on EnterpriseUserContext
-        }
-    }
-
-    /// Convert JWT claims to unified context
     fn convert_jwt_claims_to_unified(
         &self,
         claims: crate::network::auth::Claims,
@@ -872,10 +918,23 @@ impl UnifiedAuthService {
             metadata.insert("metering_required".to_string(), value.to_string());
         }
 
+        // TD-SSO-1 uniform seam: when an OIDC provider is configured, LOCAL
+        // tokens sanitize through the SAME allowlist as IdP tokens (the
+        // #1791 invariant holds on every bearer path). With no OIDC config,
+        // local behavior is unchanged — the local mint requires the engine's
+        // own secret, and existing capability tokens carry role-like strings
+        // (e.g. `data_plane`) that an empty default allowlist would strip.
+        let roles = match self.oidc_verifier.as_ref() {
+            Some(verifier) => {
+                crate::network::auth::oidc::sanitize_idp_roles(&claims.roles, verifier.config())
+            }
+            None => claims.roles,
+        };
+
         UnifiedUserContext {
             user_id: claims.sub,
             tenant_id: claims.tenant_id,
-            roles: claims.roles,
+            roles,
             effective_permissions: HashSet::new(), // Will be populated by RBAC manager
             auth_method: UnifiedAuthMethod::JWT,
             session_id: claims.jti,
@@ -948,10 +1007,44 @@ impl UnifiedAuthService {
             }
         }
 
+        let key_user_id = api_key_info.user_id.clone();
         UnifiedUserContext {
             user_id: api_key_info.user_id,
             tenant_id: api_key_info.tenant_id,
-            roles: vec!["api_user".to_string()], // Default role for API key users
+            // TD-TENANT-1 follow-up (a): configured roles ride alongside the
+            // default (nothing checking `api_user` regresses); `gateway`/
+            // `operator` here are what `is_gateway_principal` reads.
+            //
+            // ADVERSARIAL REVIEW (2026-08-31): pass-through of ARBITRARY role
+            // strings was an escalation — `SecurityPredicate::RoleBased`
+            // (security/rls/service.rs) grants Unrestricted row access when
+            // roles contain an allowed value, so a config-supplied business
+            // role would silently satisfy RLS policies (impossible before:
+            // API-key roles were hardcoded to api_user). Sanitize at this
+            // seam: ONLY the exact gateway/operator delegation markers pass;
+            // every other configured role is DROPPED with a warn. The
+            // delegation-only invariant now holds by construction.
+            roles: {
+                const DELEGATION_ROLES: [&str; 2] = [
+                    proximadb_tenant::GATEWAY_ROLE,
+                    proximadb_tenant::OPERATOR_ROLE,
+                ];
+                let mut roles = vec!["api_user".to_string()];
+                for r in &api_key_info.roles {
+                    if DELEGATION_ROLES.contains(&r.as_str()) {
+                        if !roles.iter().any(|existing| existing == r) {
+                            roles.push(r.clone());
+                        }
+                    } else {
+                        tracing::warn!(
+                            key_user = %key_user_id,
+                            dropped_role = %r,
+                            "API-key role ignored: only the gateway/operator                              delegation markers are honored (RLS RoleBased                              predicates match role strings — arbitrary                              pass-through would be an escalation)"
+                        );
+                    }
+                }
+                roles
+            },
             effective_permissions: permissions,
             auth_method: UnifiedAuthMethod::ApiKey,
             session_id: format!("apikey_{}", uuid::Uuid::new_v4()),
@@ -1014,7 +1107,9 @@ impl UnifiedAuthService {
 /// Authentication data from request
 #[derive(Debug)]
 pub enum AuthenticationData {
-    SSOToken(SSOToken),
+    /// Legacy SSO — the backing manager was removed (provider portability);
+    /// carries the opaque token for the fail-closed stub.
+    SSOToken(String),
     JWTToken(String),
     ApiKey(String),
     ClientCertificate(ClientCertificateData),
@@ -1152,6 +1247,322 @@ fn create_auth_audit_event(
 
 #[cfg(test)]
 mod tests {
+    use super::ApiKeyInfo;
+
+    /// N5 (adversarial review pass 2): the LOCAL-JWT retrofit arm is pinned
+    /// too — the same blind-test class as F5, one function below it. With an
+    /// OIDC verifier present, a locally-minted token's roles cross the SAME
+    /// seam; deleting the `Some(verifier) => sanitize…` arm reverts to
+    /// pass-through and THIS test fails.
+    #[test]
+    fn local_jwt_roles_sanitize_when_oidc_is_configured() {
+        use crate::network::auth::oidc::test_fixtures as fx;
+        let cfg = super::AuthenticationConfig {
+            oidc: Some(fx::verifier(&["analyst"], false)),
+            ..serde_json::from_str(
+                r#"{"enabled":false,"methods":["jwt"],"require_authentication":false,
+                    "default_session_timeout_minutes":30,"api_keys":{},
+                    "jwt":{"enabled":false,"secret":"x","issuer":"t","audience":"t",
+                            "access_token_expiration_minutes":1,
+                            "refresh_token_expiration_days":1,"algorithm":"HS256"},
+                    "sso":{"enabled":false,"providers":[],"token_cache_ttl_minutes":1,
+                            "aws_iam":null,"azure_ad":null}}"#,
+            )
+            .expect("minimal auth config")
+        };
+        let service = super::UnifiedAuthService::new(cfg).expect("service");
+        let claims = crate::network::auth::Claims {
+            sub: "local-user".into(),
+            iat: 1,
+            exp: 2,
+            nbf: 1,
+            iss: "local".into(),
+            aud: "local".into(),
+            jti: "j".into(),
+            typ: crate::network::auth::jwt::TokenType::Access,
+            tenant_id: None,
+            roles: vec![
+                "gateway".to_string(),
+                "analyst".to_string(),
+                "admin".to_string(),
+            ],
+            scopes: vec![],
+            capability_type: None,
+            collection: None,
+            operation: None,
+            protocol: None,
+            mode: None,
+            max_records: None,
+            max_bytes: None,
+            tier: None,
+            route_visibility: None,
+            metering_required: None,
+        };
+        let ctx = service.convert_jwt_claims_to_unified(claims);
+        // Delegation is OFF in this fixture's oidc config (F2 default), and
+        // only the allowlisted business role crosses.
+        assert_eq!(
+            ctx.roles,
+            vec!["analyst".to_string()],
+            "local tokens must hit the same seam when OIDC is configured (N5)"
+        );
+    }
+
+    /// F5 (adversarial review): the seam invariant pinned WHERE IT LIVES.
+    /// The reviewer's sabotage — deleting the `sanitize_idp_roles` call in
+    /// `convert_oidc_claims_to_unified` — passed every oidc.rs test, because
+    /// they pin the helper, not the production conversion. This test drives
+    /// the real `authenticate` dispatch with a real RS256 token against a
+    /// mock JWKS and asserts the resulting UnifiedUserContext.
+    #[tokio::test]
+    async fn oidc_seam_is_enforced_at_the_production_conversion() {
+        use crate::network::auth::oidc::test_fixtures as fx;
+
+        let server = httpmock::MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET).path("/jwks");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(fx::TEST_JWKS_JSON);
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET)
+                    .path("/.well-known/openid-configuration");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(
+                        serde_json::json!({
+                            "issuer": "https://idp.example.test",
+                            "jwks_uri": format!("{}/jwks", server.base_url())
+                        })
+                        .to_string(),
+                    );
+            })
+            .await;
+
+        // OIDC issuer must be https — point the config at the loopback http
+        // mock by supplying jwks_url explicitly (issuer stays the https
+        // claim value; only the FETCH goes to the loopback).
+        let cfg = super::AuthenticationConfig {
+            enabled: true,
+            methods: vec![super::AuthenticationMethod::JWT],
+            require_authentication: false,
+            default_session_timeout_minutes: 30,
+            api_keys: HashMap::new(),
+            jwt: super::JwtConfig {
+                enabled: false,
+                secret: "x".to_string(),
+                access_token_expiration_minutes: 1,
+                refresh_token_expiration_days: 1,
+                issuer: "local".to_string(),
+                audience: "local".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: super::SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 1,
+            },
+            mtls: super::MtlsConfig::default(),
+            audit_fail_closed: false,
+            oidc: Some(crate::network::auth::oidc::OidcProviderConfig {
+                jwks_url: Some(format!("{}/jwks", server.base_url())),
+                role_allowlist: vec!["analyst".to_string()],
+                ..fx::verifier(&[], false)
+            }),
+        };
+        let service = super::UnifiedAuthService::new(cfg).expect("service");
+
+        let now = chrono::Utc::now().timestamp();
+        let token = fx::sign_rs256(&fx::std_claims(now));
+        let result = service
+            .authenticate(crate::security::AuthenticationData::JWTToken(token))
+            .await
+            .expect("authenticate dispatch");
+
+        assert!(result.success, "err: {:?}", result.error_message);
+        let ctx = &result.user_context;
+        // THE invariant, at the production seam: IdP groups ["gateway",
+        // "analyst"] — analyst allowlisted, gateway delegation OFF by
+        // default (F2) — only ["analyst"] crosses.
+        assert_eq!(
+            ctx.roles,
+            vec!["analyst".to_string()],
+            "seam must sanitize at the production conversion (F5)"
+        );
+        // F3: identity is namespaced, not the raw sub.
+        assert!(ctx.user_id.starts_with("oidc:"), "got {}", ctx.user_id);
+        // Tenant claim mapped at the production seam (reviewer E-gap).
+        assert_eq!(ctx.tenant_id.as_deref(), Some("tenant-9"));
+        // N3: OIDC provenance is marked for the middleware's fallback gate.
+        assert_eq!(ctx.metadata.get("oidc").map(String::as_str), Some("true"));
+        // Claim 4: no permissions derived.
+        assert!(ctx.effective_permissions.is_empty());
+    }
+
+    fn key(user: &str, roles: Vec<&str>) -> ApiKeyInfo {
+        ApiKeyInfo {
+            user_id: user.to_string(),
+            tenant_id: Some("tenant-a".to_string()),
+            permissions: vec![],
+            roles: roles.into_iter().map(String::from).collect(),
+            created_at: None,
+            expires_at: None,
+            rate_limit_per_minute: None,
+            ip_restrictions: vec![],
+        }
+    }
+
+    fn convert(info: ApiKeyInfo) -> crate::security::rbac_service::UnifiedUserContext {
+        // The conversion is pure given a config; reach it through a minimal
+        // service rather than replicating its logic here. mTLS disabled so
+        // ::new never touches the filesystem.
+        let cfg = super::AuthenticationConfig {
+            mtls: super::MtlsConfig::default(),
+            oidc: None,
+            ..serde_json::from_str(
+                r#"{"enabled":false,"methods":["api_key"],"require_authentication":false,
+                    "default_session_timeout_minutes":30,"api_keys":{},
+                    "jwt":{"enabled":false,"secret":"x","issuer":"t","audience":"t",
+                            "access_token_expiration_minutes":1,
+                            "refresh_token_expiration_days":1,"algorithm":"HS256"},
+                    "sso":{"enabled":false,"providers":[],"token_cache_ttl_minutes":1,
+                            "aws_iam":null,"azure_ad":null}}"#,
+            )
+            .expect("minimal auth config")
+        };
+        let svc = super::UnifiedAuthService::new(cfg).expect("service");
+        svc.convert_api_key_to_unified(info)
+    }
+
+    /// TD-TENANT-1 follow-up (a): a configured `gateway` role makes the API
+    /// key a gateway principal — previously structurally impossible (roles
+    /// were hardcoded to `api_user`).
+    #[test]
+    fn apikey_gateway_role_makes_a_gateway_principal() {
+        let ctx = convert(key("gw", vec!["gateway"]));
+        assert!(
+            ctx.is_gateway_principal(),
+            "gateway role must stamp the principal"
+        );
+    }
+
+    /// Fail-closed: a typo grants nothing — only the exact `gateway`/
+    /// `operator` strings match.
+    #[test]
+    fn apikey_typo_role_grants_nothing() {
+        let ctx = convert(key("typo", vec!["gateways", "Gateway", ""]));
+        assert!(!ctx.is_gateway_principal());
+    }
+
+    /// ADVERSARIAL REVIEW (2026-08-31) regression: a config-supplied BUSINESS
+    /// role must NOT reach the user context — `SecurityPredicate::RoleBased`
+    /// grants Unrestricted row access on role-string match, so arbitrary
+    /// pass-through would silently satisfy RLS policies. Only the delegation
+    /// markers survive the conversion.
+    #[test]
+    fn apikey_business_roles_are_dropped_not_passed_through() {
+        let ctx = convert(key("biz", vec!["analyst", "admin", "collection_user"]));
+        assert!(!ctx.is_gateway_principal());
+        assert_eq!(
+            ctx.roles,
+            vec!["api_user".to_string()],
+            "only delegation markers may pass; business roles are an RLS escalation"
+        );
+        // And the delegation marker still passes alongside a business role.
+        let ctx = convert(key("mix", vec!["analyst", "gateway"]));
+        assert!(ctx.is_gateway_principal());
+        assert!(!ctx.roles.contains(&"analyst".to_string()));
+    }
+
+    /// The default (no roles) keeps today's behavior exactly.
+    #[test]
+    fn apikey_default_roles_unchanged() {
+        let ctx = convert(key("plain", vec![]));
+        assert!(!ctx.is_gateway_principal());
+        assert_eq!(ctx.roles, vec!["api_user".to_string()]);
+    }
+
+    /// Defense in depth: `gateway` unlocks ONLY delegation under GatewayOnly
+    /// — it implies NO data-plane permission. Authz stays permission-driven.
+    #[test]
+    fn apikey_gateway_role_grants_no_data_plane_permission() {
+        let ctx = convert(key("gw", vec!["gateway"]));
+        assert!(
+            ctx.effective_permissions.is_empty(),
+            "gateway role must not imply any UnifiedPermission"
+        );
+    }
+
+    /// Config compatibility: TOML without `roles` parses (serde default).
+    #[test]
+    fn apikey_toml_without_roles_parses() {
+        let toml = r#"
+user_id = "u1"
+tenant_id = "t1"
+permissions = ["read"]
+ip_restrictions = []
+"#;
+        let info: ApiKeyInfo = toml::from_str(toml).expect("legacy TOML must parse");
+        assert!(info.roles.is_empty());
+    }
+
+    /// The end-to-end contract: an API-key principal stamped `gateway` by
+    /// CONFIG is accepted by the ONE shared trust primitive for GatewayOnly
+    /// delegation — and one without roles is refused. This is the property
+    /// TD-TENANT-1 follow-up (a) exists for; tested at the primitive seam the
+    /// surfaces actually call.
+    #[test]
+    fn apikey_gateway_principal_is_accepted_for_gatewayonly_delegation() {
+        use proximadb_tenant::{
+            AuthenticatedTenantBinding, HeaderTrustPolicy, ResolvedTenantAssertion,
+            resolve_tenant_assertion,
+        };
+        let bind =
+            |ctx: &crate::security::rbac_service::UnifiedUserContext| AuthenticatedTenantBinding {
+                tenant_id: ctx.tenant_id.clone().expect("key bound to tenant-a"),
+                is_gateway_principal: ctx.is_gateway_principal(),
+            };
+
+        let gw = convert(key("gw", vec!["gateway"]));
+        let binding = bind(&gw);
+        match resolve_tenant_assertion(
+            Some("tenant-b"),
+            Some(&binding),
+            HeaderTrustPolicy::GatewayOnly,
+        ) {
+            Ok(ResolvedTenantAssertion::Asserted(t)) => assert_eq!(t, "tenant-b"),
+            other => panic!("gateway-role API key must delegate, got {other:?}"),
+        }
+
+        let plain = convert(key("plain", vec![]));
+        let binding = bind(&plain);
+        assert!(
+            resolve_tenant_assertion(
+                Some("tenant-b"),
+                Some(&binding),
+                HeaderTrustPolicy::GatewayOnly
+            )
+            .is_err(),
+            "role-less API key must NOT delegate under GatewayOnly"
+        );
+    }
+
+    #[test]
+    fn apikey_toml_with_roles_round_trips() {
+        let toml = r#"
+user_id = "u1"
+permissions = []
+roles = ["gateway"]
+ip_restrictions = []
+"#;
+        let info: ApiKeyInfo = toml::from_str(toml).expect("roles TOML must parse");
+        assert_eq!(info.roles, vec!["gateway".to_string()]);
+    }
+
     use super::*;
 
     fn api_key_test_config(api_keys: HashMap<String, ApiKeyInfo>) -> AuthenticationConfig {
@@ -1174,10 +1585,9 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         }
     }
@@ -1227,6 +1637,7 @@ mod tests {
                 user_id: "mallory".to_string(),
                 tenant_id: Some("tenant-x".to_string()),
                 permissions: vec!["*".to_string()],
+                roles: vec![],
                 created_at: None,
                 expires_at: None,
                 rate_limit_per_minute: None,
@@ -1275,10 +1686,9 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         };
 
@@ -1315,10 +1725,9 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         };
 
@@ -1365,10 +1774,9 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         }
     }
@@ -1378,6 +1786,7 @@ mod tests {
             user_id: user_id.to_string(),
             tenant_id: None,
             permissions: permissions.into_iter().map(String::from).collect(),
+            roles: vec![],
             created_at: None,
             expires_at: None,
             rate_limit_per_minute: None,
@@ -1536,8 +1945,6 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: false,
@@ -1546,6 +1953,7 @@ mod tests {
                 cn_role_mapping,
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| {
@@ -1584,8 +1992,6 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: false,
@@ -1594,6 +2000,7 @@ mod tests {
                 cn_role_mapping,
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
@@ -1633,8 +2040,6 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: false,
@@ -1643,6 +2048,7 @@ mod tests {
                 cn_role_mapping,
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
@@ -1679,8 +2085,6 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: true,
@@ -1689,6 +2093,7 @@ mod tests {
                 cn_role_mapping: HashMap::new(),
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let result = UnifiedAuthService::new(config);
@@ -1718,8 +2123,6 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: false,
@@ -1728,6 +2131,7 @@ mod tests {
                 cn_role_mapping: HashMap::new(),
             },
             audit_fail_closed: false,
+            oidc: None,
         };
 
         let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());

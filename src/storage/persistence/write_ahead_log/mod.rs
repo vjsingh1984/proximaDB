@@ -3994,21 +3994,181 @@ mod td_flush_8_catalog_walk_tests {
     use super::{catalog_default_namespaces, collections_from_catalog_walk};
     use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
 
-    /// Build the exact production gap shape (TD-FLUSH-8): a collection table
-    /// registered under `["default"]` while `list_namespaces(None)` does NOT
-    /// report the `default` namespace (here: the mock's configured database is
-    /// `other`, and `create_table` — like a reload/visibility gap — does not
-    /// re-register the namespace).
-    async fn catalog_with_unlisted_default_collection() -> proximadb_catalog::hive::HiveCatalog {
-        let cache = std::sync::Arc::new(proximadb_catalog::cache::CatalogCache::new(16, 60));
-        let config = proximadb_catalog::hive::HiveCatalogConfig {
-            database: "other".to_string(),
-            ..Default::default()
-        };
-        let catalog = proximadb_catalog::hive::HiveCatalog::new("t".to_string(), config, cache)
-            .await
-            .expect("mock hive catalog");
+    /// A catalog in exactly the TD-FLUSH-8 gap shape: a collection table is
+    /// resolvable under `["default"]` while `list_namespaces(None)` does NOT
+    /// report that namespace.
+    ///
+    /// This used to borrow `HiveCatalog` for the shape, which worked only
+    /// because that adapter was an in-memory mock whose namespace listing
+    /// happened to omit `default`. Two problems with that: the test's real
+    /// requirement was invisible (nothing said "the listing must omit it" — it
+    /// was a side effect of someone else's fixture), and it tied a WAL
+    /// regression test to an unrelated catalog backend. TD-CAT-8 deleted that
+    /// mock, so the shape is now stated directly.
+    ///
+    /// Only `list_namespaces`, `list_tables` and `get_table` are real — those
+    /// are the three the flush-side walk calls. Everything else returns an
+    /// error naming itself, so a future caller that wanders in gets told which
+    /// method it needs rather than a plausible default.
+    struct UnlistedDefaultNamespaceCatalog {
+        table: TableIdentifier,
+        schema: CatalogTableSchema,
+    }
 
+    impl UnlistedDefaultNamespaceCatalog {
+        fn unused<T>(what: &str) -> anyhow::Result<T> {
+            Err(anyhow::anyhow!(
+                "UnlistedDefaultNamespaceCatalog::{what} is not part of the TD-FLUSH-8 fixture"
+            ))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Catalog for UnlistedDefaultNamespaceCatalog {
+        fn name(&self) -> &str {
+            "unlisted-default"
+        }
+        fn catalog_type(&self) -> &str {
+            "test-fixture"
+        }
+
+        /// The gap itself: `default` is deliberately absent.
+        async fn list_namespaces(
+            &self,
+            _parent: Option<&[String]>,
+        ) -> anyhow::Result<Vec<proximadb_catalog::CatalogNamespace>> {
+            Ok(vec![proximadb_catalog::CatalogNamespace::new(vec![
+                "other".to_string(),
+            ])])
+        }
+
+        async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>> {
+            Ok(if namespace == self.table.namespace.as_slice() {
+                vec![self.table.clone()]
+            } else {
+                Vec::new()
+            })
+        }
+
+        async fn get_table(
+            &self,
+            identifier: &TableIdentifier,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            if identifier == &self.table {
+                Ok(self.schema.clone())
+            } else {
+                Err(anyhow::anyhow!("no such table: {identifier:?}"))
+            }
+        }
+
+        async fn create_namespace(
+            &self,
+            _namespace: &[String],
+            _properties: std::collections::HashMap<String, String>,
+        ) -> anyhow::Result<proximadb_catalog::CatalogNamespace> {
+            Self::unused("create_namespace")
+        }
+        async fn drop_namespace(
+            &self,
+            _namespace: &[String],
+            _cascade: bool,
+        ) -> anyhow::Result<bool> {
+            Self::unused("drop_namespace")
+        }
+        async fn namespace_exists(&self, _namespace: &[String]) -> anyhow::Result<bool> {
+            Self::unused("namespace_exists")
+        }
+        async fn get_namespace(
+            &self,
+            _namespace: &[String],
+        ) -> anyhow::Result<proximadb_catalog::CatalogNamespace> {
+            Self::unused("get_namespace")
+        }
+        async fn update_namespace_properties(
+            &self,
+            _namespace: &[String],
+            _updates: std::collections::HashMap<String, String>,
+            _removals: Vec<String>,
+        ) -> anyhow::Result<()> {
+            Self::unused("update_namespace_properties")
+        }
+        async fn create_table_inner(
+            &self,
+            _identifier: &TableIdentifier,
+            schema: CatalogTableSchema,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            Ok(schema)
+        }
+        async fn drop_table(
+            &self,
+            _identifier: &TableIdentifier,
+            _purge: bool,
+        ) -> anyhow::Result<bool> {
+            Self::unused("drop_table")
+        }
+        async fn table_exists(&self, identifier: &TableIdentifier) -> anyhow::Result<bool> {
+            Ok(identifier == &self.table)
+        }
+        async fn rename_table(
+            &self,
+            _from: &TableIdentifier,
+            _to: &TableIdentifier,
+        ) -> anyhow::Result<()> {
+            Self::unused("rename_table")
+        }
+        async fn evolve_schema(
+            &self,
+            _identifier: &TableIdentifier,
+            _evolution: proximadb_catalog::CatalogSchemaEvolution,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            Self::unused("evolve_schema")
+        }
+        async fn get_schema_version(&self, _identifier: &TableIdentifier) -> anyhow::Result<i32> {
+            Self::unused("get_schema_version")
+        }
+        async fn get_schema_by_version(
+            &self,
+            _identifier: &TableIdentifier,
+            _version: i32,
+        ) -> anyhow::Result<CatalogTableSchema> {
+            Self::unused("get_schema_by_version")
+        }
+        async fn create_index(
+            &self,
+            _identifier: &TableIdentifier,
+            _index: proximadb_catalog::CatalogIndex,
+        ) -> anyhow::Result<proximadb_catalog::CatalogIndex> {
+            Self::unused("create_index")
+        }
+        async fn drop_index(
+            &self,
+            _identifier: &TableIdentifier,
+            _index_name: &str,
+        ) -> anyhow::Result<bool> {
+            Self::unused("drop_index")
+        }
+        async fn list_indexes(
+            &self,
+            _identifier: &TableIdentifier,
+        ) -> anyhow::Result<Vec<proximadb_catalog::CatalogIndex>> {
+            Self::unused("list_indexes")
+        }
+        async fn get_statistics(
+            &self,
+            _identifier: &TableIdentifier,
+        ) -> anyhow::Result<proximadb_catalog::CatalogTableStatistics> {
+            Self::unused("get_statistics")
+        }
+        async fn update_statistics(
+            &self,
+            _identifier: &TableIdentifier,
+            _stats: proximadb_catalog::CatalogTableStatistics,
+        ) -> anyhow::Result<()> {
+            Self::unused("update_statistics")
+        }
+    }
+
+    fn catalog_with_unlisted_default_collection() -> UnlistedDefaultNamespaceCatalog {
         let mut schema = CatalogTableSchema {
             name: "diag_coll".to_string(),
             // `validate_schema` requires at least one column.
@@ -4035,12 +4195,10 @@ mod td_flush_8_catalog_walk_tests {
         schema
             .properties
             .insert("collection.name".to_string(), "diag_coll".to_string());
-        let table_id = TableIdentifier::new(vec!["default".to_string()], "diag_coll");
-        catalog
-            .create_table(&table_id, schema)
-            .await
-            .expect("register collection table under default");
-        catalog
+        UnlistedDefaultNamespaceCatalog {
+            table: TableIdentifier::new(vec!["default".to_string()], "diag_coll"),
+            schema,
+        }
     }
 
     /// The namespace walk must ALWAYS include `["default"]`, mirroring the
@@ -4048,7 +4206,7 @@ mod td_flush_8_catalog_walk_tests {
     /// that keeps the flush-side listing in agreement with the write path.
     #[tokio::test]
     async fn namespace_walk_always_includes_default() {
-        let catalog = catalog_with_unlisted_default_collection().await;
+        let catalog = catalog_with_unlisted_default_collection();
 
         // Precondition: the fixture really reproduces the gap — the namespace
         // listing omits `default` while the table under it is resolvable.
@@ -4078,7 +4236,7 @@ mod td_flush_8_catalog_walk_tests {
     /// write path resolved the same collection fine).
     #[tokio::test]
     async fn flush_side_list_finds_collection_in_unlisted_default_namespace() {
-        let catalog = catalog_with_unlisted_default_collection().await;
+        let catalog = catalog_with_unlisted_default_collection();
 
         let collections = collections_from_catalog_walk(&catalog).await;
         assert!(

@@ -316,8 +316,84 @@ pub struct QueryShape {
     pub join_bearing: bool,
 }
 
+/// Vector-operator geometry presented to the same scheduler without conflating
+/// an operator access method with the containing SQL plan's compute backend.
+/// A `vector_search(...)` source may execute inside a DataFusion join, so this
+/// is deliberately a sibling of [`QueryShape`], not a boolean embedded in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorQueryShape {
+    /// Query-vector width. Kept as measured geometry for route telemetry; it is
+    /// not bucketed into an unvalidated threshold on the hot path.
+    pub dimensions: usize,
+    /// Requested result cardinality.
+    pub top_k: u32,
+    /// Whether the vector operator carries a pushed predicate.
+    pub has_filter: bool,
+    /// Explicit caller intent. `None` means the correctness-first exact floor.
+    pub requested_mode: Option<proximadb_search_types::search_params::SearchMode>,
+}
+
+/// Observable vector access-path decision produced at the canonical scheduler
+/// seam and consumed by the one native vector-search port.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorRouteDecision {
+    /// Vector access methods execute in the specialized native backend.
+    pub backend: ComputeBackend,
+    /// Catalog workload classification for telemetry and policy.
+    pub workload_profile: CatalogWorkloadProfile,
+    /// Typed access strategy and execution effort that must be forwarded to
+    /// storage unchanged. Exact scan and ANN remain access methods over the
+    /// same authority, not peer [`ComputeBackend`] variants.
+    pub search_mode: proximadb_search_types::search_params::SearchMode,
+    /// Human-readable selection rationale.
+    pub reason: String,
+    /// What produced the decision. Cost-driven override remains default-OFF;
+    /// this slice records the static/explicit selection truthfully.
+    pub source: RouteSource,
+    has_filter: bool,
+}
+
+impl VectorRouteDecision {
+    /// Stable low-cardinality label derived from the canonical search mode.
+    pub fn strategy_label(&self) -> &'static str {
+        use proximadb_search_types::search_params::SearchMode;
+
+        match &self.search_mode {
+            SearchMode::Exact => "exact",
+            SearchMode::Approximate { .. } => "approximate",
+            SearchMode::Adaptive { .. } => "adaptive",
+        }
+    }
+
+    /// Stable class used by route metrics. Dimension/top-k remain numeric trace
+    /// geometry until measured evidence justifies stable buckets; this avoids
+    /// fragmenting cost cells around arbitrary thresholds.
+    pub fn shape_class(&self) -> String {
+        format!(
+            "vector/native/mode={}/filter={}",
+            self.strategy_label(),
+            if self.has_filter { "yes" } else { "no" }
+        )
+    }
+
+    /// Stable one-line diagnostic for pgwire/UDTF logs and future EXPLAIN.
+    pub fn explain_line(&self) -> String {
+        format!(
+            "Vector Route: Native(Vector) (strategy={}, reason=\"{}\")",
+            self.strategy_label(),
+            self.reason
+        )
+    }
+}
+
 /// TD-OLAP-1 slice 2: PAX-native OLAP scan gate (inline — not imported from
 /// `pax_adapter` so compute_scheduler compiles without `datafusion-integration`).
+///
+/// WARNING (TD-PAXRG-1 closeout): enabling this gate today changes only
+/// DECISION STAMPING — dispatch still requires `parquet_backed`, so Volcano
+/// serves while the cost model attributes Volcano's measured costs to
+/// DataFusion cells. Do not default-ON until the slice-2 dispatch wiring
+/// (see the TD-OLAP-1 slice-2 design record) lands.
 fn pax_reader_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
@@ -599,6 +675,58 @@ impl ComputeScheduler {
         finalize_route(self.route_select_inner(shape), shape)
     }
 
+    /// Select the access strategy for one vector-search operator.
+    ///
+    /// This shares the scheduler policy boundary and observability with SQL
+    /// routing while preserving the architectural axes: the containing plan
+    /// still chooses one [`ComputeBackend`] via [`Self::route_select`], and this
+    /// method chooses an access method inside its vector source. With no caller
+    /// intent the static route remains exact; approximate/adaptive selection is
+    /// activated only by explicit typed intent until comparable route-cost
+    /// cells and recall ratchets exist.
+    pub fn route_vector_search(&self, shape: VectorQueryShape) -> VectorRouteDecision {
+        use proximadb_search_types::search_params::SearchMode;
+
+        let (search_mode, intent) = match shape.requested_mode {
+            None => (
+                SearchMode::Exact,
+                "safe default: exact search preserves the SQL correctness floor".to_string(),
+            ),
+            Some(SearchMode::Exact) => (
+                SearchMode::Exact,
+                "explicit exact intent preserves the SQL correctness floor".to_string(),
+            ),
+            Some(mode @ SearchMode::Approximate { nprobe }) => {
+                let detail = match nprobe {
+                    Some(nprobe) => format!("explicit approximate intent (nprobe={nprobe})"),
+                    None => "explicit approximate intent (engine-selected effort)".to_string(),
+                };
+                (mode, detail)
+            }
+            Some(mode @ SearchMode::Adaptive { threshold }) => (
+                mode,
+                format!("explicit adaptive intent (vector threshold={threshold})"),
+            ),
+        };
+        let decision = VectorRouteDecision {
+            backend: ComputeBackend::Native,
+            workload_profile: CatalogWorkloadProfile::Vector,
+            search_mode,
+            reason: format!(
+                "{intent}; dimensions={}, top_k={}, filter={}",
+                shape.dimensions, shape.top_k, shape.has_filter
+            ),
+            source: RouteSource::Static,
+            has_filter: shape.has_filter,
+        };
+        crate::metrics::route_metrics::record_decision(
+            "Native(Vector)",
+            &decision.shape_class(),
+            decision.source.as_str(),
+        );
+        decision
+    }
+
     /// The static shape rule ONLY — no metric, no io_trace stamp. The pure
     /// policy core; [`Self::route_select`] and [`Self::route_select_advised`]
     /// wrap it (the latter may override the backend before stamping, so the
@@ -825,11 +953,11 @@ impl ComputeScheduler {
                 // when it moves fewer bytes (latency = depth × RTT). Flip to the
                 // cheapest freshness-safe candidate WITHIN the budget.
                 if let Some(budget) = model.rtt_budget()
-                    && static_choice.range_gets > budget
+                    && static_choice.get_ops > budget
                     && let Some(within) = consult
                         .ranked()
                         .iter()
-                        .filter(|c| c.range_gets <= budget && flip_eligible(&c.backend))
+                        .filter(|c| c.get_ops <= budget && flip_eligible(&c.backend))
                         .min_by(|a, b| {
                             a.score
                                 .partial_cmp(&b.score)
@@ -998,6 +1126,82 @@ fn finalize_route(decision: SelectRouteDecision, shape: QueryShape) -> SelectRou
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vector_route_preserves_safe_default_and_explicit_search_intent() {
+        use proximadb_search_types::search_params::SearchMode;
+
+        let scheduler = ComputeScheduler::new();
+        let default_route = scheduler.route_vector_search(VectorQueryShape {
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: None,
+        });
+        assert_eq!(default_route.backend, ComputeBackend::Native);
+        assert_eq!(
+            default_route.workload_profile,
+            CatalogWorkloadProfile::Vector
+        );
+        assert_eq!(default_route.search_mode, SearchMode::Exact);
+        assert_eq!(default_route.strategy_label(), "exact");
+        assert!(default_route.reason.contains("safe default"));
+
+        let explicit_exact_route = scheduler.route_vector_search(VectorQueryShape {
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: Some(SearchMode::Exact),
+        });
+        assert_eq!(explicit_exact_route.search_mode, SearchMode::Exact);
+        assert_eq!(explicit_exact_route.strategy_label(), "exact");
+        assert!(
+            explicit_exact_route
+                .reason
+                .contains("explicit exact intent")
+        );
+
+        let approximate = SearchMode::Approximate { nprobe: Some(12) };
+        let approximate_route = scheduler.route_vector_search(VectorQueryShape {
+            dimensions: 1_536,
+            top_k: 50,
+            has_filter: true,
+            requested_mode: Some(approximate.clone()),
+        });
+        assert_eq!(approximate_route.search_mode, approximate);
+        assert_eq!(approximate_route.strategy_label(), "approximate");
+        assert!(approximate_route.reason.contains("nprobe=12"));
+        assert_eq!(
+            approximate_route.shape_class(),
+            "vector/native/mode=approximate/filter=yes"
+        );
+    }
+
+    #[test]
+    fn vector_access_routing_does_not_change_relational_backend_routing() {
+        let scheduler = ComputeScheduler::new();
+        let before = scheduler.route_select(QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        });
+
+        let _ = scheduler.route_vector_search(VectorQueryShape {
+            dimensions: 384,
+            top_k: 10,
+            has_filter: false,
+            requested_mode: None,
+        });
+
+        let after = scheduler.route_select(QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        });
+        assert_eq!(before.backend, ComputeBackend::DataFusionLocal);
+        assert_eq!(after.backend, before.backend);
+        assert_eq!(after.workload_profile, before.workload_profile);
+    }
 
     #[test]
     fn olap_shape_on_native_storage_stays_on_volcano() {
@@ -1252,12 +1456,9 @@ mod tests {
         assert!(line.starts_with("Compute Route: Native(Volcano) (workload=Olap"));
     }
 
-    fn io_snap(
-        range_gets: u64,
-        bytes_read: u64,
-    ) -> crate::observability::io_trace::IoTraceSnapshot {
+    fn io_snap(get_ops: u64, bytes_read: u64) -> crate::observability::io_trace::IoTraceSnapshot {
         crate::observability::io_trace::IoTraceSnapshot {
-            range_gets,
+            get_ops,
             bytes_read,
             ..Default::default()
         }

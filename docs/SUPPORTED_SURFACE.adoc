@@ -80,10 +80,11 @@ REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of
 * *REST /api/v3* — **removed**. The document-ingest handler lives canonically at
   `POST /api/v2/collections/{id}/documents`; the former v3 308-redirect alias was
   deleted (it was never an OpenAPI/released surface). Target `/api/v2` for all clients.
-* *gRPC v1 (`proximadb.v1.*`)* — deprecated-compat; **OFF by default**. Enable only for
-  transitional client compatibility via config flag `enable_grpc_v1_compat: true` or
-  environment variable `PROXIMADB_GRPC_V1_COMPAT=1`. This compat layer is scheduled for
-  **Sunset 2026-06-30**; clients must migrate to `proximadb.v2.*` before that date.
+* *gRPC v1 (`proximadb.v1.*`)* — **REMOVED** (sunset completed). The v1 services were
+  hard-deleted; the former opt-in (`enable_grpc_v1_compat` / `PROXIMADB_GRPC_V1_COMPAT`)
+  no longer exists — setting it does nothing. The v1 *proto types* remain in-tree as
+  internal message shapes only (ratchet-tracked by `scripts/check_v1_proto_usage.py`);
+  they are not a served surface. Target `proximadb.v2.*` exclusively.
 ====
 
 === Query Surfaces (which language goes where)
@@ -142,11 +143,13 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 
 | *Graph `ExecuteHybridQuery` / `CreateGraphWithEngine` / `GetPulsarStats`*
 | Cross-modality hybrid query; engine-typed graph create; PULSAR stats
-| Still v1-only / unimplemented. `ExecuteHybridQuery` needs a v2-native
-  vector+graph fusion surface (depends on full `UnifiedHandlers`);
-  `CreateGraphWithEngine`/`GetPulsarStats` are unimplemented (PULSAR/QUASAR
-  retired). See TD-124.
-| Deferred — TD-124
+| **Absent from v2; the v1 surface they were deferred to is REMOVED** (the
+  `enable_grpc_v1_compat` gate no longer exists). Hybrid search is served by
+  REST `/api/v2/hybrid/search`; a v2-native gRPC hybrid RPC would be a new
+  design, not a port. `CreateGraphWithEngine`/`GetPulsarStats` are
+  retired/unimplemented (PULSAR/QUASAR). See TD-124 + the v2 graph.proto
+  service comment.
+| Not planned (absent)
 |===
 
 [NOTE]
@@ -207,7 +210,7 @@ primitives.
 | Converge every cross-modal blend on the `oid`-keyed fusion seam (`seed -> expand -> calibrate -> fuse-by-oid -> rank`). Do not add one-off entity/vector/document/graph join handlers.
 
 | Entity / SKS
-| Deprecated gRPC v1 `proximadb.v1.EntityService` when `enable_grpc_v1_compat=true`; legacy REST v1 entity routes and split `ProximaEntityStore` exist as compatibility/transition code
+| gRPC v1 `proximadb.v1.EntityService` removed (sunset completed — no opt-in flag remains); legacy REST v1 entity routes and split `ProximaEntityStore` exist as compatibility/transition code
 | Semantic convenience shape: entity id, metadata, embeddings, provenance, relations, temporal fields
 | Do not create v2 entity storage. A future v2 entity surface, if exposed, must be an orchestration facade over record/vector + graph + document/provenance + event/temporal history, with `TenantContext` and structural tenant paths at every I/O boundary.
 |===
@@ -274,7 +277,7 @@ for evidence/provenance, and event/history records for temporal state. The v1
 
 | Security runtime
 | Beta
-| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present. Tenant identity is credential-bound by policy on EVERY network surface (TD-TENANT-1, one shared primitive in `proximadb-tenant`): an assertion that contradicts an authenticated tenant binding is always rejected (HTTP 403 / gRPC PERMISSION_DENIED / SQLSTATE 28000); the bare assertion (REST `X-Tenant-ID`, gRPC/Arrow Flight `x-tenant-id` metadata, pgwire startup `database` + tenant session vars) is governed by `HeaderTrustPolicy` (`open` default / `authenticated-only` in the multi-tenant strict preset / `gateway-only` for trusted-gateway delegation via a first-class gateway-principal role marker), configurable via `[security.tenant] header_trust` and overridable via `PROXIMADB_TENANT_HEADER_TRUST`. Rejections emit `proximadb::tenant_audit` warns.
+| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present. Tenant identity is credential-bound by policy on EVERY network surface (TD-TENANT-1, one shared primitive in `proximadb-tenant`): an assertion that contradicts an authenticated tenant binding is always rejected (HTTP 403 / gRPC PERMISSION_DENIED / SQLSTATE 28000); the bare assertion (REST `X-Tenant-ID`, gRPC/Arrow Flight `x-tenant-id` metadata, pgwire startup `database` + tenant session vars) is governed by `HeaderTrustPolicy` (`open` default / `authenticated-only` in the multi-tenant strict preset / `gateway-only` for trusted-gateway delegation via a first-class gateway-principal role marker), configurable via `[security.tenant] header_trust` and overridable via `PROXIMADB_TENANT_HEADER_TRUST`. Rejections emit `proximadb::tenant_audit` warns. The entitlement claim (`x-tenant-tier` on REST, gRPC, and Arrow Flight; `proximadb_tier` pgwire startup param) is governed by the same ladder via `[security.tenant] tier_header_trust` / `PROXIMADB_TIER_HEADER_TRUST` (ADR-0053 W8): an untrusted claim is dropped — never a 4xx — and the tenant resolves its default tier; under strict policies the pgwire startup parameter is inert (trust auth carries no binding). Generic OIDC bearer authentication is supported via `[security.authentication.oidc]` (TD-SSO-1: Kanidm, Keycloak, Okta, Azure Entra ID, Google Workspace; JWKS-validated RS256/ES256, any-of audience list, issuer aliases for bare-hostname `iss` forms, nested claim paths for Keycloak `realm_access.roles`, custom CA for internal PKI, configurable clock-skew/JWKS-TTL/timeout; IdP role claims cross only through the sanitized seam — gateway/operator delegation markers plus an operator allowlist, everything else dropped). REST request rate limiting is opt-in via `PROXIMADB_REST_RATE_LIMIT_RPM` (TD-RATE-1; default off — unset adds no middleware layer; per observed client IP, `/health` exempt, process-global ceiling at 10x the per-IP cap). Deprecated claim use and dropped tier claims are metered (`proximadb_deprecated_claim_uses_total`, `proximadb_tier_claims_dropped_total`) — the Flight legacy-alias retirement gate is `increase(proximadb_deprecated_claim_uses_total[7d]) == 0`. Claim *names* come from one shared vocabulary across all four surfaces (TD-TENANT-3): `x-tenant-id` / `x-tenant-tier` are canonical everywhere, Arrow Flight additionally DETECTS three deprecated tenant-alias names (`x-proximadb-tenant-id`, `tenant-id`, `tenant_id`) for deprecation warning only — they no longer grant a tenant (honoring removed 2026-08-29; the names are deleted at the next release boundary), and a stamped tier claim is normalized to a canonical tier id at the boundary so an alias and its canonical spelling resolve to the same cache entitlement.
 | Security admin/status APIs and stronger online revocation policy are incomplete. pgwire runs trust auth (no credential binding), so strict policies disable pgwire tenant selection rather than authenticate it; ADR-031 tenant stable-id minting behind the `TenantStableIdResolver` port is pending (TD-TENANT-1).
 
 | Hybrid retrieval
@@ -296,6 +299,16 @@ for evidence/provenance, and event/history records for temporal state. The v1
 | Beta
 | TST engine complete (ASOF joins, downsampling, OHLC; TD-009). Event sourcing engine complete (append-only WAL, temporal queries; TD-010).
 | Product packaging, API parity, and production validation at scale still in progress.
+
+| Document chunking (Python SDK)
+| Supported
+| `proximadb_sdk.chunking_strategies` -- fixed-size, sentence, paragraph, recursive, sliding-window, semantic and token-budget strategies over a single span-first spine (ADR-091). A chunk is a span, so `source[start:end] == chunk.text` holds exactly wherever `offset_contract` is `exact`; totality, non-overlap, order preservation and the `max_chunk_size` cap are structural post-conditions enforced at one chokepoint, not per-strategy conventions. Grid (where a cut may land), measure (how a span is counted: `char` or `token`) and budget (window/overlap/floor/cap) are independently selectable. Conformance is an absolute gate, not a ratchet: 70 of 70 strategy x corpus cases clean, 0 violations, plus a golden-output oracle proving refactors are behaviour-neutral and an eval suite scoring retrieval quality (containment, fragmentation, structure preservation, attributability). Four post-partition capabilities run through one `ChunkPass` seam (ADR-091 D7), each declaring which of a chunk's three faces it touches -- the span it is, the text embedded, the text returned -- so ordering is derived rather than configured and is verified after every pass: heading-path annotation (default ON, free), near-duplicate elision (MinHash + exact Jaccard), structural context enrichment, and small-to-big parent linkage.
+| The `token` measure needs the whole document, so it is refused on the streaming path rather than measured against a bounded buffer. Token-measured chunks are deliberately NOT char-contiguous (inter-token whitespace falls between chunks); totality is defined over non-whitespace characters. `deduplicate_chunks`, `enrich_context` and `link_parent_chunks` are all **default-OFF** because each changes what is stored: dedup is lossy by construction, enrichment costs KEU on every chunk (measured +4%), and parent linkage costs ~1.74x KSU (measured; it buys containment 0.75 -> 0.875 on the returned unit). Enrichment's *recall* gate is deliberately NOT in the chunking eval harness -- that harness is model-independent so its failures stay attributable to chunking, and enrichment changes only what a model sees; gate it in the ANN/recall harnesses. Chunk-policy fields on the wire (`EmbeddingPolicy.chunk`) are NOT connected to this subsystem -- see TD-CHUNK-5; configure chunking through the SDK, not the wire.
+
+| Code chunking / symbol extraction (Python SDK)
+| Experimental
+| `CodeChunkingStrategy` delegates to the shared, commercially neutral `victor-codegraph` package (ADR-029; TD-CG2 deleted the duplicate in-SDK parsers). **Symbol extraction is measured against `victor-codegraph` 0.9.0, which is NOT YET PUBLISHED** (latest on PyPI: 0.8.1). On 0.8.1 the acceptance suite fails 30 of 54 and R1 fails for **15 of the 16** languages below, so the delegated chunker returns almost no symbols there. The extra therefore pins `>=0.9.0`, which is deliberately unsatisfiable from PyPI today: an install-time error naming the version is the honest form of that gap, and `code.py` carries a matching runtime guard for environments already holding an older copy. The per-language assertion (`SYMBOL_EXTRACTING_LANGUAGES`, R1) covers **16 languages** -- bash, c, cpp, csharp, go, java, javascript, kotlin, lua, php, python, rust, scala, swift, tsx, typescript -- across 40 file extensions. Relations (calls/imports/inheritance) are extracted for the same set and drive the code knowledge graph's edges. Chunks carry `offset_basis="byte"` (UTF-8 byte offsets, unlike every text strategy) and honour `max_chunk_size`.
+| Requires the `codegraph` extra at **>= 0.9.0**; without it — or with an older copy — code chunking **fails loudly** naming what is missing, rather than degrading to unlabelled text windows or to a package that silently extracts nothing. The acceptance suite skips (naming the installed version) rather than running against a version its claims were never measured on. **No CI job installs the extra today**, so the delegated path is not yet exercised in CI; wiring it is gated on an adequate release. Two advertised languages are detected and chunked but yield **no symbols** (`ruby`, `sql` -- `COVERED_WITHOUT_SYMBOLS`), and six were withdrawn from the advertised map entirely (`perl`, `haskell`, `elixir`, `json`, `xml`, `yaml` -- `WITHDRAWN_LANGUAGES`); files of any unrecognised type still chunk through a fallback labelled `chunk_type="code_fallback"`, so a symbol-less window can never be mistaken for a symbol. Two upstream defects are pinned as strict xfails: a Rust `impl` block emits a window chunk alongside its nested `fn` (double-embedded body), and a JS/TS/Java class yields a header chunk leaving the closing brace uncovered. Do not quote "20+ languages": the three sets above partition the surface exactly, asserted in both directions.
 |===
 
 == Storage Engine Matrix (canonical inventory)
@@ -318,9 +331,9 @@ in the Current Matrix stay authoritative for API-level claims. `StorageEngineStr
 | The safe default for adoption and examples.
 
 | VIPER
-| Beta
-| `Viper` variant, factory-reachable, ungated. Columnar Parquet with advanced quantization; analytics-leaning.
-| Selectable per collection; no per-engine conformance ratchet published yet — do not market above Beta by name.
+| Deprecated
+| `Viper` variant, factory-reachable, ungated (stage 1). Columnar Parquet with advanced quantization; analytics-leaning. DEPRECATED per ADR-093 — staged retirement in progress (TD-VIPER-1).
+| Do NOT create new VIPER collections: use SST (default), NOVA (columnar-analytics vector), or the DataFusion/Parquet path (analytics). Existing collections remain readable; stage 2 rejects new selections at the collection boundary while preserving legacy reads, and stage 3 requires verified migration of all persisted VIPER collections before code removal.
 
 | HELIX
 | Beta
@@ -463,7 +476,7 @@ must not list them under "supported", "production", or "ready":
   Codecs/kernels are tested; no per-collection policy or recall SLA is claimed.
 * Arrow Flight / gRPC service multiplexing as a customer-facing transport.
 * Trino / Spark compute adapters — _scaffolded_ (Spark JNI bridge per TD-097; Trino Flight per TD-098). Structural contract gates land in 2026-05-30 connector sprint (`tests/connectors_flight_contract.rs`); end-to-end wire impl deferred.
-* Hadoop InputFormat / OutputFormat — _write-side wire-true_ (`ProximaRecordWriter::flush_now` posts spec-true `/api/v2/.../records/batch`); read-side blocked on the records-scan endpoint gap tracked under TD-099.
+* Hadoop InputFormat / OutputFormat — _write-side wire-true_ (`ProximaRecordWriter::flush_now` posts spec-true `/api/v2/.../records/batch`); read-side unblocked: the records-scan endpoint pages by cursor (TD-099; the cursor-identity 400 fixed 2026-08).
 * DuckDB connector — _Rust-side wire-true for bind / search / insert_ (`src/connectors/duckdb.rs`); DuckDB extension binary compilation + scan-via-Flight are separate follow-ups.
 * All "Not Supported in v0.2" items above.
 

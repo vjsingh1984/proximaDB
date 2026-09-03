@@ -125,6 +125,46 @@ RSS, and recall. No layout or production-default change is authorized by this
 clarification. Eligible Hot/same-region policy may minimize requests; cold or
 remote policy must jointly minimize bytes and requests.
 
+**Measured range-policy update (2026-08-14).** On that exact immutable bed, a
+clean 4-versus-32 MiB Azurite wire run measured 49.543 -> 17.084 GET/query at
+top-10 and 49.529 -> 17.169 at top-20. The Azure SDK emitted one HTTP range
+request per application range; bytes rose 3.4--3.9%, but peak RSS rose
+10.9--12.3%, so 32 MiB failed the predeclared 10% RSS gate. A focused 24 MiB
+run measured 17.958/17.846 GET/query, +3.3--4.0% bytes, and +6.2--6.4% RSS.
+Its aggregate recall differed from its same-run 4 MiB control by 0.0004 at
+top-10 and 0.00005 at top-20, within the 0.0005 non-inferiority margin and
+above the 0.98 ratchet. Because repeated 4 MiB controls span a similar range,
+the harness now records paired per-query result identity and recall-hit deltas
+for an exact-current rerun. No range default or layout change is authorized
+until that rerun passes and `k_c=90` is repeated at the same cap. The result
+does establish that the 4 MiB cap, rather than cell geometry alone, dominated
+this bed's Hot-Blob operation count.
+
+**Adaptive read-plan amendment (2026-08-17).** Exact-current measurements now
+show that cap choice is shape-dependent even when writer geometry keeps average
+SQ8 cells near 4 MiB. On BIGANN 1M (`128d`, `k_c=30`, `nprobe=6`), the
+4/8/12/16/24 MiB curve measured 10.077/8.177/7.796/7.657/7.647 wire GET/query;
+bytes rose from 28.56 MiB/query to 33.11--33.71 MiB/query. Thus 8 MiB is the
+latency knee, 16 MiB the operation knee, and 24 MiB is dominated. On the
+491,655-row 768d `k_c=90`, `nprobe=30` bed, 24 MiB reduced top-10 wire GETs
+47.514 -> 26.790 with +4.0% bytes and approximately half the median latency.
+
+ADR-065 therefore rejects both a universal 4 MiB cap and a universal larger
+cap. Under the existing default-OFF storage read-strategy gate, Regions A/B/D
+may enumerate provider-bounded policies and execute their real coalescing state
+machine without I/O. A tier-aware engine-core objective chooses from exact
+cold-miss GET/byte estimates, bounds Hot-cloud bytes to 1.25x the conservative baseline, prices
+retrieval-billed tiers more strictly, and chooses the smaller cap when scores
+are within 0.5%. Explicit operator overrides retain precedence and an absent
+gate retains the fixed policy. This changes neither selected cells nor decoded
+rows, so it is a physical I/O decision rather than an ANN-quality decision.
+The first slice holds the backend-derived gap constant; adaptive gap candidates
+remain deferred until a paired gap/RSS sweep provides evidence.
+PAX currently supplies no per-object access-tier metadata at this read leaf, so
+an absent tier is explicitly the active Hot/standard profile. Cool/Cold/Archive
+promotion requires plumbing the canonical `ObjectAccessTier`; URL aliases do
+not infer billing tier.
+
 === Explicitly rejected / deferred
 
 * **Separate files per family** — needs a multi-object commit protocol
@@ -244,10 +284,36 @@ region. It is to reuse and persist the compaction work already paid for, then
 selectively address existing A/B runs (TD-RDSTRAT-8). Region C/D follow only if
 the resulting trace still identifies them as dominant.
 
+== Amendment — row-group Region D + Region C closure (2026-08, TD-PAXRG-1)
+
+Regions C and D are implemented, closing the two open targets above:
+
+* **Region D is a row-group region** — Parquet-style granules (Olap-framed PAX
+  blocks, RowDirectory + in-block rgdir suppressed, 256 KiB target floor), per-RG
+  zone stats + OID-chunk extents in the footer's per-entry stats payload, and the
+  ANN top-k OID fetch reading footer-addressed chunks instead of whole granules.
+  Measured driver: per-block framing amplified ~15× at 400 B targets; the floor
+  makes that structurally impossible and the measured closure (v4 < ¼ of the v3
+  micro-block baseline on identical data) is pinned in TD-PAXRG-1.
+* **Region C is a hoisted exact-f32 region** — same ordinal space as A/B, extent
+  in the header prefix + footer section 6, written only under the existing
+  `pax_f32_tier` opt-in (Q4's evidence gate governs per-collection activation).
+  Reconstruction parity with in-block stripes is bitwise (pinned).
+* **Single layout version (pre-GA collapse)**: nothing serialized predates this
+  change, so the v1/v3/v4 version sprawl Q2 anticipated was deleted rather than
+  maintained. ONE version whose region extents are always serialized (zero =
+  absent) — this Decision's own invariant ("region presence is declared by the
+  serialized header/footer") made the version byte redundant. The byte is
+  reserved for the first post-GA successor; Q2's mixed-read machinery (parse
+  arms + freeze tests) re-engages then, with actual legacy bytes to protect.
+* Write side stays default-OFF (`PROXIMADB_PAX_WRITE_RG_LAYOUT`, per-collection
+  `pax_rg_layout` tag); the SIFT-recall + amplification + GET-economy flip
+  criteria live in TD-PAXRG-1 §Remaining work.
+
 == Consequences
 
-* Region B is the accepted and shipped part of this ADR. Region C and pure D
-  remain unimplemented, evidence-gated targets.
+* Region B is the accepted and shipped part of this ADR; Regions C and D are now
+  implemented (above), with D's default-ON flip evidence-gated per TD-PAXRG-1.
 * TD-RDSTRAT-8 narrows the scale end-state: a global Region-A scan plus
   whole-Region-B fallback is not acceptable indefinitely as N grows.
 * Downstream pricing dependency (TD-RDSTRAT-6 § downstream note): region

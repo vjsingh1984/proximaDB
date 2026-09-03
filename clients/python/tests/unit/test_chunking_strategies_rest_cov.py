@@ -351,43 +351,71 @@ def test_semantic_section_break_marker():
 def test_semantic_single_section_no_boundaries():
     cfg = ChunkingConfig(chunk_size=500, min_chunk_size=1, max_chunk_size=1000)
     s = SemanticStrategy(cfg)
-    # No headers / breaks / transitions -> boundaries = [0, len] -> single
-    # 'topic_based' section spanning the whole text.
-    sections = s._identify_topic_sections("just one continuous block of text")
+    # No headers / breaks / transitions -> one 'topic_based' section spanning the
+    # whole text. Sections are now (start, end, metadata) spans rather than
+    # (text, start, end, metadata): the text is derived from the span.
+    sections = s._topic_section_spans("just one continuous block of text")
     assert len(sections) == 1
-    assert sections[0][3]["section_type"] == "topic_based"
+    assert sections[0][2]["section_type"] == "topic_based"
+    assert (sections[0][0], sections[0][1]) == (
+        0,
+        len("just one continuous block of text"),
+    )
 
 
 def test_semantic_topic_sections_empty_text_fallback():
     s = SemanticStrategy(ChunkingConfig())
     # Whitespace-only text strips to nothing for every boundary slice, so the
     # 'single' fallback branch is taken.
-    sections = s._identify_topic_sections("   ")
+    # Sections now tile the document contiguously, so whitespace-only text is
+    # one section covering it rather than falling through to the 'single'
+    # branch (which is only reachable for genuinely empty input). chunk()
+    # still returns nothing for it.
+    sections = s._topic_section_spans("   ")
     assert len(sections) == 1
-    assert sections[0][3]["section_type"] == "single"
+    assert (sections[0][0], sections[0][1]) == (0, 3)
+    assert s.chunk("   ", "doc") == []
+    assert s._topic_section_spans("")[0][2]["section_type"] == "single"
 
 
-def test_semantic_preserve_and_restore_code_blocks():
+def test_semantic_protects_code_blocks_without_rewriting_text():
+    """A fence is declared atomic; the text is never substituted.
+
+    Previously asserted the `<<CODE_BLOCK_0>>` placeholder round trip. That
+    scheme mutated the string while iterating matches captured from the
+    pre-mutation string, so every match after the first spliced at stale offsets
+    and destroyed content -- and it left chunk spans indexing a different string
+    than chunk text. `preserve_code_blocks` now means "indivisible", so the only
+    thing produced is a protected span.
+    """
     s = SemanticStrategy(ChunkingConfig())
     text = "Before.\n\n```python\nprint('hi')\n```\n\nAfter."
-    stripped, blocks = s._preserve_special_blocks(text)
-    assert blocks and blocks[0]["type"] == "code"
-    assert "<<CODE_BLOCK_0>>" in stripped
-    restored = s._restore_special_blocks(stripped, blocks)
-    assert "print('hi')" in restored
+
+    barriers = s._protected_spans(text)
+    assert len(barriers) == 1
+    start, end = barriers[0]
+    assert text[start:end].startswith("```") and text[start:end].endswith("```")
+    assert "print('hi')" in text[start:end]
+    # No boundary may land strictly inside it.
+    assert s._protects(barriers, (start + end) // 2) == (start, end)
+    assert s._protects(barriers, start) is None
+    # And every chunk still slices back to its own span.
+    for chunk in s.chunk(text, "doc"):
+        assert text[chunk.start_pos : chunk.end_pos] == chunk.text
 
 
-def test_semantic_preserve_table_block():
+def test_semantic_protects_table_block():
     s = SemanticStrategy(ChunkingConfig())
     text = "Intro.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nOutro."
-    stripped, blocks = s._preserve_special_blocks(text)
-    assert any(b["type"] == "table" for b in blocks)
+    barriers = s._protected_spans(text)
+    assert barriers
+    assert any(text[a:b].lstrip().startswith("|") for a, b in barriers)
 
 
 def test_semantic_oversize_section_split():
     cfg = ChunkingConfig(chunk_size=40, min_chunk_size=1, max_chunk_size=60)
     s = SemanticStrategy(cfg)
-    # A header followed by a long multi-paragraph body to force _split_large_section
+    # A header followed by a long multi-paragraph body to force a section split
     body = "\n\n".join(f"Paragraph number {i} with some text." for i in range(6))
     text = f"# Big Section\n\n{body}"
     chunks = s.chunk(text, "doc")
@@ -464,19 +492,29 @@ def test_recursive_split_wrong_level_returns_empty():
     assert s._recursive_split("x", 0, "doc", 0, {}, "p", level=3) == []
 
 
-def test_recursive_descends_to_sliding_window_via_chunk():
-    # A long single paragraph with NO sentence endings can't be split by the
-    # paragraph or sentence strategies, so chunk() falls through to the
-    # sliding-window level with forced_split metadata.
+def test_recursive_force_splits_a_paragraph_with_no_sentence_boundary():
+    """An unsplittable paragraph is still cut to the cap and marked as forced.
+
+    Previously asserted ``strategy_used == "sliding_window"``: the paragraph
+    tier could not honour max_chunk_size, so recursive had to fall through to
+    the sliding-window tier to get a bounded chunk. The paragraph strategy now
+    enforces the cap itself via the hard-split backstop, so the descent no
+    longer happens — the tier that produced the chunk is an implementation
+    detail, whereas the cap and the forced-split signal are the contract.
+    """
     cfg = ChunkingConfig(
         chunk_size=30, chunk_overlap=5, min_chunk_size=1, max_chunk_size=30
     )
     s = RecursiveStrategy(cfg)
     text = ("word " * 30).strip()
     chunks = s.chunk(text, "doc")
+
     assert chunks
-    assert any(c.metadata.get("strategy_used") == "sliding_window" for c in chunks)
+    assert all(len(c.text) <= cfg.max_chunk_size for c in chunks)
     assert any(c.metadata.get("forced_split") for c in chunks)
+    # And the properties the cap must not have cost us:
+    assert all(text[c.start_pos : c.end_pos] == c.text for c in chunks)
+    assert "".join(c.text for c in chunks).replace(" ", "") == text.replace(" ", "")
 
 
 def test_recursive_repr():

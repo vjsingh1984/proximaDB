@@ -10,6 +10,7 @@ pub mod coarse_directory;
 pub mod collection_path;
 pub mod column_projector;
 pub mod columnar_constants;
+pub mod columnar_schema_full;
 pub mod compaction_override;
 pub mod deletion_vector;
 pub mod delta_simd;
@@ -29,6 +30,8 @@ pub mod iops_budget;
 pub mod metadata_collector;
 pub mod mmap_file;
 pub mod native_metadata;
+pub mod proto_metadata_helper;
+pub mod write_strategy;
 /// Re-export shim — the canonical `ObjectStoreBridge` contract now lives in
 /// the foundation `proximadb-catalog-schema` crate (extracted from the control
 /// catalog), so this storage crate depends downward on foundation only — no
@@ -59,6 +62,7 @@ pub mod storage_path;
 pub mod storage_profile;
 pub mod swift_id_index;
 pub mod tenant_performance;
+pub mod text_search;
 pub mod tiering_policy;
 pub mod tiering_retention;
 pub mod transaction_isolation;

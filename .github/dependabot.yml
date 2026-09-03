@@ -51,6 +51,18 @@ updates:
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # The legacy admin UI is pinned to the coherent React 17 + Material-UI v4
+      # stack. React 18/19 requires an intentional createRoot + MUI + types
+      # migration; independent major bumps leave npm's peer graph unsatisfiable.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: pip
     directories:

@@ -109,5 +109,29 @@ class WorkspaceDependentsTest(unittest.TestCase):
         )
 
 
+class FastLaneWorkflowContractTest(unittest.TestCase):
+    def test_production_scale_recall_stays_out_of_advisory_only(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        required_unit_job = workflow.split("\n  rust-test:", 1)[1].split(
+            "\n  rust-affected-fast:", 1
+        )[0]
+        advisory_job = workflow.split("\n  rust-affected-fast:", 1)[1].split(
+            "\n  object-store-emulator-tests:", 1
+        )[0]
+        slow_test = "rabitq_cold_recall_harness_n100000_recall_at_10"
+
+        self.assertIn(
+            "cargo nextest run --lib --profile unit --test-threads=2",
+            required_unit_job,
+            "the required unit lane must keep running every library test",
+        )
+        self.assertNotIn(slow_test, required_unit_job)
+        self.assertIn(
+            f"-E 'not test({slow_test})'",
+            advisory_job,
+            "the 10-minute advisory must not duplicate a production-scale ratchet",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

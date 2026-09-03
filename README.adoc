@@ -371,3 +371,9 @@ Features:
 Apache License 2.0 - See link:LICENSE[LICENSE]
 
 Open-core boundary: the full single-node engine is free forever with no feature gates — see link:OPEN_CORE.md[OPEN_CORE.md] for what the commercial layer sells (operations, never features).
+
+== Branching and Releases
+
+- `develop` is the integration branch: feature branches open PRs into `develop` (CI-gated).
+- Promotion is staged: `develop` -> `qa` (staging validation) -> `main` (release); releases are tagged on `main`.
+- `qa` and `main` always reflect promoted states; nothing merges directly to either without passing through the previous stage.

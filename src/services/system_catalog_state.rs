@@ -130,6 +130,10 @@ struct CatalogInner {
     /// Per-table statistics (stored separately, like NativeCatalog's
     /// `TableMetadata.statistics`, not on the schema).
     statistics: HashMap<TableIdentifier, CatalogTableStatistics>,
+    /// Derived inverse index for stable table/model asset identity. It is not
+    /// persisted separately: WAL replay and snapshot load rebuild it from the
+    /// authoritative schemas, so it cannot drift from `tables`.
+    object_ids: HashMap<u64, TableIdentifier>,
     /// Highest WAL sequence number folded in (the replay watermark).
     applied_seq: u64,
 }
@@ -150,12 +154,24 @@ impl CatalogInner {
                 if let Some(children) = self.ns_children.remove(&levels) {
                     for name in children {
                         let id = TableIdentifier::new(levels.clone(), name);
-                        self.tables.remove(&id);
+                        if let Some(schema) = self.tables.remove(&id)
+                            && let Some(object_id) = schema.object_id
+                        {
+                            self.object_ids.remove(&object_id);
+                        }
                         self.statistics.remove(&id);
                     }
                 }
             }
             CatalogDelta::UpsertTable { identifier, schema } => {
+                if let Some(previous) = self.tables.get(&identifier)
+                    && let Some(object_id) = previous.object_id
+                {
+                    self.object_ids.remove(&object_id);
+                }
+                if let Some(object_id) = schema.object_id {
+                    self.object_ids.insert(object_id, identifier.clone());
+                }
                 self.ns_children
                     .entry(identifier.namespace.clone())
                     .or_default()
@@ -163,7 +179,11 @@ impl CatalogInner {
                 self.tables.insert(identifier, Arc::new(*schema));
             }
             CatalogDelta::DropTable { identifier } => {
-                self.tables.remove(&identifier);
+                if let Some(schema) = self.tables.remove(&identifier)
+                    && let Some(object_id) = schema.object_id
+                {
+                    self.object_ids.remove(&object_id);
+                }
                 self.statistics.remove(&identifier);
                 if let Some(children) = self.ns_children.get_mut(&identifier.namespace) {
                     children.remove(&identifier.name);
@@ -252,6 +272,12 @@ impl SystemCatalogState {
         self.inner.read().tables.get(identifier).cloned()
     }
 
+    /// Resolve the rename-stable table/model asset identifier without scanning
+    /// the catalog. The index is rebuilt from schemas on every recovery path.
+    pub fn get_table_by_object_id(&self, object_id: u64) -> Option<TableIdentifier> {
+        self.inner.read().object_ids.get(&object_id).cloned()
+    }
+
     /// List the tables in a namespace. Replaces `NativeCatalog`'s per-call
     /// `read_dir`.
     pub fn list_tables(&self, namespace: &[String]) -> Vec<TableIdentifier> {
@@ -273,6 +299,22 @@ impl SystemCatalogState {
     /// Get a namespace by its `levels` path.
     pub fn get_namespace(&self, levels: &[String]) -> Option<CatalogNamespace> {
         self.inner.read().namespaces.get(levels).cloned()
+    }
+
+    /// Resolve a namespace's `levels` from its stable catalog `object_id` —
+    /// the namespace analogue of [`Self::get_table_by_object_id`].
+    ///
+    /// TD-CAT-7: a linear scan, not an index. Namespaces are few and this has
+    /// no hot caller; the alternative that was in force until now — inheriting
+    /// the trait's silent `Ok(None)` — answered "no such namespace" for every
+    /// id, which is worse than an O(n) answer.
+    pub fn get_namespace_by_object_id(&self, object_id: u64) -> Option<Vec<String>> {
+        self.inner
+            .read()
+            .namespaces
+            .values()
+            .find(|ns| ns.object_id == Some(object_id))
+            .map(|ns| ns.levels.clone())
     }
 
     /// List all namespace paths.
@@ -301,6 +343,17 @@ impl SystemCatalogState {
         self.inner.read().account_ids.values().copied().max()
     }
 
+    /// Snapshot the table identity rows used to recover the SystemCatalog's
+    /// transient allocator floors and namespace registry after WAL replay.
+    pub fn table_entries(&self) -> Vec<(TableIdentifier, Arc<CatalogTableSchema>)> {
+        self.inner
+            .read()
+            .tables
+            .iter()
+            .map(|(identifier, schema)| (identifier.clone(), schema.clone()))
+            .collect()
+    }
+
     /// The highest `object_id` folded into state, across tables AND the columns
     /// and indexes they carry (they all draw from one sequence).
     ///
@@ -315,7 +368,7 @@ impl SystemCatalogState {
     /// hand a NEW table the DEAD table's permissions.
     pub fn max_object_id(&self) -> Option<u64> {
         let guard = self.inner.read();
-        guard
+        let from_tables = guard
             .tables
             .values()
             .flat_map(|schema| {
@@ -325,7 +378,19 @@ impl SystemCatalogState {
                     .chain(schema.columns.iter().filter_map(|c| c.object_id))
                     .chain(schema.indexes.iter().filter_map(|i| i.object_id))
             })
-            .max()
+            .max();
+        // TD-CAT-9: namespaces draw from the SAME sequence, so the floor must
+        // fold them too. This line and the mint in `create_namespace_inner` are
+        // one change: minting without folding recovers a floor BELOW a persisted
+        // namespace id after a restart and re-issues a live identity — the exact
+        // hazard the paragraph above describes, only for namespaces. Neuter this
+        // and `object_ids_are_never_reissued_across_a_restart` fails.
+        let from_namespaces = guard
+            .namespaces
+            .values()
+            .filter_map(|namespace| namespace.object_id)
+            .max();
+        from_tables.max(from_namespaces)
     }
 
     /// The highest WAL sequence number folded in (replay watermark / snapshot
@@ -377,8 +442,8 @@ impl SystemCatalogState {
     }
 
     /// Decode a snapshot blob into a fully-indexed [`CatalogInner`], rebuilding
-    /// the `ns_children` secondary index (which the snapshot omits as a pure
-    /// derivation of `tables`).
+    /// the `ns_children` and `object_ids` secondary indexes (which the snapshot
+    /// omits as pure derivations of `tables`).
     fn inner_from_snapshot_bytes(bytes: &[u8]) -> Result<CatalogInner> {
         let snapshot: CatalogSnapshot =
             rmp_serde::from_slice(bytes).context("decoding catalog snapshot")?;
@@ -389,11 +454,15 @@ impl SystemCatalogState {
             ns_children.entry(levels.clone()).or_default();
         }
         let mut tables = HashMap::with_capacity(snapshot.tables.len());
+        let mut object_ids = HashMap::with_capacity(snapshot.tables.len());
         for (id, schema) in snapshot.tables {
             ns_children
                 .entry(id.namespace.clone())
                 .or_default()
                 .insert(id.name.clone());
+            if let Some(object_id) = schema.object_id {
+                object_ids.insert(object_id, id.clone());
+            }
             tables.insert(id, Arc::new(schema));
         }
         Ok(CatalogInner {
@@ -402,6 +471,7 @@ impl SystemCatalogState {
             tables,
             ns_children,
             statistics: snapshot.statistics,
+            object_ids,
             applied_seq: snapshot.applied_seq,
         })
     }
@@ -419,6 +489,49 @@ mod tests {
 
     fn tid(namespace: &[&str], name: &str) -> TableIdentifier {
         TableIdentifier::new(namespace.iter().map(|s| s.to_string()).collect(), name)
+    }
+
+    /// TD-CAT-7: `SystemCatalog` had no `get_namespace_by_object_id` override at
+    /// all — the DEFAULT backend silently inherited the trait's `Ok(None)`, so a
+    /// namespace object_id resolved to "no such namespace". Splitting the trait
+    /// turned the omission into a compile error; this pins the answer.
+    ///
+    /// Teeth: make the accessor return `None` unconditionally and the `Some`
+    /// arm fails.
+    #[test]
+    fn namespaces_resolve_from_their_object_id() {
+        let state = SystemCatalogState::new();
+        let mut sales = ns(&["sales"]);
+        sales.object_id = Some(11);
+        let mut returns = ns(&["returns"]);
+        returns.object_id = Some(12);
+
+        state.apply_committed(
+            1,
+            CatalogDelta::UpsertNamespace {
+                namespace: Box::new(sales),
+            },
+        );
+        state.apply_committed(
+            2,
+            CatalogDelta::UpsertNamespace {
+                namespace: Box::new(returns),
+            },
+        );
+
+        assert_eq!(
+            state.get_namespace_by_object_id(11),
+            Some(vec!["sales".to_string()])
+        );
+        assert_eq!(
+            state.get_namespace_by_object_id(12),
+            Some(vec!["returns".to_string()])
+        );
+        assert_eq!(
+            state.get_namespace_by_object_id(13),
+            None,
+            "an unminted id stays None — the honest one"
+        );
     }
 
     fn upsert_table_op(namespace: &[&str], name: &str) -> CanonicalOperation {

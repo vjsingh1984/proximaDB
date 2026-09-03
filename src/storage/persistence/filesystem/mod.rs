@@ -273,44 +273,60 @@ impl std::fmt::Debug for FilesystemFactory {
     }
 }
 
-/// Forwards `CountingFileSystem` GET reads into the per-query `IoTrace`
-/// (TD-096 S2). The record fns are ADR-030 always-on accumulators: they no-op
-/// outside an active `io_trace` scope and when the `io-trace` perf-emission
-/// feature is compiled out, so this impl is unconditional and zero-cost when no
-/// query is being traced.
-///
-/// **Single-source discipline (io-trace GET/bytes):** ranged reads are accounted
-/// ONCE, by the leaf backend — `LocalFileSystem`/`AzureBlob`/`Gcs`/`AwsS3` each
-/// call `record_range_gets(1)` + `record_bytes_read` in their own `read_range`,
-/// and batched reads (`read_ranges`) loop `read_range` via the trait default. So
-/// this decorator records ONLY (a) the op verb (`get_ops` — no backend records
-/// it) and (b) whole-object `read()` bytes (no backend records those). Mirroring
-/// `range_gets`/`bytes_read` here too double-counted every ranged GET whenever
-/// the counting wrapper was active (io-trace reported 2× the real GET count under
-/// `PROXIMADB_COUNT_FS_IO`). Regression: `counting_wrapper_records_ranged_gets_once_not_twice`.
-#[derive(Debug, Default)]
-struct IoTraceFsRecorder;
+/// Record a successful whole-object read at the physical filesystem boundary.
+/// This is always-on query evidence; `PROXIMADB_COUNT_FS_IO` controls only the
+/// separate process-global benchmark counters.
+pub(super) fn record_physical_full_read(bytes: u64) {
+    crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+    crate::observability::io_trace::record_bytes_read(bytes);
+}
 
-impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceFsRecorder {
+/// Record a successful ranged read at the physical filesystem boundary.
+/// `get_ops` is the total physical GET count; `range_gets` is its ranged subset.
+pub(super) fn record_physical_range_read(bytes: u64) {
+    crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+    crate::observability::io_trace::record_range_gets(1);
+    crate::observability::io_trace::record_bytes_read(bytes);
+}
+
+/// Records `ProximaObjectStore` reads into the per-query `IoTrace`.
+///
+/// `ProximaObjectStore` goes straight to upstream `object_store`, bypassing the
+/// root `FileSystem` leaf backends and their always-on helpers above. This
+/// recorder is therefore the sole source for that stack and records each
+/// physical counter in full.
+#[derive(Debug)]
+pub struct IoTraceObjectStoreRecorder;
+
+impl proximadb_storage_filesystem_types::counting::IoRecorder for IoTraceObjectStoreRecorder {
     fn record_full_read(&self, bytes: u64) {
-        // Whole-object reads are NOT re-accounted by the leaf backends (only
-        // ranged reads are), so the recorder is the sole io_trace source here.
         crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
         if bytes > 0 {
             crate::observability::io_trace::record_bytes_read(bytes);
         }
     }
-    fn record_range_read(&self, _bytes: u64) {
-        // The leaf backend's `read_range` already recorded `range_gets(1)` +
-        // `bytes_read`; re-recording here double-counts. Keep only the op verb.
+
+    fn record_range_read(&self, bytes: u64) {
         crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        crate::observability::io_trace::record_range_gets(1);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
+        }
     }
-    fn record_batched_ranges(&self, physical_gets: u64, _bytes: u64) {
-        // `read_ranges` loops the leaf `read_range` (trait default), which
-        // already accounted each constituent range's bytes/range_gets. This
-        // decorator owns only the op verb, once per physical range.
+
+    fn record_batched_ranges(&self, physical_gets: u64, bytes: u64) {
+        // `physical_gets` here is an UPPER BOUND, not a measurement: upstream
+        // `object_store::get_ranges` coalesces internally at a hard-coded 1 MiB
+        // gap and never reports how many HTTP requests it issued. Over-stating
+        // requests is the safe direction — it can never hide cost — but this
+        // number must not be compared naively against the FileSystem stack's
+        // measured counts.
         for _ in 0..physical_gets {
             crate::observability::io_trace::record_op(crate::observability::io_trace::IoOp::Get);
+        }
+        crate::observability::io_trace::record_range_gets(physical_gets);
+        if bytes > 0 {
+            crate::observability::io_trace::record_bytes_read(bytes);
         }
     }
 }
@@ -548,21 +564,25 @@ impl FilesystemFactory {
             .cloned()
             .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme_str.to_string()))?;
 
-        // TD-096 S2: when the GET-count instrumentation env gate is set, wrap the
-        // filesystem so (a) a bench can tally per-search read operations via the
-        // global counters, AND (b) each read is forwarded into the per-query
-        // `IoTrace` (via `IoTraceFsRecorder`) so GET counts drive the route cost
-        // model + per-tenant KRU. Default OFF — one `env::var_os` check per
-        // cached factory lookup — so there is zero behavior change otherwise.
-        // The recorder calls `io_trace::record_*`, which are ADR-030 always-on
-        // accumulators that no-op outside an active query scope (and when the
-        // `io-trace` perf-emission feature is compiled out).
+        // TD-096 S2: the env gate enables process-global benchmark counters.
+        // Per-query IoTrace accounting is an independent production invariant
+        // recorded by each physical leaf backend, so routing evidence cannot
+        // silently disappear when this diagnostic gate is OFF.
+        // TD-COMPACT-13 TDD: the env-gated delete-fault wrapper sits INSIDE the
+        // counting wrapper so retirement tests observe the fault while the
+        // counters keep counting the inner backend. Unset = byte-identical.
+        let fs: Arc<dyn FileSystem> = if std::env::var_os("PROXIMADB_TEST_FS_DELETE_FAIL_FIRST")
+            .is_some()
+        {
+            Arc::new(proximadb_storage_filesystem_types::faults::FaultInjectingFileSystem::new(fs))
+        } else {
+            fs
+        };
         if std::env::var_os("PROXIMADB_COUNT_FS_IO").is_some() {
             Ok(Arc::new(
-                proximadb_storage_filesystem_types::counting::CountingFileSystem::new_with_recorder(
+                proximadb_storage_filesystem_types::counting::CountingFileSystem::new(
                     fs,
                     proximadb_storage_filesystem_types::counting::global_counters(),
-                    std::sync::Arc::new(IoTraceFsRecorder),
                 ),
             ))
         } else {
@@ -1149,10 +1169,23 @@ impl FilesystemFactory {
         fs.read_range(&path, offset, length).await
     }
 
-    /// Read multiple byte ranges from `url` in one batched call — the object-store
-    /// backend coalesces adjacent ranges into fewer GETs. Mirrors [`Self::read`];
-    /// the ranged PAX reader uses this to fetch all surviving blocks of a pruned
-    /// scan together.
+    /// Read multiple byte ranges from `url` in one batched call. Mirrors
+    /// [`Self::read`]; the ranged PAX reader uses this to fetch all surviving
+    /// blocks of a pruned scan together.
+    ///
+    /// Whether those logical ranges become fewer physical requests depends on
+    /// `PROXIMADB_FS_READ_RANGES_COALESCE_GAP`. **Unset — the default — means
+    /// one physical GET per range**, and object stores bill per request.
+    ///
+    /// When armed, this method plans the merge itself rather than delegating,
+    /// because this is the layer that knows the backend: `IopsBudget::for_path`
+    /// needs the URL, and the filesystem-types crate is a leaf that must not
+    /// depend upward to reach it. Callers still receive exactly one buffer per
+    /// input range, in input order, sliced exactly.
+    ///
+    /// An earlier version of this comment asserted the backend coalesced. It
+    /// did not, and no backend overrode `read_ranges`, so callers trusting it
+    /// silently paid one billed request per range.
     pub async fn read_ranges(
         &self,
         url: &str,
@@ -1160,7 +1193,71 @@ impl FilesystemFactory {
     ) -> FsResult<Vec<Vec<u8>>> {
         let fs = self.get_filesystem(url)?;
         let path = Self::resolve_path(url)?;
-        fs.read_ranges(&path, ranges).await
+        let Some(policy) = Self::range_coalesce_policy_for(url) else {
+            return fs.read_ranges(&path, ranges).await;
+        };
+
+        // Coalesce HERE rather than inside the filesystem, because this is the
+        // layer that knows the backend: `IopsBudget::for_path` needs the URL,
+        // and `proximadb-storage-filesystem-types` is a leaf crate that must
+        // not depend up into `storage-common` to reach it.
+        //
+        // Scope is exactly right by construction, not by luck:
+        //   * the SST vector path issues singular `read_range` calls after
+        //     planning its own coalescing, so it cannot double-merge here;
+        //   * `SmartIo` coalesces internally and calls `FileSystem::read_ranges`
+        //     directly, bypassing this method, so it cannot double-merge either;
+        //   * the DataFusion PAX adapter is the one production caller, and it
+        //     currently pays one billed GET per surviving block.
+        let plan =
+            proximadb_storage_filesystem_types::read_ranges_plan::coalesce_ranges_with_mapping(
+                &ranges,
+                Some(policy),
+            )?;
+        let mut buffers = Vec::with_capacity(plan.physical.len());
+        for physical in &plan.physical {
+            buffers.push(
+                fs.read_range(&path, physical.start, physical.end - physical.start)
+                    .await?,
+            );
+        }
+        Ok(plan
+            .mapping
+            .iter()
+            .map(|slice| match slice.physical {
+                Some(idx) => {
+                    proximadb_storage_filesystem_types::read_ranges_plan::slice_from_physical(
+                        &buffers[idx],
+                        *slice,
+                    )
+                }
+                None => Vec::new(),
+            })
+            .collect())
+    }
+
+    /// Range-merging policy for `url`, or `None` to issue one request per range.
+    ///
+    /// Gate semantics: **unset is OFF**. An explicit `0` gap is a legitimate
+    /// setting — "merge only exactly-adjacent ranges" — so absence, not zero,
+    /// has to mean disabled. The byte ceiling defaults to the backend's own
+    /// `IopsBudget` maximum and is clamped to it, so this knob can tighten the
+    /// over-read bound but never loosen it past what the backend profile
+    /// already permits. Raising that profile is TD-SEARCH-3's call, not this
+    /// gate's.
+    fn range_coalesce_policy_for(
+        url: &str,
+    ) -> Option<proximadb_storage_filesystem_types::RangeCoalescePolicy> {
+        let budget = proximadb_storage_common::iops_budget::IopsBudget::for_path(url);
+        resolve_range_coalesce_policy(
+            std::env::var("PROXIMADB_FS_READ_RANGES_COALESCE_GAP")
+                .ok()
+                .as_deref(),
+            std::env::var("PROXIMADB_FS_READ_RANGES_COALESCE_MAX")
+                .ok()
+                .as_deref(),
+            budget.max,
+        )
     }
 
     pub async fn write(
@@ -1392,13 +1489,41 @@ mod inline_tests {
         }
     }
 
-    /// Regression for the io-trace `range_gets` / `bytes_read` DOUBLE-COUNT.
+    /// Physical read accounting is a production invariant, not a benchmark
+    /// capability.  The diagnostic counting wrapper may be disabled, but the
+    /// route-cost ledger must still see both whole-object and ranged GETs.
+    #[tokio::test]
+    async fn local_leaf_records_all_physical_reads_without_counting_wrapper() {
+        use crate::observability::io_trace;
+        use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+
+        let temp = TempDir::new().unwrap();
+        let file_path = temp.path().join("physical-reads.bin");
+        let payload = vec![7u8; 4096];
+        std::fs::write(&file_path, &payload).unwrap();
+        let url = format!("file://{}", file_path.display());
+        let fs = LocalFileSystem::new(LocalConfig::default()).await.unwrap();
+
+        let snap = io_trace::scope(async {
+            assert_eq!(fs.read(&url).await.unwrap().len(), 4096);
+            assert_eq!(fs.read_range(&url, 1024, 512).await.unwrap().len(), 512);
+            io_trace::snapshot().expect("io_trace scope active")
+        })
+        .await;
+
+        assert_eq!(snap.get_ops, 2, "both physical reads are GET operations");
+        assert_eq!(snap.range_gets, 1, "only the ranged read is a range GET");
+        assert_eq!(snap.bytes_read, 4096 + 512);
+    }
+
+    /// Regression for io-trace double-counting under the diagnostic wrapper.
     /// `CountingFileSystem` (active under `PROXIMADB_COUNT_FS_IO`) wraps the leaf
     /// `LocalFileSystem`; both used to call `record_range_gets(1)` +
     /// `record_bytes_read` on every ranged GET, so io-trace reported 2× the real
     /// GET count and 2× the real bytes whenever the counting wrapper was on (`avg_get_bytes`
     /// self-corrected by cancelling both halves). The wrapper must now record only
-    /// the op verb + whole-read bytes; ranged GETs/bytes come once from the backend.
+    /// only owns process-global counters; all per-query evidence comes once from
+    /// the physical backend.
     #[tokio::test]
     async fn counting_wrapper_records_ranged_gets_once_not_twice() {
         use crate::observability::io_trace;
@@ -1412,11 +1537,8 @@ mod inline_tests {
         let url = format!("file://{}", file_path.display());
 
         let inner = LocalFileSystem::new(LocalConfig::default()).await.unwrap();
-        let fs: Arc<dyn FileSystem> = Arc::new(CountingFileSystem::new_with_recorder(
-            Arc::new(inner),
-            global_counters(),
-            Arc::new(IoTraceFsRecorder),
-        ));
+        let fs: Arc<dyn FileSystem> =
+            Arc::new(CountingFileSystem::new(Arc::new(inner), global_counters()));
 
         let snap = io_trace::scope(async {
             let a = fs.read_range(&url, 0, 1024).await.unwrap();
@@ -1438,7 +1560,7 @@ mod inline_tests {
         );
         assert_eq!(
             snap.get_ops, 2,
-            "op verb recorded once per read by the recorder (backends do not record it)"
+            "each physical leaf read records its GET exactly once"
         );
     }
 
@@ -1694,5 +1816,99 @@ impl proximadb_storage_ports::FilesystemPort for FilesystemFactory {
 
     async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>> {
         FilesystemFactory::list(self, url).await
+    }
+}
+
+/// Pure resolution of the range-coalescing gate, split out so its semantics are
+/// testable without mutating process environment (`set_var`/`remove_var` are
+/// unsafe in edition 2024 precisely because they race across threads).
+///
+/// `None` means "issue one physical request per logical range" — today's
+/// behaviour, and what an unset gate must produce.
+fn resolve_range_coalesce_policy(
+    gap_raw: Option<&str>,
+    max_raw: Option<&str>,
+    ceiling: u64,
+) -> Option<proximadb_storage_filesystem_types::RangeCoalescePolicy> {
+    // Absence is OFF. A malformed value is also OFF rather than defaulting to
+    // some merging: silently coalescing because someone typo'd a gap would
+    // change billed request counts with no signal anywhere.
+    let max_gap_bytes = gap_raw?.trim().parse::<u64>().ok()?;
+    let max_merged_bytes = max_raw
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(ceiling)
+        .min(ceiling)
+        .max(1);
+    Some(proximadb_storage_filesystem_types::RangeCoalescePolicy {
+        max_gap_bytes,
+        max_merged_bytes,
+    })
+}
+
+#[cfg(test)]
+mod range_coalesce_gate_tests {
+    use super::resolve_range_coalesce_policy;
+
+    const AZURE_MAX: u64 = 4 * 1024 * 1024;
+
+    /// Unset must be OFF, so an un-gated deployment issues exactly the requests
+    /// it issues today.
+    #[test]
+    fn unset_gap_disables_coalescing() {
+        assert!(resolve_range_coalesce_policy(None, None, AZURE_MAX).is_none());
+        // ...and a max without a gap is still off — the gap is the arming knob.
+        assert!(resolve_range_coalesce_policy(None, Some("1048576"), AZURE_MAX).is_none());
+    }
+
+    /// Zero is a REAL setting ("merge only exactly-adjacent ranges"), which is
+    /// why OFF has to be encoded as absence rather than as zero.
+    #[test]
+    fn explicit_zero_gap_is_armed_not_disabled() {
+        let policy = resolve_range_coalesce_policy(Some("0"), None, AZURE_MAX)
+            .expect("explicit 0 must arm the policy");
+        assert_eq!(policy.max_gap_bytes, 0);
+        assert_eq!(
+            policy.max_merged_bytes, AZURE_MAX,
+            "defaults to the backend ceiling"
+        );
+    }
+
+    /// A typo must not silently change billed request counts.
+    #[test]
+    fn malformed_gap_is_off_rather_than_guessed() {
+        for bad in ["", "1MiB", "-1", "0x10", "1.5"] {
+            assert!(
+                resolve_range_coalesce_policy(Some(bad), None, AZURE_MAX).is_none(),
+                "malformed gap {bad:?} must disable, not guess"
+            );
+        }
+    }
+
+    /// The ceiling can be tightened but never loosened. Raising a backend's
+    /// range profile is TD-SEARCH-3's decision, gated on its own measurement —
+    /// this knob must not be a back door to it.
+    #[test]
+    fn max_is_clamped_to_the_backend_ceiling() {
+        let tighter = resolve_range_coalesce_policy(Some("65536"), Some("1048576"), AZURE_MAX)
+            .expect("armed");
+        assert_eq!(
+            tighter.max_merged_bytes,
+            1024 * 1024,
+            "tightening is honoured"
+        );
+
+        let looser = resolve_range_coalesce_policy(Some("65536"), Some("25165824"), AZURE_MAX)
+            .expect("armed");
+        assert_eq!(
+            looser.max_merged_bytes, AZURE_MAX,
+            "24 MiB must clamp to the backend ceiling, not widen it"
+        );
+
+        let zero =
+            resolve_range_coalesce_policy(Some("65536"), Some("0"), AZURE_MAX).expect("armed");
+        assert_eq!(
+            zero.max_merged_bytes, 1,
+            "a zero ceiling would merge nothing at all"
+        );
     }
 }

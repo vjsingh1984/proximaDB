@@ -411,7 +411,7 @@ impl FileSystem for LocalFileSystem {
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
 
-        match fs::read(&resolved_path).await {
+        let result = match fs::read(&resolved_path).await {
             Ok(data) => {
                 // Decrypt data if encryption is enabled
                 if let Some(ref encryption) = self.encryption_layer {
@@ -445,7 +445,11 @@ impl FileSystem for LocalFileSystem {
                 )),
                 _ => Err(FilesystemError::Io(e)),
             },
+        };
+        if let Ok(ref bytes) = result {
+            super::record_physical_full_read(bytes.len() as u64);
         }
+        result
     }
 
     async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {
@@ -786,8 +790,7 @@ impl FileSystem for LocalFileSystem {
         }
         .await;
         if let Ok(ref bytes) = result {
-            crate::observability::io_trace::record_range_gets(1);
-            crate::observability::io_trace::record_bytes_read(bytes.len() as u64);
+            super::record_physical_range_read(bytes.len() as u64);
             if std::env::var_os("PROXIMADB_TRACE_GETS").is_some() {
                 eprintln!("[FS GET] {path} off={offset} len={length}");
             }

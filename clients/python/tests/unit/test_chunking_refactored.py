@@ -241,9 +241,40 @@ class Calculator:
         return self.result
 """
 
+        # SEMANTIC_EMBEDDING genuinely requires a provider. It used to sail
+        # through this loop without one only because the sentence splitter
+        # collapsed this sample to a single "sentence" (nothing here ends in
+        # .!?), hitting the no-embedding-needed short circuit. A blank line now
+        # ends a sentence unit, so the strategy reaches its real code path --
+        # give it a deterministic provider rather than depending on an accident.
+        def fake_provider(texts):
+            return [
+                [float((hash(t) >> shift) & 0xFF) / 255.0 for shift in range(8)]
+                for t in texts
+            ]
+
+        # CODE delegates to the optional `codegraph` extra and raises without it
+        # (TD-CG2: silently returning text windows would look like working code
+        # chunking while extracting no symbols). That is the contract, so assert
+        # it here rather than skipping the strategy -- a skip would let the
+        # behaviour change without this test noticing.
+        try:
+            import victor_codegraph  # noqa: F401
+
+            codegraph_installed = True
+        except ImportError:
+            codegraph_installed = False
+
         for strategy in ChunkingStrategy:
-            config = ChunkingConfig(strategy=strategy, chunk_size=200)
+            config = ChunkingConfig(
+                strategy=strategy, chunk_size=200, embedding_provider=fake_provider
+            )
             chunker = TextChunker(config)
+
+            if strategy is ChunkingStrategy.CODE and not codegraph_installed:
+                with pytest.raises(RuntimeError, match="codegraph"):
+                    chunker.chunk_text(text, f"test_{strategy.value}.py")
+                continue
 
             chunks = chunker.chunk_text(text, f"test_{strategy.value}.py")
 

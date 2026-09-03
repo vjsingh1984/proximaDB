@@ -23,33 +23,21 @@ class GraphCollectionResponse:
     SDKs rely on; extra server-side fields are passed through.
 
         Attributes:
-            description (None | str | Unset):
-            edge_count (int | None | Unset):
             graph_id (str | Unset):
             name (None | str | Unset):
+            description (None | str | Unset):
             node_count (int | None | Unset):
+            edge_count (int | None | Unset):
     """
 
-    description: None | str | Unset = UNSET
-    edge_count: int | None | Unset = UNSET
     graph_id: str | Unset = UNSET
     name: None | str | Unset = UNSET
+    description: None | str | Unset = UNSET
     node_count: int | None | Unset = UNSET
+    edge_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        description: None | str | Unset
-        if isinstance(self.description, Unset):
-            description = UNSET
-        else:
-            description = self.description
-
-        edge_count: int | None | Unset
-        if isinstance(self.edge_count, Unset):
-            edge_count = UNSET
-        else:
-            edge_count = self.edge_count
-
         graph_id = self.graph_id
 
         name: None | str | Unset
@@ -58,50 +46,43 @@ class GraphCollectionResponse:
         else:
             name = self.name
 
+        description: None | str | Unset
+        if isinstance(self.description, Unset):
+            description = UNSET
+        else:
+            description = self.description
+
         node_count: int | None | Unset
         if isinstance(self.node_count, Unset):
             node_count = UNSET
         else:
             node_count = self.node_count
 
+        edge_count: int | None | Unset
+        if isinstance(self.edge_count, Unset):
+            edge_count = UNSET
+        else:
+            edge_count = self.edge_count
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if description is not UNSET:
-            field_dict["description"] = description
-        if edge_count is not UNSET:
-            field_dict["edge_count"] = edge_count
         if graph_id is not UNSET:
             field_dict["graph_id"] = graph_id
         if name is not UNSET:
             field_dict["name"] = name
+        if description is not UNSET:
+            field_dict["description"] = description
         if node_count is not UNSET:
             field_dict["node_count"] = node_count
+        if edge_count is not UNSET:
+            field_dict["edge_count"] = edge_count
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-
-        def _parse_description(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        description = _parse_description(d.pop("description", UNSET))
-
-        def _parse_edge_count(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        edge_count = _parse_edge_count(d.pop("edge_count", UNSET))
-
         graph_id = d.pop("graph_id", UNSET)
 
         def _parse_name(data: object) -> None | str | Unset:
@@ -113,6 +94,15 @@ class GraphCollectionResponse:
 
         name = _parse_name(d.pop("name", UNSET))
 
+        def _parse_description(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        description = _parse_description(d.pop("description", UNSET))
+
         def _parse_node_count(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -122,12 +112,21 @@ class GraphCollectionResponse:
 
         node_count = _parse_node_count(d.pop("node_count", UNSET))
 
+        def _parse_edge_count(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        edge_count = _parse_edge_count(d.pop("edge_count", UNSET))
+
         graph_collection_response = cls(
-            description=description,
-            edge_count=edge_count,
             graph_id=graph_id,
             name=name,
+            description=description,
             node_count=node_count,
+            edge_count=edge_count,
         )
 
         graph_collection_response.additional_properties = d

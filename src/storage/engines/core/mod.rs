@@ -5,7 +5,7 @@
 //! implementations (what engines do).
 
 pub mod adaptive_strategy_optimizer; // Intelligent strategy optimization and tuning
-pub mod coalesce_strategy; // Cost-driven, tier-aware read-coalescing chooser (TD-RDSTRAT-1)
+pub use proximadb_engine_core::coalesce_strategy; // extracted TD-DECOMP-79 (cost-driven, tier-aware read-coalescing chooser, TD-RDSTRAT-1)
 pub mod columnar_format_serializer;
 pub mod constants; // Centralized constants for all storage engines
 pub mod filter_evaluator; // Unified filter evaluation for all engines

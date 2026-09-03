@@ -54,6 +54,14 @@ pub struct TenantTrustConfig {
     /// The `PROXIMADB_TENANT_HEADER_TRUST` env override wins over both.
     #[serde(default)]
     pub header_trust: Option<proximadb_tenant::HeaderTrustPolicy>,
+    /// Tier-claim trust policy (ADR-0053 W8) for the entitlement claim every
+    /// network surface reads (REST `X-Tenant-Tier`, gRPC `x-tenant-tier`
+    /// metadata, pgwire `proximadb_tier` startup parameter). Unset ⇒ the
+    /// deployment-mode preset (same ladder as `header_trust`). The
+    /// `PROXIMADB_TIER_HEADER_TRUST` env override wins over both. A rejected
+    /// claim is dropped (never a 4xx) — the tenant resolves its default tier.
+    #[serde(default)]
+    pub tier_header_trust: Option<proximadb_tenant::HeaderTrustPolicy>,
 }
 
 /// Security mode for different deployment scenarios
@@ -522,8 +530,9 @@ impl TenantSecurityPolicy {
             require_authentication: true,
             require_mfa: true,
             session_timeout_minutes: 120,
+            // SSO removed (TD-SSO-1): the legacy SSO path is fail-closed;
+            // enterprise OIDC federation rides the JWT method.
             allowed_auth_methods: vec![
-                super::auth_service::AuthenticationMethod::SSO,
                 super::auth_service::AuthenticationMethod::JWT,
                 super::auth_service::AuthenticationMethod::ClientCertificate,
             ],
@@ -641,10 +650,9 @@ mod tests {
                     enabled: false,
                     providers: vec![],
                     token_cache_ttl_minutes: 5,
-                    aws_iam: None,
-                    azure_ad: None,
                 },
                 mtls: MtlsConfig::default(),
+                oidc: None,
                 audit_fail_closed: false,
             },
             rbac: RBACConfig::default(),

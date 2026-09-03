@@ -127,7 +127,11 @@ impl CacheKey {
         Self::with_scope(CacheScope::Shared, kind, key)
     }
 
-    fn persistent_key(&self, namespace: &str) -> String {
+    /// TD-RDSTRAT-12 §3: the persistent-tier key format, exposed so engine-side
+    /// residency peeks can probe the raw L2 store for entries the write path
+    /// created under this exact key — without duplicating (and drifting from)
+    /// the namespace/scope/kind encoding here.
+    pub fn persistent_key(&self, namespace: &str) -> String {
         format!(
             "{namespace}/{}/{}:{}",
             self.scope.persistent_component(),
@@ -223,6 +227,15 @@ pub struct L2CacheStats {
     pub resident_bytes: u64,
 }
 
+/// Tier that satisfied a cache read. `Loaded` means no cache tier served the
+/// request and the caller-provided authoritative loader ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheReadOutcome {
+    MemoryHit,
+    PersistentHit,
+    Loaded,
+}
+
 /// A cached value carrying its byte weight (so moka's weigher budgets by bytes,
 /// not entry count).
 #[derive(Debug, Clone)]
@@ -288,6 +301,16 @@ impl TierPolicy {
             default_tier: "default".into(),
             tiers,
         }
+    }
+
+    /// Whether this policy declares an explicit spec for `tier`.
+    ///
+    /// Lets a caller probe several spellings of the same entitlement in its own
+    /// preferred order (e.g. a canonical id, then the operator's original
+    /// alias) while this crate stays free of any tier vocabulary — the key
+    /// space here is deliberately generic and operator-supplied.
+    pub fn has_tier(&self, tier: &str) -> bool {
+        self.tiers.contains_key(tier)
     }
 
     /// Absolute [`TenantLimits`] for `tier` at a given pool `total_bytes`
@@ -770,23 +793,21 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         u.saturating_add(weight) <= fair
     }
 
-    /// Look up a value, recording a per-tenant hit or miss. Pinned entries
-    /// (the tenant's floor working set) are checked before the shared pool.
-    pub async fn get(&self, key: &CacheKey) -> Option<V> {
+    async fn lookup(&self, key: &CacheKey) -> Option<(V, CacheReadOutcome)> {
         if let Some(pinned) = &self.pinned
             && let Some(v) = pinned.get(key)
         {
             self.usage_for(&key.scope)
                 .hits
                 .fetch_add(1, Ordering::Relaxed);
-            return Some(v);
+            return Some((v, CacheReadOutcome::MemoryHit));
         }
         let result = self.inner.get(key).await;
         let u = self.usage_for(&key.scope);
         match result {
             Some(cv) => {
                 u.hits.fetch_add(1, Ordering::Relaxed);
-                Some(cv.value)
+                Some((cv.value, CacheReadOutcome::MemoryHit))
             }
             None => {
                 u.misses.fetch_add(1, Ordering::Relaxed);
@@ -798,7 +819,7 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                     Ok(Some((value, weight))) => {
                         self.l2_hits.fetch_add(1, Ordering::Relaxed);
                         self.insert_l1(key.clone(), weight, value.clone()).await;
-                        Some(value)
+                        Some((value, CacheReadOutcome::PersistentHit))
                     }
                     Ok(None) | Err(_) => {
                         self.l2_misses.fetch_add(1, Ordering::Relaxed);
@@ -807,6 +828,38 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
                 }
             }
         }
+    }
+
+    /// Look up a value, recording a per-tenant hit or miss. Pinned entries
+    /// (the tenant's floor working set) are checked before the shared pool.
+    pub async fn get(&self, key: &CacheKey) -> Option<V> {
+        self.lookup(key).await.map(|(value, _)| value)
+    }
+
+    /// TD-RDSTRAT-12 §3: RAM-residency probe with NO hit/miss accounting and
+    /// NO inserts — answers "would `get_or_load` for this key be served from
+    /// DRAM without running its loader?". Checks the pinned floor set and the
+    /// shared L1 only; persistent L2 is deliberately unchecked so callers
+    /// treat `None` as "a fetch may still be needed" (conservative: a resident
+    /// disk-tier range could then be re-fetched once through the caller's own
+    /// consume path — never double-billed at the object-store boundary twice
+    /// per query, because the consumer that owns the persistent tier is the
+    /// same caller). The moka recency of a probed entry is refreshed; there is
+    /// no other observable effect.
+    pub async fn peek_memory(&self, key: &CacheKey) -> Option<V> {
+        if let Some(pinned) = &self.pinned
+            && let Some(v) = pinned.get(key)
+        {
+            return Some(v);
+        }
+        self.inner.get(key).await.map(|cv| cv.value)
+    }
+
+    /// Lookup with the physical cache tier that satisfied it. Engine wrappers
+    /// use this to forward truthful per-query evidence without making the
+    /// foundation cache depend on an observability crate.
+    pub async fn get_with_outcome(&self, key: &CacheKey) -> Option<(V, CacheReadOutcome)> {
+        self.lookup(key).await
     }
 
     /// Get `key`, or run `loader` on miss and cache the result **iff** the
@@ -818,22 +871,22 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         key: CacheKey,
         weight: u32,
         loader: F,
-    ) -> Result<V, E>
+    ) -> Result<(V, CacheReadOutcome), E>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<V, E>>,
     {
-        if let Some(v) = self.get(&key).await {
-            return Ok(v);
+        if let Some(found) = self.lookup(&key).await {
+            return Ok(found);
         }
-        // `get` already recorded the miss.
+        // `lookup` already recorded the miss.
         let value = loader().await?;
 
         if let Some(l2) = &self.l2 {
             let _ = l2.put(&key, weight, value.clone()).await;
         }
         self.insert_l1(key, weight, value.clone()).await;
-        Ok(value)
+        Ok((value, CacheReadOutcome::Loaded))
     }
 
     /// TD-CACHE-3 S2: route an admitted insert into the tenant's pinned floor
@@ -1059,6 +1112,37 @@ mod tests {
         assert_eq!(c.stable_tenant_bytes(42), 8);
     }
 
+    /// TD-RDSTRAT-12 §3: `peek_memory` reports DRAM residency (L1/pinned)
+    /// only — a value that would be served from persistent L2 reads as None
+    /// so batch-prefetch planners conservatively count a fetch, and peeking
+    /// never promotes.
+    #[tokio::test]
+    async fn peek_memory_is_l1_only_and_never_promotes_from_l2() {
+        let dir = tempfile::tempdir().expect("test tempdir");
+        let store = Arc::new(
+            PersistentByteStore::open(dir.path(), 1 << 20).expect("open persistent cache"),
+        );
+        let first = TenantCache::new(CacheBudget::new(1024, 1024)).with_l2_backend(Arc::new(
+            PersistentArcBytesL2::new(store.clone(), "survivor", L2Class::Survivor),
+        ));
+        let k = CacheKey::new("tenant-a", CacheKind::QuantizedCodes, "seg:0:5");
+        first.insert(k.clone(), 5, Arc::from(&b"bytes"[..])).await;
+        drop(first);
+
+        let second = TenantCache::new(CacheBudget::new(1024, 1024)).with_l2_backend(Arc::new(
+            PersistentArcBytesL2::new(store, "survivor", L2Class::Survivor),
+        ));
+        // Resident only in persistent L2: peek reports None (no promotion).
+        assert_eq!(
+            second.peek_memory(&k).await.as_deref(),
+            None,
+            "peek must not see through to the persistent tier"
+        );
+        // A real get promotes; afterwards peek sees it.
+        assert_eq!(second.get(&k).await.as_deref(), Some(&b"bytes"[..]));
+        assert_eq!(second.peek_memory(&k).await.as_deref(), Some(&b"bytes"[..]));
+    }
+
     /// TD-CACHE-3 S2: a churning tenant CANNOT evict another tenant's pinned
     /// floor. Tiny shared pool + pin reserve; A pins its floor working set;
     /// B floods far past total capacity; every one of A's floor entries is
@@ -1242,13 +1326,17 @@ mod tests {
             .get_or_load(k.clone(), 16, || async { Ok::<u64, ()>(42) })
             .await
             .unwrap();
-        assert_eq!(v, 42);
+        assert_eq!(v, (42, CacheReadOutcome::Loaded));
         // hit → no reload
         let v2 = c
             .get_or_load(k.clone(), 16, || async { Ok::<u64, ()>(999) })
             .await
             .unwrap();
-        assert_eq!(v2, 42, "second call must hit cache, not reload");
+        assert_eq!(
+            v2,
+            (42, CacheReadOutcome::MemoryHit),
+            "second call must hit cache, not reload"
+        );
         c.sync().await;
         let s = c.tenant_stats();
         let a = s.iter().find(|s| s.tenant == "A").unwrap();

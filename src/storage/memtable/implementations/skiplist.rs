@@ -31,6 +31,13 @@ where
     /// Main storage using DashMap for lock-free concurrent access
     data: Arc<DashMap<K, V>>,
 
+    /// Ordered key index for range scans and ordered iteration (DashMap has
+    /// no ordered iteration; the previous range_scan / get_all_ordered
+    /// collected and sorted the WHOLE table per call). Mirrors the
+    /// `scan_index` pattern in `global_partitioned.rs`: writes take one
+    /// O(log n) index insert under a short write lock.
+    key_index: Arc<std::sync::RwLock<std::collections::BTreeSet<K>>>,
+
     /// Approximate memory usage tracking (atomic for concurrent access)
     size_bytes: Arc<AtomicUsize>,
 
@@ -49,6 +56,7 @@ where
     pub fn new() -> Self {
         Self {
             data: Arc::new(DashMap::new()),
+            key_index: Arc::new(std::sync::RwLock::new(std::collections::BTreeSet::new())),
             size_bytes: Arc::new(AtomicUsize::new(0)),
             insert_count: Arc::new(AtomicU64::new(0)),
             get_count: Arc::new(AtomicU64::new(0)),
@@ -81,6 +89,12 @@ where
             0
         };
 
+        // Maintain the ordered key index (key would be moved into the map).
+        self.key_index
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(key.clone());
+
         // Insert into DashMap (lock-free operation)
         self.data.insert(key, value);
 
@@ -110,21 +124,27 @@ where
     }
 
     async fn range_scan(&self, from: K, limit: Option<usize>) -> Result<Vec<(K, V)>> {
-        // DashMap doesn't have built-in range scan, so we need to collect and sort
-        let mut results: Vec<(K, V)> = self
-            .data
-            .iter()
-            .filter(|entry| *entry.key() >= from)
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+        // Ordered index range: O(log n + result) instead of collect-all +
+        // O(n log n) sort per scan.
+        let keys: Vec<K> = {
+            let index = self
+                .key_index
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let range = index.range(from..);
+            match limit {
+                Some(limit) => range.take(limit).cloned().collect(),
+                None => range.cloned().collect(),
+            }
+        };
+        let results: Vec<(K, V)> = keys
+            .into_iter()
+            .filter_map(|key| {
+                self.data
+                    .get(&key)
+                    .map(|entry| (key, entry.value().clone()))
+            })
             .collect();
-
-        // Sort by key
-        results.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Apply limit if specified
-        if let Some(limit) = limit {
-            results.truncate(limit);
-        }
 
         // Update metrics using atomics (lock-free)
         self.scan_count.fetch_add(1, Ordering::Relaxed);
@@ -144,13 +164,19 @@ where
         let mut removed_count = 0;
         let mut removed_size = 0;
 
-        // Collect keys to remove
-        let keys_to_remove: Vec<K> = self
-            .data
-            .iter()
-            .filter(|entry| *entry.key() <= threshold)
-            .map(|entry| entry.key().clone())
-            .collect();
+        // Collect keys to remove from the ordered index (was: a full-table
+        // scan per flush boundary).
+        let keys_to_remove: Vec<K> = {
+            let mut index = self
+                .key_index
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let keys: Vec<K> = index.range(..=threshold).cloned().collect();
+            for key in &keys {
+                index.remove(key);
+            }
+            keys
+        };
 
         // Remove entries
         for key in keys_to_remove {
@@ -170,6 +196,10 @@ where
     async fn clear(&self) -> Result<()> {
         // Clear all entries
         self.data.clear();
+        self.key_index
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
 
         // Reset size tracking
         self.size_bytes.store(0, Ordering::Relaxed);
@@ -178,16 +208,23 @@ where
     }
 
     async fn get_all_ordered(&self) -> Result<Vec<(K, V)>> {
-        // Collect all entries and sort by key
-        let mut results: Vec<(K, V)> = self
-            .data
+        // Ordered index iteration (was: collect the whole table + sort per
+        // call — this runs on every flush).
+        let keys: Vec<K> = self
+            .key_index
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .cloned()
             .collect();
-
-        results.sort_by(|a, b| a.0.cmp(&b.0));
-
-        Ok(results)
+        Ok(keys
+            .into_iter()
+            .filter_map(|key| {
+                self.data
+                    .get(&key)
+                    .map(|entry| (key, entry.value().clone()))
+            })
+            .collect())
     }
 }
 
@@ -226,43 +263,44 @@ where
         to: Option<K>,
         limit: Option<usize>,
     ) -> Result<Vec<(K, V)>> {
-        let mut results: Vec<(K, V)> = if let Some(to) = to {
-            self.data
-                .iter()
-                .filter(|entry| *entry.key() >= from && *entry.key() <= to)
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect()
-        } else {
-            self.data
-                .iter()
-                .filter(|entry| *entry.key() >= from)
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect()
+        // Ordered index range (was: collect + sort the whole table).
+        let keys: Vec<K> = {
+            let index = self
+                .key_index
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let range = if let Some(to) = &to {
+                index.range(from..=to.clone())
+            } else {
+                index.range(from..)
+            };
+            match limit {
+                Some(limit) => range.take(limit).cloned().collect(),
+                None => range.cloned().collect(),
+            }
         };
-
-        // Sort by key
-        results.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Apply limit if specified
-        if let Some(limit) = limit {
-            results.truncate(limit);
-        }
+        let results: Vec<(K, V)> = keys
+            .into_iter()
+            .filter_map(|key| {
+                self.data
+                    .get(&key)
+                    .map(|entry| (key, entry.value().clone()))
+            })
+            .collect();
 
         Ok(results)
     }
 
     /// Count entries in range without loading values (memory efficient)
     pub async fn count_range(&self, from: K, to: Option<K>) -> usize {
-        if let Some(to) = to {
-            self.data
-                .iter()
-                .filter(|entry| *entry.key() >= from && *entry.key() <= to)
-                .count()
+        let index = self
+            .key_index
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(to) = &to {
+            index.range(from..=to.clone()).count()
         } else {
-            self.data
-                .iter()
-                .filter(|entry| *entry.key() >= from)
-                .count()
+            index.range(from..).count()
         }
     }
 }

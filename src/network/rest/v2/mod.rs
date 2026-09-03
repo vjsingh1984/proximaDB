@@ -49,6 +49,7 @@ pub mod documents;
 pub mod entities;
 pub mod external_collection;
 pub mod graphs;
+pub mod model_registry;
 pub mod query;
 pub mod records;
 pub mod schema;
@@ -160,6 +161,23 @@ pub fn create_v2_router() -> Router<AppState> {
         // Canonical HTTP/JSON SQL adapter. This owns transport validation and
         // result shaping only; execution is the same shared authority as gRPC.
         .route("/sql", post(sql::execute_sql))
+        // Tenant-scoped xCatalog embedding-model lifecycle.
+        .route(
+            "/model-registries",
+            post(model_registry::create_model_registry).get(model_registry::list_model_registries),
+        )
+        .route(
+            "/model-registries/{name}",
+            get(model_registry::get_model_registry),
+        )
+        .route(
+            "/model-registries/{name}/mutations",
+            post(model_registry::apply_model_registry_mutation),
+        )
+        .route(
+            "/model-registries/{name}/resolve",
+            post(model_registry::resolve_model_alias),
+        )
         // Time-series surface (TD-TS-1) — native TST engine over the SDK contract.
         .route(
             "/timeseries/collections",
@@ -293,7 +311,7 @@ pub async fn capabilities() -> axum::Json<serde_json::Value> {
         "features": [
             "collections", "records", "typed_search", "query_uql", "query_explain",
             "graphs", "hybrid_search", "document_collections", "observability",
-            "index_configs", "tags", "request_id", "timeseries"
+            "index_configs", "tags", "request_id", "timeseries", "model_registry"
         ],
         "limits": {
             "max_batch_records": 10000,

@@ -84,21 +84,6 @@ mod catalog_manager_tests {
     }
 
     #[tokio::test]
-    async fn test_create_hive_catalog_factory() {
-        let manager = CatalogManager::new();
-
-        // Hive catalog should be creatable (even without actual Thrift server)
-        let result = manager
-            .create_hive_catalog("test_hive", "thrift://localhost:9083")
-            .await;
-
-        assert!(result.is_ok(), "Hive catalog creation should succeed");
-        let catalog = result.unwrap();
-        assert_eq!(catalog.name(), "test_hive");
-        assert_eq!(catalog.catalog_type(), "hive");
-    }
-
-    #[tokio::test]
     #[cfg(not(feature = "aws"))]
     async fn test_glue_catalog_requires_feature() {
         let manager = CatalogManager::new();
@@ -860,43 +845,6 @@ mod native_catalog_tests {
             .unwrap();
 
         cleanup_dir(&temp_dir).await;
-    }
-}
-
-// ================================
-// Hive Catalog Tests
-// ================================
-
-mod hive_catalog_tests {
-    use super::*;
-    use proximadb::catalog::{Catalog, CatalogManager, TableIdentifier};
-
-    #[tokio::test]
-    async fn test_hive_catalog_creation() {
-        let manager = CatalogManager::new();
-
-        let catalog = manager
-            .create_hive_catalog("hive", "thrift://localhost:9083")
-            .await
-            .unwrap();
-
-        assert_eq!(catalog.name(), "hive");
-        assert_eq!(catalog.catalog_type(), "hive");
-    }
-
-    #[tokio::test]
-    async fn test_hive_health_check_no_server() {
-        let manager = CatalogManager::new();
-
-        let catalog = manager
-            .create_hive_catalog("hive", "thrift://localhost:9083")
-            .await
-            .unwrap();
-
-        // Health check without actual server should indicate unhealthy or handle gracefully.
-        // This is a smoke test — the only contract is that health_check() returns without
-        // panicking (the .unwrap() above asserts no error); the health value is discarded.
-        let _ = catalog.health_check().await.unwrap();
     }
 }
 

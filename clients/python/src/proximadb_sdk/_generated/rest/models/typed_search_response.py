@@ -26,45 +26,49 @@ class TypedSearchResponse:
     """Search response with typed results
 
     Attributes:
+        results (list[TypedSearchResult]): Search results
         latency_ms (int): Search latency in milliseconds
         request_id (str): Request ID for tracing
-        results (list[TypedSearchResult]): Search results
-        explain (Any | Unset): Human-readable explain summary derived from the SearchPlanTrace.
-            Only emitted when the request sets `debug=true` — gives an on-call
-            operator a one-glance view of the plan, cache result, and any
-            actionable hints (high scan fraction, repair triggered, ...).
+        total_matches (int | None | Unset): Total number of matching documents (before top_k limit)
         predicate_shortfall (None | PredicateShortfallWire | Unset):
         search_plan_trace (Any | Unset): SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
             upstream gateways consume for metering and planner-v2 training.
             Phase 0 emits a stub trace populated from request_id + latency; later
             phases fill in the per-stage counters. Only emitted when the request
             sets `debug=true` (LLD §1 contract).
-        total_matches (int | None | Unset): Total number of matching documents (before top_k limit)
+        explain (Any | Unset): Human-readable explain summary derived from the SearchPlanTrace.
+            Only emitted when the request sets `debug=true` — gives an on-call
+            operator a one-glance view of the plan, cache result, and any
+            actionable hints (high scan fraction, repair triggered, ...).
     """
 
+    results: list[TypedSearchResult]
     latency_ms: int
     request_id: str
-    results: list[TypedSearchResult]
-    explain: Any | Unset = UNSET
+    total_matches: int | None | Unset = UNSET
     predicate_shortfall: None | PredicateShortfallWire | Unset = UNSET
     search_plan_trace: Any | Unset = UNSET
-    total_matches: int | None | Unset = UNSET
+    explain: Any | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.predicate_shortfall_wire import PredicateShortfallWire
         from ..models.typed_search_result import TypedSearchResult
 
-        latency_ms = self.latency_ms
-
-        request_id = self.request_id
-
         results = []
         for results_item_data in self.results:
             results_item = results_item_data.to_dict()
             results.append(results_item)
 
-        explain = self.explain
+        latency_ms = self.latency_ms
+
+        request_id = self.request_id
+
+        total_matches: int | None | Unset
+        if isinstance(self.total_matches, Unset):
+            total_matches = UNSET
+        else:
+            total_matches = self.total_matches
 
         predicate_shortfall: dict[str, Any] | None | Unset
         if isinstance(self.predicate_shortfall, Unset):
@@ -76,29 +80,25 @@ class TypedSearchResponse:
 
         search_plan_trace = self.search_plan_trace
 
-        total_matches: int | None | Unset
-        if isinstance(self.total_matches, Unset):
-            total_matches = UNSET
-        else:
-            total_matches = self.total_matches
+        explain = self.explain
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "results": results,
                 "latency_ms": latency_ms,
                 "request_id": request_id,
-                "results": results,
             }
         )
-        if explain is not UNSET:
-            field_dict["explain"] = explain
+        if total_matches is not UNSET:
+            field_dict["total_matches"] = total_matches
         if predicate_shortfall is not UNSET:
             field_dict["predicate_shortfall"] = predicate_shortfall
         if search_plan_trace is not UNSET:
             field_dict["search_plan_trace"] = search_plan_trace
-        if total_matches is not UNSET:
-            field_dict["total_matches"] = total_matches
+        if explain is not UNSET:
+            field_dict["explain"] = explain
 
         return field_dict
 
@@ -108,10 +108,6 @@ class TypedSearchResponse:
         from ..models.typed_search_result import TypedSearchResult
 
         d = dict(src_dict)
-        latency_ms = d.pop("latency_ms")
-
-        request_id = d.pop("request_id")
-
         results = []
         _results = d.pop("results")
         for results_item_data in _results:
@@ -119,7 +115,18 @@ class TypedSearchResponse:
 
             results.append(results_item)
 
-        explain = d.pop("explain", UNSET)
+        latency_ms = d.pop("latency_ms")
+
+        request_id = d.pop("request_id")
+
+        def _parse_total_matches(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        total_matches = _parse_total_matches(d.pop("total_matches", UNSET))
 
         def _parse_predicate_shortfall(
             data: object,
@@ -144,23 +151,16 @@ class TypedSearchResponse:
 
         search_plan_trace = d.pop("search_plan_trace", UNSET)
 
-        def _parse_total_matches(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        total_matches = _parse_total_matches(d.pop("total_matches", UNSET))
+        explain = d.pop("explain", UNSET)
 
         typed_search_response = cls(
+            results=results,
             latency_ms=latency_ms,
             request_id=request_id,
-            results=results,
-            explain=explain,
+            total_matches=total_matches,
             predicate_shortfall=predicate_shortfall,
             search_plan_trace=search_plan_trace,
-            total_matches=total_matches,
+            explain=explain,
         )
 
         typed_search_response.additional_properties = d

@@ -326,9 +326,14 @@ collection_affinity = true
 # [storage.sst_config.coarse_probe]
 # enable_read_probe = true                   # search probes A0 (kill-switch)
 # enable_write_train = true                  # compaction emits v3/A0 (the COGS unblock)
-# nprobe_multiplier = 1.0                    # nprobe = ceil(sqrt(ncells) x mult); 1.5 = higher recall
+# nprobe_multiplier = 2.0                    # nprobe = ceil(sqrt(ncells) x mult)
+#                                            # 2.0 is the compiled default. 1.0 was measured
+#                                            # BELOW the recall@10 >= 0.98 ratchet (0.9795 at
+#                                            # k_c=30) -- do not copy it. Lower only behind a
+#                                            # representative recall gate.
 # nprobe_min = 3
 # nprobe_max = 0                             # 0 = unlimited (capped at ncells)
+# ncomp_floor = 0                            # 0 = legacy coarse-PCA width formula (TD-IVF-3)
 
 # [storage.viper_config]
 # row_group_size = 100000
@@ -348,6 +353,12 @@ mode = "development"  # development | production | enterprise
 # ("open"; "authenticated-only" under multi-tenant strict mode). The
 # PROXIMADB_TENANT_HEADER_TRUST env var overrides both.
 # header_trust = "open"  # open | authenticated-only | gateway-only
+# Tier-claim trust policy (ADR-0053 W8) for the entitlement claim (REST
+# X-Tenant-Tier, gRPC x-tenant-tier, pgwire proximadb_tier startup param).
+# Unset => same deployment-mode preset ladder; PROXIMADB_TIER_HEADER_TRUST
+# overrides. A rejected claim is DROPPED (never a 4xx): the tenant resolves
+# its default tier.
+# tier_header_trust = "open"  # open | authenticated-only | gateway-only
 
 [security.authentication]
 enabled = false
@@ -356,7 +367,62 @@ require_authentication = false
 default_session_timeout_minutes = 60
 
 [security.authentication.api_keys]
+# TD-TENANT-1 follow-up (a): an entry may carry roles = ["gateway"] to make
+# the key a gateway principal — enabling GatewayOnly tenant delegation.
+# Delegation ONLY: it grants no data-plane permission.
 "dev-key" = { user_id = "devuser", permissions = ["*"], ip_restrictions = [] }
+
+# Generic OIDC provider (TD-SSO-1): bearer tokens from ANY compliant IdP,
+# validated against its JWKS. Roles sanitize at the seam: ONLY the
+# role_allowlist crosses — anything else the IdP asserts is dropped.
+# Supports: Kanidm, Keycloak, Okta, Azure Entra ID, Google Workspace.
+#
+# ── Kanidm (tested, working on dataserver3) ──
+# [security.authentication.oidc]
+# enabled = true
+# NOTE: requires methods = [..., "jwt"] above — the OIDC path rides the jwt
+# method; without it every bearer token reads "JWT authentication disabled".
+# Pair with [security.rbac] default_deny = true: with the permissive default,
+# any principal that can obtain a token for `audience` from the IdP is an
+# authorized data-plane principal (adversarial-review finding F4).
+# issuer_url = "https://sso.singh.local:8443/oauth2/openid/proximadb"
+# audience = ["proximadb"]
+# roles_claim = "groups"
+# tenant_claim = "tenant"
+# ca_cert_path = "/etc/proximadb/sso-ca.pem"       # internal PKI
+#
+# ── Azure Entra ID (single-tenant v2.0) ──
+# issuer_url = "https://login.microsoftonline.com/{tenant}/v2.0"
+# audience = ["api://{client-id}", "{client-id}"]   # both forms accepted
+# roles_claim = "roles"                              # or "groups" with claims
+# tenant_claim = "tid"
+# allowed_algorithms = ["RS256", "ES256"]
+#
+# ── Keycloak ──
+# issuer_url = "https://kc.example.com/realms/{realm}"
+# audience = ["account"]
+# roles_claim = "realm_access.roles"                 # nested path (dot notation)
+# allowed_algorithms = ["RS256", "ES256"]
+#
+# ── Okta ──
+# issuer_url = "https://xxx.okta.com/oauth2/default"
+# audience = ["api://default"]
+# roles_claim = "groups"
+#
+# ── Google Workspace ──
+# issuer_url = "https://accounts.google.com"
+# issuer_aliases = ["accounts.google.com"]           # bare-hostname iss form
+# audience = ["{client-id}"]
+# NOTE: Workspace groups are NOT in ID tokens (require Admin SDK call);
+# role mapping is structurally unavailable on this provider.
+#
+# Timing knobs (all optional, these are the defaults):
+# clock_skew_seconds = 60
+# jwks_cache_seconds = 3600
+# http_timeout_seconds = 10
+# role_allowlist = []             # deliberate business-role opt-in
+# allow_delegation_roles = false  # gateway/operator groups grant
+#                                 # cross-tenant delegation only when you opt in
 
 [security.authentication.jwt]
 enabled = false

@@ -304,6 +304,11 @@ impl StorageEngine {
             }
         }
 
+        // STEP 1b: Reap the global WAL manifest after the final flush — the
+        // driver may never tick again, so this is what actually reclaims the
+        // manifest files of an embedded run's last flush.
+        crate::storage::auto_flush_driver::AutoFlushDriver::reap_manifest_segments().await;
+
         // STEP 2: Stop compaction manager (stop() is &self; no Arc::get_mut
         // needed — the workers hold clones but stop signals via shutdown_signal).
         self.compaction_manager.stop().await?;

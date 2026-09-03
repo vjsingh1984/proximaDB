@@ -5,7 +5,7 @@
 [cols="1,3",options="header"]
 |===
 | Field | Value
-| Status | **Open — root cause measured; single fix unlocks ClickBench.** ProximaDB resolves unquoted identifiers **case-sensitively**, deviating from the SQL standard / PostgreSQL (which fold unquoted identifiers to lowercase). The ClickBench DDL defines CamelCase columns (`AdvEngineID`, `UserID`, `EventDate`); the queries reference lowercase (`advengineid`, `userid`, `eventdate`); resolution fails → **37 of 43 ClickBench queries** return `Schema error: No field named <lowercase>`.
+| Status | **Fix shipped (this PR) — resolution-side fold-on-miss, not a parser rewrite.** Exact/declared-case resolution always wins; only a previously-failing unquoted lookup falls back to a *unique* case-insensitive match (ambiguous case-variants stay strict and error). Quoted identifiers remain case-exact; quoted table spellings (`"Name"`) strip quotes and match exactly. The DataFusion fallback path additionally repairs unquoted identifiers that uniquely match a declared CamelCase column into the QUOTED declared form before planning (`case_repair_sql_for_datafusion`), and scan lowering retries the folded table-provider name. Default ON, kill-switch `PROXIMADB_IDENT_CASE_FOLD=0` restores legacy case-exact resolution. Because the fold only converts exact-miss lookups into successes, today's working queries are byte-identical in behavior. Covered by `tests/ident_case_fold_e2e.rs` (CamelCase Parquet fixture with ClickBench q02/q03/q05/q08 shapes, native `CREATE TABLE CaseTbl (ColMine INT)` round-trip, kill-switch). Original measured finding (37/43 ClickBench failures with `No field named <lowercase>`) below; the 100M-row ClickBench ledger re-run (target ≥35/43, DuckDB parity) is the post-landing evidence step.
 | Priority | **P1** — one root cause, one fix, unlocks a whole benchmark (ClickBench 6/43 → ~35/43, DuckDB parity) AND closes a general ANSI-SQL conformance gap (the "full ANSI/standard SQL over pgwire" mandate). Independent of perf — TD-OLAP-17 already made the table-OPEN floor fast; ClickBench now fails on conformance, not speed.
 | Severity | High — any SQL that references a CamelCase-defined column in a different case fails. Breaks ClickBench + portability of existing SQL workloads/tools that assume standard folding.
 | Component | the SQL frontend / identifier resolution (parser → planner → DataFusion field resolution), the catalog column-name store. Likely a single seam: fold unquoted identifiers to lowercase before catalog/DataFusion resolution (PostgreSQL semantics), keeping quoted identifiers case-exact.
@@ -31,6 +31,28 @@ The 6 that pass (q01, q20, q24-q27) reference columns whose case happens to matc
 ANSI SQL / PostgreSQL fold **unquoted** identifiers to lowercase: `CREATE TABLE hits (AdvEngineID …)` stores the column as `advengineid`, and `SELECT advengineid` resolves to `advengineid` → match. ProximaDB preserves the declared case of unquoted identifiers, so the DDL's `AdvEngineID` and the query's `advengineid` are two different names → `No field named`. **Quoted** identifiers (`"AdvEngineID"`) should remain case-exact (standard).
 
 == Fix design
+
+=== As shipped (this PR)
+
+The landing is the resolution-side variant of option 1 — fold on miss instead of rewriting
+identifiers at parse time:
+
+- `InMemoryCatalog::lookup_table` (`crates/query/proximadb-relational-frontend`): exact hit
+  first; quoted spellings strip `"` and match exactly; otherwise a unique
+  `eq_ignore_ascii_case` match resolves (multiple case-variants → still not found, stay strict).
+- `Scope::resolve_unqualified/_exact/_folded` + `resolve_qualified(column_quoted)`: the
+  column-level mirror — declared-case exact match wins, unquoted miss folds to a unique
+  case-insensitive match, ambiguous variants error.
+- `src/datafusion/logical_lowering.rs`: scan lowering retries the folded (unquoted, lowercased)
+  table-provider name; `RExpr::Column` lowers via `Column::new_unqualified` so the DECLARED name
+  is never re-folded by DataFusion's planner.
+- `src/query/execution/datafusion_engine.rs` `case_repair_sql_for_datafusion`: on the SQL
+  fallback path, rewrite unquoted identifiers that uniquely match a declared non-lowercase
+  column into the quoted declared form (`advengineid` → `"AdvEngineID"`). All-lowercase schemas
+  short-circuit — no parse, byte-identical SQL.
+
+=== Original sketch
+
 
 A single seam — fold unquoted identifiers to lowercase at the SQL frontend (parser/planner), before catalog lookup and DataFusion field resolution:
 

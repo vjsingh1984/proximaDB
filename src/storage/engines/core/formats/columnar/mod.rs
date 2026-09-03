@@ -86,38 +86,47 @@
 pub mod columnar_io;
 pub mod constants; // Column name constants
 pub mod id_index;
-pub mod metadata_filter_strategy;
+pub use proximadb_storage_common::text_search::metadata_filter_strategy; // extracted TD-DECOMP-73
 pub mod optimization; // NEW: Consolidated Parquet and Arrow IPC operations
 
 // Modular components with semantic names (replacing old monolithic files)
+pub use proximadb_engine_core::parquet_write_engine; // extracted TD-DECOMP-78
 pub mod columnar_query_engine;
-pub mod parquet_write_engine; // Columnar write operations and Parquet file generation // Columnar read operations and query execution
+
 // Quantization now handled by unified compute module
 pub mod batch_operations;
-pub mod columnar_schema;
+pub use proximadb_engine_core::proximablocks::columnar_config_types::{
+    ColumnStatistics, ColumnarColumnStatistics, ColumnarConfig, ColumnarFileMetadata,
+    OptimizationThresholds, QuantizationConfig,
+};
+pub use proximadb_storage_common::columnar_schema_full as schema; // extracted TD-DECOMP-74
+
 pub mod config_builder;
-pub mod footer_cache;
+pub use proximadb_engine_core::proximablocks::columnar_footer_cache as footer_cache; // extracted TD-DECOMP-76
 pub mod hybrid_writer;
 pub mod metadata_collector;
 pub mod native_metadata;
-pub mod nova_metadata;
+pub use proximadb_engine_core::proximablocks::nova_metadata; // extracted TD-DECOMP-76
 pub mod parquet_io_layer; // Low-level I/O operations (formerly shared_parquet_reader)
-pub mod parquet_metadata; // NEW: Zero-copy metadata serialization for Parquet
-pub mod utilities; // NEW: Zero-copy metadata serialization for NOVA // NEW: Trait for engine-specific metadata collection during writes
 pub use metadata_collector::MetadataCollector;
+pub use proximadb_engine_core::proximablocks::columnar_utilities as utilities; // extracted TD-DECOMP-76
+pub use proximadb_engine_core::proximablocks::parquet_metadata; // extracted TD-DECOMP-76
 pub mod columnar_compaction; // Unified Parquet compaction using StreamingParquetWriter
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure
-pub mod common;
-pub mod schema;
-pub mod serialization;
+pub use proximadb_engine_core::proximablocks::columnar_common as common; // extracted TD-DECOMP-80
+pub use proximadb_engine_core::proximablocks::columnar_serialization as serialization; // extracted TD-DECOMP-80
 // NOTE: Distance computation has been moved to proximadb_distance_kernel::quantized
 
 // TEXT column storage, filtering, and full-text search (Phase 3)
-pub mod fulltext_index;
-pub mod text_filter;
-pub mod text_storage;
+pub use proximadb_storage_common::text_search::fulltext_index; // extracted TD-DECOMP-70
+pub use proximadb_storage_common::text_search::metadata_filter_types::{
+    ColumnarMetadataFilter, FilterCondition, FilterLogic, MetadataFilter,
+};
+pub use proximadb_storage_common::text_search::text_filter; // extracted TD-DECOMP-73
+
+pub use proximadb_storage_common::text_search::text_storage; // extracted TD-DECOMP-70
 
 // Examples demonstrating optimization benefits (moved to tests)
 #[cfg(test)]
@@ -190,6 +199,7 @@ pub use self::metadata_filter_strategy::{
 pub use batch_operations::ColumnarBatchOperations;
 pub use columnar_schema::ColumnarSchema;
 pub use footer_cache::{FooterCacheConfig, FooterCacheStats, ParquetFooterCache, WarmingStrategy};
+pub use proximadb_engine_core::proximablocks::columnar_schema_types as columnar_schema; // extracted TD-DECOMP-77
 pub use utilities::ColumnarUtilities;
 
 pub use config_builder::{
@@ -297,114 +307,9 @@ pub use fulltext_index::{
 use anyhow::Result;
 use arrow_schema::Schema;
 use parquet::file::metadata::RowGroupMetaData;
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use proximadb_distance_kernel::DistanceMetric;
 use proximadb_records::ProximaRecord;
-
-/// Common configuration for columnar operations
-///
-/// This configuration structure controls the behavior of columnar storage
-/// operations across both VIPER and NOVA engines. Each option represents
-/// a specific optimization that can be toggled based on workload characteristics.
-///
-/// ## Performance Impact:
-/// - **Predicate Pushdown**: 60-90% I/O reduction for filtered queries
-/// - **Column Projection**: Read only needed columns (up to 90% savings)
-/// - **Row Group Pruning**: Skip irrelevant row groups using statistics
-/// - **Caching**: Reduce repeated reads by 70-90%
-#[derive(Debug, Clone)]
-pub struct ColumnarConfig {
-    /// Enable predicate pushdown optimization
-    /// When true, filters are pushed to the storage layer to minimize data transfer
-    pub enable_predicate_pushdown: bool,
-
-    /// Enable column projection optimization  
-    /// When true, only requested columns are read from Parquet files
-    pub enable_projection: bool,
-
-    /// Enable row group pruning
-    /// When true, use min/max statistics to skip irrelevant row groups
-    pub enable_row_group_pruning: bool,
-
-    /// Maximum cache size for row groups (bytes)
-    /// Controls memory usage for caching frequently accessed data
-    pub max_cache_size_bytes: usize,
-
-    /// Quantization configuration for progressive search
-    pub quantization: QuantizationConfig,
-
-    /// Optimization thresholds
-    pub optimization_thresholds: OptimizationThresholds,
-    /// Filterable metadata columns (have dedicated columns in Parquet)
-    pub filterable_metadata_columns: Option<Vec<String>>,
-}
-
-// DEPRECATED: Replaced with proto-generated config
-// All quantization configs now use the canonical proto version
-pub use crate::proto::proximadb_v1::QuantizationConfig;
-
-/// Optimization thresholds
-#[derive(Debug, Clone)]
-pub struct OptimizationThresholds {
-    /// Row group pruning threshold (records)
-    pub row_group_pruning_threshold: usize,
-
-    /// Column projection threshold (columns)
-    pub projection_threshold: usize,
-
-    /// SIMD batch size threshold
-    pub simd_threshold: usize,
-
-    /// GPU computation threshold
-    pub gpu_threshold: usize,
-}
-
-/// File metadata common to both NOVA and VIPER
-#[derive(Debug, Clone)]
-pub struct ColumnarFileMetadata {
-    /// Collection ID
-    pub collection_id: String,
-
-    /// Number of vectors
-    pub num_vectors: u64,
-
-    /// Vector dimension
-    pub dimension: usize,
-
-    /// Distance metric
-    pub distance_metric: DistanceMetric,
-
-    /// Quantization configuration
-    pub quantization: QuantizationConfig,
-
-    /// Column statistics
-    pub column_stats: HashMap<String, ColumnarColumnStatistics>,
-
-    /// File version
-    pub version: u32,
-
-    /// Creation timestamp
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-
-    /// Last modified timestamp
-    pub modified_at: chrono::DateTime<chrono::Utc>,
-}
-
-/// Backwards-compat alias for [`ColumnarColumnStatistics`].
-pub type ColumnStatistics = ColumnarColumnStatistics;
-
-/// Column statistics for query optimization
-#[derive(Debug, Clone)]
-pub struct ColumnarColumnStatistics {
-    pub null_count: u64,
-    pub distinct_count: u64,
-    pub min_value: Option<serde_json::Value>,
-    pub max_value: Option<serde_json::Value>,
-    pub avg_size_bytes: u64,
-    pub compression_ratio: f32,
-}
 
 /// Search mode for columnar engines
 #[derive(Debug, Clone)]
@@ -425,168 +330,6 @@ pub enum ColumnarSearchMode {
         query: Vec<f32>,
         rerank_factor: f32,
     },
-}
-
-/// Backwards-compat alias for [`ColumnarMetadataFilter`].
-pub type MetadataFilter = ColumnarMetadataFilter;
-
-/// Metadata filter for queries
-#[derive(Debug, Clone)]
-pub struct ColumnarMetadataFilter {
-    pub conditions: Vec<FilterCondition>,
-    pub logic: FilterLogic,
-}
-
-#[derive(Debug, Clone)]
-pub enum FilterLogic {
-    And,
-    Or,
-}
-
-#[derive(Debug, Clone)]
-pub enum FilterCondition {
-    Equals(String, serde_json::Value),
-    Range(String, serde_json::Value, serde_json::Value),
-    In(String, Vec<serde_json::Value>),
-    IsNull(String),
-    IsNotNull(String),
-}
-
-impl FilterCondition {
-    /// Get the column name from the filter condition
-    pub fn column(&self) -> &str {
-        match self {
-            FilterCondition::Equals(col, _) => col,
-            FilterCondition::Range(col, _, _) => col,
-            FilterCondition::In(col, _) => col,
-            FilterCondition::IsNull(col) => col,
-            FilterCondition::IsNotNull(col) => col,
-        }
-    }
-}
-
-impl ColumnarMetadataFilter {
-    /// Convert from core::search::FilterExpression to columnar::ColumnarMetadataFilter
-    /// This enables row group pruning using FilterExpression
-    pub fn from_filter_expression(
-        expr: &proximadb_filter_expression::FilterExpression,
-    ) -> Option<Self> {
-        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
-
-        fn convert_condition(expr: &FilterExpression) -> Option<FilterCondition> {
-            match expr {
-                FilterExpression::Comparison {
-                    field,
-                    operator,
-                    value,
-                } => {
-                    match operator {
-                        ComparisonOperator::Equals => {
-                            Some(FilterCondition::Equals(field.clone(), value.clone()))
-                        }
-                        ComparisonOperator::In => {
-                            if let Some(arr) = value.as_array() {
-                                Some(FilterCondition::In(field.clone(), arr.clone()))
-                            } else {
-                                Some(FilterCondition::In(field.clone(), vec![value.clone()]))
-                            }
-                        }
-                        ComparisonOperator::Between => {
-                            // Between expects an array of [min, max]
-                            if let Some(arr) = value.as_array() {
-                                if arr.len() >= 2 {
-                                    Some(FilterCondition::Range(
-                                        field.clone(),
-                                        arr[0].clone(),
-                                        arr[1].clone(),
-                                    ))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                        ComparisonOperator::GreaterThan
-                        | ComparisonOperator::GreaterThanOrEqual => {
-                            // Range with open upper bound (use MAX values)
-                            let max_val = serde_json::json!(f64::MAX);
-                            Some(FilterCondition::Range(
-                                field.clone(),
-                                value.clone(),
-                                max_val,
-                            ))
-                        }
-                        ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
-                            // Range with open lower bound (use MIN values)
-                            let min_val = serde_json::json!(f64::MIN);
-                            Some(FilterCondition::Range(
-                                field.clone(),
-                                min_val,
-                                value.clone(),
-                            ))
-                        }
-                        ComparisonOperator::IsNull => Some(FilterCondition::IsNull(field.clone())),
-                        ComparisonOperator::IsNotNull => {
-                            Some(FilterCondition::IsNotNull(field.clone()))
-                        }
-                        _ => None, // NotEquals, NotIn, Contains, StartsWith, EndsWith, Like not directly supported
-                    }
-                }
-                _ => None, // And, Or, Not handled at top level
-            }
-        }
-
-        fn collect_conditions(
-            expr: &FilterExpression,
-            conditions: &mut Vec<FilterCondition>,
-            logic: &mut FilterLogic,
-        ) {
-            match expr {
-                FilterExpression::And(exprs) => {
-                    *logic = FilterLogic::And;
-                    for e in exprs {
-                        if let Some(cond) = convert_condition(e) {
-                            conditions.push(cond);
-                        } else {
-                            // Recursively handle nested And/Or
-                            collect_conditions(e, conditions, logic);
-                        }
-                    }
-                }
-                FilterExpression::Or(exprs) => {
-                    *logic = FilterLogic::Or;
-                    for e in exprs {
-                        if let Some(cond) = convert_condition(e) {
-                            conditions.push(cond);
-                        } else {
-                            collect_conditions(e, conditions, logic);
-                        }
-                    }
-                }
-                FilterExpression::Comparison { .. } => {
-                    if let Some(cond) = convert_condition(expr) {
-                        conditions.push(cond);
-                    }
-                }
-                FilterExpression::Not(_) => {
-                    // NOT expressions can't be easily converted to ColumnarMetadataFilter
-                    // Skip them for now
-                }
-            }
-        }
-
-        let mut conditions = Vec::new();
-        let mut logic = FilterLogic::And;
-
-        collect_conditions(expr, &mut conditions, &mut logic);
-
-        if conditions.is_empty() {
-            None
-        } else {
-            Some(ColumnarMetadataFilter { conditions, logic })
-        }
-    }
 }
 
 /// Backwards-compat alias for [`ColumnarRowGroupStats`].
@@ -754,33 +497,6 @@ pub fn estimate_row_group_memory(row_group: &RowGroupMetaData, schema: &Schema) 
     total
 }
 
-impl Default for ColumnarConfig {
-    fn default() -> Self {
-        Self {
-            enable_predicate_pushdown: true,
-            enable_projection: true,
-            enable_row_group_pruning: true,
-            max_cache_size_bytes: 512 * 1024 * 1024, // 512MB
-            quantization: QuantizationConfig::default(),
-            optimization_thresholds: OptimizationThresholds::default(),
-            filterable_metadata_columns: None,
-        }
-    }
-}
-
-// Default implementation removed - using proto-generated Default
-
-impl Default for OptimizationThresholds {
-    fn default() -> Self {
-        Self {
-            row_group_pruning_threshold: 1000,
-            projection_threshold: 5,
-            simd_threshold: 10000,
-            gpu_threshold: 100000,
-        }
-    }
-}
-
 /// Factory for creating optimized columnar components
 pub struct ColumnarFactory;
 
@@ -845,7 +561,35 @@ impl ColumnarFactory {
             ..Default::default()
         };
 
-        StreamingParquetWriter::new(file_path, dimension, config, None).await
+        // Root-side convenience: constructs the default filesystem + quantization
+        // engine and injects them through the ports (TD-DECOMP-78 moved the
+        // default-construction responsibility to the composition root).
+        let filesystem_factory: std::sync::Arc<dyn proximadb_storage_ports::FilesystemPort> =
+            std::sync::Arc::new(
+                crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                    .await?,
+            );
+        let quantization_engine: Option<
+            std::sync::Arc<dyn proximadb_storage_ports::QuantizationEnginePort>,
+        > = Some(std::sync::Arc::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
+                std::sync::Arc::new(
+                    proximadb_distance_kernel::engine::UnifiedDistanceCompute::default(),
+                ),
+                std::sync::Arc::new(
+                    crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+                ),
+            ),
+        ));
+        StreamingParquetWriter::new(
+            file_path,
+            dimension,
+            config,
+            None,
+            filesystem_factory,
+            quantization_engine,
+        )
+        .await
     }
 
     /// Create columnar optimizer with hardware-specific settings
@@ -1094,5 +838,41 @@ mod inline_tests {
         assert_eq!(small.row_group_size, 1_000);
         assert_eq!(medium.row_group_size, 5_000);
         assert_eq!(large.row_group_size, 50_000);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod writer_port_helpers {
+    //! Test construction of the streaming-writer ports (TD-DECOMP-78): the
+    //! default factory + engine construction lives root-side now.
+    use std::sync::Arc;
+
+    pub(crate) async fn default_ports() -> (
+        Arc<dyn proximadb_storage_ports::FilesystemPort>,
+        Option<Arc<dyn proximadb_storage_ports::QuantizationEnginePort>>,
+    ) {
+        let factory: Arc<dyn proximadb_storage_ports::FilesystemPort> = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                .await
+                .expect("default filesystem"),
+        );
+        let quant = crate::storage::engines::core::formats::columnar::hybrid_writer::root_quantization_engine();
+        (factory, quant)
+    }
+
+    /// Test helper: build a StreamingParquetWriter with root-side default ports.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn make_streaming_writer<P: AsRef<std::path::Path>>(
+        file_path: P,
+        dimension: usize,
+        config: crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig,
+    ) -> anyhow::Result<
+        crate::storage::engines::core::formats::columnar::parquet_write_engine::streaming_writer::StreamingParquetWriter,
+    >{
+        let (factory, quant) = default_ports().await;
+        crate::storage::engines::core::formats::columnar::parquet_write_engine::streaming_writer::StreamingParquetWriter::new(
+            file_path, dimension, config, None, factory, quant,
+        )
+        .await
     }
 }

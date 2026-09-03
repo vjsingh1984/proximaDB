@@ -157,10 +157,93 @@ jobs:
           name: embedded-sdist
           path: dist/*.tar.gz
 
+  # ---- Wheel smoke test (gates publish) ----------------------------------------------
+  # The wheel was unbuildable for months without any signal (#1675): the
+  # vendored-openssl feature was deleted in the #1021 crate extraction, the
+  # jobs in other workflows were commented out behind a stale note, and the
+  # only run that would have caught it was the tag push itself. This job makes
+  # "the wheel installs and the engine answers" a precondition of publishing —
+  # a broken wheel now fails HERE, not in a consumer's pip install.
+  test-embedded-wheels:
+    name: Smoke test embedded wheel (${{ matrix.os }})
+    needs: [build-embedded-wheels]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: embedded-wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist
+      - name: Install wheel
+        shell: bash
+        run: python -m pip install dist/*.whl
+      - name: In-process engine answers a graph + vector roundtrip
+        shell: bash
+        run: |
+          python - <<'PY'
+          import tempfile
+
+          import proximadb_embedded as pe
+
+          db = pe.ProximaDB(data_dirs=tempfile.mkdtemp())
+          db.create_graph("smoke", None)
+          db.create_nodes(
+              "smoke",
+              [
+                  pe.GraphNode("a", ["Fn"], {"name": "alpha"}),
+                  pe.GraphNode("b", ["Fn"], {"name": "beta"}),
+              ],
+          )
+          # GraphEdge signature: (from_node_id, to_node_id, edge_type, id=..)
+          db.create_edges("smoke", [pe.GraphEdge("a", "b", "CALLS", id="e1")])
+          out = db.get_outgoing_edges("smoke", "a", None)
+          assert len(out) == 1 and out[0].to_node_id == "b", out
+          inc = db.get_incoming_edges("smoke", "b", None)
+          assert len(inc) == 1 and inc[0].from_node_id == "a", inc
+          stats = db.graph_stats("smoke")
+          assert stats.total_edges == 1, stats
+
+          # Typed property round-trip (#1698): scalars must keep their Python
+          # types across write -> engine -> read. Before the fix every value
+          # was stringified at the boundary ("line": 42 stored as "42"), the
+          # engine's numeric property index stayed empty, and Array/Object
+          # properties were silently dropped on read.
+          db.create_nodes(
+              "smoke",
+              [pe.GraphNode("typed", ["Fn"], {
+                  "line": 42,
+                  "score": 0.5,
+                  "flag": True,
+                  "name": "alpha",
+                  "tags": ["a", "b"],
+              })],
+          )
+          got = db.get_node("smoke", "typed").properties
+          assert got["line"] == 42 and isinstance(got["line"], int), got
+          assert got["score"] == 0.5 and isinstance(got["score"], float), got
+          assert got["flag"] is True, got
+          assert got["name"] == "alpha", got
+          assert got["tags"] == ["a", "b"], got
+          # Typed equality filter must match a typed stored value.
+          hits = db.query_nodes("smoke", None, {"line": 42}, None, None)
+          assert [n.id for n in hits] == ["typed"], [n.id for n in hits]
+          print("wheel smoke OK: graph + typed-property roundtrip on", pe.__file__)
+          PY
+
   # ---- TestPyPI (advisory/optional) --------------------------------------------------
   publish-testpypi:
     name: Publish to TestPyPI (advisory)
-    needs: [build-sdk, build-embedded-wheels, build-embedded-sdist]
+    needs: [build-sdk, build-embedded-wheels, build-embedded-sdist, test-embedded-wheels]
     if: ${{ github.event.inputs.dry_run != 'true' && (github.event.inputs.publish_testpypi == 'true' || startsWith(github.ref, 'refs/tags/python-v')) }}
     continue-on-error: true
     runs-on: ubuntu-latest
@@ -208,7 +291,7 @@ jobs:
   # ---- PyPI (authoritative): proximadb_embedded native package ----------------------
   publish-embedded-pypi:
     name: Publish proximadb_embedded to PyPI
-    needs: [build-embedded-wheels, build-embedded-sdist]
+    needs: [build-embedded-wheels, build-embedded-sdist, test-embedded-wheels]
     if: ${{ github.event.inputs.dry_run != 'true' && startsWith(github.ref, 'refs/tags/python-v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
     runs-on: ubuntu-latest
     environment:

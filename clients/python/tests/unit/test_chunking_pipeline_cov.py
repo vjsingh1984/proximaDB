@@ -1011,6 +1011,24 @@ def test_async_pipeline_context_manager():
 )
 def test_all_strategies_process_offline(strategy):
     p = create_pipeline(strategy=strategy)
+
+    # CODE requires the optional `codegraph` extra and fails loudly without it
+    # (TD-CG2). The pipeline surfaces that as an unsuccessful result rather than
+    # a silent empty one, which is the property worth pinning -- asserted here
+    # instead of skipping the parameter, so a regression to silent-success is
+    # caught.
+    if strategy is ChunkingStrategy.CODE:
+        try:
+            import victor_codegraph  # noqa: F401
+        except ImportError:
+            r = p.process_text(PARA_TEXT, "doc1")
+            assert r.success is False
+            assert any("codegraph" in str(e).lower() for e in (r.errors or [])), (
+                "code chunking without the extra must report WHY it failed; a "
+                f"bare failure is indistinguishable from a bug. got: {r.errors}"
+            )
+            return
+
     r = p.process_text(PARA_TEXT, "doc1")
     assert r.success is True
     assert isinstance(r.chunk_count, int)

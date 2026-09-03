@@ -28,11 +28,15 @@ class ScanRecordsResponse:
 
         Attributes:
             records (list[RecordV2Response]):
+            content_revision (int):
+            content_revision_token (str):
             next_cursor (None | str | Unset):
             scanned_count (int | None | Unset):
     """
 
     records: list[RecordV2Response]
+    content_revision: int
+    content_revision_token: str
     next_cursor: None | str | Unset = UNSET
     scanned_count: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -44,6 +48,10 @@ class ScanRecordsResponse:
         for records_item_data in self.records:
             records_item = records_item_data.to_dict()
             records.append(records_item)
+
+        content_revision = self.content_revision
+
+        content_revision_token = self.content_revision_token
 
         next_cursor: None | str | Unset
         if isinstance(self.next_cursor, Unset):
@@ -62,6 +70,8 @@ class ScanRecordsResponse:
         field_dict.update(
             {
                 "records": records,
+                "content_revision": content_revision,
+                "content_revision_token": content_revision_token,
             }
         )
         if next_cursor is not UNSET:
@@ -83,6 +93,10 @@ class ScanRecordsResponse:
 
             records.append(records_item)
 
+        content_revision = d.pop("content_revision")
+
+        content_revision_token = d.pop("content_revision_token")
+
         def _parse_next_cursor(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -103,6 +117,8 @@ class ScanRecordsResponse:
 
         scan_records_response = cls(
             records=records,
+            content_revision=content_revision,
+            content_revision_token=content_revision_token,
             next_cursor=next_cursor,
             scanned_count=scanned_count,
         )

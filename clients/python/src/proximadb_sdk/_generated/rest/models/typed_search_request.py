@@ -40,12 +40,8 @@ class TypedSearchRequest:
     ```
 
         Attributes:
-            top_k (int): Number of results to return
             vector (list[float]): Query vector
-            debug (bool | None | Unset): Return the SearchPlanTrace + a human-readable route explain
-                in the response (LLD §1 contract). Defaults to `false` so
-                non-debug requests don't pay the JSON serialization cost of
-                the ~30-field trace envelope.
+            top_k (int): Number of results to return
             filters (list[TypedFilter] | None | Unset): Typed filters with operator support
             include_text (bool | None | Unset): Whether to include TEXT fields in results (default: false)
 
@@ -54,28 +50,26 @@ class TypedSearchRequest:
             include_vector (bool | None | Unset): Whether to include the vector in results (default: false)
 
                 Vector data can be large, so it is excluded by default.
+            debug (bool | None | Unset): Return the SearchPlanTrace + a human-readable route explain
+                in the response (LLD §1 contract). Defaults to `false` so
+                non-debug requests don't pay the JSON serialization cost of
+                the ~30-field trace envelope.
     """
 
-    top_k: int
     vector: list[float]
-    debug: bool | None | Unset = UNSET
+    top_k: int
     filters: list[TypedFilter] | None | Unset = UNSET
     include_text: bool | None | Unset = UNSET
     include_vector: bool | None | Unset = UNSET
+    debug: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.typed_filter import TypedFilter
 
-        top_k = self.top_k
-
         vector = self.vector
 
-        debug: bool | None | Unset
-        if isinstance(self.debug, Unset):
-            debug = UNSET
-        else:
-            debug = self.debug
+        top_k = self.top_k
 
         filters: list[dict[str, Any]] | None | Unset
         if isinstance(self.filters, Unset):
@@ -101,22 +95,28 @@ class TypedSearchRequest:
         else:
             include_vector = self.include_vector
 
+        debug: bool | None | Unset
+        if isinstance(self.debug, Unset):
+            debug = UNSET
+        else:
+            debug = self.debug
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "top_k": top_k,
                 "vector": vector,
+                "top_k": top_k,
             }
         )
-        if debug is not UNSET:
-            field_dict["debug"] = debug
         if filters is not UNSET:
             field_dict["filters"] = filters
         if include_text is not UNSET:
             field_dict["include_text"] = include_text
         if include_vector is not UNSET:
             field_dict["include_vector"] = include_vector
+        if debug is not UNSET:
+            field_dict["debug"] = debug
 
         return field_dict
 
@@ -125,18 +125,9 @@ class TypedSearchRequest:
         from ..models.typed_filter import TypedFilter
 
         d = dict(src_dict)
-        top_k = d.pop("top_k")
-
         vector = cast(list[float], d.pop("vector"))
 
-        def _parse_debug(data: object) -> bool | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(bool | None | Unset, data)
-
-        debug = _parse_debug(d.pop("debug", UNSET))
+        top_k = d.pop("top_k")
 
         def _parse_filters(data: object) -> list[TypedFilter] | None | Unset:
             if data is None:
@@ -180,13 +171,22 @@ class TypedSearchRequest:
 
         include_vector = _parse_include_vector(d.pop("include_vector", UNSET))
 
+        def _parse_debug(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        debug = _parse_debug(d.pop("debug", UNSET))
+
         typed_search_request = cls(
-            top_k=top_k,
             vector=vector,
-            debug=debug,
+            top_k=top_k,
             filters=filters,
             include_text=include_text,
             include_vector=include_vector,
+            debug=debug,
         )
 
         typed_search_request.additional_properties = d

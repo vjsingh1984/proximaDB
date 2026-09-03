@@ -1314,8 +1314,85 @@ impl NativeCatalog {
     }
 }
 
+/// TD-CAT-7: `NativeCatalog` owns an allocator and an account registry, so it
+/// is an identity authority. Every method here is required by the trait — the
+/// silent `Ok(None)` inheritance that let minting go missing is not reachable
+/// from this impl.
+// Referenced by full path, deliberately NOT imported: `NativeCatalog` implements
+// both `Catalog` and `CatalogAuthority`, which declare the same method names. With
+// both traits in scope every concrete-type call site becomes ambiguous (E0034).
+// In-module and test callers use `Catalog`, whose defaults delegate here.
+#[async_trait]
+impl crate::CatalogAuthority for NativeCatalog {
+    async fn max_object_id(&self) -> Result<Option<u64>> {
+        // Max persisted object_id from the durable forward index (name→oid),
+        // loaded eagerly at startup. Used by the root to raise the collection-id
+        // allocator floor above every existing object_id (collision safety).
+        Ok(self.object_name_index.read().await.values().copied().max())
+    }
+
+    async fn allocate_object_id(&self) -> Result<u64> {
+        // Collection lifecycle and ordinary catalog DDL must draw from one
+        // authority. The later create_table adopts this id via mint_object_id.
+        Ok(self.mint_object_id(None))
+    }
+
+    async fn mint_collection_typed_identity(
+        &self,
+        account: &str,
+        namespace_key: &str,
+    ) -> Result<Option<(u32, u16, u32)>> {
+        // Phase 4c pre-mint: a fresh typed triple (no existing values) via the
+        // shared `resolve_typed_triple`. The caller stamps it onto the schema
+        // before create_table, whose `mint_stable_identity` then preserves it
+        // (idempotent — no double-mint).
+        Ok(self
+            .resolve_typed_triple(account, namespace_key, None, None)
+            .await)
+    }
+
+    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
+        // Thin public wrapper over the private registry lookup-or-mint. The
+        // root path-resolver calls this to compose a `CollectionIdentity`.
+        self.ensure_account_u32(account).await
+    }
+
+    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
+        // TD-TENANT-1 item 3: sync read-only lookup (no mint, no persist) for the
+        // request-hot TenantStableIdResolver. None when unminted/empty.
+        let account = account.trim();
+        if account.is_empty() {
+            return None;
+        }
+        self.account_registry.get(account).map(|v| *v.value())
+    }
+
+    async fn get_table_by_object_id(&self, object_id: u64) -> Result<Option<TableIdentifier>> {
+        // TD-181 P1: the reverse index is now built eagerly at startup from the
+        // durable `object_index.json` (rebuilt by scan if absent), so a fresh
+        // process resolves any persisted id without first loading its table by
+        // name. Still maintained on create/load/rename/drop.
+        Ok(self.object_id_index.read().await.get(&object_id).cloned())
+    }
+
+    async fn get_namespace_by_object_id(&self, object_id: u64) -> Result<Option<Vec<String>>> {
+        // Namespaces load eagerly at construction (load_namespaces), so this
+        // reverse index is fully populated up front — unlike the lazy table index.
+        Ok(self
+            .namespace_object_id_index
+            .read()
+            .await
+            .get(&object_id)
+            .cloned())
+    }
+}
+
 #[async_trait]
 impl Catalog for NativeCatalog {
+    fn identity_authority(&self) -> Option<&dyn crate::CatalogAuthority> {
+        Some(self)
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -1419,43 +1496,6 @@ impl Catalog for NativeCatalog {
             .ok_or_else(|| anyhow!("Namespace '{}' not found", key))
     }
 
-    async fn account_id_u32(&self, account: &str) -> Result<Option<u32>> {
-        // Thin public wrapper over the private registry lookup-or-mint. The
-        // root path-resolver calls this to compose a `CollectionIdentity`.
-        self.ensure_account_u32(account).await
-    }
-
-    fn account_id_u32_lookup(&self, account: &str) -> Option<u32> {
-        // TD-TENANT-1 item 3: sync read-only lookup (no mint, no persist) for the
-        // request-hot TenantStableIdResolver. None when unminted/empty.
-        let account = account.trim();
-        if account.is_empty() {
-            return None;
-        }
-        self.account_registry.get(account).map(|v| *v.value())
-    }
-
-    async fn max_object_id(&self) -> Result<Option<u64>> {
-        // Max persisted object_id from the durable forward index (name→oid),
-        // loaded eagerly at startup. Used by the root to raise the collection-id
-        // allocator floor above every existing object_id (collision safety).
-        Ok(self.object_name_index.read().await.values().copied().max())
-    }
-
-    async fn mint_collection_typed_identity(
-        &self,
-        account: &str,
-        namespace_key: &str,
-    ) -> Result<Option<(u32, u16, u32)>> {
-        // Phase 4c pre-mint: a fresh typed triple (no existing values) via the
-        // shared `resolve_typed_triple`. The caller stamps it onto the schema
-        // before create_table, whose `mint_stable_identity` then preserves it
-        // (idempotent — no double-mint).
-        Ok(self
-            .resolve_typed_triple(account, namespace_key, None, None)
-            .await)
-    }
-
     async fn update_namespace_properties(
         &self,
         namespace: &[String],
@@ -1490,7 +1530,7 @@ impl Catalog for NativeCatalog {
     // Table Operations
     // ========================
 
-    async fn create_table(
+    async fn create_table_inner(
         &self,
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,
@@ -1675,25 +1715,6 @@ impl Catalog for NativeCatalog {
             .put_table(&self.name, identifier, meta.schema.clone());
 
         Ok(meta.schema)
-    }
-
-    async fn get_table_by_object_id(&self, object_id: u64) -> Result<Option<TableIdentifier>> {
-        // TD-181 P1: the reverse index is now built eagerly at startup from the
-        // durable `object_index.json` (rebuilt by scan if absent), so a fresh
-        // process resolves any persisted id without first loading its table by
-        // name. Still maintained on create/load/rename/drop.
-        Ok(self.object_id_index.read().await.get(&object_id).cloned())
-    }
-
-    async fn get_namespace_by_object_id(&self, object_id: u64) -> Result<Option<Vec<String>>> {
-        // Namespaces load eagerly at construction (load_namespaces), so this
-        // reverse index is fully populated up front — unlike the lazy table index.
-        Ok(self
-            .namespace_object_id_index
-            .read()
-            .await
-            .get(&object_id)
-            .cloned())
     }
 
     async fn rename_table(&self, from: &TableIdentifier, to: &TableIdentifier) -> Result<()> {

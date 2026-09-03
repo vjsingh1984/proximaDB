@@ -677,6 +677,8 @@ impl OrionPersistence {
 
         // Clear existing data
         engine.memory_pool.nodes.clear();
+        engine.memory_pool.edges.clear();
+        engine.memory_pool.edge_composite_index.clear();
         engine.edge_metadata.clear();
         engine.node_to_index.clear();
 
@@ -688,9 +690,15 @@ impl OrionPersistence {
                 .insert(node.id.clone(), Arc::new(node));
         }
 
-        // Restore edges
+        // Restore edges into BOTH stores: `edge_metadata` (id lookup) AND the
+        // memory pool — `get_all_edges`/the composite-uniqueness index read the
+        // pool, so restoring only metadata left every full-snapshot load
+        // edge-blind on the read path (the #1549 read-blindness bug, snapshot
+        // edition; latent while snapshot loading was gated off).
         for edge in snapshot.edges {
-            engine.edge_metadata.insert(edge.id.clone(), Arc::new(edge));
+            let edge_id = edge.id.clone();
+            let edge_arc = engine.memory_pool.insert_edge(edge);
+            engine.edge_metadata.insert(edge_id, edge_arc);
         }
 
         // Restore CSR structures
@@ -1262,6 +1270,15 @@ impl OrionPersistence {
             self.replaying
                 .store(true, std::sync::atomic::Ordering::Release);
 
+            // Replay applies frames through `create_edge`, which rebuilt BOTH
+            // CSRs per edge. A rebuild is O(V+E), so recovering E edges cost
+            // O(E^2): measured insert throughput inside one replay decayed
+            // 2,526/s -> ~60/s as the graph filled, and a 177k-edge graph never
+            // finished reopening (#1673). Replay has the whole frame set up
+            // front and serves no reads until it returns, so it accumulates
+            // into the temp buffer and rebuilds exactly once below.
+            engine.set_csr_rebuild_deferred(true);
+
             let mut replayed: u64 = 0;
             let mut skipped_failed: u64 = 0;
             for entry in entries.into_iter().skip(start_index) {
@@ -1288,8 +1305,15 @@ impl OrionPersistence {
                     }
                 }
             }
+            // Clear both flags before the rebuild so an error cannot leave the
+            // engine stuck in replay mode, then commit the accumulated edits.
+            // Until this lands the deferred edges are invisible to traversal,
+            // so it must happen before recovery returns — propagate a failure
+            // rather than serve a silently incomplete graph.
+            engine.set_csr_rebuild_deferred(false);
             self.replaying
                 .store(false, std::sync::atomic::Ordering::Release);
+            engine.rebuild_csr()?;
             tracing::info!(
                 graph_id = %self.graph_id,
                 skipped = start_index,

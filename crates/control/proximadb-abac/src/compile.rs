@@ -32,12 +32,86 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use proximadb_catalog::fc_metamodel::ObjectId;
+use proximadb_catalog::fc_metamodel::{AttrValue, ObjectId, SubjectAttributes};
 use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+
+/// The placeholder prefix a stored predicate uses to reference the acting
+/// subject: `{"field":"dept","operator":"Equals","value":"$subject.dept"}`.
+///
+/// Already the documented spelling on [`FileSystemPredicateObjectStore`]
+/// (`dept == $subject.dept`) — reused rather than re-invented, so there is one
+/// spelling and not two.
+const SUBJECT_PREFIX: &str = "$subject.";
 
 /// Reserved field name for the synthetic unsatisfiable expression. Never read
 /// from a record — the expression is a contradiction over *presence*.
 const UNSATISFIABLE_FIELD: &str = "__proximadb_abac_unsatisfiable__";
+
+/// Render a load-bearing attribute as the JSON the comparison evaluator expects.
+fn attr_to_json(value: &AttrValue) -> serde_json::Value {
+    match value {
+        AttrValue::Str(s) => serde_json::Value::String(s.clone()),
+        AttrValue::Int(i) => serde_json::Value::Number((*i).into()),
+        AttrValue::Bool(b) => serde_json::Value::Bool(*b),
+        AttrValue::List(items) => serde_json::Value::Array(
+            items
+                .iter()
+                .cloned()
+                .map(serde_json::Value::String)
+                .collect(),
+        ),
+    }
+}
+
+/// Replace every `$subject.<attr>` placeholder with the subject's value.
+///
+/// **Load-bearing only.** [`SubjectAttributes::load_bearing`] returns `None` for
+/// a claim-sourced attribute, so a forged `dept`/`clearance`/`role` in an SSO
+/// token cannot satisfy a predicate — it denies instead. That is the whole
+/// reason the substitution goes through this accessor and not `get`.
+///
+/// `None` means *some placeholder could not be resolved* — absent, or present
+/// but merely claimed. The caller turns that into a deny, exactly like a missing
+/// predicate ref: the policy asked for a value the server cannot vouch for, and
+/// the safe answer is "admit nothing", never "no restriction".
+fn substitute_subject(
+    expr: FilterExpression,
+    subject: &SubjectAttributes,
+) -> Option<FilterExpression> {
+    match expr {
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => {
+            let value = match value {
+                serde_json::Value::String(literal) => match literal.strip_prefix(SUBJECT_PREFIX) {
+                    Some(attr) => attr_to_json(subject.load_bearing(attr)?),
+                    None => serde_json::Value::String(literal),
+                },
+                other => other,
+            };
+            Some(FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            })
+        }
+        FilterExpression::And(parts) => parts
+            .into_iter()
+            .map(|part| substitute_subject(part, subject))
+            .collect::<Option<Vec<_>>>()
+            .map(FilterExpression::And),
+        FilterExpression::Or(parts) => parts
+            .into_iter()
+            .map(|part| substitute_subject(part, subject))
+            .collect::<Option<Vec<_>>>()
+            .map(FilterExpression::Or),
+        FilterExpression::Not(inner) => {
+            substitute_subject(*inner, subject).map(|e| FilterExpression::Not(Box::new(e)))
+        }
+    }
+}
 
 /// An expression that admits no row. `IsNull(f) ∧ IsNotNull(f)` is a genuine
 /// contradiction under the evaluator's own presence semantics (an absent field
@@ -59,13 +133,32 @@ fn unsatisfiable_filter() -> FilterExpression {
 
 /// Resolves `ObjectId` predicate-refs to their stored `FilterExpression`.
 ///
-/// **Structurally tenant-scoped**: an implementation is built for one tenant and
-/// only sees that tenant's predicate objects. A cross-tenant ref fails to resolve
-/// (returns `None`), and [`compile_security_filter`] turns that into a deny.
+/// # Scope: cluster-global, operator-administered — NOT tenant-partitioned
+///
+/// This doc previously claimed the trait was "structurally tenant-scoped" and
+/// that "a cross-tenant ref fails to resolve." **No implementation has ever
+/// provided that**, and `FileSystemPredicateObjectStore`'s own doc says the
+/// opposite three screens below. Two contradictory guarantees in one file is
+/// worse than a documented limitation: a reader cannot tell which one the code
+/// keeps. The accurate contract is written here instead.
+///
+/// A predicate object is a **cluster-scope** object. Both the write path
+/// (`PUT /api/v2/abac/predicate-objects/{object_id}`) and the binding that
+/// names one (`PUT /api/v2/abac/policy-bindings/{tenant}/{object_id}`) require
+/// `SystemAdmin` ∪ `ConfigureSystem` via `authorize_operator` — verified for
+/// all 14 handlers in `rest/canonical/abac_admin.rs`. So the same id resolving
+/// for two tenants is **not** a cross-tenant escalation: only a cluster
+/// operator, who already administers every tenant, can create one or reference
+/// it. `predicate_objects_are_cluster_scope_not_tenant_scoped` pins that.
+///
+/// If a tenant-facing policy API is ever added, this becomes load-bearing and
+/// the store must be keyed by `(TenantStableId, ObjectId)` **before** that API
+/// ships — tracked in TD-AUTHZ-1 L2.3.
 pub trait PredicateObjectStore {
     /// Look up the predicate object registered under `id`. Returns `None` when
-    /// unknown, revoked, or in another tenant's scope — [`compile_security_filter`]
-    /// treats `None` as fail-closed.
+    /// the id is unknown or revoked — [`compile_security_filter`] treats `None`
+    /// as fail-closed. It does **not** return `None` for another tenant's
+    /// object; see the scope note above.
     ///
     /// Returns an **owned** `FilterExpression` (not a borrow) so a durable
     /// implementation can hold its cache behind a lock — a reference could not
@@ -136,7 +229,8 @@ impl PredicateObjectStore for InMemoryPredicateObjectStore {
 /// Predicate objects are keyed by global catalog `ObjectId` (not tenant-
 /// partitioned), matching [`InMemoryPredicateObjectStore`] and the enforcer's
 /// single shared store — a predicate ref resolves the same `FilterExpression`
-/// regardless of tenant. `Send + Sync` (held by the enforcer behind a shared
+/// regardless of tenant. This is deliberate and operator-gated; see the scope
+/// note on [`PredicateObjectStore`]. `Send + Sync` (held by the enforcer behind a shared
 /// `Arc<dyn PredicateObjectStore + Send + Sync>`). The in-memory cache is behind
 /// a [`RwLock`] so an admin write through a shared `Arc` handle is visible to the
 /// live enforcer without a restart (hot-reload): writes take the write-lock and
@@ -271,12 +365,24 @@ pub enum PredicateStoreError {
 /// row restriction *at the policy level* (the subject is still admitted/denied
 /// by the `ReadDecision`; this only governs which rows are visible).
 ///
-/// **Fail-closed**: if ANY ref is missing from the store, returns
-/// `Some(unsatisfiable_filter())` — a broken policy reference denies
-/// everything rather than silently admitting.
+/// **Fail-closed**: if ANY ref is missing from the store, **or carries a
+/// `$subject.<attr>` placeholder that cannot be resolved to a load-bearing
+/// attribute**, returns `Some(unsatisfiable_filter())` — a broken or
+/// unresolvable policy reference denies everything rather than silently
+/// admitting.
+///
+/// # Subject parameterization (ADR-090 L2.1)
+///
+/// A stored predicate may reference the acting subject:
+/// `{"field":"dept","operator":"Equals","value":"$subject.dept"}`. Placeholders
+/// resolve through [`SubjectAttributes::load_bearing`], which returns `None` for
+/// a **claim-sourced** value — so a forged `dept`/`clearance`/`role` in an SSO
+/// token denies rather than satisfying the predicate. A literal string that does
+/// not start with `$subject.` is left untouched.
 pub fn compile_security_filter(
     refs: &[ObjectId],
     store: &dyn PredicateObjectStore,
+    subject: &SubjectAttributes,
 ) -> Option<FilterExpression> {
     if refs.is_empty() {
         return None;
@@ -285,7 +391,20 @@ pub fn compile_security_filter(
     let mut resolved: Vec<FilterExpression> = Vec::with_capacity(refs.len());
     for id in refs {
         match store.get(*id) {
-            Some(expr) => resolved.push(expr),
+            // ADR-090 L2.1: a stored predicate may reference the acting subject
+            // (`dept == $subject.dept`). Substituting HERE, inside the one
+            // compile every read surface funnels through, is why `subject` is a
+            // required parameter rather than an optional second entry point: a
+            // security compile that cannot see the subject would silently ignore
+            // the placeholder and compare against the literal string.
+            Some(expr) => match substitute_subject(expr, subject) {
+                Some(expr) => resolved.push(expr),
+                None => {
+                    // Unresolvable placeholder — absent, or present but merely
+                    // CLAIMED. Same deny as a missing ref.
+                    return Some(unsatisfiable_filter());
+                }
+            },
             None => {
                 // A missing predicate ref is a deny — the policy references
                 // something the store cannot find, and the safe answer is
@@ -306,6 +425,12 @@ mod tests {
     use super::*;
     use proximadb_filter_expression::ComparisonOperator;
 
+    /// A subject with no attributes — enough for every test that does not use a
+    /// `$subject.` placeholder.
+    fn bare_subject() -> SubjectAttributes {
+        SubjectAttributes::new("alice", 1)
+    }
+
     fn eq_dept(value: &str) -> FilterExpression {
         FilterExpression::Comparison {
             field: "dept".to_string(),
@@ -322,17 +447,156 @@ mod tests {
         }
     }
 
+    /// TD-AUTHZ-1 L2.3, **corrected by measurement**. The tracker recorded
+    /// "today cross-tenant deref resolves" as an open isolation gap. It does
+    /// resolve — but that is not an escalation, and this test pins why so the
+    /// entry is not re-opened as a security bug.
+    ///
+    /// Both the write path (`PUT /api/v2/abac/predicate-objects/{id}`) and the
+    /// binding that names one (`PUT /api/v2/abac/policy-bindings/{tenant}/{id}`)
+    /// require `SystemAdmin` ∪ `ConfigureSystem` — all 14 handlers in
+    /// `abac_admin.rs` call the fail-closed `authorize_operator` first. Only a
+    /// cluster operator, who already administers every tenant, can create a
+    /// predicate object or point a binding at one. No tenant-facing surface
+    /// writes either.
+    ///
+    /// **Teeth are structural, not behavioural.** A behavioural assertion here
+    /// would be vacuous — with no tenant parameter to vary, "tenant A and
+    /// tenant B get the same answer" is the same call twice. So the pin is on
+    /// the *signature*: add a tenant argument to `get` and this stops
+    /// compiling, which is exactly the moment someone should be re-reading the
+    /// scope note on the trait.
+    #[test]
+    fn predicate_objects_are_cluster_scope_not_tenant_scoped() {
+        let store = InMemoryPredicateObjectStore::new();
+
+        // The pin: `get` takes an ObjectId and NOTHING else, so no
+        // implementation of this trait can scope by tenant. Spelled as a
+        // qualified call so the arity is the assertion — add a tenant argument
+        // and this line stops compiling.
+        let resolved: Option<FilterExpression> = PredicateObjectStore::get(&store, 42);
+        assert_eq!(resolved, None, "an unregistered id is unknown to the store");
+
+        // The fail-closed property that DOES hold, and must keep holding: an id
+        // nobody registered denies rather than waving the read through.
+        assert_eq!(
+            compile_security_filter(&[42], &store, &bare_subject()),
+            Some(unsatisfiable_filter()),
+            "an unregistered ref must compile to a deny"
+        );
+    }
+
+    fn eq_subject_dept() -> FilterExpression {
+        FilterExpression::Comparison {
+            field: "dept".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::Value::String("$subject.dept".to_string()),
+        }
+    }
+
+    /// ADR-090 L2.1: a stored predicate can compare a row field against the
+    /// ACTING subject's attribute. Before this, `compile_security_filter` took
+    /// no subject at all, so `dept == $subject.dept` was not merely unsupported
+    /// — it compiled to a comparison against the literal string `"$subject.dept"`
+    /// and matched nothing, quietly.
+    #[test]
+    fn a_server_resolved_attribute_substitutes_into_the_predicate() {
+        let mut store = InMemoryPredicateObjectStore::new();
+        store.register(42, eq_subject_dept());
+        let subject = SubjectAttributes::new("alice", 1)
+            .with_resolved("dept", AttrValue::Str("eng".to_string()));
+
+        assert_eq!(
+            compile_security_filter(&[42], &store, &subject).expect("resolved"),
+            eq_dept("eng"),
+            "the placeholder must become the subject's own value"
+        );
+    }
+
+    /// **The anti-forgery property.** A claim-sourced attribute is whatever a
+    /// tenant-controlled IdP asserted, so it must never decide an admit. It
+    /// denies exactly like an absent attribute — `load_bearing` returns `None`
+    /// for both, which is why substitution goes through it and not `get`.
+    ///
+    /// Teeth: swap `load_bearing` for `get` in `substitute_subject` and this
+    /// test fails while every other test in the file still passes — the forged
+    /// value would satisfy the predicate.
+    #[test]
+    fn a_claimed_attribute_denies_rather_than_satisfying_the_predicate() {
+        let mut store = InMemoryPredicateObjectStore::new();
+        store.register(42, eq_subject_dept());
+        let forged = SubjectAttributes::new("mallory", 1)
+            .with_claim("dept", AttrValue::Str("eng".to_string()));
+
+        assert_eq!(
+            compile_security_filter(&[42], &store, &forged).expect("fail-closed yields an expr"),
+            unsatisfiable_filter(),
+            "a forged claim must not satisfy a subject-parameterized predicate"
+        );
+    }
+
+    #[test]
+    fn a_missing_attribute_denies() {
+        let mut store = InMemoryPredicateObjectStore::new();
+        store.register(42, eq_subject_dept());
+
+        assert_eq!(
+            compile_security_filter(&[42], &store, &bare_subject())
+                .expect("fail-closed yields an expr"),
+            unsatisfiable_filter(),
+            "an unresolvable placeholder denies, exactly like a missing ref"
+        );
+    }
+
+    /// Substitution must reach every leaf, not just the top level — a nested
+    /// placeholder that survived would compare against the literal and silently
+    /// match nothing, which reads as "the policy is just restrictive".
+    #[test]
+    fn substitution_reaches_nested_expressions() {
+        let mut store = InMemoryPredicateObjectStore::new();
+        store.register(
+            42,
+            FilterExpression::Or(vec![
+                FilterExpression::Not(Box::new(eq_subject_dept())),
+                FilterExpression::And(vec![eq_subject_dept()]),
+            ]),
+        );
+        let subject = SubjectAttributes::new("alice", 1)
+            .with_resolved("dept", AttrValue::Str("eng".to_string()));
+
+        assert_eq!(
+            compile_security_filter(&[42], &store, &subject).expect("resolved"),
+            FilterExpression::Or(vec![
+                FilterExpression::Not(Box::new(eq_dept("eng"))),
+                FilterExpression::And(vec![eq_dept("eng")]),
+            ])
+        );
+    }
+
+    /// A literal that merely looks like text must survive untouched — only the
+    /// `$subject.` prefix is special.
+    #[test]
+    fn ordinary_string_literals_are_left_alone() {
+        let mut store = InMemoryPredicateObjectStore::new();
+        store.register(42, eq_dept("$subject_is_not_a_placeholder"));
+
+        assert_eq!(
+            compile_security_filter(&[42], &store, &bare_subject()).expect("resolved"),
+            eq_dept("$subject_is_not_a_placeholder")
+        );
+    }
+
     #[test]
     fn empty_refs_produce_no_restriction() {
         let store = InMemoryPredicateObjectStore::new();
-        assert_eq!(compile_security_filter(&[], &store), None);
+        assert_eq!(compile_security_filter(&[], &store, &bare_subject()), None);
     }
 
     #[test]
     fn a_single_ref_compiles_to_its_expression() {
         let mut store = InMemoryPredicateObjectStore::new();
         store.register(42, eq_dept("eng"));
-        let compiled = compile_security_filter(&[42], &store).expect("resolved");
+        let compiled = compile_security_filter(&[42], &store, &bare_subject()).expect("resolved");
         assert_eq!(compiled, eq_dept("eng"));
     }
 
@@ -341,7 +605,7 @@ mod tests {
         let mut store = InMemoryPredicateObjectStore::new();
         store.register(1, eq_dept("eng"));
         store.register(2, gt_clearance(3));
-        let compiled = compile_security_filter(&[1, 2], &store).expect("resolved");
+        let compiled = compile_security_filter(&[1, 2], &store, &bare_subject()).expect("resolved");
         match compiled {
             FilterExpression::And(parts) => {
                 assert_eq!(parts.len(), 2);
@@ -355,7 +619,8 @@ mod tests {
     #[test]
     fn a_missing_ref_is_fail_closed() {
         let store = InMemoryPredicateObjectStore::new();
-        let compiled = compile_security_filter(&[999], &store).expect("fail-closed yields an expr");
+        let compiled = compile_security_filter(&[999], &store, &bare_subject())
+            .expect("fail-closed yields an expr");
         // Must be unsatisfiable, not None (None would mean "no restriction").
         assert!(
             !matches!(compiled, FilterExpression::Comparison { .. }),
@@ -368,7 +633,7 @@ mod tests {
         let mut store = InMemoryPredicateObjectStore::new();
         store.register(1, eq_dept("eng"));
         // ref 2 is missing
-        let compiled = compile_security_filter(&[1, 2], &store).expect("an expr");
+        let compiled = compile_security_filter(&[1, 2], &store, &bare_subject()).expect("an expr");
         // Must be the unsatisfiable contradiction, not the partial AND.
         match &compiled {
             FilterExpression::And(parts) => {
@@ -396,10 +661,10 @@ mod tests {
     fn revocation_takes_effect() {
         let mut store = InMemoryPredicateObjectStore::new();
         store.register(1, eq_dept("eng"));
-        assert!(compile_security_filter(&[1], &store).is_some());
+        assert!(compile_security_filter(&[1], &store, &bare_subject()).is_some());
 
         store.revoke(1);
-        let compiled = compile_security_filter(&[1], &store).expect("an expr");
+        let compiled = compile_security_filter(&[1], &store, &bare_subject()).expect("an expr");
         match compiled {
             FilterExpression::And(parts) => assert_eq!(parts.len(), 2), // unsatisfiable
             _ => panic!("revoked ref should deny"),
@@ -467,9 +732,9 @@ mod tests {
 
         // compile_security_filter — the production enforcement path — resolves
         // the restarted refs, and a missing ref compiles to the fail-closed deny.
-        assert!(compile_security_filter(&[42, 7], &store).is_some());
+        assert!(compile_security_filter(&[42, 7], &store, &bare_subject()).is_some());
         assert!(
-            compile_security_filter(&[42, 999], &store).is_some(),
+            compile_security_filter(&[42, 999], &store, &bare_subject()).is_some(),
             "a missing ref compiles to the unsatisfiable deny, not None"
         );
 

@@ -97,6 +97,37 @@ def test_exact_rendered_budget_splits_with_token_overlap_and_full_coverage():
     assert chunks[1].metadata["overlap_tokens"] == 1
 
 
+def test_overlap_does_not_reuse_a_boundary_without_meaningful_new_content():
+    strategy = make_strategy(
+        make_contract(limit=12),
+        target=12,
+        overlap=5,
+    )
+    text = " ".join(f"word{index}" for index in range(20))
+    offsets = WordCounter().content_offsets(text)
+    repeated_end = offsets[7][1]
+    strategy.boundary_strategy.preferred_boundaries = lambda *_args, **_kwargs: [
+        repeated_end,
+        len(text),
+    ]
+
+    chunks = strategy.chunk(text, "doc")
+
+    assert [chunk.text.split() for chunk in chunks] == [
+        [f"word{index}" for index in range(8)],
+        [f"word{index}" for index in range(3, 12)],
+        [f"word{index}" for index in range(7, 16)],
+        [f"word{index}" for index in range(11, 20)],
+    ]
+    assert [chunk.metadata["overlap_tokens"] for chunk in chunks] == [0, 5, 5, 5]
+    assert [chunk.metadata["new_content_tokens"] for chunk in chunks] == [8, 4, 4, 4]
+    previous_end = 0
+    for chunk in chunks:
+        end_token = sum(end <= chunk.end_pos for _, end in offsets)
+        assert end_token - previous_end >= 3
+        previous_end = end_token
+
+
 def test_composite_contract_uses_most_restrictive_rendered_input():
     primary = make_contract(name="primary", document_template="p: {text}", limit=8)
     secondary = make_contract(
@@ -108,6 +139,76 @@ def test_composite_contract_uses_most_restrictive_rendered_input():
 
     assert [len(chunk.text.split()) for chunk in chunks] == [2, 2, 2, 2]
     assert all(max(chunk.metadata["token_counts"].values()) <= 7 for chunk in chunks)
+
+
+def test_composite_contract_counts_identical_runtime_inputs_once():
+    calls = []
+
+    class CountingCounter(WordCounter):
+        def count(self, text: str) -> int:
+            calls.append((self.name, text))
+            return super().count(text)
+
+    first_counter = CountingCounter("shared", advertised_limit=8)
+    second_counter = CountingCounter("shared", advertised_limit=8)
+    first = ResolvedInputContract(
+        model_id="first",
+        model_revision="one",
+        counter=first_counter,
+        effective_context_limit=8,
+        renderer=InputRenderer(document_template="passage: {text}"),
+    )
+    second = ResolvedInputContract(
+        model_id="second",
+        model_revision="two",
+        counter=second_counter,
+        effective_context_limit=7,
+        renderer=InputRenderer(document_template="passage: {text}"),
+    )
+    composite = CompositeInputContract((first, second))
+
+    assert composite.counts("one two", InputRole.DOCUMENT) == {
+        "first": 5,
+        "second": 5,
+    }
+    assert composite.fits("one two", InputRole.DOCUMENT, 7)
+    assert composite.validate("one two", InputRole.DOCUMENT) == {
+        "first": 5,
+        "second": 5,
+    }
+    assert calls == [
+        ("shared", "passage: one two"),
+        ("shared", "passage: one two"),
+        ("shared", "passage: one two"),
+    ]
+
+
+def test_composite_contract_does_not_share_different_rendered_inputs():
+    calls = []
+
+    class CountingCounter(WordCounter):
+        def count(self, text: str) -> int:
+            calls.append(text)
+            return super().count(text)
+
+    first = ResolvedInputContract(
+        model_id="first",
+        model_revision="one",
+        counter=CountingCounter("shared", advertised_limit=8),
+        effective_context_limit=8,
+        renderer=InputRenderer(document_template="passage: {text}"),
+    )
+    second = ResolvedInputContract(
+        model_id="second",
+        model_revision="two",
+        counter=CountingCounter("shared", advertised_limit=8),
+        effective_context_limit=8,
+        renderer=InputRenderer(document_template="document: {text}"),
+    )
+
+    CompositeInputContract((first, second)).counts("one", InputRole.DOCUMENT)
+
+    assert calls == ["passage: one", "document: one"]
 
 
 def test_sentence_boundaries_are_independent_of_legacy_character_size():
@@ -203,6 +304,29 @@ def test_nomic_provider_resolves_runtime_contract_and_matryoshka_dimension():
     assert contract.render("q", InputRole.QUERY) == "search_query: q"
 
 
+def test_runtime_contract_prefers_current_embedding_dimension_api():
+    provider = create_open_model_provider(
+        "sentence-transformers/all-MiniLM-L6-v2", device="cpu"
+    )
+
+    class FakeModel:
+        tokenizer = FakeFastTokenizer()
+        max_seq_length = 16
+
+        @staticmethod
+        def get_embedding_dimension():
+            return 384
+
+        @staticmethod
+        def get_sentence_embedding_dimension():
+            raise AssertionError("deprecated dimension API should not be called")
+
+    provider._model = FakeModel()
+    provider._initialized = True
+
+    assert provider.get_input_contract().output_dimension == 384
+
+
 def test_specialized_provider_rejects_unsupported_matryoshka_dimension():
     with pytest.raises(ValueError, match="does not support 300 dimensions"):
         get_provider("nomic", dimension=300)
@@ -246,6 +370,40 @@ def test_catalog_models_cover_discrete_and_range_matryoshka_policies():
     assert not gemma.supports_dimension(300)
     assert qwen.supports_dimension(300)
     assert not qwen.supports_dimension(31)
+
+
+def test_catalog_includes_compact_long_context_granite_r2():
+    granite = OPEN_MODEL_CATALOG[
+        "ibm-granite/granite-embedding-97m-multilingual-r2"
+    ].metadata
+    assert granite.max_length == 32_768
+    assert granite.dimension == 384
+    assert granite.supported_output_dimensions == ()
+    assert granite.license_id == "apache-2.0"
+
+
+def test_sentence_transformer_runtime_info_reports_actual_accelerator():
+    provider = create_open_model_provider(
+        "sentence-transformers/all-MiniLM-L6-v2", device="mps"
+    )
+
+    class FakeModel:
+        device = "mps:0"
+        dtype = "torch.float16"
+
+        @staticmethod
+        def get_backend():
+            return "torch"
+
+    provider._model = FakeModel()
+    provider._initialized = True
+
+    assert provider.get_runtime_info() == {
+        "backend": "torch",
+        "compute_dtype": "float16",
+        "device": "mps:0",
+        "requested_device": "mps",
+    }
 
 
 def test_role_specific_adapter_parameters_reach_model_encode():

@@ -93,6 +93,8 @@ pub struct GrpcAuthContext {
 pub struct GrpcAuthLayer {
     security_coordinator: Arc<SecurityCoordinator>,
     header_trust: HeaderTrustPolicy,
+    /// ADR-0053 W8: trust policy for the `x-tenant-tier` entitlement claim.
+    tier_header_trust: HeaderTrustPolicy,
     /// TD-TENANT-1 item 3: resolver that stamps `tenant_stable_id` on each
     /// request's `GrpcAuthContext` for ABAC. `None` when no catalog resolver is
     /// wired (gRPC ABAC inert — the same default REST had before PR1).
@@ -104,6 +106,7 @@ impl GrpcAuthLayer {
         Self {
             security_coordinator,
             header_trust: HeaderTrustPolicy::default(),
+            tier_header_trust: HeaderTrustPolicy::default(),
             stable_id_resolver: None,
         }
     }
@@ -111,6 +114,12 @@ impl GrpcAuthLayer {
     /// Set the deployment's bare `x-tenant-id` trust policy (TD-TENANT-1).
     pub fn with_header_trust(mut self, header_trust: HeaderTrustPolicy) -> Self {
         self.header_trust = header_trust;
+        self
+    }
+
+    /// Set the deployment's `x-tenant-tier` claim trust policy (ADR-0053 W8).
+    pub fn with_tier_header_trust(mut self, tier_header_trust: HeaderTrustPolicy) -> Self {
+        self.tier_header_trust = tier_header_trust;
         self
     }
 
@@ -130,6 +139,7 @@ pub struct GrpcAuthService<S> {
     inner: S,
     security_coordinator: Arc<SecurityCoordinator>,
     header_trust: HeaderTrustPolicy,
+    tier_header_trust: HeaderTrustPolicy,
     stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
 }
 
@@ -141,6 +151,7 @@ impl<S> Layer<S> for GrpcAuthLayer {
             inner,
             security_coordinator: self.security_coordinator.clone(),
             header_trust: self.header_trust,
+            tier_header_trust: self.tier_header_trust,
             stable_id_resolver: self.stable_id_resolver.clone(),
         }
     }
@@ -169,6 +180,7 @@ where
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
         let header_trust = self.header_trust;
+        let tier_header_trust = self.tier_header_trust;
         let stable_id_resolver = self.stable_id_resolver.clone();
 
         Box::pin(async move {
@@ -176,6 +188,7 @@ where
                 &security_coordinator,
                 &mut request,
                 header_trust,
+                tier_header_trust,
                 stable_id_resolver,
             )
             .await
@@ -191,6 +204,7 @@ pub async fn authenticate_http_request<B>(
     security_coordinator: &SecurityCoordinator,
     request: &mut HttpRequest<B>,
     header_trust: HeaderTrustPolicy,
+    tier_header_trust: HeaderTrustPolicy,
     stable_id_resolver: Option<Arc<dyn proximadb_tenant::TenantStableIdResolver>>,
 ) -> Result<(), Status> {
     let path = request.uri().path();
@@ -215,10 +229,14 @@ pub async fn authenticate_http_request<B>(
     // REST / Arrow Flight / pgwire make). This also closes the pre-existing
     // gRPC gap where a NON-capability credential's metadata mismatch was
     // silently ignored instead of rejected.
-    let asserted = request
-        .headers()
-        .get("x-tenant-id")
-        .and_then(|value| value.to_str().ok());
+    // TD-TENANT-3: the shared claim vocabulary, canonical name only.
+    let request_headers = request.headers();
+    let asserted = proximadb_tenant::tenant_claim(|name| {
+        request_headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    })
+    .map(|hit| hit.value);
     let binding = user_context
         .tenant_id
         .as_ref()
@@ -255,13 +273,39 @@ pub async fn authenticate_http_request<B>(
     // Open-core cache tier hook: record the tenant's tier from `x-tenant-tier`
     // metadata (control-plane supplied, opaque id) for the cache policy, before
     // `user_context` is moved into the auth context.
-    let tier_claim = request
-        .headers()
-        .get("x-tenant-tier")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-    let tenant_for_tier = user_context.tenant_id.clone();
+    //
+    // ADR-0053 W8: the claim is gated by `tier_header_trust`. A rejected claim
+    // is DROPPED (warned once per tenant) — never a gRPC error, since the claim
+    // is an entitlement hint and the request proceeds at the default tier.
+    // Note: this code runs post-authenticate, so a binding is structurally
+    // always present here — `AuthenticatedOnly` can never drop a gRPC claim;
+    // only `GatewayOnly` (non-gateway principal) can.
+    //
+    // The stamp lands on the ACTING tenant (resolved_tenant — the delegated
+    // tenant under gateway delegation) falling back to the credential tenant,
+    // matching REST's `context.tenant_id` keying.
+    let raw_tier_claim = proximadb_tenant::tier_claim(|name| {
+        request_headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    });
+    let tenant_for_tier = resolved_tenant
+        .clone()
+        .or_else(|| user_context.tenant_id.clone());
+    let tier_claim = match proximadb_tenant::resolve_tier_claim(
+        raw_tier_claim,
+        binding.as_ref(),
+        tier_header_trust,
+    ) {
+        Ok(tier) => tier,
+        Err(rejection) => {
+            let tenant = tenant_for_tier.clone().unwrap_or_default();
+            crate::network::middleware::tenant::warn_tier_claim_dropped(
+                "grpc", &tenant, &rejection,
+            );
+            None
+        }
+    };
 
     // TD-TENANT-1 item 3: resolve the tenant's stable u64 id (the account u32
     // widened) for ABAC. None when no resolver is wired, no tenant resolved, or
@@ -463,11 +507,11 @@ fn validate_tenant_metadata(
         .tenant_id
         .as_deref()
         .ok_or_else(|| Status::permission_denied("capability token requires tenant_id"))?;
-    if let Some(header_tenant) = headers
-        .get("x-tenant-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    // TD-TENANT-3: same vocabulary as the assertion path above, so the
+    // capability check and the trust gate can never read different headers.
+    if let Some(header_tenant) =
+        proximadb_tenant::tenant_claim(|name| headers.get(name).and_then(|v| v.to_str().ok()))
+            .map(|hit| hit.value)
         && header_tenant != token_tenant
     {
         return Err(Status::permission_denied(
@@ -542,12 +586,9 @@ fn is_arrow_flight_path(path: &str) -> bool {
 }
 
 fn tenant_id_from_metadata(metadata: &tonic::metadata::MetadataMap) -> Option<String> {
-    metadata
-        .get("x-tenant-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    // TD-TENANT-3: the shared claim vocabulary, canonical name only.
+    proximadb_tenant::tenant_claim(|name| metadata.get(name).and_then(|value| value.to_str().ok()))
+        .map(|hit| hit.value.to_owned())
 }
 
 // `http::Response::Builder::body` only fails if a header is invalid.
@@ -711,10 +752,9 @@ mod tests {
                     enabled: false,
                     providers: vec![],
                     token_cache_ttl_minutes: 5,
-                    aws_iam: None,
-                    azure_ad: None,
                 },
                 mtls: MtlsConfig::default(),
+                oidc: None,
                 audit_fail_closed: false,
             },
             rbac: RBACConfig::default(),
@@ -739,6 +779,15 @@ mod tests {
     }
 
     fn capability_token(protocol: &str, operation: &str, collection: &str) -> String {
+        capability_token_for_tenant(protocol, operation, collection, "tenant-a")
+    }
+
+    fn capability_token_for_tenant(
+        protocol: &str,
+        operation: &str,
+        collection: &str,
+        tenant: &str,
+    ) -> String {
         let now = chrono::Utc::now().timestamp();
         let claims = Claims {
             sub: "key-a".to_string(),
@@ -748,7 +797,7 @@ mod tests {
             iss: "operator-control-plane".to_string(),
             aud: "proximadb-data-plane".to_string(),
             jti: "capability-token".to_string(),
-            tenant_id: Some("tenant-a".to_string()),
+            tenant_id: Some(tenant.to_string()),
             roles: vec!["data_plane".to_string()],
             typ: TokenType::Access,
             capability_type: Some("operator.data-plane.capability.v1".to_string()),
@@ -794,6 +843,7 @@ mod tests {
             &coordinator().await,
             &mut request,
             HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::Open,
             None,
         )
         .await
@@ -827,6 +877,7 @@ mod tests {
             &coordinator().await,
             &mut request,
             HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::Open,
             None,
         )
         .await
@@ -847,6 +898,7 @@ mod tests {
         let status = authenticate_http_request(
             &coordinator().await,
             &mut request,
+            HeaderTrustPolicy::Open,
             HeaderTrustPolicy::Open,
             None,
         )
@@ -921,6 +973,7 @@ mod tests {
             &coordinator().await,
             &mut request,
             HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::Open,
             None,
         )
         .await
@@ -941,6 +994,7 @@ mod tests {
         let status = authenticate_http_request(
             &coordinator().await,
             &mut request,
+            HeaderTrustPolicy::Open,
             HeaderTrustPolicy::Open,
             None,
         )
@@ -978,6 +1032,7 @@ mod tests {
         authenticate_http_request(
             &coordinator().await,
             &mut request,
+            HeaderTrustPolicy::Open,
             HeaderTrustPolicy::Open,
             None,
         )
@@ -1031,6 +1086,7 @@ mod tests {
             &coordinator().await,
             &mut request,
             HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::Open,
             None,
         )
         .await
@@ -1058,6 +1114,7 @@ mod tests {
             &coordinator().await,
             &mut open_request,
             HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::Open,
             None,
         )
         .await
@@ -1075,10 +1132,70 @@ mod tests {
             &coordinator().await,
             &mut strict_request,
             HeaderTrustPolicy::AuthenticatedOnly,
+            HeaderTrustPolicy::Open,
             None,
         )
         .await
         .expect_err("strict policy rejects the unbound assertion");
         assert_eq!(status.code(), Code::PermissionDenied);
+    }
+
+    // ── Tier-claim gate (ADR-0053 W8) ───────────────────────────────────
+
+    /// A capability token bound to `tenant` (the stock `capability_token`
+    /// hardcodes `tenant-a` — these tests need unique tenants because
+    /// `TENANT_TIERS` is a process-global insert-only registry).
+    fn tier_token(tenant: &str) -> String {
+        capability_token_for_tenant("grpc", "search", "example_knowledge", tenant)
+    }
+
+    /// A gRPC request carrying an `x-tenant-tier` claim, authenticated with
+    /// the plain (non-gateway) data-plane capability token bound to `tenant`.
+    fn tier_claim_request(tenant: &str, claim: &str) -> HttpRequest<()> {
+        let token = tier_token(tenant);
+        HttpRequest::builder()
+            .uri("/proximadb.v2.ProximaRecordService/Search")
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-tenant-id", tenant)
+            .header("x-tenant-tier", claim)
+            .body(())
+            .expect("request should build")
+    }
+
+    #[tokio::test]
+    async fn grpc_tier_claim_open_stamps_acting_tenant() {
+        let mut request = tier_claim_request("tier-grpc-open-tenant", "pro");
+        authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::Open,
+            None,
+        )
+        .await
+        .expect("authenticated request");
+        assert_eq!(
+            crate::services::record_store::tenant_tier("tier-grpc-open-tenant").as_deref(),
+            Some("pro")
+        );
+    }
+
+    #[tokio::test]
+    async fn grpc_tier_claim_gateway_only_drops_non_gateway_principal() {
+        let mut request = tier_claim_request("tier-grpc-strict-tenant", "enterprise");
+        authenticate_http_request(
+            &coordinator().await,
+            &mut request,
+            HeaderTrustPolicy::Open,
+            HeaderTrustPolicy::GatewayOnly,
+            None,
+        )
+        .await
+        .expect("the dropped claim must not fail the request");
+        assert_eq!(
+            crate::services::record_store::tenant_tier("tier-grpc-strict-tenant"),
+            None,
+            "a plain data-plane credential must not self-assign a tier"
+        );
     }
 }

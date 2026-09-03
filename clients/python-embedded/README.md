@@ -42,7 +42,11 @@ Requires Rust toolchain and maturin:
 
 # Build and install
 cd clients/python-embedded
-maturin develop -m ../../Cargo.toml --release --features python,pylib
+# Build from the REPO ROOT — its pyproject.toml points maturin at the
+# binding crate (crates/binding/proximadb-embedded). The old command here
+# passed `--features python,pylib`; `pylib` no longer exists and the build
+# could never work (#1675).
+cd ../.. && maturin develop --release --features python
 ```
 
 Canonical import:
@@ -137,9 +141,8 @@ ProximaDB supports multiple storage engines optimized for different workloads:
 
 | Engine | Best For | Characteristics |
 |--------|----------|-----------------|
-| `sst` | OLTP, real-time | Hybrid columnar, fast queries |
-| `viper` | Analytics | Columnar Parquet, high compression |
-| `nova` | Mixed workloads | Hybrid quantized |
+| `sst` | OLTP, real-time | Hybrid columnar, fast queries (default) |
+| `nova` | Mixed workloads, analytics | Hybrid quantized, columnar |
 | `swift` | Hot data | Hierarchical blocks, low latency |
 | `raptor` | Adaptive | Matrix-optimized, workload learning |
 | `helix` | High-dimensional | PCA + Hilbert clustering |
@@ -183,7 +186,7 @@ with ProximaDB(data_dirs="./data") as db:
 
 1. **Use NumPy arrays**: Pass `np.float32` arrays directly for zero-copy transfer
 2. **Batch inserts**: Insert vectors in batches of 1000-10000 for best throughput
-3. **Choose the right engine**: Use `sst` for real-time, `viper` for analytics
+3. **Choose the right engine**: Use `sst` for real-time, `nova` for analytics/mixed workloads (`viper` is DEPRECATED — ADR-093)
 4. **Enable batch WAL**: Use `wal_sync_mode="batch"` for better write throughput
 5. **Size cache appropriately**: Larger cache = better read performance
 

@@ -58,17 +58,17 @@ class InsertRecordsRequest:
 
         Attributes:
             records (list[ProximaRecordInput]): Records to insert
+            validate_schema (bool | None | Unset): Whether to validate against collection schema (default: true)
             upsert (bool | None | Unset): Whether existing records with the same ID should be replaced.
 
                 The current durable record write path is idempotent/upsert-oriented; this
                 field is accepted so SDKs can expose explicit upsert intent without
                 leaving the OpenAPI contract.
-            validate_schema (bool | None | Unset): Whether to validate against collection schema (default: true)
     """
 
     records: list[ProximaRecordInput]
-    upsert: bool | None | Unset = UNSET
     validate_schema: bool | None | Unset = UNSET
+    upsert: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,17 +79,17 @@ class InsertRecordsRequest:
             records_item = records_item_data.to_dict()
             records.append(records_item)
 
-        upsert: bool | None | Unset
-        if isinstance(self.upsert, Unset):
-            upsert = UNSET
-        else:
-            upsert = self.upsert
-
         validate_schema: bool | None | Unset
         if isinstance(self.validate_schema, Unset):
             validate_schema = UNSET
         else:
             validate_schema = self.validate_schema
+
+        upsert: bool | None | Unset
+        if isinstance(self.upsert, Unset):
+            upsert = UNSET
+        else:
+            upsert = self.upsert
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -98,10 +98,10 @@ class InsertRecordsRequest:
                 "records": records,
             }
         )
-        if upsert is not UNSET:
-            field_dict["upsert"] = upsert
         if validate_schema is not UNSET:
             field_dict["validate_schema"] = validate_schema
+        if upsert is not UNSET:
+            field_dict["upsert"] = upsert
 
         return field_dict
 
@@ -117,15 +117,6 @@ class InsertRecordsRequest:
 
             records.append(records_item)
 
-        def _parse_upsert(data: object) -> bool | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(bool | None | Unset, data)
-
-        upsert = _parse_upsert(d.pop("upsert", UNSET))
-
         def _parse_validate_schema(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -135,10 +126,19 @@ class InsertRecordsRequest:
 
         validate_schema = _parse_validate_schema(d.pop("validate_schema", UNSET))
 
+        def _parse_upsert(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        upsert = _parse_upsert(d.pop("upsert", UNSET))
+
         insert_records_request = cls(
             records=records,
-            upsert=upsert,
             validate_schema=validate_schema,
+            upsert=upsert,
         )
 
         insert_records_request.additional_properties = d

@@ -70,7 +70,11 @@ embedded = [
 # extra deps and works core-only.
 #   pip install 'proximadb[embeddings]'
 embeddings = [
-    "sentence-transformers>=3.2,<6",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
+    "sentence-transformers>=3.2,<7",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
+    # Trusted modeling code used by catalogued Nomic v1.5 imports
+    # einops directly; keep the public extra sufficient for every advertised
+    # open-weights model rather than relying on an ambient transitive package.
+    "einops>=0.7,<1",
 ]
 
 # Hosted / OpenAI-compatible embedding providers (opt-in, reachable via
@@ -86,7 +90,7 @@ embeddings-cloud = [
 # LLM integration via Victor framework
 llm = [
     "victor-ai>=0.2.0",  # Victor AI framework for embeddings and LLM
-    "sentence-transformers>=3.2,<6",  # Local embedding models
+    "sentence-transformers>=3.2,<7",  # Local embedding models
 ]
 
 # Chunking concern (TD-126 Phase 3): text + code-aware AST chunking via
@@ -105,15 +109,26 @@ code-chunking = [
     "tree-sitter-language-pack>=1.0",
 ]
 
-# Shared code->CPG chunker (TD-CG2 / ADR-029). When installed, the deprecated
-# in-SDK `chunking_strategies/code.py` delegates to `victor_codegraph` so the
-# tree-sitter symbol+relation chunker lives in ONE place (Victor owns it).
-# Published on PyPI: `pip install 'proximadb[codegraph]'` (for local source work:
-# pip install -e ../../victor/victor-codegraph).
+# Shared code->CPG chunker (TD-CG2 / ADR-029). The in-SDK `chunking_strategies/
+# code.py` owns no parser; it delegates to `victor_codegraph`, so the tree-sitter
+# symbol+relation chunker lives in ONE place (Victor owns it).
+#
+# The floor is 0.9.0 and that is NOT YET ON PyPI (latest published: 0.8.1). That
+# is deliberate, not an oversight. TD-CG2's acceptance suite
+# (tests/chunking/test_code_language_surface.py) passes on 0.9.0 and fails
+# 30-of-54 on 0.8.1 -- R1 alone fails for 15 of the 16 languages the SDK
+# advertises symbol extraction for. On 0.8.1 the delegated chunker returns almost
+# no symbols, which is precisely the "dead but advertised" trap TD-CG2 deleted the
+# in-SDK parsers to remove.
+#
+# An unsatisfiable floor makes that gap an install-time error naming the version,
+# instead of a silent behavioural difference the caller discovers as an empty
+# result. Lower it only when a release that passes the acceptance suite ships;
+# `code.py` carries the matching runtime guard for environments that already hold
+# an older copy. The language SURFACE is identical across 0.8.1 and 0.9.0 (27
+# extensions, 18 languages) -- it is the behaviour that differs.
 codegraph = [
-    # >=0.1.2 ships the line-independent canonical symbol oid (ADR-044) the SDK now
-    # keys code records on by default (see _code_oid.record_symbol_id).
-    "victor-codegraph>=0.1.2",
+    "victor-codegraph>=0.9.0",
 ]
 
 langchain = [
@@ -158,11 +173,14 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
-    "sentence-transformers>=3.2,<6",
+    "sentence-transformers>=3.2,<7",
     "requests>=2.28.0",
     "grpcio-tools>=1.80.0",
     "black>=22.0.0",
-    "isort>=5.10.0",
+    # Pin the major: isort 7 vs 9 order the same imports differently
+    # (9 collapses parenthesized single-imports), so an unpinned floor makes
+    # the lint gate flap on every new major. Pin ~=9.0 = what CI resolves.
+    "isort>=9.0.1,<9.1",
     "mypy>=1.0.0",
     "pre-commit>=2.20.0",
     "ruff>=0.0.280",
@@ -176,7 +194,7 @@ test = [
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
-    "sentence-transformers>=3.2,<6",
+    "sentence-transformers>=3.2,<7",
     "requests>=2.28.0",
     # Complete the "run the unit suite" contract: unit tests hard-import these
     # optional deps (arrow export/flight, dataframe builders, multi-bert psutil

@@ -84,6 +84,55 @@ mod tests {
     }
 
     #[test]
+    fn explicit_close_releases_ownership_before_rust_drop() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+        let db = EmbeddedProximaDB::new(config.clone()).expect("first open");
+
+        let started = std::time::Instant::now();
+        let conflict = EmbeddedProximaDB::new(config.clone());
+        assert!(conflict.is_err(), "second exclusive open must fail");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "ownership conflict must fail immediately"
+        );
+
+        db.close();
+        db.close();
+        assert!(!db.can_write(), "closed handle must be write-fenced");
+
+        let reopened = EmbeddedProximaDB::new(config)
+            .expect("close must release ownership before the old handle is dropped");
+        reopened.close();
+    }
+
+    #[test]
+    fn overlapping_secondary_storage_root_is_rejected() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let shared = temp_dir.path().join("shared");
+        let mut first = EmbeddedConfig::for_low_memory(
+            temp_dir.path().join("first").to_string_lossy().as_ref(),
+        );
+        first.storage_locations.push(StorageLocationConfig::new(
+            shared.to_string_lossy().as_ref(),
+        ));
+        let mut second = EmbeddedConfig::for_low_memory(
+            temp_dir.path().join("second").to_string_lossy().as_ref(),
+        );
+        second.storage_locations.push(StorageLocationConfig::new(
+            shared.to_string_lossy().as_ref(),
+        ));
+
+        let db = EmbeddedProximaDB::new(first).expect("first owner");
+        let conflict = EmbeddedProximaDB::new(second);
+        assert!(
+            conflict.is_err(),
+            "different primary roots must still conflict on a shared secondary root"
+        );
+        db.close();
+    }
+
+    #[test]
     fn test_embedded_execute_sql_lowers_agentic_ddl_to_catalog() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
@@ -425,23 +474,36 @@ mod tests {
 
     #[test]
     fn test_graph_node_with_property() {
+        use proximadb::graph::model::PropertyValue;
         let node = GraphNode::new("user_1").with_property("name", "Alice");
-        assert_eq!(node.properties.get("name"), Some(&"Alice".to_string()));
+        assert_eq!(
+            node.properties.get("name"),
+            Some(&PropertyValue::from("Alice"))
+        );
     }
 
     #[test]
     fn test_graph_node_multiple_properties() {
+        use proximadb::graph::model::PropertyValue;
+        // `age` is an i64 now — the typed boundary (#1698) is the point:
+        // it must NOT come back as "30".
         let node = GraphNode::new("user_1")
             .with_property("name", "Alice")
             .with_property("email", "alice@example.com")
-            .with_property("age", "30");
+            .with_property("age", 30i64);
         assert_eq!(node.properties.len(), 3);
-        assert_eq!(node.properties.get("name"), Some(&"Alice".to_string()));
+        assert_eq!(
+            node.properties.get("name"),
+            Some(&PropertyValue::from("Alice"))
+        );
         assert_eq!(
             node.properties.get("email"),
-            Some(&"alice@example.com".to_string())
+            Some(&PropertyValue::from("alice@example.com"))
         );
-        assert_eq!(node.properties.get("age"), Some(&"30".to_string()));
+        assert_eq!(
+            node.properties.get("age"),
+            Some(&PropertyValue::from(30i64))
+        );
     }
 
     #[test]
@@ -451,7 +513,7 @@ mod tests {
             .with_label("public")
             .with_property("name", "main")
             .with_property("file", "main.rs")
-            .with_property("line", "10");
+            .with_property("line", 10i64);
 
         assert_eq!(node.id, "func_main");
         assert_eq!(node.labels.len(), 2);
@@ -512,7 +574,10 @@ mod tests {
     #[test]
     fn test_graph_edge_with_property() {
         let edge = GraphEdge::new("a", "b", "RELATIONSHIP").with_property("since", "2024");
-        assert_eq!(edge.properties.get("since"), Some(&"2024".to_string()));
+        assert_eq!(
+            edge.properties.get("since"),
+            Some(&proximadb::graph::model::PropertyValue::from("2024"))
+        );
     }
 
     #[test]
@@ -1035,9 +1100,13 @@ mod tests {
             major
         );
 
-        // Verify the crate name
+        // Verify the crate name. Was asserted as "proximadb" — this test moved
+        // here in #1021's extraction with the assertion unchanged, so it could
+        // never pass in this crate and no CI lane runs these tests (fourth
+        // #1021-stranded artifact: wheel config #1675, workflow notes,
+        // loopback-guard paths, this).
         let crate_name = env!("CARGO_PKG_NAME");
-        assert_eq!(crate_name, "proximadb");
+        assert_eq!(crate_name, "proximadb-embedded");
     }
 
     // ========================================================================
@@ -1076,6 +1145,104 @@ mod tests {
             }],
             ..proximadb_records::ProximaRecord::default()
         }
+    }
+
+    #[test]
+    fn direct_embedded_record_write_publishes_content_revision() {
+        let (db, _temp_dir) = build_test_db();
+        db.create_collection("embedded_revision_col", 4, None)
+            .expect("create collection");
+        let collection = db
+            .runtime
+            .block_on(
+                db.collection_port
+                    .get_collection("embedded_revision_col", None),
+            )
+            .expect("resolve collection")
+            .expect("collection exists");
+        let before = db.runtime.block_on(
+            proximadb::catalog::CorpusVersionRegistry::global()
+                .current_content("default", &collection.id),
+        );
+
+        db.insert_proxima_records(
+            "embedded_revision_col",
+            vec![make_test_record("revision-record", 1)],
+        )
+        .expect("insert record");
+
+        let after = db.runtime.block_on(
+            proximadb::catalog::CorpusVersionRegistry::global()
+                .current_content("default", &collection.id),
+        );
+        assert_eq!(after, before + 1);
+        db.close();
+    }
+
+    #[test]
+    fn legacy_direct_and_batch_writes_publish_content_revision() {
+        let (db, _temp_dir) = build_test_db();
+        db.create_collection("legacy_revision_col", 4, None)
+            .expect("create collection");
+        let collection = db
+            .runtime
+            .block_on(
+                db.collection_port
+                    .get_collection("legacy_revision_col", None),
+            )
+            .expect("resolve collection")
+            .expect("collection exists");
+        let registry = proximadb::catalog::CorpusVersionRegistry::global();
+        let before = db
+            .runtime
+            .block_on(registry.current_content("default", &collection.id));
+
+        db.runtime
+            .block_on(
+                db.shared_services
+                    .vector_operations_service
+                    .insert_vectors_direct(
+                        &collection.id,
+                        std::sync::Arc::new(vec![make_test_record("direct", 1)]),
+                    ),
+            )
+            .expect("direct write");
+        let after_direct = db
+            .runtime
+            .block_on(registry.current_content("default", &collection.id));
+        assert_eq!(after_direct, before + 1);
+
+        db.runtime
+            .block_on(
+                db.shared_services
+                    .vector_operations_service
+                    .insert_vectors_via_batch_pipeline(
+                        &collection.id,
+                        vec![make_test_record("batch", 2)],
+                    ),
+            )
+            .expect("batch-pipeline write");
+        let after_batch = db
+            .runtime
+            .block_on(registry.current_content("default", &collection.id));
+        assert_eq!(after_batch, after_direct + 1);
+        db.close();
+    }
+
+    #[test]
+    fn closed_handle_rejects_single_vector_delete() {
+        let (db, _temp_dir) = build_test_db();
+        db.create_collection("closed_delete_col", 4, None)
+            .expect("create collection");
+        db.close();
+
+        let error = db
+            .delete_vector("closed_delete_col", "record-a")
+            .expect_err("closed handle must reject every write API");
+        assert!(
+            error.to_string().contains("closed"),
+            "write fence should identify the closed database: {error}"
+        );
     }
 
     #[test]
@@ -1192,17 +1359,79 @@ mod tests {
     }
 
     #[test]
+    fn scan_cursor_rejects_collection_mutation_between_pages() {
+        let (db, _td) = build_test_db();
+        db.create_collection("mutable_scan_col", 4, None)
+            .expect("create");
+        let records = (0..3)
+            .map(|i| make_test_record(&format!("r{i:02}"), 100 + i as i64))
+            .collect();
+        db.insert_proxima_records("mutable_scan_col", records)
+            .expect("initial insert");
+
+        let (_, cursor) = db
+            .scan_records("mutable_scan_col", None, 2)
+            .expect("first page");
+        db.insert_proxima_records("mutable_scan_col", vec![make_test_record("r99", 999)])
+            .expect("mutating insert");
+
+        let error = db
+            .scan_records("mutable_scan_col", cursor, 2)
+            .expect_err("a cursor must be fenced after collection content changes");
+        assert!(
+            error.to_string().contains("changed"),
+            "revision error should tell callers to restart: {error}"
+        );
+        db.close();
+    }
+
+    #[test]
+    fn scan_cursor_rejects_previous_embedded_incarnation() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+        let db = EmbeddedProximaDB::new(config.clone()).expect("first open");
+        db.create_collection("restart_scan_col", 4, None)
+            .expect("create");
+        let records = (0..3)
+            .map(|i| make_test_record(&format!("r{i:02}"), 100 + i as i64))
+            .collect();
+        db.insert_proxima_records("restart_scan_col", records)
+            .expect("insert");
+        let (_, cursor) = db
+            .scan_records("restart_scan_col", None, 2)
+            .expect("first page");
+        db.close();
+
+        let reopened = EmbeddedProximaDB::new(config).expect("reopen");
+        let error = reopened
+            .scan_records("restart_scan_col", cursor, 2)
+            .expect_err("cursor from a prior embedded incarnation must be rejected");
+        assert!(
+            error.to_string().contains("incarnation"),
+            "restart fence should be explicit: {error}"
+        );
+        reopened.close();
+    }
+
+    #[test]
     fn test_scan_records_rejects_stale_cursor() {
         use proximadb::services::scan_cursor::ScanCursor;
         let (db, _td) = build_test_db();
         db.create_collection("stale_col", 4, None).expect("create");
+        let canonical_id = db
+            .runtime
+            .block_on(db.collection_port.resolve_collection_id("stale_col"))
+            .expect("resolve collection")
+            .expect("collection exists");
 
         // Forge a cursor with epoch from > 24h ago.
         let stale = ScanCursor {
-            collection_id: "stale_col".to_string(),
+            collection_id: canonical_id,
             last_updated_at_ns: 0,
             last_oid: "x".to_string(),
             epoch_ns: 0, // wall clock is now ~> 24h since this
+            content_revision: None,
+            content_revision_token: None,
         };
         let raw = stale.encode().unwrap();
         let err = db.scan_records("stale_col", Some(raw), 10).unwrap_err();
@@ -1266,5 +1495,125 @@ mod tests {
             err.to_string().contains("does_not_exist"),
             "error must name the missing collection: {err}"
         );
+    }
+
+    // ========================================================================
+    // TD-DSEFF-2: embedded migration-risk disclosure.
+    //
+    // Pre-#1743, every embedded collection's flushes were routed through SST
+    // regardless of declared engine. `engine_data_mismatch` is the pure
+    // decision logic behind the one-shot, log-only warning `EmbeddedProximaDB
+    // ::new` emits for a non-SST-declared collection whose data directory
+    // holds only legacy `.sst` files.
+    // ========================================================================
+
+    #[test]
+    fn engine_data_mismatch_detects_sst_only_directory() {
+        let files = vec!["part-0.sst".to_string(), "part-1.sst".to_string()];
+        assert!(
+            engine_data_mismatch(&files),
+            "a non-empty directory containing ONLY .sst files must be flagged"
+        );
+    }
+
+    #[test]
+    fn engine_data_mismatch_ignores_empty_directory() {
+        // No flushes yet — nothing to migrate, not a mismatch.
+        assert!(!engine_data_mismatch(&[]));
+    }
+
+    #[test]
+    fn engine_data_mismatch_ignores_directory_with_declared_engine_files() {
+        // The declared (non-SST) engine's own files are present — no mismatch,
+        // regardless of whether some .sst leftovers also exist.
+        let files = vec!["part-0.helix".to_string()];
+        assert!(!engine_data_mismatch(&files));
+
+        let mixed = vec!["part-0.sst".to_string(), "part-1.helix".to_string()];
+        assert!(
+            !engine_data_mismatch(&mixed),
+            "even one non-.sst file means the declared engine has real data — not a mismatch"
+        );
+    }
+
+    /// End-to-end: a genuinely mismatched collection (declared HELIX, data
+    /// directory containing only a planted `.sst` file — simulating
+    /// pre-#1743 residue) must not prevent a fresh `EmbeddedProximaDB::new`
+    /// from opening the same directory. This exercises the real scan path
+    /// (catalog lookup, engine-type resolution, directory listing) against
+    /// live data, not just the pure `engine_data_mismatch` decision — the
+    /// crate has no tracing-capture test convention to assert on the
+    /// warning's text itself (see TD-DSEFF-2), so this asserts the
+    /// best-effort diagnostic never blocks startup.
+    #[test]
+    fn reopen_does_not_fail_on_mismatched_pre_fix_collection_data() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+
+        {
+            let db = EmbeddedProximaDB::new(config.clone()).expect("first open");
+            db.create_collection("mismatch_col", 4, Some("helix"))
+                .expect("create helix collection");
+            db.insert(
+                "mismatch_col",
+                vec!["v1".to_string()],
+                vec![vec![0.1, 0.2, 0.3, 0.4]],
+                None,
+            )
+            .expect("insert");
+            db.flush().expect("flush writes the real .helix file(s)");
+
+            // Find the real on-disk data directory the flush just wrote to
+            // (walk the tempdir rather than re-deriving the path formula —
+            // this test should stay correct even if that formula changes),
+            // then replace its contents with a planted .sst file to
+            // simulate the pre-#1743 flush-routing bug's residue.
+            let mut data_dir = None;
+            for entry in walkdir_files(temp_dir.path()) {
+                if entry.extension().and_then(|e| e.to_str()) == Some("helix") {
+                    data_dir = entry.parent().map(|p| p.to_path_buf());
+                    break;
+                }
+            }
+            let data_dir = data_dir.expect("flush must have written at least one .helix file");
+            for entry in std::fs::read_dir(&data_dir).unwrap() {
+                let entry = entry.unwrap();
+                if entry.path().extension().and_then(|e| e.to_str()) == Some("helix") {
+                    std::fs::remove_file(entry.path()).unwrap();
+                }
+            }
+            std::fs::write(data_dir.join("legacy.sst"), b"pre-#1743 residue").unwrap();
+
+            db.close();
+        }
+
+        // Reopening must succeed — the migration-risk scan is best-effort
+        // and log-only, never a hard failure.
+        let reopened = EmbeddedProximaDB::new(config);
+        assert!(
+            reopened.is_ok(),
+            "reopening a directory with mismatched pre-fix data must not fail: {:?}",
+            reopened.err()
+        );
+    }
+
+    /// Recursively list every file (not directory) under `root`.
+    fn walkdir_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    out.push(path);
+                }
+            }
+        }
+        out
     }
 }

@@ -759,6 +759,7 @@ impl MultiModalQueryExecutor {
         // Convert FilterExpression to VOS-compatible format
         // The FilterExpression already represents HashMap.get() patterns from lowering
         let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
+            distance_metric: None,
             optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
             progressive_search: true, // Enable 7-phase progressive optimization
             progressive_recalls: None, // Use default progressive recall targets

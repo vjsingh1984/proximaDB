@@ -62,6 +62,7 @@ fn auth_config_with_dev_key() -> SecurityConfig {
             // chain: middleware injection → wildcard fan-out →
             // require_recall_admin gate.
             permissions: vec!["*".to_string()],
+            roles: vec![],
             created_at: None,
             expires_at: None,
             rate_limit_per_minute: None,
@@ -74,6 +75,7 @@ fn auth_config_with_dev_key() -> SecurityConfig {
             user_id: "reader".to_string(),
             tenant_id: None,
             permissions: vec!["read".to_string()],
+            roles: vec![],
             created_at: None,
             expires_at: None,
             rate_limit_per_minute: None,
@@ -103,10 +105,9 @@ fn auth_config_with_dev_key() -> SecurityConfig {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
+            oidc: None,
             audit_fail_closed: false,
         },
         rbac: RBACConfig::default(),

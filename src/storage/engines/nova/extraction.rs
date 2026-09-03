@@ -127,8 +127,21 @@ impl VectorExtractor for NovaExtractor {
             files_processed += 1;
 
             // Convert canonical ProximaRecord to ExtractedVector
+            // ID filter as a set, built once per extraction call (was: a
+            // linear scan of the requested-id Vec for every record).
+            let id_filter: Option<std::collections::HashSet<&String>> =
+                request.vector_ids.as_ref().map(|ids| ids.iter().collect());
             for record in records {
                 let record_id = record.oid.clone();
+                // Apply the ID filter BEFORE any materialization (was: after
+                // the fp32 copy and metadata conversion).
+                let should_include = match &id_filter {
+                    Some(ids) => ids.contains(&record_id),
+                    None => true,
+                };
+                if !should_include {
+                    continue;
+                }
                 // Handle vector filtering based on mode
                 let fp32_vector = match request.mode {
                     ExtractionMode::Fp32Only | ExtractionMode::Both | ExtractionMode::Auto => {
@@ -161,13 +174,7 @@ impl VectorExtractor for NovaExtractor {
                     None
                 };
 
-                // Apply ID filter if selective extraction
-                let should_include = match &request.vector_ids {
-                    Some(ids) => ids.contains(&record_id),
-                    None => true,
-                };
-
-                if should_include && fp32_vector.is_some() {
+                if fp32_vector.is_some() {
                     all_vectors.push(ExtractedVector {
                         id: record_id,
                         fp32_vector,

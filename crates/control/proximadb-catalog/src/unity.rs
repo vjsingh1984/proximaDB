@@ -62,16 +62,6 @@ pub struct UnityCatalog {
     cache: Arc<CatalogCache>,
 }
 
-/// Unity Catalog API response types
-#[derive(Debug, Serialize, Deserialize)]
-struct UnityCatalogInfo {
-    name: String,
-    comment: Option<String>,
-    properties: Option<HashMap<String, String>>,
-    created_at: Option<i64>,
-    updated_at: Option<i64>,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 struct UnitySchemaInfo {
     name: String,
@@ -177,17 +167,14 @@ impl UnityCatalog {
         let mut properties = HashMap::new();
 
         // Parse vector dimension from comment
-        if let Some(comment) = &col.comment {
-            if comment.starts_with("vector:") {
-                if let Some(dim) = comment
-                    .strip_prefix("vector:")
-                    .and_then(|s| s.split(':').next())
-                {
-                    if let Ok(d) = dim.parse::<u32>() {
-                        properties.insert("dimension".to_string(), d.to_string());
-                    }
-                }
-            }
+        if let Some(comment) = &col.comment
+            && comment.starts_with("vector:")
+            && let Some(dim) = comment
+                .strip_prefix("vector:")
+                .and_then(|s| s.split(':').next())
+            && let Ok(d) = dim.parse::<u32>()
+        {
+            properties.insert("dimension".to_string(), d.to_string());
         }
 
         CatalogColumn {
@@ -487,7 +474,7 @@ impl Catalog for UnityCatalog {
     // Table Operations
     // ========================
 
-    async fn create_table(
+    async fn create_table_inner(
         &self,
         identifier: &TableIdentifier,
         schema: CatalogTableSchema,

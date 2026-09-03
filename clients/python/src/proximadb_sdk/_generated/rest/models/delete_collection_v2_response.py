@@ -21,25 +21,25 @@ class DeleteCollectionV2Response:
     """Response for deleting a collection through the v2 API.
 
     Attributes:
-        collection_id (str): Deleted collection ID.
         success (bool): Whether the delete request was accepted.
+        collection_id (str): Deleted collection ID.
     """
 
-    collection_id: str
     success: bool
+    collection_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        collection_id = self.collection_id
-
         success = self.success
+
+        collection_id = self.collection_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "collection_id": collection_id,
                 "success": success,
+                "collection_id": collection_id,
             }
         )
 
@@ -48,13 +48,13 @@ class DeleteCollectionV2Response:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        collection_id = d.pop("collection_id")
-
         success = d.pop("success")
 
+        collection_id = d.pop("collection_id")
+
         delete_collection_v2_response = cls(
-            collection_id=collection_id,
             success=success,
+            collection_id=collection_id,
         )
 
         delete_collection_v2_response.additional_properties = d

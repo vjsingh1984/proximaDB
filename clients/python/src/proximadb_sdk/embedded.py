@@ -52,7 +52,10 @@ Usage:
 """
 
 import asyncio
+import atexit
 import base64
+import json
+import logging
 import os
 import signal
 import subprocess
@@ -61,6 +64,7 @@ import tempfile
 import threading
 import time
 import uuid
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -489,9 +493,103 @@ def _collection_field(entry: Any, field: str) -> Any:
     return None
 
 
+logger = logging.getLogger(__name__)
+
+# Servers spawned by THIS process, weakly held so a garbage-collected handle
+# does not keep an instance alive. Drained at interpreter exit.
+_OWNED_SERVERS: "weakref.WeakSet[Any]" = weakref.WeakSet()
+_ATEXIT_REGISTERED = False
+
+
+def _register_owned_server(db: Any) -> None:
+    """Track a spawned server so interpreter exit tears it down."""
+    global _ATEXIT_REGISTERED
+    _OWNED_SERVERS.add(db)
+    if not _ATEXIT_REGISTERED:
+        atexit.register(_stop_owned_servers)
+        _ATEXIT_REGISTERED = True
+
+
+def _stop_owned_servers() -> None:
+    """Stop every server this process started. Best-effort and idempotent:
+    exit-time teardown must never raise, and stopping twice is harmless."""
+    for db in list(_OWNED_SERVERS):
+        try:
+            if getattr(db, "_process", None) is not None:
+                db._kill_process()
+        except Exception:  # pragma: no cover - exit path must not raise
+            pass
+
+
+RUNTIME_STATE_FILE = ".proximadb-runtime.json"
+# Mirrors the server's contract constants (apps/proximadb-server/src/runtime_state.rs).
+_STALE_AFTER_INTERVALS = 15
+
+
+def read_runtime_state(data_dir: "str | Path") -> dict[str, Any] | None:
+    """Read the server lifecycle record for a data dir, or None if absent.
+
+    A malformed record reads as None ("no owner") — a corrupt file must never
+    wedge a client, exactly as it must never block the server.
+    """
+    try:
+        raw = (Path(data_dir) / RUNTIME_STATE_FILE).read_text()
+        state = json.loads(raw)
+        return state if isinstance(state, dict) else None
+    except Exception as exc:
+        # A probe: an unreadable/absent state file legitimately means "no state".
+        # Logged so an unexpected cause (permissions, corruption) is visible
+        # rather than reading as a clean absence.
+        logger.debug("could not read runtime state from %s: %s", data_dir, exc)
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, ValueError):
+        return False
+    except PermissionError:
+        # Exists but owned by another user.
+        return True
+
+
+def runtime_state_is_stale(state: dict[str, Any], now_ms: float) -> bool:
+    """True when the recorded owner is gone or its heartbeat stopped advancing.
+
+    Pure function of the record + a caller-supplied clock, so the decision is
+    testable without spawning anything.
+    """
+    pid = state.get("pid")
+    if not isinstance(pid, int) or not _pid_alive(pid):
+        return True
+    interval = float(state.get("heartbeat_interval_ms") or 2000) or 2000.0
+    updated = float(state.get("updated_at_ms") or 0)
+    return (now_ms - updated) > interval * _STALE_AFTER_INTERVALS
+
+
 # =============================================================================
 # Configuration
 # =============================================================================
+
+
+class _PooledClientLease:
+    """Async context manager yielding a shared ``httpx.AsyncClient`` without
+    closing it on exit — so ``async with db._http_client() as client:`` keeps
+    working at every call site while the client (and its connection pool)
+    lives for the server instance. Closing happens in ``stop()``."""
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    async def __aenter__(self):
+        return self._client
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
 
 
 @dataclass
@@ -517,6 +615,25 @@ class EmbeddedConfig:
     # Engine selection (opinionated defaults for code knowledge store)
     vector_engine: str = "SST"  # Best for real-time code indexing
     graph_engine: str = "ORION"  # In-memory with WAL for code relationships
+
+    # Absolute ceiling on startup. This is a SAFETY STOP, not a schedule:
+    # while the server's runtime-state record shows an advancing heartbeat the
+    # SDK keeps waiting, because recovery time scales with data (a 1.3GB dir
+    # measured >180s) and any fixed constant eventually kills a healthy
+    # server and silently falls back to another backend (proximaDB#1667).
+    startup_timeout_s: float = 900.0
+    # Refuse to spawn when another LIVE server already owns the data dir.
+    # Set False to spawn anyway (tests/diagnostics) — never silently, since a
+    # second writer on one data dir is how "cleared" state resurrects
+    # (anvai-labs/victor#911).
+    fail_on_foreign_owner: bool = True
+
+    # SIGTERM -> SIGKILL grace window on stop(). The server's final
+    # flush-on-stop is a real materialize (tens of seconds for large
+    # sessions); killing it strands the whole session's WAL on disk. The
+    # wait polls, so small sessions still exit in ~1-3s — this is a
+    # ceiling, not a sleep.
+    shutdown_timeout_s: float = 60.0
 
 
 class EmbeddedCollection:
@@ -714,12 +831,19 @@ class EmbeddedProximaDB:
         )
         self._binary_path = binary_path
         self._process: subprocess.Popen | None = None
+        # One pooled HTTP client per server instance (see _http_client).
+        self._shared_http_client = None
         self._started = False
         self._collections: dict[str, EmbeddedCollection] = {}
         self._lock = threading.Lock()
+        self._instance_id = uuid.uuid4().hex
 
         # Resolve data directory
         self._data_dir = Path(self.config.data_dir).expanduser()
+        self._config_path = self._data_dir / f"embedded-{self._instance_id}.toml"
+        self._server_log_path = (
+            self._data_dir / f"embedded-server-{self._instance_id}.log"
+        )
         self._socket_dir = self._resolve_socket_dir()
 
     @property
@@ -816,14 +940,41 @@ class EmbeddedProximaDB:
         return self._fallback_socket_dir()
 
     def _http_client(self, **kwargs):
+        """Hand out the shared pooled client wrapped in a non-closing lease.
+
+        Every call site does ``async with self._http_client() as client:``,
+        and this used to construct a fresh ``httpx.AsyncClient`` — transport,
+        connection pool, and all — per operation, then tear it down. Client
+        construction plus a cold UDS connection measured **~13 ms per call**,
+        which was the single largest component of the 35 ms embedded vector
+        search (the server answered the same query in 2-13 ms). A search that
+        LanceDB serves in 4 ms spent three of those milliseconds' worth of
+        budget three times over just building HTTP clients.
+
+        The lease keeps every call site unchanged: ``__aenter__`` returns the
+        shared client, ``__aexit__`` does NOT close it. The shared client is
+        created lazily and closed in :meth:`stop`. Explicit ``kwargs`` still
+        get a dedicated, caller-owned client (old semantics) — the only such
+        caller is the startup health poll.
+        """
         import httpx
 
-        if self._is_uds_transport:
-            return httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=str(self.rest_socket_path)),
-                **kwargs,
-            )
-        return httpx.AsyncClient(**kwargs)
+        if kwargs:
+            if self._is_uds_transport:
+                return httpx.AsyncClient(
+                    transport=httpx.AsyncHTTPTransport(uds=str(self.rest_socket_path)),
+                    **kwargs,
+                )
+            return httpx.AsyncClient(**kwargs)
+
+        if self._shared_http_client is None or self._shared_http_client.is_closed:
+            if self._is_uds_transport:
+                self._shared_http_client = httpx.AsyncClient(
+                    transport=httpx.AsyncHTTPTransport(uds=str(self.rest_socket_path)),
+                )
+            else:
+                self._shared_http_client = httpx.AsyncClient()
+        return _PooledClientLease(self._shared_http_client)
 
     def _sync_http_client(self, **kwargs):
         import httpx
@@ -885,14 +1036,13 @@ class EmbeddedProximaDB:
 
     def _generate_config(self) -> str:
         """Generate TOML config for embedded mode."""
-        config_path = self._data_dir / "embedded-config.toml"
         self._data_dir.mkdir(parents=True, exist_ok=True)
 
         config_content = f"""# ProximaDB Embedded Mode Configuration
 # Auto-generated - do not edit manually
 
 [server]
-node_id = "embedded-node"
+node_id = "embedded-{self._instance_id}"
 bind_address = "127.0.0.1"
 port = {self.config.rest_port}
 data_dir = "{self._toml_string(self._data_dir)}"
@@ -909,6 +1059,14 @@ tags = ["embedded"]
 [storage.wal_config]
 enable_wal = true
 memory_flush_size_bytes = {self.config.memory_flush_size_mb * 1024 * 1024}
+# Embedded flush profile: the server's default 128MB predicted-segment floor
+# (TD-FLUSH-3) targets object-store GET economics; embedded is local mmap,
+# where the config docs themselves endorse a lower floor. 8MB keeps the
+# anti-tiny-segment floor while letting small sessions actually flush (and
+# with it reclaim WAL); 60s bounds the final at-shutdown flush to at most
+# one minute of ingest.
+flush_floor_predicted_mb = 8
+flush_interval_secs = 60
 
 [storage.sst_config]
 cache_size_mb = {self.config.cache_size_mb}
@@ -937,10 +1095,10 @@ engine = "{self.config.graph_engine}"
 enable_prefetch = true
 prefetch_budget = 4
 """
-        config_path.write_text(config_content)
-        return str(config_path)
+        self._config_path.write_text(config_content)
+        return str(self._config_path)
 
-    async def start(self, timeout: float = 30.0) -> None:
+    async def start(self, timeout: float | None = None) -> None:
         """Start the embedded database.
 
         Args:
@@ -953,39 +1111,185 @@ prefetch_budget = 4
             if self._started:
                 return
 
+            # Ownership check BEFORE spawning. A server spawned with setsid
+            # outlives its parent and keeps writing its data dir, so a second
+            # spawn on the same dir yields two writers and silently
+            # resurrects state a caller believed it had cleared
+            # (anvai-labs/victor#911). A STALE record (owner dead or frozen)
+            # is reclaimed automatically; a LIVE one is reported, never
+            # ignored.
+            owner = read_runtime_state(self._data_dir)
+            if owner is not None:
+                if runtime_state_is_stale(owner, time.time() * 1000):
+                    logger.info(
+                        "Reclaiming data dir from a dead ProximaDB owner "
+                        "(pid=%s, phase=%s)",
+                        owner.get("pid"),
+                        owner.get("phase"),
+                    )
+                    try:
+                        (self._data_dir / RUNTIME_STATE_FILE).unlink()
+                    except OSError:
+                        pass
+                elif self.config.fail_on_foreign_owner:
+                    raise RuntimeError(
+                        "Another ProximaDB server is already serving "
+                        f"{self._data_dir} (pid={owner.get('pid')}, "
+                        f"phase={owner.get('phase')}). Stop it first, or set "
+                        "EmbeddedConfig.fail_on_foreign_owner=False to run a "
+                        "second writer deliberately."
+                    )
+                else:
+                    logger.warning(
+                        "Spawning a SECOND writer on %s (existing pid=%s) — "
+                        "concurrent writers can corrupt or resurrect state",
+                        self._data_dir,
+                        owner.get("pid"),
+                    )
+
             # Find binary
             binary = self._find_binary()
 
             # Generate config
             config_path = self._generate_config()
 
-            # Start process
-            self._process = subprocess.Popen(
-                [binary, "--config", config_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+            # Start process. Graph WAL retention opt-ins: the canonical
+            # replay scope turns on snapshot+truncate in flush_wal, and the
+            # 8MB segment size lets truncation actually reclaim (whole
+            # segments below the checkpoint marker are deleted; an embedded
+            # graph WAL rarely reaches the 64MB server default, which would
+            # reclaim nothing). An explicit value in the caller's environment
+            # wins.
+            child_env = dict(os.environ)
+            child_env.setdefault("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE", "1")
+            child_env.setdefault("PROXIMADB_GRAPH_WAL_SEGMENT_MB", "8")
+            child_env.setdefault(
+                "PROXIMADB_CORPUS_VERSION_PATH",
+                str(self._data_dir / "corpus-versions.json"),
             )
+            # Own the child's lifetime. It is spawned setsid (its own process
+            # group) so it survives our exit — which is how orphaned servers
+            # accumulated and kept rewriting data dirs callers believed they
+            # had cleared (anvai-labs/victor#911). Registering teardown at
+            # spawn time makes ownership symmetric with the runtime-state
+            # record the server writes.
+            _register_owned_server(self)
+            self._data_dir.mkdir(parents=True, exist_ok=True)
+            # PIPEs without a reader eventually fill and stop the server. Keep
+            # launch-specific diagnostics in a file instead; this also prevents
+            # concurrent launch attempts from mixing output.
+            with self._server_log_path.open("ab") as server_log:
+                self._process = subprocess.Popen(
+                    [binary, "--config", config_path],
+                    stdout=server_log,
+                    stderr=subprocess.STDOUT,
+                    # The server's tracing appender uses a relative `logs/`
+                    # directory. Embedded mode owns the child environment, so
+                    # never let that path depend on the caller's cwd (which may
+                    # be read-only, deleted, or shared with another instance).
+                    cwd=str(self._data_dir),
+                    preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+                    env=child_env,
+                )
 
-            # Wait for server to be ready
+            # Wait for readiness. The server publishes a lifecycle record
+            # (pid + phase + heartbeat) BEFORE recovery, precisely because
+            # listeners bind only after recovery finishes: polling HTTP alone
+            # cannot tell "replaying a 1.3GB WAL" from "crashed", so a fixed
+            # deadline kills healthy servers (proximaDB#1667). We therefore
+            # wait as long as the server proves progress, bounded by an
+            # absolute safety ceiling.
+            # An EXPLICIT caller timeout wins — callers that pass one mean it
+            # (tests, probes, callers with their own deadline). Only the
+            # implicit case gets the generous config ceiling, because that is
+            # the case that used to hard-code 30s and kill healthy servers.
+            ceiling = (
+                float(timeout)
+                if timeout is not None
+                else float(self.config.startup_timeout_s)
+            )
             start_time = time.time()
-            while time.time() - start_time < timeout:
+            last_phase: str | None = None
+            last_heartbeat: float = -1.0
+            last_progress_at = start_time
+
+            while time.time() - start_time < ceiling:
+                exit_code = self._process.poll() if self._process else None
+                if exit_code is not None:
+                    log_tail = ""
+                    try:
+                        log_tail = self._server_log_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )[-2000:]
+                    except Exception:
+                        pass
+                    self._process = None
+                    self._remove_generated_config()
+                    raise RuntimeError(
+                        "ProximaDB server exited during startup with status "
+                        f"{exit_code}. Server log: {self._server_log_path}. {log_tail}"
+                    )
+
+                state = read_runtime_state(self._data_dir)
                 try:
                     with self._sync_http_client(timeout=1.0) as client:
                         response = client.get(f"{self.rest_url}/health")
-                    if response.status_code == 200:
+                    if response.status_code == 200 and self._state_belongs_to_child(
+                        state
+                    ):
                         self._started = True
+                        self._remove_generated_config()
                         return
                 except Exception:
                     pass
-                await asyncio.sleep(0.1)
 
-            # Timeout - kill process and raise error
+                # No socket yet — consult the lifecycle record.
+                if state is not None:
+                    phase = state.get("phase")
+                    heartbeat = float(state.get("updated_at_ms") or 0)
+                    if phase != last_phase or heartbeat > last_heartbeat:
+                        # Progress: the server is alive and working.
+                        last_phase, last_heartbeat = phase, heartbeat
+                        last_progress_at = time.time()
+                        logger.debug(
+                            "ProximaDB starting: phase=%s (waiting; ceiling %.0fs)",
+                            phase,
+                            ceiling,
+                        )
+                    elif runtime_state_is_stale(state, time.time() * 1000):
+                        self._kill_process()
+                        raise RuntimeError(
+                            "ProximaDB stopped making progress during startup "
+                            f"(phase={phase}, heartbeat frozen for more than "
+                            f"{_STALE_AFTER_INTERVALS} beats)"
+                        )
+                await asyncio.sleep(0.2)
+
+            # Ceiling reached — report the phase we last saw, so the failure
+            # says what the server was doing rather than just "didn't start".
             self._kill_process()
             raise TimeoutError(
-                f"ProximaDB failed to start within {timeout}s. "
-                "Check logs for errors."
+                f"ProximaDB failed to start within {ceiling:.0f}s "
+                f"(last phase: {last_phase or 'unknown'}, "
+                f"stalled {time.time() - last_progress_at:.0f}s). "
+                f"Server log: {self._server_log_path}"
             )
+
+    def _state_belongs_to_child(self, state: dict[str, Any] | None) -> bool:
+        """Prove the healthy endpoint is the subprocess this object owns."""
+        if self._process is None or state is None:
+            return False
+        try:
+            return int(state.get("pid")) == self._process.pid
+        except (TypeError, ValueError):
+            return False
+
+    def _remove_generated_config(self) -> None:
+        """Remove launch-only configuration without masking the real result."""
+        try:
+            self._config_path.unlink(missing_ok=True)
+        except OSError:
+            logger.debug("could not remove generated config", exc_info=True)
 
     def _kill_process(self) -> None:
         """Kill the server process."""
@@ -995,13 +1299,15 @@ prefetch_budget = 4
                     os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
                 else:
                     self._process.terminate()
-                self._process.wait(timeout=5)
+                self._process.wait(timeout=self.config.shutdown_timeout_s)
             except Exception:
                 if hasattr(os, "killpg"):
                     os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
                 else:
                     self._process.kill()
             self._process = None
+
+        self._remove_generated_config()
 
         # Cleanup: remove the fallback tmpdir (pxdb-*) when we created one.
         # The data_dir/sockets/ path is left behind for reuse/restart.
@@ -1027,6 +1333,14 @@ prefetch_budget = 4
             self._kill_process()
             self._started = False
             self._collections.clear()
+
+        # Close the pooled HTTP client outside the (sync) lock.
+        client, self._shared_http_client = self._shared_http_client, None
+        if client is not None and not client.is_closed:
+            try:
+                await client.aclose()
+            except Exception:  # pragma: no cover - teardown best-effort
+                logger.debug("pooled http client close failed", exc_info=True)
 
     async def create_collection(
         self,
@@ -1389,11 +1703,17 @@ prefetch_budget = 4
             return 0
 
         deleted = 0
+        from urllib.parse import quote
+
         async with self._http_client() as client:
             for record_id in ids:
+                # Record ids are caller-defined and may contain characters
+                # illegal or ambiguous in a URL path (newlines from
+                # signature-derived ids, '/', '%', spaces). Encode the path
+                # component; axum percent-decodes it back to the exact id.
                 response = await client.delete(
                     f"{self.rest_url}/api/v2/collections/{collection_name}"
-                    f"/records/{record_id}",
+                    f"/records/{quote(record_id, safe='')}",
                     timeout=30.0,
                 )
                 if response.status_code in (200, 204):
@@ -1438,7 +1758,10 @@ prefetch_budget = 4
                     timeout=5.0,
                 )
                 return response.status_code == 200
-        except Exception:
+        except Exception as exc:
+            # Unhealthy is the correct answer here. Logging is what separates
+            # "the server said no" from "the check itself could not run".
+            logger.debug("health check failed: %s", exc)
             return False
 
     # =============================================================================
@@ -2029,6 +2352,7 @@ class EmbeddedMultiModalQueryExecutor:
 
         start_time = time.time()
         component_times: dict[str, float] = {}
+        component_errors: dict[str, str] = {}
         component_results: list[list[dict[str, Any]]] = []
 
         # Execute each component
@@ -2036,29 +2360,67 @@ class EmbeddedMultiModalQueryExecutor:
             comp_start = time.time()
 
             comp_type = component.get("type")
-            if comp_type == "vector":
-                results = await self._execute_vector(component)
-            elif comp_type == "graph":
-                # Check if this depends on previous results
-                if component.get("_from_previous") and component_results:
-                    prev_results = component_results[-1]
-                    id_field = component.get("_id_field", "id")
-                    start_nodes = [
-                        r.get(id_field) for r in prev_results if r.get(id_field)
-                    ]
-                    component["start_nodes"] = start_nodes
-                results = await self._execute_graph(component)
-            elif comp_type == "document":
-                results = await self._execute_document(component)
-            elif comp_type == "logs":
-                results = await self._execute_logs(component)
-            elif comp_type == "metrics":
-                results = await self._execute_metrics(component)
-            else:
+            comp_key = f"{comp_type}_{i}"
+            try:
+                results = await self._run_component(
+                    comp_type, component, component_results
+                )
+            except Exception as exc:  # noqa: BLE001 - recorded, not discarded
+                # Best-effort fusion is intended: one failing leg must not lose
+                # the others. What is not acceptable is the caller being unable
+                # to tell, so the failure is named on the result.
+                logger.warning(
+                    "embedded multi-modal component %s failed: %s",
+                    comp_key,
+                    exc,
+                    exc_info=True,
+                )
+                component_errors[comp_key] = f"{type(exc).__name__}: {exc}"
                 results = []
 
             component_results.append(results)
-            component_times[f"{comp_type}_{i}"] = (time.time() - comp_start) * 1000
+            component_times[comp_key] = (time.time() - comp_start) * 1000
+
+        return await self._fuse_and_package(
+            query, component_results, component_times, component_errors, start_time
+        )
+
+    async def _run_component(
+        self,
+        comp_type: str | None,
+        component: dict[str, Any],
+        component_results: list[list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """Run one leg. Raises; `execute` decides what a failure means."""
+        if comp_type == "vector":
+            return await self._execute_vector(component)
+        elif comp_type == "graph":
+            # Check if this depends on previous results
+            if component.get("_from_previous") and component_results:
+                prev_results = component_results[-1]
+                id_field = component.get("_id_field", "id")
+                start_nodes = [r.get(id_field) for r in prev_results if r.get(id_field)]
+                component["start_nodes"] = start_nodes
+            return await self._execute_graph(component)
+        elif comp_type == "document":
+            return await self._execute_document(component)
+        elif comp_type == "logs":
+            return await self._execute_logs(component)
+        elif comp_type == "metrics":
+            return await self._execute_metrics(component)
+        else:
+            return []
+
+    async def _fuse_and_package(
+        self,
+        query: "MultiModalQuery",
+        component_results: list[list[dict[str, Any]]],
+        component_times: dict[str, float],
+        component_errors: dict[str, str],
+        start_time: float,
+    ) -> "MultiModalQueryResult":
+        """Join, fuse and package, so `execute` reads as its own policy."""
+        from .multimodal_query import MultiModalQueryResult
 
         # Apply joins if specified
         if query.joins:
@@ -2092,6 +2454,7 @@ class EmbeddedMultiModalQueryExecutor:
             query_time_ms=total_time,
             component_times=component_times,
             fusion_strategy=query.fusion_strategy,
+            component_errors=component_errors,
             metadata={
                 "component_count": len(query.components),
                 "join_count": len(query.joins),
@@ -2125,9 +2488,12 @@ class EmbeddedMultiModalQueryExecutor:
                 }
                 for r in results
             ]
-        except Exception:
-            # Log error but return empty results to allow other components to proceed
-            return []
+        except Exception as exc:
+            # Re-raised, not swallowed. This comment used to say "log error but
+            # return empty results" -- and it did not log, so a failed leg was
+            # indistinguishable from one that matched nothing. `execute` owns
+            # the best-effort policy and records which component failed.
+            raise exc
 
     async def _execute_graph(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute graph traversal component against embedded database.
@@ -2216,8 +2582,10 @@ class EmbeddedMultiModalQueryExecutor:
 
             return results[:limit]
 
-        except Exception:
-            return []
+        except Exception as exc:
+            # Re-raised; see _execute_vector. A truncated traversal that returns
+            # [] is indistinguishable from a node with no edges.
+            raise exc
 
     async def _execute_document(
         self, component: dict[str, Any]
@@ -2270,7 +2638,11 @@ class EmbeddedMultiModalQueryExecutor:
 
             return []
 
-        except Exception:
+        except Exception as exc:
+            # A read leg returning [] on failure is indistinguishable from a
+            # query that matched nothing. Logged at warning because, unlike the
+            # probes above, an empty answer here will be acted on as data.
+            logger.warning("embedded document query failed: %s", exc, exc_info=True)
             return []
 
     async def _execute_logs(self, component: dict[str, Any]) -> list[dict[str, Any]]:

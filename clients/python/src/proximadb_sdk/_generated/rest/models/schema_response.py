@@ -25,44 +25,38 @@ class SchemaResponse:
     """Schema response with metadata
 
     Attributes:
+        schema_id (str): Schema ID (UUID)
+        schema_version (str): Schema version (semantic versioning)
         collection_id (str): Collection this schema belongs to
-        created_at (str): Creation timestamp
         schema (SchemaDefinition): Schema definition for a collection
 
             Defines the typed columns and enforcement rules for ProximaRecord support.
-        schema_id (str): Schema ID (UUID)
-        schema_version (str): Schema version (semantic versioning)
-        parent_schema_id (None | str | Unset): Parent schema ID (for evolution tracking)
+        created_at (str): Creation timestamp
         updated_at (None | str | Unset): Last update timestamp
+        parent_schema_id (None | str | Unset): Parent schema ID (for evolution tracking)
     """
 
-    collection_id: str
-    created_at: str
-    schema: SchemaDefinition
     schema_id: str
     schema_version: str
-    parent_schema_id: None | str | Unset = UNSET
+    collection_id: str
+    schema: SchemaDefinition
+    created_at: str
     updated_at: None | str | Unset = UNSET
+    parent_schema_id: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.schema_definition import SchemaDefinition
 
-        collection_id = self.collection_id
-
-        created_at = self.created_at
-
-        schema = self.schema.to_dict()
-
         schema_id = self.schema_id
 
         schema_version = self.schema_version
 
-        parent_schema_id: None | str | Unset
-        if isinstance(self.parent_schema_id, Unset):
-            parent_schema_id = UNSET
-        else:
-            parent_schema_id = self.parent_schema_id
+        collection_id = self.collection_id
+
+        schema = self.schema.to_dict()
+
+        created_at = self.created_at
 
         updated_at: None | str | Unset
         if isinstance(self.updated_at, Unset):
@@ -70,21 +64,27 @@ class SchemaResponse:
         else:
             updated_at = self.updated_at
 
+        parent_schema_id: None | str | Unset
+        if isinstance(self.parent_schema_id, Unset):
+            parent_schema_id = UNSET
+        else:
+            parent_schema_id = self.parent_schema_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "collection_id": collection_id,
-                "created_at": created_at,
-                "schema": schema,
                 "schema_id": schema_id,
                 "schema_version": schema_version,
+                "collection_id": collection_id,
+                "schema": schema,
+                "created_at": created_at,
             }
         )
-        if parent_schema_id is not UNSET:
-            field_dict["parent_schema_id"] = parent_schema_id
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
+        if parent_schema_id is not UNSET:
+            field_dict["parent_schema_id"] = parent_schema_id
 
         return field_dict
 
@@ -93,24 +93,15 @@ class SchemaResponse:
         from ..models.schema_definition import SchemaDefinition
 
         d = dict(src_dict)
-        collection_id = d.pop("collection_id")
-
-        created_at = d.pop("created_at")
-
-        schema = SchemaDefinition.from_dict(d.pop("schema"))
-
         schema_id = d.pop("schema_id")
 
         schema_version = d.pop("schema_version")
 
-        def _parse_parent_schema_id(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
+        collection_id = d.pop("collection_id")
 
-        parent_schema_id = _parse_parent_schema_id(d.pop("parent_schema_id", UNSET))
+        schema = SchemaDefinition.from_dict(d.pop("schema"))
+
+        created_at = d.pop("created_at")
 
         def _parse_updated_at(data: object) -> None | str | Unset:
             if data is None:
@@ -121,14 +112,23 @@ class SchemaResponse:
 
         updated_at = _parse_updated_at(d.pop("updated_at", UNSET))
 
+        def _parse_parent_schema_id(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        parent_schema_id = _parse_parent_schema_id(d.pop("parent_schema_id", UNSET))
+
         schema_response = cls(
-            collection_id=collection_id,
-            created_at=created_at,
-            schema=schema,
             schema_id=schema_id,
             schema_version=schema_version,
-            parent_schema_id=parent_schema_id,
+            collection_id=collection_id,
+            schema=schema,
+            created_at=created_at,
             updated_at=updated_at,
+            parent_schema_id=parent_schema_id,
         )
 
         schema_response.additional_properties = d

@@ -220,8 +220,13 @@ pub async fn boot_warm(factory: Arc<FilesystemFactory>, base_url: String, tenant
         .ok()
         .and_then(|path| std::fs::read_to_string(&path).ok())
         .and_then(|json| proximadb_cache::TierPolicy::from_json(&json).ok());
+    // TD-TENANT-3 S3: canonical-then-raw probe, so boot-warm ordering agrees
+    // with the admission floors the survivor cache resolves for the same tenant.
     let tenants = tier_ordered(tenants, policy.as_ref(), &|t| {
-        crate::services::record_store::tenant_tier(t)
+        let Some(policy) = policy.as_ref() else {
+            return crate::services::record_store::tenant_tier(t);
+        };
+        crate::services::record_store::tenant_tier_policy_key(t, |key| policy.has_tier(key))
     });
     let mut total_ranges = 0usize;
     let mut total_segments = 0usize;

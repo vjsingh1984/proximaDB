@@ -96,6 +96,11 @@ pub struct EmbedIngestPayload {
 struct ReadyEmbedIngestPayload {
     payload: EmbedIngestPayload,
     route: EmbedRoute,
+    /// Stable queue-message identity (TD-SANDHI-3): the drainer acks only after every route
+    /// group succeeds, and a failed batch is redelivered on restart/lease takeover (in-process
+    /// redelivery never happens — the read cursor advances on delivery) and re-embeds — this id
+    /// is the at-most-once key for the re-emitted usage event.
+    message_id: String,
 }
 
 /// Insert path the drainer calls once embedding has populated vectors.
@@ -343,10 +348,17 @@ impl EmbeddingDrainer {
                 .message_id
                 .partition()
                 .ok_or_else(|| anyhow::anyhow!("drainer: malformed delivery id"))?;
+            // MessageId renders as "{partition}:{segment}:{offset}" — the stable identity of
+            // this logical ingest across redeliveries (TD-SANDHI-3 idempotency key).
+            let message_id = delivery.message_id.0.clone();
             partition_queues
                 .entry(partition)
                 .or_default()
-                .push_back(ReadyEmbedIngestPayload { payload, route });
+                .push_back(ReadyEmbedIngestPayload {
+                    payload,
+                    route,
+                    message_id,
+                });
         }
 
         // Preserve FIFO within each queue partition. At each step, batch all
@@ -356,16 +368,16 @@ impl EmbeddingDrainer {
             .values()
             .find_map(|queue| queue.front().map(|ready| ready.route.clone()))
         {
-            let mut payloads = Vec::new();
+            let mut group = Vec::new();
             for queue in partition_queues.values_mut() {
                 while queue.front().is_some_and(|ready| ready.route == route) {
                     let Some(ready) = queue.pop_front() else {
                         break;
                     };
-                    payloads.push(ready.payload);
+                    group.push(ready);
                 }
             }
-            self.process_route_group(route, payloads).await?;
+            self.process_route_group(route, group).await?;
         }
 
         if !delivery_ids.is_empty() {
@@ -381,11 +393,12 @@ impl EmbeddingDrainer {
     async fn process_route_group(
         &self,
         route: EmbedRoute,
-        payloads: Vec<EmbedIngestPayload>,
+        group: Vec<ReadyEmbedIngestPayload>,
     ) -> anyhow::Result<()> {
         let mut batch_records = Vec::new();
-        let mut payload_ranges = Vec::with_capacity(payloads.len());
-        for payload in &payloads {
+        let mut payload_ranges = Vec::with_capacity(group.len());
+        for ready in &group {
+            let payload = &ready.payload;
             let start = batch_records.len();
             batch_records.extend(payload.records.iter().map(|record| EmbedRecord {
                 id: record.oid.clone(),
@@ -406,14 +419,10 @@ impl EmbeddingDrainer {
             )
             .await
             .map_err(|e| anyhow::anyhow!("drainer embed failed: {e}"))?;
+        // TD-SANDHI-3: the adapter-measured wall clock (queue wait excluded, measured inside
+        // the scheduler worker — the usage-event `duration_ms` contract).
+        let provider_duration_ms = result.provider_duration_ms;
         let batch_records_total = batch_record_count(&payload_ranges);
-        if result.vectors.len() != batch_records_total {
-            anyhow::bail!(
-                "drainer: provider returned {} vectors for {} records",
-                result.vectors.len(),
-                batch_records_total
-            );
-        }
         let dimension = u32::try_from(route.dimension())
             .map_err(|_| anyhow::anyhow!("drainer: route dimension exceeds u32"))?;
         // TD-SANDHI-1: the provider's real token usage is batch-level (all payloads in this
@@ -422,7 +431,34 @@ impl EmbeddingDrainer {
         let batch_usage = result.usage;
         let total_records = batch_records_total as u64;
 
-        for (payload, range) in payloads.iter().zip(payload_ranges) {
+        // Meter EVERY payload before ALL shape validation (the vector-count check below
+        // included): the provider already consumed the whole batch's tokens even when the
+        // returned vectors are unusable — and each event's idempotency_key (queue message id)
+        // makes at-least-once redelivery safe.
+        for (i, ready) in group.iter().enumerate() {
+            let payload = &ready.payload;
+            let payload_records = payload.records.len() as u64;
+            let real_input_tokens = batch_usage
+                .map(|usage| measured_share(usage.input_tokens, payload_records, total_records));
+            record_embedding_consumption(
+                payload,
+                &route,
+                real_input_tokens,
+                carrier_duration(i, provider_duration_ms),
+                &ready.message_id,
+            );
+        }
+
+        if result.vectors.len() != batch_records_total {
+            anyhow::bail!(
+                "drainer: provider returned {} vectors for {} records",
+                result.vectors.len(),
+                batch_records_total
+            );
+        }
+
+        for (ready, range) in group.iter().zip(payload_ranges) {
+            let payload = &ready.payload;
             let vectors = result
                 .vectors
                 .get(range)
@@ -437,12 +473,6 @@ impl EmbeddingDrainer {
                     payload.expected_dimension
                 );
             }
-
-            let payload_records = payload.records.len() as u64;
-            let real_input_tokens = batch_usage.map(|usage| {
-                split_input_tokens(usage.input_tokens, payload_records, total_records)
-            });
-            record_embedding_consumption(payload, &route, real_input_tokens);
             let target_precision = self.resolve_target_precision(payload).await;
             let embedded = payload
                 .records
@@ -490,6 +520,26 @@ fn batch_record_count(ranges: &[std::ops::Range<usize>]) -> usize {
     ranges.last().map_or(0, |range| range.end)
 }
 
+/// The route group's batch wall clock is stamped on exactly ONE event — the first payload's
+/// (TD-SANDHI-3). N events × full duration would inflate any `SUM(duration_ms)` rollup N×
+/// (provider utilization >100%); with one carrier, sum-over-events stays exact and the single
+/// honest latency sample survives. Split out as a fn so the selection policy is pinned by test
+/// (`carrier_duration_is_first_payload_only` fails on a regression to unconditional `Some`).
+fn carrier_duration(payload_index: usize, provider_duration_ms: u64) -> Option<u64> {
+    (payload_index == 0).then_some(provider_duration_ms)
+}
+
+/// A measured batch never attributes a record-carrying payload zero tokens: floor-only could
+/// yield 0 (2 real tokens across 3 payloads), which on the wire is indistinguishable from the
+/// gateway-bug zeros TD-SANDHI-3 refuses to certify — and would drop 100% of the measurement
+/// from KEU in that regime. Clamping the floored share up to 1 over-counts by at most one
+/// token per floored payload (≤ `batch_size` ≈ 32 tokens/batch), keeping the sum over payloads
+/// within a few tokens of the measured batch total. Preconditions hold at the call site: a
+/// measured batch implies `input_tokens > 0` (parser guards) and payloads are non-empty.
+fn measured_share(batch_input_tokens: u64, payload_records: u64, total_records: u64) -> u64 {
+    split_input_tokens(batch_input_tokens, payload_records, total_records).max(1)
+}
+
 /// Split a batch's total input-token count across one payload, proportionally by its record
 /// share (TD-SANDHI-1). A route group can batch several tenants' payloads into one provider
 /// call, whose usage is reported batch-wide; this attributes each tenant its slice. Returns 0
@@ -506,27 +556,25 @@ fn split_input_tokens(batch_input_tokens: u64, payload_records: u64, total_recor
 ///
 /// `real_input_tokens` carries the provider's **measured** input-token count for this payload
 /// (external providers that report `usage`); when `None` the count*512 heuristic is used (local
-/// BGE, or BYO whose contract has no usage). For external routes, also emits the neutral
-/// usage event at the egress boundary (default-inert unless `PROXIMADB_EMIT_USAGE_EVENTS`).
+/// BGE, or BYO whose contract has no usage). `duration_ms` is `Some` only on the route group's
+/// designated carrier event (TD-SANDHI-3). `message_id` is the queue-message identity, carried
+/// as the event's `idempotency_key` so at-least-once redelivery cannot double-bill. For
+/// external routes, also emits the neutral usage event at the egress boundary (default-inert
+/// unless `PROXIMADB_EMIT_USAGE_EVENTS`).
 fn record_embedding_consumption(
     payload: &EmbedIngestPayload,
     route: &EmbedRoute,
     real_input_tokens: Option<u64>,
+    duration_ms: Option<u64>,
+    message_id: &str,
 ) {
     let embedding_count = payload.records.len() as u64;
+    let provider_reported = real_input_tokens.is_some();
     let input_tokens = real_input_tokens.unwrap_or_else(|| embedding_count.saturating_mul(512));
     // Output tokens stay a compute proxy (count × dimension) — embeddings emit no completion
     // tokens, so no provider reports them; this is ProximaDB's own KEU storage unit.
     let output_tokens = embedding_count.saturating_mul(route.dimension() as u64);
-    let (provider, model, external): (&'static str, String, bool) = match route {
-        EmbedRoute::BgeSmall => ("victor", "bge-small-en-v1.5".to_string(), false),
-        EmbedRoute::BgeLarge => ("victor", "bge-large-en-v1.5".to_string(), false),
-        EmbedRoute::BgeM3 => ("victor", "bge-m3".to_string(), false),
-        EmbedRoute::AzureOpenAi { model } => ("azure_openai", format!("azure_{model:?}"), true),
-        EmbedRoute::OpenAi { model } => ("openai", format!("openai_{model:?}"), true),
-        EmbedRoute::Cohere { model } => ("cohere", format!("cohere_{model:?}"), true),
-        EmbedRoute::Byo { url, .. } => ("byo", url.clone(), true),
-    };
+    let (provider, model, external) = route_labels(route);
     crate::metrics::consumption_metrics::record_keu_units(
         Some(&payload.tenant_id),
         provider,
@@ -538,15 +586,62 @@ fn record_embedding_consumption(
     // ADR-067 Fix 2: emit the shared neutral usage event at the external-provider boundary.
     // Local BGE is self-hosted (no external egress) → no event.
     if external {
-        crate::metrics::usage_event::UsageEvent::external_embedding(
+        // TD-SANDHI-3: provider-reported when the provider returned a usage figure, estimated
+        // for the count×512 heuristic.
+        let basis = if provider_reported {
+            crate::metrics::usage_event::UsageBasis::ProviderReported
+        } else {
+            crate::metrics::usage_event::UsageBasis::Estimated
+        };
+        build_external_embedding_event(
+            payload,
             provider,
-            model.as_str(),
-            Some(payload.tenant_id.as_str()),
+            &model,
             input_tokens,
-            "embed_batch",
+            basis,
+            duration_ms,
+            message_id,
         )
         .emit();
     }
+}
+
+/// Neutral (provider slug, model id, external-egress?) labels for one embedding route.
+fn route_labels(route: &EmbedRoute) -> (&'static str, String, bool) {
+    match route {
+        EmbedRoute::BgeSmall => ("victor", "bge-small-en-v1.5".to_string(), false),
+        EmbedRoute::BgeLarge => ("victor", "bge-large-en-v1.5".to_string(), false),
+        EmbedRoute::BgeM3 => ("victor", "bge-m3".to_string(), false),
+        EmbedRoute::AzureOpenAi { model } => ("azure_openai", format!("azure_{model:?}"), true),
+        EmbedRoute::OpenAi { model } => ("openai", format!("openai_{model:?}"), true),
+        EmbedRoute::Cohere { model } => ("cohere", format!("cohere_{model:?}"), true),
+        EmbedRoute::Byo { url, .. } => ("byo", url.clone(), true),
+    }
+}
+
+/// Build (without emitting) the neutral usage event for one external embedding payload,
+/// stamped with measurement provenance and the queue-message idempotency key (TD-SANDHI-3).
+/// Split from [`record_embedding_consumption`] so the stamping is unit-testable without the
+/// env-gated emit.
+fn build_external_embedding_event(
+    payload: &EmbedIngestPayload,
+    provider: &'static str,
+    model: &str,
+    input_tokens: u64,
+    usage_basis: crate::metrics::usage_event::UsageBasis,
+    duration_ms: Option<u64>,
+    message_id: &str,
+) -> crate::metrics::usage_event::UsageEvent {
+    let mut event = crate::metrics::usage_event::UsageEvent::external_embedding(
+        provider,
+        model,
+        Some(payload.tenant_id.as_str()),
+        input_tokens,
+        "embed_batch",
+    )
+    .with_provenance(usage_basis, duration_ms);
+    event.idempotency_key = Some(message_id.to_string());
+    event
 }
 
 // ── tests ───────────────────────────────────────────────────────────
@@ -554,13 +649,17 @@ fn record_embedding_consumption(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_embedding::config::{ByoAuth, ChunkConfig, EmbeddingConfig};
+    use proximadb_catalog::Catalog;
+    use proximadb_embedding::config::{ByoAuth, EmbeddingConfig};
     use proximadb_embedding::scheduler::EmbedSchedulerConfig;
     use proximadb_queue::{Message, QueueConfig, TopicConfig};
     use std::collections::HashMap;
     use std::io::{Read, Write};
+    use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::sync::Mutex;
+
+    use crate::testing::InMemoryTestCatalog;
 
     #[derive(Default)]
     struct RecordingSink {
@@ -591,7 +690,6 @@ mod tests {
         let _ = proximadb_embedding::EmbeddingService::initialize(
             EmbeddingConfig {
                 route: EmbedRoute::BgeSmall,
-                chunk: ChunkConfig::default(),
             },
             EmbedSchedulerConfig::default(),
         );
@@ -806,10 +904,107 @@ mod tests {
         assert_eq!(split_input_tokens(1234, 5, 5), 1234);
         // Integer division floors (no panic, no over-attribution).
         assert_eq!(split_input_tokens(100, 1, 3), 33);
+        // A tiny measured batch floors a payload's share to 0 — the metering call site clamps
+        // that to a minimum of 1 (measured_share) so a measured batch never certifies a zero.
+        assert_eq!(split_input_tokens(2, 1, 3), 0);
         // Empty batch → 0, never a div-by-zero.
         assert_eq!(split_input_tokens(100, 0, 0), 0);
         // Large counts do not overflow (u128 intermediate).
         assert_eq!(split_input_tokens(u64::MAX, 1, 1), u64::MAX);
+    }
+
+    /// TD-SANDHI-3: a measured share never certifies a zero — floor-only could yield 0 for a
+    /// tiny measured batch (2 tokens / 3 payloads), indistinguishable on the wire from the
+    /// gateway-bug zeros the parser guards refuse. Clamp to a minimum of 1; over-count is
+    /// bounded by one token per floored payload.
+    #[test]
+    fn measured_share_never_certifies_a_zero() {
+        assert_eq!(measured_share(2, 1, 3), 1);
+        assert_eq!(measured_share(1, 5, 10), 1);
+        assert_eq!(measured_share(10, 1, 12), 1);
+        assert_eq!(measured_share(100, 1, 3), 33);
+        assert_eq!(measured_share(300, 10, 30), 100);
+        assert_eq!(measured_share(1234, 5, 5), 1234);
+        assert_eq!(measured_share(u64::MAX, 1, 1), u64::MAX);
+    }
+
+    /// TD-SANDHI-3: the batch duration belongs to exactly one carrier event per route group.
+    #[test]
+    fn carrier_duration_is_first_payload_only() {
+        assert_eq!(carrier_duration(0, 4321), Some(4321));
+        assert_eq!(carrier_duration(1, 4321), None);
+        assert_eq!(carrier_duration(31, 4321), None);
+    }
+
+    /// TD-SANDHI-3: the external embedding event carries measurement provenance (basis +
+    /// `Final` + `success` outcome, duration only on the designated carrier event of a route
+    /// group) and the queue-message `idempotency_key` that makes at-least-once redelivery
+    /// safe to consume.
+    #[test]
+    fn external_embedding_event_stamps_provenance_and_idempotency() {
+        let route = EmbedRoute::Byo {
+            url: "https://byo.example/v1/embed".to_string(),
+            auth: ByoAuth::None,
+            declared_dim: 3,
+            declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
+            batch_size: 8,
+            timeout_ms: 1_000,
+        };
+        let (provider, model, external) = route_labels(&route);
+        assert_eq!(provider, "byo");
+        assert_eq!(model, "https://byo.example/v1/embed");
+        assert!(external);
+        // Local BGE is the non-egress counter-case: no event, and victor-labeled KEU.
+        let (bge_provider, _, bge_external) = route_labels(&EmbedRoute::BgeSmall);
+        assert_eq!(bge_provider, "victor");
+        assert!(!bge_external);
+
+        let payload = EmbedIngestPayload {
+            target_collection: "knowledge".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            embedding_route_identity: (&route).into(),
+            expected_dimension: 3,
+            records: vec![],
+        };
+
+        let carrier = build_external_embedding_event(
+            &payload,
+            provider,
+            &model,
+            1024,
+            crate::metrics::usage_event::UsageBasis::Estimated,
+            Some(4321),
+            "7:0:3",
+        );
+        assert_eq!(carrier.idempotency_key.as_deref(), Some("7:0:3"));
+        assert_eq!(carrier.duration_ms, Some(4321));
+        assert_eq!(
+            carrier.usage_basis,
+            Some(crate::metrics::usage_event::UsageBasis::Estimated)
+        );
+        assert_eq!(
+            carrier.usage_completeness,
+            Some(crate::metrics::usage_event::UsageCompleteness::Final)
+        );
+        assert_eq!(carrier.outcome.as_deref(), Some("success"));
+        assert_eq!(carrier.tokens_in, 1024);
+
+        // A non-carrier batch-mate: same provenance, no duration, its own key.
+        let mate = build_external_embedding_event(
+            &payload,
+            provider,
+            &model,
+            1024,
+            crate::metrics::usage_event::UsageBasis::ProviderReported,
+            None,
+            "7:0:4",
+        );
+        assert_eq!(mate.duration_ms, None);
+        assert_eq!(mate.idempotency_key.as_deref(), Some("7:0:4"));
+        assert_eq!(
+            mate.usage_basis,
+            Some(crate::metrics::usage_event::UsageBasis::ProviderReported)
+        );
     }
 
     #[test]
@@ -967,8 +1162,9 @@ mod tests {
     async fn drainer_stamps_target_precision_from_resolver() {
         use proximadb_catalog::cache::CatalogCache;
         use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
-        use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
-        use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
+        use proximadb_catalog::{Catalog, CatalogNamespace, CatalogTableSchema, TableIdentifier};
+        use std::collections::HashMap;
+        use tokio::sync::RwLock;
 
         ensure_embedding_singleton();
         let tmp = TempDir::new().expect("tempdir");
@@ -988,15 +1184,7 @@ mod tests {
 
         // Stand up an in-memory catalog with one fp16 collection.
         let cache = Arc::new(CatalogCache::new(1000, 60));
-        let cat: Arc<OltpCatalog> = Arc::new(
-            OltpCatalog::new(
-                "drainer-test",
-                OltpCatalogConfig::sqlite("sqlite::memory:"),
-                cache.clone(),
-            )
-            .await
-            .unwrap(),
-        );
+        let cat: Arc<dyn Catalog> = Arc::new(InMemoryTestCatalog::new("drainer-test".to_string()));
         cat.create_namespace(&["default".to_string()], HashMap::new())
             .await
             .unwrap();

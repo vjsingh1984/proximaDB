@@ -35,6 +35,16 @@ pub mod optimizer;
 use anyhow::Result;
 use futures::future::join_all;
 
+/// TD-RDSTRAT-13 C3: a discovered segment plus the size the listing already
+/// reported. `size_bytes` lets the read path skip the per-segment HEAD (one
+/// billed metadata op per segment per query); `None` means the backend did
+/// not report a size and the reader must stat.
+#[derive(Clone)]
+pub(crate) struct DiscoveredSstFile {
+    pub url: String,
+    pub size_bytes: Option<u64>,
+}
+
 /// TD-SEARCH-2 S2: process-wide in-flight cold-scan counter — the input to
 /// the adaptive morsel degree. Incremented per `fallback_to_direct_search`
 /// (the segment-scan path; memtable/index serves don't burn scan CPU).
@@ -292,7 +302,7 @@ impl SstEngine {
         };
         let mut total = 0usize;
         for file_path in &files {
-            if let Ok(Some(entry_count)) = self.legacy_sst_entry_count(file_path).await {
+            if let Ok(Some(entry_count)) = self.legacy_sst_entry_count(&file_path.url).await {
                 total = total.saturating_add(entry_count);
             }
         }
@@ -336,8 +346,7 @@ impl SstEngine {
         distance_metric: DistanceMetric,
         filter_expression: Option<&FilterExpression>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        let mut exact_params = (*ctx.search_params).clone();
-        exact_params.block_prune.force_exact = true;
+        let exact_params = Self::force_exact_params(ctx.search_params.as_ref());
         let exact_ctx = StorageQueryContext {
             search_params: std::sync::Arc::new(exact_params),
             collection: ctx.collection.clone(),
@@ -357,6 +366,18 @@ impl SstEngine {
             true, // include_metadata
         )
         .await
+    }
+
+    /// Build the effective exact-search contract from caller parameters.
+    /// `want_exact_search` may resolve Adaptive to exact; both the mode-driven
+    /// file pruner and the block/cascade gates must see that same resolution.
+    fn force_exact_params(
+        params: &crate::core::search::SearchParams,
+    ) -> crate::core::search::SearchParams {
+        let mut exact = params.clone();
+        exact.search_mode = crate::core::search::SearchMode::Exact;
+        exact.block_prune.force_exact = true;
+        exact
     }
 
     /// PAX RaBitQ→SQ8 cascade attempt for a `.pax` segment — the co-designed
@@ -382,11 +403,14 @@ impl SstEngine {
         collection_id: &str,
         collection_root: &str,
         snapshot_lsn: u64,
+        known_size: Option<u64>,
     ) -> anyhow::Result<Option<Vec<OptimizedSearchRecord>>> {
         use proximadb_block_format::RankMetric;
-        // Map the query metric to a cascade rank metric. Dot/max-IP and exotic
-        // metrics stay on the generic scan (unvalidated recall / score polarity);
-        // the caller gate only routes Euclidean + Cosine here.
+        // Map the query metric to a cascade rank metric. Euclidean + Cosine
+        // carry the SIFT-ratchet recall validation; DotProduct is also routed
+        // (`should_try_pax_cascade`) and mapped, but its filtered-recall
+        // validation is the TD-FPRUNE-1 filtered-ratchet follow-up — exotic
+        // metrics stay on the generic scan.
         let Some(rank_metric) = (match distance_metric {
             DistanceMetric::Euclidean => Some(RankMetric::L2),
             DistanceMetric::Cosine => Some(RankMetric::Cosine),
@@ -460,6 +484,7 @@ impl SstEngine {
                     self.segment_invariants_cache.as_deref(),
                     self.survivor_cache.as_deref(),
                     row_allow.as_ref(),
+                    known_size,
                 )
                 .await?;
                 if let Some(hits) = coalesced_hits {
@@ -487,9 +512,36 @@ impl SstEngine {
                     } else {
                         hits
                     };
+                    // TD-FPRUNE-1 top-k rehydration: the exact path this cascade
+                    // replaces returns full record metadata (props); the cascade
+                    // ranks from codes and knows only id+score+vector. Fetch the
+                    // k winners' records (position-selective, bounded by the hit
+                    // set) so the filtered response keeps the same shape as the
+                    // exact path. Best-effort: a rehydrate failure degrades to
+                    // metadata-less hits (the pre-flip cascade behavior), never a
+                    // query failure.
+                    let positions: Vec<u32> = hits.iter().map(|h| h.position).collect();
+                    let rehydrated =
+                        crate::storage::engines::sst::segment_format::read_records_by_positions(
+                            fs.as_ref(),
+                            sstable_path,
+                            &positions,
+                            &[],
+                            &[],
+                            None,
+                        )
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(
+                                "cascade top-k rehydration failed for {sstable_path} \
+                                 (hits return without metadata): {e}"
+                            );
+                            vec![None; positions.len()]
+                        });
                     let records = hits
                         .into_iter()
-                        .map(|h| {
+                        .zip(rehydrated)
+                        .map(|(h, rec)| {
                             let sim = OptimizedSearchRecord::standardized_distance_to_similarity(
                                 h.distance,
                                 &distance_metric,
@@ -502,9 +554,17 @@ impl SstEngine {
                             if let Some(v) = h.vector {
                                 r = r.add_vector(v);
                             }
+                            if let Some(full) = rec {
+                                r.metadata =
+                                    proximadb_records::conversions::proxima_tree_to_value_map(
+                                        &full.props,
+                                    );
+                                r.vector_id = Some(full.oid.clone());
+                            }
                             r
                         })
                         .collect();
+                    crate::observability::io_trace::record_vector_ann_proof();
                     return Ok(Some(records));
                 }
             }
@@ -555,6 +615,7 @@ impl SstEngine {
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
+        let cache_policy = self.vector_cache_policy();
 
         info!(
             "🚀 SST: Starting unified search for collection {} with {} dimensions",
@@ -587,7 +648,7 @@ impl SstEngine {
                 "🎯 SST: exact segment scan for collection {} (SearchMode honored; cost-gated) — guaranteed recall (TD-165)",
                 collection_id
             );
-            return self
+            let result = self
                 .execute_exact_segment_scan(
                     ctx,
                     collection_id,
@@ -598,7 +659,21 @@ impl SstEngine {
                     filter_expression,
                 )
                 .await;
+            if result.is_ok() {
+                Self::record_completed_vector_access(
+                    ctx,
+                    &storage_url,
+                    query_vector.len(),
+                    k,
+                    filter_expression.is_some(),
+                    crate::observability::io_trace::VectorAccessPath::Exact,
+                    cache_policy,
+                );
+            }
+            return result;
         }
+
+        let ann_proofs_before = crate::observability::io_trace::vector_ann_proof_count();
 
         // Determine search strategy based on context
         // Co-design search routing: the collection's index_configs is authoritative.
@@ -624,7 +699,7 @@ impl SstEngine {
                 .await;
         }
 
-        if use_orchestration {
+        let result = if use_orchestration {
             // Use advanced orchestration when available
             self.execute_orchestrated_search(
                 ctx,
@@ -648,7 +723,21 @@ impl SstEngine {
                 filter_expression,
             )
             .await
+        };
+        if result.is_ok()
+            && crate::observability::io_trace::vector_ann_proof_count() > ann_proofs_before
+        {
+            Self::record_completed_vector_access(
+                ctx,
+                &storage_url,
+                query_vector.len(),
+                k,
+                filter_expression.is_some(),
+                crate::observability::io_trace::VectorAccessPath::Ann,
+                cache_policy,
+            );
         }
+        result
     }
 
     /// TD-112: lazily rebuild a collection's AXIS index from its durable SST
@@ -683,7 +772,12 @@ impl SstEngine {
         if registered > 0 {
             let covered = match self.discover_sstable_files(storage_url).await {
                 Ok(files) if !files.is_empty() => {
-                    match self.durable_vector_count_for_rebuild(&files).await {
+                    match self
+                        .durable_vector_count_for_rebuild(
+                            &files.iter().map(|f| f.url.clone()).collect::<Vec<_>>(),
+                        )
+                        .await
+                    {
                         Some(durable) => registered as u64 >= durable,
                         None => false, // unknown → rebuild
                     }
@@ -719,7 +813,9 @@ impl SstEngine {
         // `all()` check and rebuilds normally (exact AXIS). See
         // `pax_segment_is_coarse_rabitq_without_f32_tier`.
         if self
-            .all_segments_coarse_rabitq_pax_without_f32_tier(&files)
+            .all_segments_coarse_rabitq_pax_without_f32_tier(
+                &files.iter().map(|f| f.url.clone()).collect::<Vec<_>>(),
+            )
             .await
         {
             tracing::info!(
@@ -754,7 +850,11 @@ impl SstEngine {
 
         let count = records.len();
         match axis
-            .handle_flushed_vectors(collection_id, records, files.clone())
+            .handle_flushed_vectors(
+                collection_id,
+                records,
+                files.iter().map(|f| f.url.clone()).collect::<Vec<_>>(),
+            )
             .await
         {
             Ok(()) => {
@@ -847,7 +947,7 @@ impl SstEngine {
                 // Cloud URLs download to a scratch file for the path-based reader
                 // (defect-6 read class); local paths pass through.
                 let seg = crate::storage::engines::sst::staged_write::LocalizedSegment::fetch(
-                    self.filesystem(),
+                    &self.filesystem_port(),
                     file,
                 )
                 .await?;
@@ -866,7 +966,7 @@ impl SstEngine {
                 // P3: read a PAX segment via the mixed-format primitive (magic-detected,
                 // reuses PaxSegmentScanner). Best-effort schema keys (empty) for now.
                 let bytes = crate::storage::engines::sst::staged_write::read_object_bytes(
-                    self.filesystem(),
+                    &self.filesystem_port(),
                     file,
                 )
                 .await
@@ -1012,6 +1112,7 @@ impl SstEngine {
                             .await;
                     }
 
+                    crate::observability::io_trace::record_vector_ann_proof();
                     return Ok(results);
                 }
                 Err(e) => {
@@ -1239,7 +1340,7 @@ impl SstEngine {
             search_mode
         );
         for (i, file) in sstable_files.iter().enumerate() {
-            tracing::trace!(index = i, file = %file, "Discovered SSTable file");
+            tracing::trace!(index = i, file = %file.url, "Discovered SSTable file");
         }
 
         debug!(
@@ -1277,47 +1378,47 @@ impl SstEngine {
             );
 
             // Build per-file futures (borrow &self — no 'static needed).
-            let file_futures = sstable_files.iter().map(|sstable_path| {
-                let sstable_path = sstable_path.as_str();
+            let file_futures = sstable_files.iter().map(|discovered| {
+                let sstable_path = discovered.url.as_str();
+                let known_size = discovered.size_bytes;
                 let filter_owned = filter_expression.cloned();
                 async move {
                     let result: Result<Vec<OptimizedSearchRecord>, String> = async {
                         // PAX cascade
-                        let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path
-                            .ends_with(".pax")
-                            && matches!(
+                        let pax_cascade: Option<Vec<OptimizedSearchRecord>> =
+                            if Self::should_try_pax_cascade(
+                                sstable_path,
                                 distance_metric,
-                                DistanceMetric::Euclidean
-                                    | DistanceMetric::Cosine
-                                    | DistanceMetric::DotProduct
+                                prune_config,
                             ) {
-                            match self
-                                .try_pax_cascade(
-                                    sstable_path,
-                                    query_vector,
-                                    filter_expression,
-                                    k,
-                                    distance_metric,
-                                    collection_id,
-                                    storage_url,
-                                    snapshot_lsn,
-                                )
-                                .await
-                            {
-                                Ok(Some(records)) => Some(records),
-                                Ok(None) => None,
-                                Err(e) => {
-                                    warn!(
-                                        file = sstable_path,
-                                        error = %e,
-                                        "PAX cascade unavailable; falling back to generic scan"
-                                    );
-                                    None
+                                match self
+                                    .try_pax_cascade(
+                                        sstable_path,
+                                        query_vector,
+                                        filter_expression,
+                                        k,
+                                        distance_metric,
+                                        collection_id,
+                                        storage_url,
+                                        snapshot_lsn,
+                                        known_size,
+                                    )
+                                    .await
+                                {
+                                    Ok(Some(records)) => Some(records),
+                                    Ok(None) => None,
+                                    Err(e) => {
+                                        warn!(
+                                            file = sstable_path,
+                                            error = %e,
+                                            "PAX cascade unavailable; falling back to generic scan"
+                                        );
+                                        None
+                                    }
                                 }
-                            }
-                        } else {
-                            None
-                        };
+                            } else {
+                                None
+                            };
 
                         let search_result = if let Some(records) = pax_cascade {
                             Ok(records)
@@ -1338,6 +1439,7 @@ impl SstEngine {
                                 k,
                                 distance_metric,
                                 snapshot_lsn,
+                                prune_config.force_exact,
                             )
                             .await
                         } else {
@@ -1372,12 +1474,16 @@ impl SstEngine {
                         );
                         all_candidates.extend(file_results);
                     }
-                    Err(e) => warn!("SST: Failed to search file {e}"),
+                    Err(e) => {
+                        Self::handle_per_file_scan_failure(path, &e, prune_config.force_exact)?
+                    }
                 }
             }
         } else {
             // Sequential fallback (single file or flag explicitly off)
-            for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
+            for (file_idx, discovered) in sstable_files.iter().enumerate() {
+                let sstable_path = discovered.url.as_str();
+                let known_size = discovered.size_bytes;
                 trace!(
                     "SST: Searching file [{}/{}]: {} (force_exact={})",
                     file_idx + 1,
@@ -1391,48 +1497,43 @@ impl SstEngine {
                 // The generic dispatch below handles every other case — `.arrow`, legacy
                 // `.sst`, AND `.pax` under Dot/other metrics or any cascade miss
                 // (not-PAX / no RaBitQ / error) — so this is additive and mixed-read-safe.
-                let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path
-                    .ends_with(".pax")
-                    && matches!(
-                        distance_metric,
-                        DistanceMetric::Euclidean
-                            | DistanceMetric::Cosine
-                            | DistanceMetric::DotProduct
-                    ) {
-                    match self
-                        .try_pax_cascade(
-                            sstable_path,
-                            query_vector,
-                            filter_expression,
-                            k,
-                            distance_metric,
-                            collection_id,
-                            storage_url,
-                            snapshot_lsn,
-                        )
-                        .await
-                    {
-                        Ok(Some(records)) => {
-                            debug!(
-                                file = %sstable_path,
-                                n = records.len(),
-                                "SST per-file result source=pax_cascade"
-                            );
-                            Some(records)
+                let pax_cascade: Option<Vec<OptimizedSearchRecord>> =
+                    if Self::should_try_pax_cascade(sstable_path, distance_metric, prune_config) {
+                        match self
+                            .try_pax_cascade(
+                                sstable_path,
+                                query_vector,
+                                filter_expression,
+                                k,
+                                distance_metric,
+                                collection_id,
+                                storage_url,
+                                snapshot_lsn,
+                                known_size,
+                            )
+                            .await
+                        {
+                            Ok(Some(records)) => {
+                                debug!(
+                                    file = %sstable_path,
+                                    n = records.len(),
+                                    "SST per-file result source=pax_cascade"
+                                );
+                                Some(records)
+                            }
+                            Ok(None) => None,
+                            Err(e) => {
+                                warn!(
+                                    file = %sstable_path,
+                                    error = %e,
+                                    "PAX cascade unavailable; falling back to generic scan"
+                                );
+                                None
+                            }
                         }
-                        Ok(None) => None,
-                        Err(e) => {
-                            warn!(
-                                file = %sstable_path,
-                                error = %e,
-                                "PAX cascade unavailable; falling back to generic scan"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
+                    } else {
+                        None
+                    };
 
                 // Dispatch based on file format (Arrow vs ProximaBlocks); the PAX
                 // cascade short-circuits above when it applies.
@@ -1462,6 +1563,7 @@ impl SstEngine {
                         k,
                         distance_metric,
                         snapshot_lsn,
+                        prune_config.force_exact,
                     )
                     .await
                 } else {
@@ -1541,8 +1643,11 @@ impl SstEngine {
                         all_candidates.extend(results);
                     }
                     Err(e) => {
-                        warn!("SST: Failed to search file {}: {}", sstable_path, e);
-                        // Continue with other files
+                        Self::handle_per_file_scan_failure(
+                            sstable_path,
+                            &e,
+                            prune_config.force_exact,
+                        )?;
                     }
                 }
             } // end sequential fallback
@@ -1635,6 +1740,48 @@ impl SstEngine {
         }
     }
 
+    /// Emit one successful, physically attributable vector access. The
+    /// requested mode remains separate from `actual_path`: Adaptive and
+    /// Approximate may fall back to exact, and such ambiguous executions must
+    /// never warm an ANN cost cell without an engagement proof.
+    fn vector_cache_policy(&self) -> crate::observability::io_trace::VectorCachePolicy {
+        crate::observability::io_trace::VectorCachePolicy::from_tiers(
+            self.segment_invariants_cache.is_some(),
+            self.survivor_cache.is_some(),
+        )
+    }
+
+    fn record_completed_vector_access(
+        ctx: &StorageQueryContext,
+        storage_url: &str,
+        dimensions: usize,
+        top_k: usize,
+        has_filter: bool,
+        actual_path: crate::observability::io_trace::VectorAccessPath,
+        cache_policy: crate::observability::io_trace::VectorCachePolicy,
+    ) {
+        use crate::core::search::SearchMode;
+        use crate::observability::io_trace::{
+            VectorAccessTrace, VectorSearchIntent, VectorStorageScope,
+        };
+
+        let requested_mode = match &ctx.search_params.search_mode {
+            SearchMode::Exact => VectorSearchIntent::Exact,
+            SearchMode::Approximate { .. } => VectorSearchIntent::Approximate,
+            SearchMode::Adaptive { .. } => VectorSearchIntent::Adaptive,
+        };
+        crate::observability::io_trace::record_vector_access(VectorAccessTrace {
+            engine: "sst".to_string(),
+            dimensions: dimensions as u64,
+            top_k: top_k as u64,
+            has_filter,
+            requested_mode,
+            actual_path,
+            storage_scope: VectorStorageScope::from_storage_url(storage_url),
+            cache_policy,
+        });
+    }
+
     /// TD-SEARCH-2 S2: whether to use the AXIS in-memory orchestration path
     /// (extracted; reused by `_arc`). `use_axis_indexes` is authoritative — a
     /// registered global AXIS manager does NOT force AXIS on co-designed
@@ -1662,6 +1809,7 @@ impl SstEngine {
         use_pipeline: bool,
         use_parallel_morsels: bool,
         use_vectorized: bool,
+        known_size: Option<u64>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         // TD-DELVEC-1 WI-4: capture the scan's snapshot LSN once per single-file
         // scan (the parallel/arc path's per-file entry) for merge-on-read filtering
@@ -1676,38 +1824,36 @@ impl SstEngine {
         let snapshot_lsn: u64 = u64::MAX;
 
         // PAX RaBitQ→SQ8 cascade first for `.pax` under a validated metric.
-        let pax_cascade: Option<Vec<OptimizedSearchRecord>> = if sstable_path.ends_with(".pax")
-            && matches!(
-                distance_metric,
-                DistanceMetric::Euclidean | DistanceMetric::Cosine | DistanceMetric::DotProduct
-            ) {
-            match self
-                .try_pax_cascade(
-                    sstable_path,
-                    query_vector,
-                    filter_expression,
-                    k,
-                    distance_metric,
-                    collection_id,
-                    storage_url,
-                    snapshot_lsn,
-                )
-                .await
-            {
-                Ok(Some(records)) => Some(records),
-                Ok(None) => None,
-                Err(e) => {
-                    warn!(
-                        file = sstable_path,
-                        error = %e,
-                        "PAX cascade unavailable; falling back to generic scan"
-                    );
-                    None
+        let pax_cascade: Option<Vec<OptimizedSearchRecord>> =
+            if Self::should_try_pax_cascade(sstable_path, distance_metric, prune_config) {
+                match self
+                    .try_pax_cascade(
+                        sstable_path,
+                        query_vector,
+                        filter_expression,
+                        k,
+                        distance_metric,
+                        collection_id,
+                        storage_url,
+                        snapshot_lsn,
+                        known_size,
+                    )
+                    .await
+                {
+                    Ok(Some(records)) => Some(records),
+                    Ok(None) => None,
+                    Err(e) => {
+                        warn!(
+                            file = sstable_path,
+                            error = %e,
+                            "PAX cascade unavailable; falling back to generic scan"
+                        );
+                        None
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         if let Some(records) = pax_cascade {
             return Ok(records);
@@ -1731,6 +1877,7 @@ impl SstEngine {
                 k,
                 distance_metric,
                 snapshot_lsn,
+                prune_config.force_exact,
             )
             .await
         } else if use_pipeline {
@@ -1783,6 +1930,42 @@ impl SstEngine {
                 )
                 .await
         }
+    }
+
+    /// Central exactness gate for the approximate PAX cascade. Both direct
+    /// implementations call this helper so sequential and multi-core scans
+    /// cannot drift on the correctness contract.
+    fn should_try_pax_cascade(
+        sstable_path: &str,
+        distance_metric: DistanceMetric,
+        prune_config: &crate::core::search::BlockPruneConfig,
+    ) -> bool {
+        !prune_config.force_exact
+            && sstable_path.ends_with(".pax")
+            && matches!(
+                distance_metric,
+                DistanceMetric::Euclidean | DistanceMetric::Cosine | DistanceMetric::DotProduct
+            )
+    }
+
+    /// Preserve the caller's completeness contract at the per-file boundary.
+    /// Approximate scans retain the historical best-effort behavior, but an
+    /// exact scan cannot silently omit an unreadable or semantically ineligible
+    /// segment and still claim complete results.
+    fn handle_per_file_scan_failure(
+        sstable_path: &str,
+        error: &dyn std::fmt::Display,
+        require_complete_scan: bool,
+    ) -> Result<()> {
+        if require_complete_scan {
+            anyhow::bail!("SST exact scan failed for segment '{sstable_path}': {error}");
+        }
+        warn!(
+            file = sstable_path,
+            error = %error,
+            "SST approximate per-file scan failed (best-effort)"
+        );
+        Ok(())
     }
 
     /// TD-SEARCH-2 S2: multi-core direct search. Same semantics as
@@ -1846,6 +2029,10 @@ impl SstEngine {
         let query_arc: std::sync::Arc<[f32]> = std::sync::Arc::from(query_vector);
         let collection = std::sync::Arc::clone(&ctx.collection);
         let filter_owned = filter_expression.cloned();
+        // `tokio::task_local!` does not propagate through the per-file spawns.
+        // Capture once and rebind in each child so physical I/O and ANN proof
+        // counters remain part of this query's measured cost.
+        let trace_handle = crate::observability::io_trace::current_handle();
 
         let mut all_candidates = Vec::new();
 
@@ -1858,9 +2045,15 @@ impl SstEngine {
             // Cap in-flight scans at `degree` so file_count >> cores does not
             // oversubscribe; the runtime worker pool backpressures cross-query.
             let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(degree as usize));
-            let mut handles: Vec<tokio::task::JoinHandle<Result<Vec<OptimizedSearchRecord>>>> =
-                Vec::with_capacity(sstable_files.len());
-            for path in sstable_files {
+            let mut handles: Vec<(
+                String,
+                tokio::task::JoinHandle<Result<Vec<OptimizedSearchRecord>>>,
+            )> = Vec::with_capacity(sstable_files.len());
+            for discovered in sstable_files {
+                let DiscoveredSstFile {
+                    url: path,
+                    size_bytes: known_size,
+                } = discovered;
                 // Gate concurrency: await a permit before spawning (bound at degree).
                 let permit = std::sync::Arc::clone(&sem).acquire_owned().await?;
                 let engine = std::sync::Arc::clone(&self);
@@ -1870,12 +2063,15 @@ impl SstEngine {
                 let cid = collection_id.to_string();
                 let url = storage_url.to_string();
                 let prune = prune_config.clone();
-                handles.push(tokio::spawn(async move {
-                    let _permit = permit; // released on task drop
-                    // `engine` is `Arc<SstEngine>`; method-call auto-derefs to `&self`.
-                    engine
-                        .scan_single_file(
-                            &path,
+                let trace = trace_handle.clone();
+                let scan_path = path.clone();
+                handles.push((
+                    path,
+                    tokio::spawn(async move {
+                        let _permit = permit; // released on task drop
+                        // `engine` is `Arc<SstEngine>`; method-call auto-derefs to `&self`.
+                        let scan = engine.scan_single_file(
+                            &scan_path,
                             &collection,
                             &query[..],
                             filter.as_ref(),
@@ -1887,17 +2083,26 @@ impl SstEngine {
                             use_pipeline,
                             use_parallel_morsels,
                             use_vectorized,
-                        )
-                        .await
-                }));
+                            known_size,
+                        );
+                        if let Some(trace) = trace {
+                            crate::observability::io_trace::scope_with_handle(trace, scan).await
+                        } else {
+                            scan.await
+                        }
+                    }),
+                ));
             }
-            // Collect: best-effort on per-file I/O errors (warn + continue, as
-            // S1 does), fail-closed on JoinError (a panic is a logic bug, not
-            // transient I/O — silently dropping its file would degrade recall).
-            for h in handles {
+            // Approximate scans remain best-effort on per-file I/O errors.
+            // Exact scans fail closed because omitting one segment violates the
+            // completeness contract. JoinError is always fatal: a panic is a
+            // logic bug, not transient I/O.
+            for (path, h) in handles {
                 match h.await {
                     Ok(Ok(recs)) => all_candidates.extend(recs),
-                    Ok(Err(e)) => warn!(error = %e, "SST S2: per-file scan failed (best-effort)"),
+                    Ok(Err(e)) => {
+                        Self::handle_per_file_scan_failure(&path, &e, prune_config.force_exact)?
+                    }
                     Err(join_err) => {
                         return Err(anyhow::anyhow!(
                             "SST S2: per-file scan task panicked: {join_err}"
@@ -1907,10 +2112,10 @@ impl SstEngine {
             }
         } else {
             // degree == 1 / single file: sequential, no spawn overhead.
-            for path in &sstable_files {
+            for discovered in &sstable_files {
                 match self
                     .scan_single_file(
-                        path,
+                        &discovered.url,
                         &collection,
                         &query_arc[..],
                         filter_owned.as_ref(),
@@ -1922,13 +2127,16 @@ impl SstEngine {
                         use_pipeline,
                         use_parallel_morsels,
                         use_vectorized,
+                        discovered.size_bytes,
                     )
                     .await
                 {
                     Ok(recs) => all_candidates.extend(recs),
-                    Err(e) => {
-                        warn!(file = %path, error = %e, "SST S2: per-file scan failed (best-effort)")
-                    }
+                    Err(e) => Self::handle_per_file_scan_failure(
+                        &discovered.url,
+                        &e,
+                        prune_config.force_exact,
+                    )?,
                 }
             }
         }
@@ -1973,12 +2181,13 @@ impl SstEngine {
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
+        let cache_policy = self.vector_cache_policy();
 
         if self
             .want_exact_search(ctx, query_vector, &storage_url)
             .await
         {
-            return self
+            let result = self
                 .execute_exact_segment_scan(
                     ctx,
                     collection_id,
@@ -1989,14 +2198,28 @@ impl SstEngine {
                     filter_expression,
                 )
                 .await;
+            if result.is_ok() {
+                Self::record_completed_vector_access(
+                    ctx,
+                    &storage_url,
+                    query_vector.len(),
+                    k,
+                    filter_expression.is_some(),
+                    crate::observability::io_trace::VectorAccessPath::Exact,
+                    cache_policy,
+                );
+            }
+            return result;
         }
+
+        let ann_proofs_before = crate::observability::io_trace::vector_ann_proof_count();
 
         let use_orchestration = self.use_orchestrated_search(ctx);
         if use_orchestration {
             self.ensure_axis_index_from_sst(collection_id, &storage_url)
                 .await;
         }
-        if use_orchestration {
+        let result = if use_orchestration {
             self.execute_orchestrated_search(
                 ctx,
                 collection_id,
@@ -2021,7 +2244,21 @@ impl SstEngine {
                 true,
             )
             .await
+        };
+        if result.is_ok()
+            && crate::observability::io_trace::vector_ann_proof_count() > ann_proofs_before
+        {
+            Self::record_completed_vector_access(
+                ctx,
+                &storage_url,
+                query_vector.len(),
+                k,
+                filter_expression.is_some(),
+                crate::observability::io_trace::VectorAccessPath::Ann,
+                cache_policy,
+            );
         }
+        result
     }
 
     /// Discover SSTable files with optional centroid-based pruning (LanceDB-inspired IVF optimization)
@@ -2038,7 +2275,7 @@ impl SstEngine {
         distance_metric: proximadb_distance_kernel::DistanceMetric,
         search_mode: &crate::core::search::SearchMode,
         prune_config: &crate::core::search::BlockPruneConfig, // [AGENT_FIX] New parameter
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<DiscoveredSstFile>> {
         use crate::core::search::SearchMode;
 
         // First get all files
@@ -2106,7 +2343,7 @@ impl SstEngine {
         let mut file_distances: Vec<(String, f32)> = Vec::new();
 
         for file_path in &all_files {
-            match self.load_sst_header_centroid(file_path).await {
+            match self.load_sst_header_centroid(&file_path.url).await {
                 Ok(Some((centroid, _max_distance_to_centroid))) => {
                     if centroid.len() == query_vector.len() {
                         // Compute distance from query to file centroid
@@ -2115,23 +2352,23 @@ impl SstEngine {
                             &centroid,
                             distance_metric,
                         );
-                        file_distances.push((file_path.clone(), distance));
+                        file_distances.push((file_path.url.clone(), distance));
                     } else {
                         // Dimension mismatch - include file anyway
-                        file_distances.push((file_path.clone(), 0.0));
+                        file_distances.push((file_path.url.clone(), 0.0));
                     }
                 }
                 Ok(None) => {
                     // No centroid - include file anyway (for backwards compatibility)
-                    file_distances.push((file_path.clone(), 0.0));
+                    file_distances.push((file_path.url.clone(), 0.0));
                 }
                 Err(e) => {
                     tracing::warn!(
                         "Failed to load centroid from {}: {}, including anyway",
-                        file_path,
+                        file_path.url,
                         e
                     );
-                    file_distances.push((file_path.clone(), 0.0));
+                    file_distances.push((file_path.url.clone(), 0.0));
                 }
             }
         }
@@ -2139,12 +2376,21 @@ impl SstEngine {
         // Sort by distance (ascending - closest first for similarity search)
         file_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Return top nprobe files
-        let selected_files: Vec<String> = file_distances
-            .into_iter()
+        // Return top nprobe files (carrying the list-time sizes through).
+        let selected_urls: std::collections::HashSet<&str> = file_distances
+            .iter()
             .take(nprobe)
-            .map(|(path, _)| path)
+            .map(|(path, _)| path.as_str())
             .collect();
+        let selected_files: Vec<DiscoveredSstFile> = all_files
+            .iter()
+            .filter(|f| selected_urls.contains(f.url.as_str()))
+            .cloned()
+            .collect();
+
+        if selected_files.len() < all_files.len() {
+            crate::observability::io_trace::record_vector_ann_proof();
+        }
 
         debug!(
             "🎯 SST Centroid pruning: selected {}/{} files (nprobe={})",
@@ -2257,7 +2503,10 @@ impl SstEngine {
     ///
     /// `pub(crate)` so the flush path can reuse it for the L0 compaction
     /// trigger (TD-114) without duplicating segment discovery.
-    pub(crate) async fn discover_sstable_files(&self, storage_url: &str) -> Result<Vec<String>> {
+    pub(crate) async fn discover_sstable_files(
+        &self,
+        storage_url: &str,
+    ) -> Result<Vec<DiscoveredSstFile>> {
         tracing::debug!(
             "[SST] discover_sstable_files called with storage_url: {}",
             storage_url
@@ -2293,6 +2542,14 @@ impl SstEngine {
             }
         };
 
+        // TD-COMPACT-13: the data dir is a reconciler-sweep target (its
+        // retire-pending obligations drain on the worker), and any input whose
+        // delete failed is filtered from the live set here — superseded
+        // segments stop serving the moment the obligation is recorded.
+        crate::storage::engines::sst::retirement_ledger::register_collection_dir(
+            &std::path::PathBuf::from(data_url),
+        );
+        let pending = crate::storage::engines::sst::retirement_ledger::pending_paths();
         for entry in entries {
             tracing::trace!(
                 "[SST] Examining entry: name={}, url={}, is_dir={}",
@@ -2300,12 +2557,26 @@ impl SstEngine {
                 entry.url,
                 entry.metadata.is_directory
             );
+            if !entry.metadata.is_directory && pending.contains(&entry.url) {
+                tracing::debug!(
+                    url = %entry.url,
+                    "TD-COMPACT-13: filtering pending-retirement segment from discovery"
+                );
+                continue;
+            }
             if !entry.metadata.is_directory
                 && (entry.name.ends_with(".sst")
                     || entry.name.ends_with(".arrow")
                     || entry.name.ends_with(".pax"))
             {
-                files.push(entry.url);
+                // TD-RDSTRAT-13 C3: carry the list-time object size so the
+                // search path can skip the per-segment HEAD. `0` means the
+                // backend did not report a size — record `None` and let the
+                // reader fall back to a real stat; never guess.
+                files.push(DiscoveredSstFile {
+                    size_bytes: (entry.metadata.size > 0).then_some(entry.metadata.size),
+                    url: entry.url,
+                });
                 tracing::debug!("[SST] Found data file: {}", entry.name);
             }
         }
@@ -2401,7 +2672,7 @@ impl SstEngine {
         // Cloud URLs download to a scratch file for the path-based reader
         // (defect-6 read class); local paths pass through.
         let seg = crate::storage::engines::sst::staged_write::LocalizedSegment::fetch(
-            self.filesystem(),
+            &self.filesystem_port(),
             arrow_path,
         )
         .await?;
@@ -2472,12 +2743,15 @@ impl SstEngine {
     /// exotic), a non-RaBitQ quant (RawF32 / SQ8), or a cascade miss/error. The
     /// segment is decoded back to `ProximaRecord`s via the mixed-format reader
     /// (`segment_format::read_segment_records`, magic-detected) and ranked by
-    /// exact distance for the requested metric, so a `.pax` file is searchable
-    /// under EVERY metric and quant. This is the property that makes the PAX
+    /// exhaustive distance for the requested metric, so a `.pax` file is searchable
+    /// under EVERY metric and quant for approximate/adaptive callers. An explicit
+    /// exact request additionally requires raw-f32 authority and fails loudly
+    /// before ranking when the segment is lossy. This is the property that makes the PAX
     /// write-default flip safe: the L2/Cosine fast path still takes the RaBitQ
     /// cascade; everything else falls here instead of hitting the
     /// ProximaBlocks-only `sstable_reader` (which cannot decode `.pax`). Recall
-    /// is exact for `RawF32` quant and dequantization-bound for `RaBitQ`/`SQ8`.
+    /// is exact for `RawF32` or an exact-f32 tier; lossy `RaBitQ`/`SQ8` values
+    /// remain valid only for callers that accepted approximate semantics.
     #[cfg_attr(not(feature = "cold-deletion-vectors"), allow(unused_variables))]
     async fn search_pax_file_exact(
         &self,
@@ -2487,6 +2761,7 @@ impl SstEngine {
         limit: usize,
         distance_metric: DistanceMetric,
         snapshot_lsn: u64,
+        require_exact_authority: bool,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
         use std::sync::Arc;
@@ -2494,11 +2769,22 @@ impl SstEngine {
         debug!("📦 Exact PAX scan: {}", pax_path);
 
         let bytes = crate::storage::engines::sst::staged_write::read_object_bytes(
-            self.filesystem(),
+            &self.filesystem_port(),
             pax_path,
         )
         .await
         .map_err(|e| anyhow::anyhow!("read pax segment {pax_path}: {e}"))?;
+        if require_exact_authority
+            && !crate::storage::engines::sst::segment_format::pax_segment_has_exact_vector_authority(
+                &bytes,
+            )
+        {
+            anyhow::bail!(
+                "exact vector search requires authoritative raw-f32 values, but PAX segment \
+                 '{pax_path}' is lossy; enable the collection's pax_f32_tier or use \
+                 SearchMode::Approximate"
+            );
+        }
         let records = crate::storage::engines::sst::segment_format::read_segment_records(
             &bytes,
             &[],
@@ -2922,5 +3208,56 @@ mod tests {
         };
         let (budget, _) = resolve_exact_budget(Some(&p));
         assert_eq!(budget, EXACT_SCAN_MAX_BYTES);
+    }
+
+    #[test]
+    fn exact_prune_contract_blocks_every_pax_cascade_entry() {
+        let approximate = crate::core::search::BlockPruneConfig::default();
+        assert!(SstEngine::should_try_pax_cascade(
+            "segment.pax",
+            DistanceMetric::Euclidean,
+            &approximate,
+        ));
+
+        let exact = crate::core::search::BlockPruneConfig {
+            force_exact: true,
+            ..Default::default()
+        };
+        for metric in [
+            DistanceMetric::Euclidean,
+            DistanceMetric::Cosine,
+            DistanceMetric::DotProduct,
+        ] {
+            assert!(
+                !SstEngine::should_try_pax_cascade("segment.pax", metric, &exact),
+                "force_exact must dominate every ANN-compatible metric"
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_route_resolved_exact_rewrites_every_pruning_control() {
+        let caller = crate::core::search::SearchParams {
+            search_mode: crate::core::search::SearchMode::Adaptive { threshold: 10_000 },
+            block_prune: crate::core::search::BlockPruneConfig {
+                force_exact: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let effective = SstEngine::force_exact_params(&caller);
+        assert!(matches!(
+            effective.search_mode,
+            crate::core::search::SearchMode::Exact
+        ));
+        assert!(effective.block_prune.force_exact);
+        assert!(matches!(
+            caller.search_mode,
+            crate::core::search::SearchMode::Adaptive { .. }
+        ));
+        assert!(
+            !caller.block_prune.force_exact,
+            "caller intent stays immutable"
+        );
     }
 }

@@ -1322,18 +1322,27 @@ impl UnifiedStorageFormat for SwiftEngine {
             });
         }
 
-        // Merge all records from loaded files, dedup by ID (latest wins)
+        // Merge all records from loaded files, dedup by ID (latest wins).
+        // Locator pattern: index oid → (file, superblock, block, record) and
+        // clone only the surviving record per oid. The previous loop cloned
+        // EVERY record version into the map — superseded copies were dropped
+        // immediately, so compaction paid a full-record clone per entry for
+        // nothing. Latest-wins, tombstone filtering, counters, and the
+        // (already map-arbitrary) output order are unchanged.
         let input_count = files.len() as u64;
-        let mut merged: HashMap<String, ProximaRecord> = HashMap::new();
+        let mut latest: HashMap<String, (usize, usize, usize, usize)> = HashMap::new();
         let mut total_entries: u64 = 0;
         let mut bytes_read: u64 = 0;
 
-        for file in &files {
-            for superblock in &file.superblocks {
-                for block in &superblock.blocks {
-                    for record in &block.records {
+        for (file_idx, file) in files.iter().enumerate() {
+            for (superblock_idx, superblock) in file.superblocks.iter().enumerate() {
+                for (block_idx, block) in superblock.blocks.iter().enumerate() {
+                    for (record_idx, record) in block.records.iter().enumerate() {
                         total_entries += 1;
-                        merged.insert(record.oid.clone(), record.clone());
+                        latest.insert(
+                            record.oid.clone(),
+                            (file_idx, superblock_idx, block_idx, record_idx),
+                        );
                     }
                 }
             }
@@ -1341,8 +1350,14 @@ impl UnifiedStorageFormat for SwiftEngine {
         }
 
         // Filter tombstones (records marked as deleted have empty vectors)
-        let live_records: Vec<ProximaRecord> =
-            merged.into_values().filter(swift_record_is_live).collect();
+        let live_records: Vec<ProximaRecord> = latest
+            .into_values()
+            .filter_map(|(file_idx, superblock_idx, block_idx, record_idx)| {
+                let record = &files[file_idx].superblocks[superblock_idx].blocks[block_idx].records
+                    [record_idx];
+                swift_record_is_live(record).then(|| record.clone())
+            })
+            .collect();
 
         let entries_removed = total_entries.saturating_sub(live_records.len() as u64);
 

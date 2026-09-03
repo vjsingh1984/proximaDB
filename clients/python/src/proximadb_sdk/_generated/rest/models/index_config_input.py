@@ -28,19 +28,19 @@ class IndexConfigInput:
 
     Attributes:
         algorithm (str): Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh".
-        hnsw_config (HnswConfigInput | None | Unset):
         index_name (None | str | Unset): Optional index name (defaults to `index_<n>`).
-        is_primary (bool | None | Unset): Mark this index as the collection's primary ANN index (gRPC-v2 parity).
-        ivf_config (IvfConfigInput | None | Unset):
         parameters (IndexConfigInputParameters | Unset): Free-form algorithm parameters.
+        hnsw_config (HnswConfigInput | None | Unset):
+        ivf_config (IvfConfigInput | None | Unset):
+        is_primary (bool | None | Unset): Mark this index as the collection's primary ANN index (gRPC-v2 parity).
     """
 
     algorithm: str
-    hnsw_config: HnswConfigInput | None | Unset = UNSET
     index_name: None | str | Unset = UNSET
-    is_primary: bool | None | Unset = UNSET
-    ivf_config: IvfConfigInput | None | Unset = UNSET
     parameters: IndexConfigInputParameters | Unset = UNSET
+    hnsw_config: HnswConfigInput | None | Unset = UNSET
+    ivf_config: IvfConfigInput | None | Unset = UNSET
+    is_primary: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +50,16 @@ class IndexConfigInput:
 
         algorithm = self.algorithm
 
+        index_name: None | str | Unset
+        if isinstance(self.index_name, Unset):
+            index_name = UNSET
+        else:
+            index_name = self.index_name
+
+        parameters: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.parameters, Unset):
+            parameters = self.parameters.to_dict()
+
         hnsw_config: dict[str, Any] | None | Unset
         if isinstance(self.hnsw_config, Unset):
             hnsw_config = UNSET
@@ -57,18 +67,6 @@ class IndexConfigInput:
             hnsw_config = self.hnsw_config.to_dict()
         else:
             hnsw_config = self.hnsw_config
-
-        index_name: None | str | Unset
-        if isinstance(self.index_name, Unset):
-            index_name = UNSET
-        else:
-            index_name = self.index_name
-
-        is_primary: bool | None | Unset
-        if isinstance(self.is_primary, Unset):
-            is_primary = UNSET
-        else:
-            is_primary = self.is_primary
 
         ivf_config: dict[str, Any] | None | Unset
         if isinstance(self.ivf_config, Unset):
@@ -78,9 +76,11 @@ class IndexConfigInput:
         else:
             ivf_config = self.ivf_config
 
-        parameters: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.parameters, Unset):
-            parameters = self.parameters.to_dict()
+        is_primary: bool | None | Unset
+        if isinstance(self.is_primary, Unset):
+            is_primary = UNSET
+        else:
+            is_primary = self.is_primary
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -89,16 +89,16 @@ class IndexConfigInput:
                 "algorithm": algorithm,
             }
         )
-        if hnsw_config is not UNSET:
-            field_dict["hnsw_config"] = hnsw_config
         if index_name is not UNSET:
             field_dict["index_name"] = index_name
-        if is_primary is not UNSET:
-            field_dict["is_primary"] = is_primary
-        if ivf_config is not UNSET:
-            field_dict["ivf_config"] = ivf_config
         if parameters is not UNSET:
             field_dict["parameters"] = parameters
+        if hnsw_config is not UNSET:
+            field_dict["hnsw_config"] = hnsw_config
+        if ivf_config is not UNSET:
+            field_dict["ivf_config"] = ivf_config
+        if is_primary is not UNSET:
+            field_dict["is_primary"] = is_primary
 
         return field_dict
 
@@ -110,6 +110,22 @@ class IndexConfigInput:
 
         d = dict(src_dict)
         algorithm = d.pop("algorithm")
+
+        def _parse_index_name(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        index_name = _parse_index_name(d.pop("index_name", UNSET))
+
+        _parameters = d.pop("parameters", UNSET)
+        parameters: IndexConfigInputParameters | Unset
+        if isinstance(_parameters, Unset):
+            parameters = UNSET
+        else:
+            parameters = IndexConfigInputParameters.from_dict(_parameters)
 
         def _parse_hnsw_config(data: object) -> HnswConfigInput | None | Unset:
             if data is None:
@@ -128,24 +144,6 @@ class IndexConfigInput:
 
         hnsw_config = _parse_hnsw_config(d.pop("hnsw_config", UNSET))
 
-        def _parse_index_name(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        index_name = _parse_index_name(d.pop("index_name", UNSET))
-
-        def _parse_is_primary(data: object) -> bool | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(bool | None | Unset, data)
-
-        is_primary = _parse_is_primary(d.pop("is_primary", UNSET))
-
         def _parse_ivf_config(data: object) -> IvfConfigInput | None | Unset:
             if data is None:
                 return data
@@ -163,20 +161,22 @@ class IndexConfigInput:
 
         ivf_config = _parse_ivf_config(d.pop("ivf_config", UNSET))
 
-        _parameters = d.pop("parameters", UNSET)
-        parameters: IndexConfigInputParameters | Unset
-        if isinstance(_parameters, Unset):
-            parameters = UNSET
-        else:
-            parameters = IndexConfigInputParameters.from_dict(_parameters)
+        def _parse_is_primary(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        is_primary = _parse_is_primary(d.pop("is_primary", UNSET))
 
         index_config_input = cls(
             algorithm=algorithm,
-            hnsw_config=hnsw_config,
             index_name=index_name,
-            is_primary=is_primary,
-            ivf_config=ivf_config,
             parameters=parameters,
+            hnsw_config=hnsw_config,
+            ivf_config=ivf_config,
+            is_primary=is_primary,
         )
 
         index_config_input.additional_properties = d

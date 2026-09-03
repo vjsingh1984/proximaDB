@@ -648,16 +648,19 @@ impl AggregationExecutor {
     ///
     /// This provides basic TF-IDF-like scoring for text matching.
     /// For production use, integrate with Tantivy index.
-    pub fn calculate_fulltext_scores(
+    pub fn calculate_fulltext_scores<'a>(
         &self,
-        documents: &[DocumentRecord],
+        documents: &[&'a DocumentRecord],
         query_terms: &[String],
         text_paths: &[String],
-    ) -> Vec<(DocumentRecord, f32)> {
+    ) -> Vec<(f32, &'a DocumentRecord)> {
         let total_docs = documents.len() as f32;
 
         // Slice 6: the record carries the canonical `props` tree directly.
-        let trees: Vec<ProximaTree> = documents.iter().map(|doc| doc.props.clone()).collect();
+        // Borrowed views — the previous version cloned every document's
+        // props tree up front AND the full record per document; callers now
+        // clone only the returned top-k.
+        let trees: Vec<&ProximaTree> = documents.iter().map(|doc| &doc.props).collect();
 
         // Calculate document frequency for each term
         let mut doc_frequencies: HashMap<String, usize> = HashMap::new();
@@ -692,7 +695,7 @@ impl AggregationExecutor {
                     score += tf * idf;
                 }
 
-                (doc.clone(), score)
+                (score, *doc)
             })
             .collect()
     }
@@ -1121,9 +1124,10 @@ mod tests {
         let query_terms = vec!["fox".to_string(), "quick".to_string()];
         let text_paths = vec!["title".to_string(), "body".to_string()];
 
-        let scored = executor.calculate_fulltext_scores(&docs, &query_terms, &text_paths);
+        let borrowed: Vec<&DocumentRecord> = docs.iter().collect();
+        let scored = executor.calculate_fulltext_scores(&borrowed, &query_terms, &text_paths);
 
         // Document 1 should have higher score (contains "fox" and "quick")
-        assert!(scored[0].1 > scored[1].1);
+        assert!(scored[0].0 > scored[1].0);
     }
 }

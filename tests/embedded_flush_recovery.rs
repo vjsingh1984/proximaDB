@@ -601,3 +601,94 @@ fn cold_read_recall_survives_flush_and_reopen() {
         "✅ Cold-read recall survives flush+reopen (hot={hot_recall:.3}, cold={cold_recall:.3})"
     );
 }
+
+/// Graph data must survive a close/reopen cycle in the in-process engine.
+///
+/// The sibling test above covers VECTOR durability and has always passed,
+/// which is precisely why this gap survived: graph writes go through a
+/// different WAL, and nothing on the in-process path ever flushed it. Writes
+/// land in `UnifiedWALWriter::current_segment_data`, an in-memory buffer that
+/// reaches disk only on an explicit flush or a 64 MB segment rotation;
+/// `UnifiedWALEntry::new` never sets `requires_fsync`, so no graph write
+/// triggers the former, and a realistic graph never reaches the latter.
+///
+/// Measured before the fix on a real code graph: ingest reported 177,046
+/// edges, `graph_stats` agreed, `close()` returned cleanly, the WAL file was
+/// 0 bytes on disk, and a fresh process saw `edges=0` — total silent loss
+/// with every durability API reporting success (#1524). The server never had
+/// this bug because `ProximaDB::stop` flushes graph WALs, but that loop is
+/// gated on the NETWORK server object, which port-free embedded never builds.
+///
+/// Deliberately asserts through a REOPEN rather than in-memory stats: stats
+/// answered 177,046 while the disk held nothing, so only a reopen can tell
+/// durability from bookkeeping.
+#[test]
+fn embedded_graph_survives_close_and_reopen() {
+    use proximadb_embedded::{EmbeddedGraphEdge, EmbeddedGraphNode};
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let data_path = temp_dir.path().join("graph-data");
+    std::fs::create_dir_all(&data_path).expect("create data dir");
+
+    let graph_id = "durability_graph";
+    let node_ids: Vec<String> = (0..50).map(|i| format!("n{i}")).collect();
+
+    {
+        let mut config = EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
+        config.enable_wal = true;
+        let db = EmbeddedProximaDB::new(config).expect("create db");
+
+        db.create_graph(graph_id, None).expect("create graph");
+        db.create_nodes(
+            graph_id,
+            node_ids
+                .iter()
+                .map(|id| EmbeddedGraphNode::new(id.clone()).with_label("Symbol"))
+                .collect(),
+        )
+        .expect("create nodes");
+        db.create_edges(
+            graph_id,
+            node_ids
+                .windows(2)
+                .enumerate()
+                .map(|(i, pair)| {
+                    EmbeddedGraphEdge::new(pair[0].clone(), pair[1].clone(), "CALLS")
+                        .with_id(format!("e{i}"))
+                })
+                .collect(),
+        )
+        .expect("create edges");
+
+        let stats = db.graph_stats(graph_id).expect("stats before close");
+        assert_eq!(
+            stats.total_edges,
+            (node_ids.len() - 1) as u64,
+            "sanity: the engine should report the edges it just accepted"
+        );
+
+        db.close();
+    }
+
+    // Fresh instance over the same directory — the only honest durability test.
+    let mut reopen_config = EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
+    reopen_config.enable_wal = true;
+    let reopened = EmbeddedProximaDB::new(reopen_config).expect("reopen db");
+
+    let stats = reopened.graph_stats(graph_id).expect("stats after reopen");
+    assert_eq!(
+        stats.total_edges,
+        (node_ids.len() - 1) as u64,
+        "graph edges must survive close/reopen; 0 here is the #1524 data loss"
+    );
+
+    let outgoing = reopened
+        .get_outgoing_edges(graph_id, &node_ids[0], None)
+        .expect("outgoing after reopen");
+    assert_eq!(
+        outgoing.len(),
+        1,
+        "topology must be queryable after reopen, not merely counted"
+    );
+    assert_eq!(outgoing[0].to_node_id, node_ids[1]);
+}

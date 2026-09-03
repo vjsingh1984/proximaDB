@@ -706,9 +706,21 @@ def cached_embeddings(corpus_data, bert_service):
 def pytest_collection_modifyitems(config, items):
     """Modify test collection to add markers"""
     for item in items:
-        # Mark slow tests
-        if "large" in item.name or "stress" in item.name or "compaction" in item.name:
-            item.add_marker(pytest.mark.slow)
+        # The `slow` auto-marker was REMOVED here, deliberately.
+        #
+        # It marked any test whose NAME contained "large", "stress" or
+        # "compaction". Nothing in this repository selects on that marker -- no
+        # CI job passes `-m slow`, and the Makefile does not either. But third
+        # party plugins do: `pytest-astropy` registers a `--run-slow` option and
+        # SKIPS anything marked slow unless it is passed.
+        #
+        # So a test was silently skipped in any environment that happened to
+        # have such a plugin installed, chosen by a substring of its own name.
+        # `test_paragraph_strategy_groups_lists_and_splits_large_paragraphs`
+        # was skipped that way on my machine while failing in CI the whole time,
+        # and the divergence read as "CI is flaky" rather than "these tests are
+        # broken". A marker whose meaning is supplied by whatever happens to be
+        # installed is worse than no marker.
 
         # Mark storage tests
         if "storage" in item.name or "wal" in item.name or "flush" in item.name:

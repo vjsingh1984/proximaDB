@@ -435,7 +435,7 @@ impl ZeroCopyIOSystemBuilder {
         self.serializers.push(Box::new(sst_serializer));
 
         // Register Parquet serializer
-        let parquet_serializer = crate::storage::engines::core::formats::columnar::parquet_metadata::ParquetMetadataSerializer::new(filesystem.clone());
+        let parquet_serializer = crate::storage::engines::core::formats::columnar::parquet_metadata::ParquetMetadataSerializer::new(filesystem.clone() as Arc<dyn proximadb_storage_ports::FilesystemPort>);
         self.serializers.push(Box::new(parquet_serializer));
 
         Ok(())
