@@ -258,6 +258,7 @@ impl AWSIAMIntegration {
     }
 
     /// Validate AWS IAM token and resolve user context
+    #[cfg(test)]
     pub async fn validate_token(&self, sso_token: &SSOToken) -> Result<SSOValidationResult> {
         info!("🔐 Validating AWS IAM token for enterprise SSO");
 

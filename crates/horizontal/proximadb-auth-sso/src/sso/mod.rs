@@ -69,20 +69,45 @@ impl SSOIntegrationManager {
         }
 
         // Validate with appropriate provider
-        let validation_result = match &sso_token.provider {
+        let validation_result: SSOValidationResult = match &sso_token.provider {
             SSOProvider::AWSIAM => {
                 let aws = self
                     .aws_integration
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("AWS IAM not configured"))?;
-                aws.validate_token(sso_token).await?
+                {
+                    #[cfg(test)]
+                    {
+                        aws.validate_token(sso_token).await?
+                    }
+                    #[cfg(not(test))]
+                    {
+                        return Err(anyhow::anyhow!(
+                            "AWS IAM stub quarantined (TD-SSO-1); use [security.authentication.oidc]"
+                        ));
+                    }
+                }
             }
             SSOProvider::AzureAD => {
+                #[cfg(test)]
                 let azure = self
                     .azure_integration
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Azure AD not configured"))?;
-                azure.validate_token(sso_token).await?
+                {
+                    // Azure AD validate_token is cfg(test) — the stub returned
+                    // system_admin() for any unexpired token (privilege escalation).
+                    #[cfg(test)]
+                    {
+                        azure.validate_token(sso_token).await?
+                    }
+                    #[cfg(not(test))]
+                    {
+                        return Err(anyhow::anyhow!(
+                            "Azure AD stub quarantined (TD-SSO-1); use [security.authentication.oidc]"
+                        ));
+                    }
+                }
             }
             _ => return Err(anyhow::anyhow!("Unsupported SSO provider")),
         };
@@ -545,7 +570,7 @@ mod tests {
 
         let _ = EnterpriseUserContext::system_admin();
 
-        assert!(true);
+        // compile-only smoke test
     }
 
     // --- Integration Tests ---
@@ -564,6 +589,6 @@ mod tests {
         let _ = std::any::type_name::<GoogleCloudIntegration>();
         let _ = std::any::type_name::<SAMLIntegration>();
 
-        assert!(true);
+        // compile-only smoke test
     }
 }

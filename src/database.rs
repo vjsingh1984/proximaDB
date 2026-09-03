@@ -1793,8 +1793,6 @@ mod security_initialization_tests {
                     enabled: false,
                     providers: Vec::new(),
                     token_cache_ttl_minutes: 5,
-                    aws_iam: None,
-                    azure_ad: None,
                 },
                 mtls: MtlsConfig {
                     enabled: true,

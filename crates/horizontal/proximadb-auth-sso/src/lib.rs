@@ -1,3 +1,5 @@
+// TD-SSO-1: dead crate pending removal — zero production callers.
+#![allow(dead_code, unused_imports, unused_variables, unreachable_code)]
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 //! Enterprise SSO / federated-identity integrations, extracted from the root
