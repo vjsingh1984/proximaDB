@@ -1517,404 +1517,6 @@ pub mod relations_service_server {
         const NAME: &'static str = SERVICE_NAME;
     }
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct AssembleDocumentRequest {
-    #[prost(string, tag = "1")]
-    pub collection_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub source_id: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DocumentSegment {
-    #[prost(string, tag = "1")]
-    pub text: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
-    pub provenance: ::core::option::Option<Provenance>,
-    /// To maintain document structure
-    #[prost(uint32, tag = "3")]
-    pub order: u32,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AssembleDocumentResponse {
-    #[prost(string, tag = "1")]
-    pub source_id: ::prost::alloc::string::String,
-    #[prost(message, repeated, tag = "2")]
-    pub segments: ::prost::alloc::vec::Vec<DocumentSegment>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct AssembleContextRequest {
-    #[prost(string, tag = "1")]
-    pub collection_id: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag = "2")]
-    pub entity_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// e.g., number of chunks before and after each entity's chunk
-    #[prost(uint32, tag = "3")]
-    pub radius: u32,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ContextSegment {
-    #[prost(string, tag = "1")]
-    pub text: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
-    pub provenance: ::core::option::Option<Provenance>,
-    /// Relevance score to the query/entities
-    #[prost(float, tag = "3")]
-    pub score: f32,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AssembleContextResponse {
-    #[prost(message, repeated, tag = "1")]
-    pub segments: ::prost::alloc::vec::Vec<ContextSegment>,
-}
-/// Generated client implementations.
-pub mod context_service_client {
-    #![allow(
-        unused_variables,
-        dead_code,
-        missing_docs,
-        clippy::wildcard_imports,
-        clippy::let_unit_value
-    )]
-    use tonic::codegen::http::Uri;
-    use tonic::codegen::*;
-    /// Service for assembling context and documents from stored chunks.
-    #[derive(Debug, Clone)]
-    pub struct ContextServiceClient<T> {
-        inner: tonic::client::Grpc<T>,
-    }
-    impl ContextServiceClient<tonic::transport::Channel> {
-        /// Attempt to create a new client by connecting to a given endpoint.
-        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
-        where
-            D: TryInto<tonic::transport::Endpoint>,
-            D::Error: Into<StdError>,
-        {
-            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
-            Ok(Self::new(conn))
-        }
-    }
-    impl<T> ContextServiceClient<T>
-    where
-        T: tonic::client::GrpcService<tonic::body::Body>,
-        T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
-    {
-        pub fn new(inner: T) -> Self {
-            let inner = tonic::client::Grpc::new(inner);
-            Self { inner }
-        }
-        pub fn with_origin(inner: T, origin: Uri) -> Self {
-            let inner = tonic::client::Grpc::with_origin(inner, origin);
-            Self { inner }
-        }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> ContextServiceClient<InterceptedService<T, F>>
-        where
-            F: tonic::service::Interceptor,
-            T::ResponseBody: Default,
-            T: tonic::codegen::Service<
-                    http::Request<tonic::body::Body>,
-                    Response = http::Response<
-                        <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
-                    >,
-                >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
-                Into<StdError> + std::marker::Send + std::marker::Sync,
-        {
-            ContextServiceClient::new(InterceptedService::new(inner, interceptor))
-        }
-        /// Compress requests with the given encoding.
-        ///
-        /// This requires the server to support it otherwise it might respond with an
-        /// error.
-        #[must_use]
-        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.inner = self.inner.send_compressed(encoding);
-            self
-        }
-        /// Enable decompressing responses.
-        #[must_use]
-        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.inner = self.inner.accept_compressed(encoding);
-            self
-        }
-        /// Limits the maximum size of a decoded message.
-        ///
-        /// Default: `4MB`
-        #[must_use]
-        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
-            self.inner = self.inner.max_decoding_message_size(limit);
-            self
-        }
-        /// Limits the maximum size of an encoded message.
-        ///
-        /// Default: `usize::MAX`
-        #[must_use]
-        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
-            self.inner = self.inner.max_encoding_message_size(limit);
-            self
-        }
-        /// Reconstructs a full document from its constituent chunks.
-        pub async fn assemble_document(
-            &mut self,
-            request: impl tonic::IntoRequest<super::AssembleDocumentRequest>,
-        ) -> std::result::Result<tonic::Response<super::AssembleDocumentResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
-            let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/proximadb.v1.ContextService/AssembleDocument",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.ContextService",
-                "AssembleDocument",
-            ));
-            self.inner.unary(req, path, codec).await
-        }
-        /// Assembles a coherent context around a set of entities.
-        pub async fn assemble_context(
-            &mut self,
-            request: impl tonic::IntoRequest<super::AssembleContextRequest>,
-        ) -> std::result::Result<tonic::Response<super::AssembleContextResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
-            let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/proximadb.v1.ContextService/AssembleContext",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.ContextService",
-                "AssembleContext",
-            ));
-            self.inner.unary(req, path, codec).await
-        }
-    }
-}
-/// Generated server implementations.
-pub mod context_service_server {
-    #![allow(
-        unused_variables,
-        dead_code,
-        missing_docs,
-        clippy::wildcard_imports,
-        clippy::let_unit_value
-    )]
-    use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with ContextServiceServer.
-    #[async_trait]
-    pub trait ContextService: std::marker::Send + std::marker::Sync + 'static {
-        /// Reconstructs a full document from its constituent chunks.
-        async fn assemble_document(
-            &self,
-            request: tonic::Request<super::AssembleDocumentRequest>,
-        ) -> std::result::Result<tonic::Response<super::AssembleDocumentResponse>, tonic::Status>;
-        /// Assembles a coherent context around a set of entities.
-        async fn assemble_context(
-            &self,
-            request: tonic::Request<super::AssembleContextRequest>,
-        ) -> std::result::Result<tonic::Response<super::AssembleContextResponse>, tonic::Status>;
-    }
-    /// Service for assembling context and documents from stored chunks.
-    #[derive(Debug)]
-    pub struct ContextServiceServer<T> {
-        inner: Arc<T>,
-        accept_compression_encodings: EnabledCompressionEncodings,
-        send_compression_encodings: EnabledCompressionEncodings,
-        max_decoding_message_size: Option<usize>,
-        max_encoding_message_size: Option<usize>,
-    }
-    impl<T> ContextServiceServer<T> {
-        pub fn new(inner: T) -> Self {
-            Self::from_arc(Arc::new(inner))
-        }
-        pub fn from_arc(inner: Arc<T>) -> Self {
-            Self {
-                inner,
-                accept_compression_encodings: Default::default(),
-                send_compression_encodings: Default::default(),
-                max_decoding_message_size: None,
-                max_encoding_message_size: None,
-            }
-        }
-        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
-        where
-            F: tonic::service::Interceptor,
-        {
-            InterceptedService::new(Self::new(inner), interceptor)
-        }
-        /// Enable decompressing requests with the given encoding.
-        #[must_use]
-        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.accept_compression_encodings.enable(encoding);
-            self
-        }
-        /// Compress responses with the given encoding, if the client supports it.
-        #[must_use]
-        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.send_compression_encodings.enable(encoding);
-            self
-        }
-        /// Limits the maximum size of a decoded message.
-        ///
-        /// Default: `4MB`
-        #[must_use]
-        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
-            self.max_decoding_message_size = Some(limit);
-            self
-        }
-        /// Limits the maximum size of an encoded message.
-        ///
-        /// Default: `usize::MAX`
-        #[must_use]
-        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
-            self.max_encoding_message_size = Some(limit);
-            self
-        }
-    }
-    impl<T, B> tonic::codegen::Service<http::Request<B>> for ContextServiceServer<T>
-    where
-        T: ContextService,
-        B: Body + std::marker::Send + 'static,
-        B::Error: Into<StdError> + std::marker::Send + 'static,
-    {
-        type Response = http::Response<tonic::body::Body>;
-        type Error = std::convert::Infallible;
-        type Future = BoxFuture<Self::Response, Self::Error>;
-        fn poll_ready(
-            &mut self,
-            _cx: &mut Context<'_>,
-        ) -> Poll<std::result::Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn call(&mut self, req: http::Request<B>) -> Self::Future {
-            match req.uri().path() {
-                "/proximadb.v1.ContextService/AssembleDocument" => {
-                    #[allow(non_camel_case_types)]
-                    struct AssembleDocumentSvc<T: ContextService>(pub Arc<T>);
-                    impl<T: ContextService>
-                        tonic::server::UnaryService<super::AssembleDocumentRequest>
-                        for AssembleDocumentSvc<T>
-                    {
-                        type Response = super::AssembleDocumentResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::AssembleDocumentRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ContextService>::assemble_document(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = AssembleDocumentSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/proximadb.v1.ContextService/AssembleContext" => {
-                    #[allow(non_camel_case_types)]
-                    struct AssembleContextSvc<T: ContextService>(pub Arc<T>);
-                    impl<T: ContextService>
-                        tonic::server::UnaryService<super::AssembleContextRequest>
-                        for AssembleContextSvc<T>
-                    {
-                        type Response = super::AssembleContextResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::AssembleContextRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ContextService>::assemble_context(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = AssembleContextSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                _ => Box::pin(async move {
-                    let mut response = http::Response::new(tonic::body::Body::default());
-                    let headers = response.headers_mut();
-                    headers.insert(
-                        tonic::Status::GRPC_STATUS,
-                        (tonic::Code::Unimplemented as i32).into(),
-                    );
-                    headers.insert(
-                        http::header::CONTENT_TYPE,
-                        tonic::metadata::GRPC_CONTENT_TYPE,
-                    );
-                    Ok(response)
-                }),
-            }
-        }
-    }
-    impl<T> Clone for ContextServiceServer<T> {
-        fn clone(&self) -> Self {
-            let inner = self.inner.clone();
-            Self {
-                inner,
-                accept_compression_encodings: self.accept_compression_encodings,
-                send_compression_encodings: self.send_compression_encodings,
-                max_decoding_message_size: self.max_decoding_message_size,
-                max_encoding_message_size: self.max_encoding_message_size,
-            }
-        }
-    }
-    /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "proximadb.v1.ContextService";
-    impl<T> tonic::server::NamedService for ContextServiceServer<T> {
-        const NAME: &'static str = SERVICE_NAME;
-    }
-}
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
 pub struct IncludeFields {
     #[prost(bool, tag = "1")]
@@ -6156,6 +5758,14 @@ pub struct CollectionConfig {
     /// When true, indicates the same embedding is used for retrieval AND context.
     #[prost(bool, optional, tag = "24")]
     pub enable_dual_use_embeddings: ::core::option::Option<bool>,
+    /// Per-collection server-side embedding configuration (collection_types.proto
+    /// tag 25). When set, Arrow Flight DoPut accepts records without a vector
+    /// column; the server populates it via the configured embedding route
+    /// before WAL append. `serde(default)` keeps old persisted collection
+    /// records (no field) readable (mixed-read-safe).
+    #[prost(message, optional, tag = "25")]
+    #[serde(default)]
+    pub embedding_config: ::core::option::Option<EmbeddingConfig>,
     /// Canonical embedding precision for this collection. Mirrors
     /// `CatalogTableSchema.canonical_embedding_precision`. Unset / Fp32
     /// keeps the legacy fp32 path; Fp16/Bf16/Int8/UInt8 routes records
@@ -6170,7 +5780,7 @@ pub struct CollectionConfig {
     /// data-plane handler layer (REST/gRPC/pgwire) as a fail-closed check.
     /// Governance/admin-plane operations (e.g., collection metadata updates) are
     /// not subject to this check — they use separate admin permissions.
-    #[prost(message, repeated, tag = "27")]
+    #[prost(string, repeated, tag = "27")]
     #[serde(default)]
     pub permitted_principals: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Per-collection cold/warm search routing policy (ADR-028). Absent =>
@@ -6223,6 +5833,114 @@ impl EmbeddingPrecision {
             _ => None,
         }
     }
+}
+/// Tier-aware embedding route. Resolved per-collection or per-tenant via the
+/// tenant registry. Mirrors `proximadb_embedding::config::EmbedRoute`.
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
+#[repr(i32)]
+pub enum EmbeddingRoute {
+    Unspecified = 0,
+    /// 384-dim, in-process — Free/Starter/Standard tiers
+    BgeSmall = 1,
+    /// 1024-dim, in-process — Pro/Business tiers
+    BgeLarge = 2,
+    /// 1024-dim multilingual, in-process — Enterprise default
+    BgeM3 = 3,
+    /// External API — Enterprise + Premium add-on
+    AzureOpenai = 4,
+    /// Customer-supplied endpoint — Enterprise BYO
+    Byo = 5,
+}
+impl EmbeddingRoute {
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EMBEDDING_ROUTE_UNSPECIFIED",
+            Self::BgeSmall => "EMBEDDING_ROUTE_BGE_SMALL",
+            Self::BgeLarge => "EMBEDDING_ROUTE_BGE_LARGE",
+            Self::BgeM3 => "EMBEDDING_ROUTE_BGE_M3",
+            Self::AzureOpenai => "EMBEDDING_ROUTE_AZURE_OPENAI",
+            Self::Byo => "EMBEDDING_ROUTE_BYO",
+        }
+    }
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EMBEDDING_ROUTE_UNSPECIFIED" => Some(Self::Unspecified),
+            "EMBEDDING_ROUTE_BGE_SMALL" => Some(Self::BgeSmall),
+            "EMBEDDING_ROUTE_BGE_LARGE" => Some(Self::BgeLarge),
+            "EMBEDDING_ROUTE_BGE_M3" => Some(Self::BgeM3),
+            "EMBEDDING_ROUTE_AZURE_OPENAI" => Some(Self::AzureOpenai),
+            "EMBEDDING_ROUTE_BYO" => Some(Self::Byo),
+            _ => None,
+        }
+    }
+}
+/// Per-collection server-side embedding configuration (collection_types.proto).
+/// When set on a `CollectionConfig`, Arrow Flight DoPut accepts records without
+/// a vector column; the server populates it via the configured route before
+/// WAL append. Field 2 (`chunk`) is reserved by TD-CHUNK-5.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct EmbeddingConfig {
+    /// Embedding model + transport selection.
+    #[prost(enumeration = "EmbeddingRoute", tag = "1")]
+    pub route: i32,
+    /// BYO endpoint metadata (only when route == EMBEDDING_ROUTE_BYO).
+    #[prost(message, optional, tag = "3")]
+    #[serde(default)]
+    pub byo_endpoint: ::core::option::Option<ByoEndpoint>,
+}
+/// Customer-supplied embedding endpoint (collection_types.proto)
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct ByoEndpoint {
+    #[prost(string, tag = "1")]
+    pub url: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    #[serde(default)]
+    pub auth: ::core::option::Option<ByoAuth>,
+    #[prost(uint32, tag = "3")]
+    pub declared_dim: u32,
+    /// Default: 32
+    #[prost(uint32, tag = "4")]
+    pub batch_size: u32,
+    /// Default: 10000
+    #[prost(uint64, tag = "5")]
+    pub timeout_ms: u64,
+}
+/// BYO authentication method (collection_types.proto)
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct ByoAuth {
+    #[prost(oneof = "byo_auth::Method", tags = "1, 2")]
+    pub method: ::core::option::Option<byo_auth::Method>,
+}
+/// Nested message and enum types in `ByoAuth`.
+pub mod byo_auth {
+    #[derive(Clone, PartialEq, ::prost::Oneof, serde::Serialize, serde::Deserialize)]
+    pub enum Method {
+        /// Azure Key Vault / Secrets Manager ref
+        #[prost(string, tag = "1")]
+        BearerSecretRef(::prost::alloc::string::String),
+        #[prost(message, tag = "2")]
+        Mtls(super::MtlsCert),
+    }
+}
+/// mTLS certificate references for BYO endpoints (collection_types.proto)
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MtlsCert {
+    #[prost(string, tag = "1")]
+    pub cert_ref: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub key_ref: ::prost::alloc::string::String,
 }
 #[derive(
     serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Hash, ::prost::Message,
@@ -7795,6 +7513,491 @@ pub struct Permission {
     #[prost(string, repeated, tag = "3")]
     pub scopes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+// ===== PULSAR distributed / QUASAR tiered graph engine features (graph.proto) =====
+//
+// Experimental engines (PULSAR = distributed sharded, QUASAR = hot/cold
+// tiered). ORION is the production single-node engine; these types carry the
+// engine-selection contract of graph.proto lines 695-998.
+/// Graph engine type selection for graph creation
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
+#[repr(i32)]
+pub enum GraphEngineType {
+    Unspecified = 0,
+    /// In-memory single-node (default, production-ready)
+    Orion = 1,
+    /// Distributed sharded (experimental)
+    Pulsar = 2,
+    /// Hot/cold tiered storage (experimental)
+    Quasar = 3,
+}
+impl GraphEngineType {
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "GRAPH_ENGINE_TYPE_UNSPECIFIED",
+            Self::Orion => "GRAPH_ENGINE_TYPE_ORION",
+            Self::Pulsar => "GRAPH_ENGINE_TYPE_PULSAR",
+            Self::Quasar => "GRAPH_ENGINE_TYPE_QUASAR",
+        }
+    }
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "GRAPH_ENGINE_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "GRAPH_ENGINE_TYPE_ORION" => Some(Self::Orion),
+            "GRAPH_ENGINE_TYPE_PULSAR" => Some(Self::Pulsar),
+            "GRAPH_ENGINE_TYPE_QUASAR" => Some(Self::Quasar),
+            _ => None,
+        }
+    }
+}
+/// PULSAR-specific configuration for distributed graph
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct PulsarGraphConfig {
+    /// Number of shards for data distribution (default: 16)
+    #[prost(uint32, optional, tag = "1")]
+    pub shard_count: ::core::option::Option<u32>,
+    /// Replication factor 1-3 (default: 1)
+    #[prost(uint32, optional, tag = "2")]
+    pub replication_factor: ::core::option::Option<u32>,
+    /// Consistency level for distributed operations
+    #[prost(enumeration = "PulsarConsistencyLevel", tag = "3")]
+    pub consistency_level: i32,
+    /// Enable cross-shard query optimization (default: true)
+    #[prost(bool, optional, tag = "4")]
+    pub cross_shard_optimization: ::core::option::Option<bool>,
+    /// Maximum concurrent cross-shard queries (default: 100)
+    #[prost(uint32, optional, tag = "5")]
+    pub max_concurrent_queries: ::core::option::Option<u32>,
+}
+/// Consistency levels for PULSAR distributed operations
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
+#[repr(i32)]
+pub enum PulsarConsistencyLevel {
+    Unspecified = 0,
+    /// Read/write from any replica
+    Any = 1,
+    /// Read/write from majority
+    Quorum = 2,
+    /// Read/write from all replicas
+    All = 3,
+}
+impl PulsarConsistencyLevel {
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PULSAR_CONSISTENCY_LEVEL_UNSPECIFIED",
+            Self::Any => "PULSAR_CONSISTENCY_LEVEL_ANY",
+            Self::Quorum => "PULSAR_CONSISTENCY_LEVEL_QUORUM",
+            Self::All => "PULSAR_CONSISTENCY_LEVEL_ALL",
+        }
+    }
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PULSAR_CONSISTENCY_LEVEL_UNSPECIFIED" => Some(Self::Unspecified),
+            "PULSAR_CONSISTENCY_LEVEL_ANY" => Some(Self::Any),
+            "PULSAR_CONSISTENCY_LEVEL_QUORUM" => Some(Self::Quorum),
+            "PULSAR_CONSISTENCY_LEVEL_ALL" => Some(Self::All),
+            _ => None,
+        }
+    }
+}
+/// PULSAR distributed graph statistics
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct PulsarGraphStats {
+    /// Total nodes across all shards
+    #[prost(uint64, tag = "1")]
+    pub total_nodes: u64,
+    /// Total edges across all shards
+    #[prost(uint64, tag = "2")]
+    pub total_edges: u64,
+    /// Number of active shards
+    #[prost(uint32, tag = "3")]
+    pub shards_active: u32,
+    /// Cross-shard queries executed
+    #[prost(uint64, tag = "4")]
+    pub cross_shard_queries: u64,
+    /// Replication lag in milliseconds
+    #[prost(uint64, tag = "5")]
+    pub replication_lag_ms: u64,
+    /// Hot shard IDs (overloaded shards)
+    #[prost(uint32, repeated, tag = "6")]
+    pub hot_shards: ::prost::alloc::vec::Vec<u32>,
+    /// Load balance operations performed
+    #[prost(uint64, tag = "7")]
+    pub load_balance_operations: u64,
+    /// Per-shard statistics
+    #[prost(message, repeated, tag = "8")]
+    pub shard_stats: ::prost::alloc::vec::Vec<ShardStats>,
+}
+/// Statistics for a single shard
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct ShardStats {
+    #[prost(uint32, tag = "1")]
+    pub shard_id: u32,
+    #[prost(uint64, tag = "2")]
+    pub node_count: u64,
+    #[prost(uint64, tag = "3")]
+    pub edge_count: u64,
+    /// 0.0 to 1.0
+    #[prost(double, tag = "4")]
+    pub load_factor: f64,
+    #[prost(bool, tag = "5")]
+    pub is_hot: bool,
+}
+/// Request for cross-shard query (PULSAR only)
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct CrossShardQueryRequest {
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Query to execute across shards
+    #[prost(string, tag = "2")]
+    pub query: ::prost::alloc::string::String,
+    /// Maximum results per shard
+    #[prost(uint32, optional, tag = "3")]
+    pub max_results_per_shard: ::core::option::Option<u32>,
+    /// Timeout in milliseconds
+    #[prost(uint32, optional, tag = "4")]
+    pub timeout_ms: ::core::option::Option<u32>,
+}
+/// Response from cross-shard query
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct CrossShardQueryResponse {
+    /// Combined results from all shards
+    #[prost(message, repeated, tag = "1")]
+    pub nodes: ::prost::alloc::vec::Vec<Node>,
+    #[prost(message, repeated, tag = "2")]
+    pub edges: ::prost::alloc::vec::Vec<Edge>,
+    /// Query execution statistics
+    #[prost(message, optional, tag = "3")]
+    pub query_stats: ::core::option::Option<PulsarQueryStats>,
+}
+/// PULSAR query execution statistics
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct PulsarQueryStats {
+    /// Number of shards queried
+    #[prost(uint32, tag = "1")]
+    pub shards_queried: u32,
+    /// Total execution time in milliseconds
+    #[prost(uint64, tag = "2")]
+    pub total_time_ms: u64,
+    /// Per-shard execution times
+    #[prost(uint64, repeated, tag = "3")]
+    pub shard_times_ms: ::prost::alloc::vec::Vec<u64>,
+    /// Cross-shard network overhead
+    #[prost(uint64, tag = "4")]
+    pub network_overhead_ms: u64,
+}
+/// Request to rebalance shards (PULSAR only)
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct RebalanceShardsRequest {
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Target shards to rebalance (empty = auto-detect hot shards)
+    #[prost(uint32, repeated, tag = "2")]
+    pub shard_ids: ::prost::alloc::vec::Vec<u32>,
+    /// Force rebalancing even if shards are not hot
+    #[prost(bool, optional, tag = "3")]
+    pub force: ::core::option::Option<bool>,
+}
+/// Response from shard rebalancing
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct RebalanceShardsResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(uint32, repeated, tag = "2")]
+    pub rebalanced_shards: ::prost::alloc::vec::Vec<u32>,
+    #[prost(string, tag = "3")]
+    pub message: ::prost::alloc::string::String,
+}
+/// QUASAR-specific configuration for tiered storage
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct QuasarGraphConfig {
+    /// Maximum size of hot tier (number of nodes)
+    #[prost(uint32, optional, tag = "1")]
+    pub hot_tier_max_nodes: ::core::option::Option<u32>,
+    /// Maximum size of hot tier (MB)
+    #[prost(uint32, optional, tag = "2")]
+    pub hot_tier_max_memory_mb: ::core::option::Option<u32>,
+    /// Path for cold storage files
+    #[prost(string, optional, tag = "3")]
+    pub cold_tier_path: ::core::option::Option<::prost::alloc::string::String>,
+    /// Threshold for moving data to cold tier (access frequency)
+    #[prost(uint64, optional, tag = "4")]
+    pub cold_migration_threshold_seconds: ::core::option::Option<u64>,
+    /// Threshold for promoting data to hot tier (access frequency)
+    #[prost(uint64, optional, tag = "5")]
+    pub hot_promotion_threshold_seconds: ::core::option::Option<u64>,
+    /// Background migration interval (seconds)
+    #[prost(uint64, optional, tag = "6")]
+    pub migration_interval_seconds: ::core::option::Option<u64>,
+    /// Storage backend for cold tier
+    #[prost(enumeration = "QuasarColdStorageBackend", tag = "7")]
+    pub cold_storage_backend: i32,
+}
+/// Cold storage backend options for QUASAR
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
+#[repr(i32)]
+pub enum QuasarColdStorageBackend {
+    Unspecified = 0,
+    /// SST files
+    Sst = 1,
+    /// Parquet files
+    Parquet = 2,
+    /// JSON files (testing)
+    Json = 3,
+}
+impl QuasarColdStorageBackend {
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "QUASAR_COLD_STORAGE_BACKEND_UNSPECIFIED",
+            Self::Sst => "QUASAR_COLD_STORAGE_BACKEND_SST",
+            Self::Parquet => "QUASAR_COLD_STORAGE_BACKEND_PARQUET",
+            Self::Json => "QUASAR_COLD_STORAGE_BACKEND_JSON",
+        }
+    }
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUASAR_COLD_STORAGE_BACKEND_UNSPECIFIED" => Some(Self::Unspecified),
+            "QUASAR_COLD_STORAGE_BACKEND_SST" => Some(Self::Sst),
+            "QUASAR_COLD_STORAGE_BACKEND_PARQUET" => Some(Self::Parquet),
+            "QUASAR_COLD_STORAGE_BACKEND_JSON" => Some(Self::Json),
+            _ => None,
+        }
+    }
+}
+/// QUASAR tiered storage statistics
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct QuasarGraphStats {
+    /// Hot tier statistics
+    #[prost(message, optional, tag = "1")]
+    pub hot_tier: ::core::option::Option<TierStats>,
+    /// Cold tier statistics
+    #[prost(message, optional, tag = "2")]
+    pub cold_tier: ::core::option::Option<TierStats>,
+    /// Tiering statistics
+    #[prost(message, optional, tag = "3")]
+    pub tiering_stats: ::core::option::Option<QuasarTieringStats>,
+    /// Cache hit rates
+    #[prost(message, optional, tag = "4")]
+    pub cache_stats: ::core::option::Option<CacheStats>,
+}
+/// Statistics for a single tier (hot or cold)
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct TierStats {
+    #[prost(uint64, tag = "1")]
+    pub node_count: u64,
+    #[prost(uint64, tag = "2")]
+    pub edge_count: u64,
+    #[prost(uint64, tag = "3")]
+    pub size_bytes: u64,
+    /// 0.0 to 1.0
+    #[prost(double, tag = "4")]
+    pub utilization: f64,
+}
+/// QUASAR tiering operation statistics
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct QuasarTieringStats {
+    /// Nodes demoted to cold tier
+    #[prost(uint64, tag = "1")]
+    pub nodes_demoted: u64,
+    /// Nodes promoted to hot tier
+    #[prost(uint64, tag = "2")]
+    pub nodes_promoted: u64,
+    /// Background migrations in progress
+    #[prost(uint32, tag = "3")]
+    pub migrations_in_progress: u32,
+    /// Last migration time (milliseconds since epoch)
+    #[prost(int64, optional, tag = "4")]
+    pub last_migration_time_ms: ::core::option::Option<i64>,
+}
+/// Cache statistics for QUASAR
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct CacheStats {
+    /// Hot tier cache hit rate (0.0 to 1.0)
+    #[prost(double, tag = "1")]
+    pub hot_tier_hit_rate: f64,
+    /// Cold tier cache hit rate (0.0 to 1.0)
+    #[prost(double, tag = "2")]
+    pub cold_tier_hit_rate: f64,
+    /// Total cache hits
+    #[prost(uint64, tag = "3")]
+    pub total_hits: u64,
+    /// Total cache misses
+    #[prost(uint64, tag = "4")]
+    pub total_misses: u64,
+}
+/// Request to manually trigger tier migration (QUASAR only)
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct TriggerMigrationRequest {
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Node IDs to migrate (empty = auto-migrate based on access patterns)
+    #[prost(string, repeated, tag = "2")]
+    pub node_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Target tier
+    #[prost(enumeration = "QuasarTier", tag = "3")]
+    pub target_tier: i32,
+    /// Force migration even if thresholds not met
+    #[prost(bool, optional, tag = "4")]
+    pub force: ::core::option::Option<bool>,
+}
+/// Tier selection for manual migration
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
+#[repr(i32)]
+pub enum QuasarTier {
+    Unspecified = 0,
+    /// In-memory ORION tier
+    Hot = 1,
+    /// Disk storage tier
+    Cold = 2,
+}
+impl QuasarTier {
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "QUASAR_TIER_UNSPECIFIED",
+            Self::Hot => "QUASAR_TIER_HOT",
+            Self::Cold => "QUASAR_TIER_COLD",
+        }
+    }
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUASAR_TIER_UNSPECIFIED" => Some(Self::Unspecified),
+            "QUASAR_TIER_HOT" => Some(Self::Hot),
+            "QUASAR_TIER_COLD" => Some(Self::Cold),
+            _ => None,
+        }
+    }
+}
+/// Response from tier migration
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct TriggerMigrationResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(string, repeated, tag = "2")]
+    pub migrated_node_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub message: ::prost::alloc::string::String,
+}
+/// Request for tier statistics (QUASAR only)
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct GetTierStatsRequest {
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Include per-node access statistics
+    #[prost(bool, optional, tag = "2")]
+    pub include_node_stats: ::core::option::Option<bool>,
+}
+/// Response with tier statistics
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct GetTierStatsResponse {
+    #[prost(message, optional, tag = "1")]
+    pub stats: ::core::option::Option<QuasarGraphStats>,
+    /// Per-node access statistics (if requested)
+    #[prost(message, repeated, tag = "2")]
+    pub node_stats: ::prost::alloc::vec::Vec<NodeAccessStats>,
+}
+/// Per-node access statistics for QUASAR
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct NodeAccessStats {
+    #[prost(string, tag = "1")]
+    pub node_id: ::prost::alloc::string::String,
+    /// Number of accesses
+    #[prost(uint64, tag = "2")]
+    pub access_count: u64,
+    /// Last access time (milliseconds since epoch)
+    #[prost(int64, optional, tag = "3")]
+    pub last_access_ms: ::core::option::Option<i64>,
+    /// Current tier
+    #[prost(enumeration = "QuasarTier", tag = "4")]
+    pub current_tier: i32,
+    /// Access frequency (accesses per hour)
+    #[prost(double, tag = "5")]
+    pub access_frequency_per_hour: f64,
+}
+/// Extended graph creation request with engine selection
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct CreateGraphWithEngineRequest {
+    /// Graph ID
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Engine type (ORION, PULSAR, QUASAR)
+    #[prost(enumeration = "GraphEngineType", tag = "2")]
+    pub engine_type: i32,
+    /// Engine-specific configuration
+    #[prost(oneof = "create_graph_with_engine_request::EngineConfig", tags = "3, 4")]
+    pub engine_config: ::core::option::Option<create_graph_with_engine_request::EngineConfig>,
+    /// Graph metadata
+    #[prost(map = "string, string", tag = "5")]
+    #[serde(default)]
+    pub metadata:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+}
+/// Nested message and enum types in `CreateGraphWithEngineRequest`.
+pub mod create_graph_with_engine_request {
+    #[derive(Clone, PartialEq, ::prost::Oneof, serde::Serialize, serde::Deserialize)]
+    pub enum EngineConfig {
+        #[prost(message, tag = "3")]
+        PulsarConfig(super::PulsarGraphConfig),
+        #[prost(message, tag = "4")]
+        QuasarConfig(super::QuasarGraphConfig),
+    }
+}
+/// Response from graph creation
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
+pub struct CreateGraphWithEngineResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(string, tag = "2")]
+    pub message: ::prost::alloc::string::String,
+    #[prost(enumeration = "GraphEngineType", tag = "3")]
+    pub created_engine_type: i32,
+}
 /// Request to create a new graph collection
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
 pub struct CreateGraphRequest {
@@ -8075,6 +8278,10 @@ pub struct DocumentCollectionConfig {
     /// Compression settings
     #[prost(message, optional, tag = "7")]
     pub compression: ::core::option::Option<CompressionConfig>,
+    /// Store documents in JSONB binary form (document.proto tag 8)
+    #[prost(bool, tag = "8")]
+    #[serde(default)]
+    pub use_jsonb: bool,
 }
 /// Index definition for document paths
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Hash, ::prost::Message)]

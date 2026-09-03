@@ -417,6 +417,7 @@ pub fn build_collection_config(
 ) -> Result<CollectionConfig> {
     let mut config = CollectionConfig {
         name: name.clone(),
+        embedding_config: None,
         dimension: dimension as u32,
         distance_metric: distance_metric
             .map(|m| parse_distance_metric(&m))

@@ -340,6 +340,23 @@ fn opener_name(line: &str, prefix: &str) -> Option<String> {
     Some(name)
 }
 
+/// `pub struct Foo {}` — a one-line empty struct (prost renders empty proto
+/// messages this way). Returns the item name.
+fn unit_struct_name(line: &str) -> Option<String> {
+    if !line.starts_with("pub struct ") || !line.ends_with("{}") {
+        return None;
+    }
+    let name = line
+        .strip_prefix("pub struct ")?
+        .trim_end_matches("{}")
+        .trim()
+        .to_string();
+    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(name)
+}
+
 fn parse_enum_value(line: &str) -> Option<(String, i32)> {
     let line = line.split("//").next().unwrap_or("").trim();
     let line = line.trim_end_matches(',');
@@ -588,7 +605,19 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
         }
 
         // ---- item/module openers ----
-        if let Some(name) = opener_name(line, "pub struct ") {
+        if let Some(name) = unit_struct_name(line)
+            && derive_has(&last_derive, "Message")
+        {
+            // One-line empty struct: register it, no body follows.
+            let mk = module_key(&modules);
+            let key = if mk.is_empty() {
+                name.clone()
+            } else {
+                format!("{mk}::{name}")
+            };
+            model.messages.entry(normalize_type_path(&key)).or_default();
+            last_derive.clear();
+        } else if let Some(name) = opener_name(line, "pub struct ") {
             item = if derive_has(&last_derive, "Message") {
                 let mk = module_key(&modules);
                 let key = normalize_type_path(&if mk.is_empty() {

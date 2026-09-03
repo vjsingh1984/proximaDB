@@ -6,7 +6,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Implemented (guard + oltp/jsonb fixes); 41-finding pre-existing backlog ledgered — burn-down open
+| Status | Implemented + ledger burned to ZERO in the same change (41 → 0)
 | Severity | Medium — silent field/variant loss on binary decode; no guard existed
 | Component | `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs` vs `proto/proximadb/v1/*.proto`
 | Pillar | CORRECTNESS / TOOLING
@@ -96,15 +96,25 @@ alongside the mirrors it guards.
     (`serde_impls.rs`) round-trip + the ~20 exhaustive-match fan-out sites,
     each extending its local `BytesValue` convention.
 * **First-run census**: the guard found 49 pre-existing findings; 8 were fixed
-  above and 41 remain in the ledger — mostly whole messages/enums that were
-  never mirrored (security.proto's Byo*/MtlsCert, Pulsar*/Quasar* experimental
-  engine surfaces, several List*Request types), 6 mirror-only messages
-  (`assemble_context/document_*` — used by the REST surface, absent from the
-  protos), `CollectionConfig.embedding_config` (tag 25), a
-  `permitted_principals` kind disagreement (mirror `message` vs proto
-  `string`), and `DocumentCollectionConfig.use_jsonb` (tag 8). Fixing each is a
-  small, individually-reviewable follow-up; the ledger entry list is the work
-  list and the count only goes down.
+  above and the remaining **41 were burned down in the same change — the ledger
+  now sits at zero** and any future finding is new drift:
+  ** Never-mirrored messages/enums added to the mirror from their protos:
+     the graph.proto PULSAR/QUASAR distributed-engine block (13 messages, 5
+     enums incl. `GraphEngineType`), the collection_types.proto server-side
+     embedding block (`EmbeddingConfig`/`EmbeddingRoute`/`ByoEndpoint`/
+     `ByoAuth`/`MtlsCert`) plus `CollectionConfig.embedding_config` (tag 25)
+     and `DocumentCollectionConfig.use_jsonb` (tag 8).
+  ** `CollectionConfig.permitted_principals` was a real mirror bug: the prost
+     attr said `message` over a `Vec<String>` (proto: `repeated string`) —
+     fixed to `string`.
+  ** The 6 mirror-only `assemble_*` messages (plus the whole generated
+     `ContextService` client/server built on them) were **deleted**: absent
+     from every proto, zero references anywhere in the workspace — dead wire
+     types left behind when the protos dropped them (pre-GA no-back-compat
+     applies). This is the guard's "invented types" direction doing its job.
+  ** 3 of the "missing" messages were parser false-positives: one-line
+     `pub struct X {}` units (prost's rendering of empty messages) — the
+     guard now recognizes them.
 * The guard caught a variant-name typo (`Polar` vs `Polaris`) introduced in
   this very PR before review did — the class of mistake it exists for.
 

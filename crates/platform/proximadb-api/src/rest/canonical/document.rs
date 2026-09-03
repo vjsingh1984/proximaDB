@@ -237,6 +237,7 @@ async fn create_collection(
         fulltext_paths: Vec::new(),
         ttl_seconds: 0,
         compression: None,
+        use_jsonb: false,
     };
 
     state
