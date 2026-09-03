@@ -114,6 +114,32 @@ segment_format internals into `cluster_plan_*` → `ivf_fine_cell_count` →
 With TD-IOBUDGET-1's registry seeded, the writer now resolves the SAME budget
 per location that the reader's coalescing policies resolve — the "one IOP"
 co-design premise holds on BOTH sides of the storage boundary. `None` remains
-the explicit fallback for genuinely destination-less callers (the
-`compactor_impl` silent local variant, direct unit tests). New segments only;
-cell counts are per-segment self-describing metadata — no format change.
+the explicit fallback for genuinely destination-less callers (the legacy/
+test-only compactor path — `compact_level_tiered`/`compact_size_tiered` have
+no production callers — and direct unit tests). New segments only; cell counts
+are per-segment self-describing metadata — no format change.
+
+=== The DEFAULT file:// deployment also shifts geometry (adversarial-review finding)
+
+The narrative above called out the `s3://` case only. The DEFAULT deployment is
+all-`file://` (`config/config.toml`; `StorageAssignment` default), and
+`write_target_block_bytes(Some("file:///…"))` resolves LOCAL (1 MiB target) vs
+the old hard-coded CLOUD (4 MiB): with compaction IVF write-train default-ON,
+every NEW compacted segment derives `k` ×4 larger (clamp 2..4096) and the
+reader's `nprobe = ceil(2·√k_c)` roughly doubles — the reader self-adapts via
+each segment's own stored `k_c`. This is INTENDED (a 4 MiB writer cell against
+the file:// reader's 1 MiB coalescing was the divergence this TD closes) but
+UNMEASURED: the settled SIFT-1M acceptance geometry (30 cells / nprobe 11 /
+recall 0.9822) was measured at the OLD k, and no CI gate pins `k`.
+
+**Rollback levers available today** (no redeploy): `PROXIMADB_DISK_CLASS=hdd`
+restores the CLOUD-on-file profile pod-wide; per-location TOML
+`io_budget.disk_class = "hdd"` restores it for one location.
+
+**REQUIRED FOLLOW-UP before qa promotion:** a local-bed compaction A/B on
+byte-identical SIFT-1M `file://` beds — old-CLOUD-k vs new-LOCAL-k, acceptance
+pair first (recall@10 and GETs/query at the new operating point vs the 0.9822
+anchor). Cross-host byte-determinism note: same input compacted on hosts with
+different registries / `PROXIMADB_DISK_CLASS` now yields different segment
+bytes — a pre-existing, config-driven class (cf. `PROXIMADB_IVF_K`), mixed-read
+-safe regardless; no cross-host consistency test exists (noted, not actioned).

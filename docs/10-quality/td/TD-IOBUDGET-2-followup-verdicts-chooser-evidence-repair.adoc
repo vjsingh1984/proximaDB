@@ -25,10 +25,17 @@ Details in the TD-IVF-4 Resolution section. Red→green:
 `destination_url_resolves_the_iop_target` (block_cluster).
 
 Co-design note: this also removes a silent divergence — with an empty registry the writer
-now derives the SCHEME default (s3:// → S3 8 MiB) where it previously hard-coded CLOUD
-(4 MiB), which is exactly what the reader already assumed for that path. New segments
-only; cell counts are per-segment self-describing metadata (no format change,
-mixed-read-safe by construction).
+now derives the SCHEME default (s3:// → S3 8 MiB; **file:// → LOCAL 1 MiB — the DEFAULT
+deployment's k ×4 on new compaction segments, reader nprobe ≈ ×2, self-adapting via each
+segment's stored k_c**) where it previously hard-coded CLOUD (4 MiB), which is exactly
+what the reader already assumed for that path. Intended but UNMEASURED at the new
+operating point: the SIFT-1M acceptance geometry was measured at the OLD k. Rollback
+levers today: `PROXIMADB_DISK_CLASS=hdd` (pod-wide) or per-location TOML
+`io_budget.disk_class = "hdd"`. **Required follow-up before qa promotion:** a local-bed
+compaction A/B (old-CLOUD-k vs new-LOCAL-k, acceptance pair first) — full narration in
+the TD-IVF-4 Resolution. New segments only; cell counts are per-segment
+self-describing metadata (no format change, mixed-read-safe by construction); cross-host
+byte-determinism is a pre-existing config-driven class (cf. `PROXIMADB_IVF_K`).
 
 == Verdict 2 — the chooser default flip is REFUSED on evidence; the supporting A/B is INVALIDATED
 
@@ -63,7 +70,7 @@ an operator-exported gate silently engaging the "baseline").
    ("default-OFF pending cache-tier evidence") — TD-SEARCH-3's estimator A/B
    (GETs −24.11%, p50 −31.51%, recall 0.9800 parity) is real but explicitly gated on it,
    and the 3.3M sibling claim narrowly failed the 1.10 peak-RSS gate (1.10209).
-. Re-tier the env row (`ENV_GATE_REGISTRY.adoc:244`, tier `eval`) to a kill-switch named
+. Re-tier the env row (`ENV_GATE_REGISTRY.adoc:250`, tier `eval`) to a kill-switch named
    for what it DISABLES (`PROXIMADB_STORAGE_READ_STRATEGY_CHOOSER_DISABLE`), keeping the
    old name as deprecated alias — copy the `PROXIMADB_PAX_READ_COARSE_PROBE` flip shape.
 . Update the one default-OFF assertion: `segment_format.rs` "unset gate preserves

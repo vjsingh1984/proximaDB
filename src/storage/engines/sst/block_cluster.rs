@@ -242,8 +242,10 @@ fn sq8_morton_key(codes: &[u8], dim: usize) -> Vec<u8> {
 /// batch-local model is discarded after ordering — persisted-model reuse
 /// (`pca_model_ref`) is the TD-WLP-4b follow-up.
 pub fn cluster_order_pca_ivf(records: &[ProximaRecord], idx: usize) -> Option<Vec<usize>> {
-    // Order-only wrapper (no production callers today); the destination is
-    // irrelevant to survivor ORDER, so `None` (CLOUD target) is explicit here.
+    // Test-only wrapper — NO production callers. The destination is NOT
+    // order-irrelevant (k feeds `ivf_projection_dims` and the train sample,
+    // which move the model and hence the order); `None` (CLOUD target) is
+    // simply the explicit fallback for these order-shape tests.
     cluster_plan_pca_ivf(records, idx, None).map(|plan| plan.order)
 }
 
@@ -1859,10 +1861,19 @@ mod ncomp_floor_tests {
     /// per-location budget (TD-IOBUDGET-1) changes the derived cell count `k`
     /// (visible through `default_train_sample`'s k-scaling), while `None`
     /// keeps the CLOUD fallback. Pure arithmetic — no records, no k-means.
-    /// (nextest process isolation covers the registry and env.)
+    /// (nextest process isolation covers the registry; the Drop guard restores
+    /// the env vars for shared-process legacy `cargo test` runs.)
     #[test]
     fn destination_url_resolves_the_iop_target() {
         use proximadb_storage_common::iops_budget::{IopsBudget, register_location_budget};
+        struct RestoreEnvs;
+        impl Drop for RestoreEnvs {
+            fn drop(&mut self) {
+                unsafe { std::env::remove_var("PROXIMADB_IVF_K") };
+                unsafe { std::env::remove_var("PROXIMADB_IVF_TRAIN_SAMPLE") };
+            }
+        }
+        let _env_guard = RestoreEnvs;
         unsafe {
             std::env::remove_var("PROXIMADB_IVF_K");
         }
@@ -1870,9 +1881,10 @@ mod ncomp_floor_tests {
             std::env::remove_var("PROXIMADB_IVF_TRAIN_SAMPLE");
         }
 
-        // 500k usable 768-d rows: k under the CLOUD 4 MiB target is ~9
-        // (train sample stays at the 50k floor); under a registered 64 KiB
-        // target k is ~5859 (train sample scales to the 200k cap).
+        // 500k usable 768-d rows: k under the CLOUD 4 MiB target is ~91
+        // (384 MB / 4 MiB — train sample stays at the 50k floor); under a
+        // registered 64 KiB target k = 5859 clamps to the 4096 cap (train
+        // sample scales to the 200k cap).
         let (rows, dim) = (500_000usize, 768usize);
         let baseline = super::ivf_training_shape(rows, dim, None).expect("baseline shape");
         assert_eq!(
