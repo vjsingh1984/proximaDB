@@ -1556,7 +1556,10 @@ async fn sift_ivf2_probe_release_bakeoff_eval() {
         .into_iter()
         .map(|row| row.into_iter().take(TOP_K).map(vid).collect())
         .collect();
-    let recall_floor = 0.98;
+    // TD-IOBUDGET-2 (product decision 2026-09-03): 0.98 -> 0.975 for the
+    // economical default geometry (k=122 file://: bytes -51%, GETs -13%,
+    // recall 0.9794). Historical TD numbers keep their original contexts.
+    let recall_floor = 0.975;
     let file_counts = csv_usize_env("PROXIMADB_SIFT_IVF2_FILE_COUNTS", &[1, 4]);
     let nprobes = csv_usize_env("PROXIMADB_SIFT_IVF2_NPROBE_SWEEP", &[4, 8, 16, 32]);
     let layout_proof = env_enabled("PROXIMADB_SIFT_IVF2_LAYOUT_PROOF");
