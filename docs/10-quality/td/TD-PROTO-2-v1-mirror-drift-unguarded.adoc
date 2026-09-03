@@ -108,6 +108,42 @@ alongside the mirrors it guards.
 * The guard caught a variant-name typo (`Polar` vs `Polaris`) introduced in
   this very PR before review did — the class of mistake it exists for.
 
+A fresh-context adversarial review (2026-09-02) hardened the change; its
+findings and dispositions:
+
+* **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
+  swallowed it (now a negation beside the other ratchet baselines). Untracked,
+  the guard would have panicked on every fresh checkout — CI included.
+* **Map kinds now compared for real**: the descriptor's synthetic map-entry
+  message supplies the key/value kinds (the first cut hardcoded string keys and
+  never compared values).
+* **Enum name tables validated independently**: `as_str_name` and
+  `from_str_name` are each checked against the descriptor and cross-checked
+  against each other, so a corrupted serialize table can no longer hide behind
+  a correct decode table.
+* **`jsonb_value` handling canonicalized**: every ProximaValue-producing site
+  decodes tag-9 bytes with the canonical MessagePack codec
+  (`ProximaValue::from_jsonb_slice`, the v2 canon), with Binary fallback — the
+  AQL sources follow their local JSON heuristic (matching their BytesValue
+  arms) instead of silently nulling via the `_` wildcard; the Python SDK's
+  `_convert_from_sql_value` gained the `jsonb_value` arm instead of silently
+  returning `None`.
+* **serde `jsonb_value` key no longer hijacks the generic-object fallback**:
+  the branch commits only when the base64 payload decodes; otherwise the
+  pre-existing MVP-friendly generic-object path applies.
+* **protoc probe moved before any filesystem access**, so the graceful skip
+  holds even without the repo tree; string literals and trailing comments are
+  masked in the tokenizer's brace counting so `format!("{…}")`-style lines
+  cannot desync it.
+* **Round-trip gate extended** (`tests/sql_value_roundtrip.rs`): JsonbValue
+  now covered on both the binary (prost) and REST (custom serde, `jsonb_value`
+  base64 key pinned) paths — the format-change gate mandate #8 requires.
+
+Known divergence deliberately left to the backlog: the JSONB *stringifying*
+surfaces (REST row builders, Arrow/observability stringifiers) each follow
+their local BytesValue convention (hex / per-byte arrays / placeholders); see
+the ledger + follow-ups.
+
 == Not in scope
 
 The v2 package already has both generation (`PROXIMADB_PROTO_REGEN=1`) and the

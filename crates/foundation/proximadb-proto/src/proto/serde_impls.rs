@@ -289,8 +289,12 @@ impl<'de> Deserialize<'de> for SqlValue {
                 }
                 if let Some(v) = obj.get("jsonb_value")
                     && let Some(s) = v.as_str()
+                    && let Ok(bytes) = base64_decode(s)
                 {
-                    let bytes = base64_decode(s).map_err(serde::de::Error::custom)?;
+                    // Only commit when the base64 payload decodes: an object
+                    // whose literal key happens to be "jsonb_value" (with a
+                    // non-base64 value or sibling keys) falls through to the
+                    // generic-object handling below instead of 422-ing.
                     return Ok(SqlValue {
                         value: Some(SqlValueVariant::JsonbValue(bytes)),
                     });

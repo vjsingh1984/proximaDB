@@ -35,9 +35,11 @@ pub fn sql_value_to_proxima_value(v: proximadb_proto::proximadb_v1::SqlValue) ->
                 ProximaValue::Binary(b)
             }
         }
-        // types.proto tag 9: JSONB by declaration — decode the JSON payload,
-        // falling back to Binary when a producer sent non-JSON bytes.
-        Some(Value::JsonbValue(b)) => match serde_json::from_slice(&b) {
+        // types.proto tag 9: JSONB by declaration — decode with the canonical
+        // MessagePack codec (ProximaValue::to_jsonb_vec's inverse), falling
+        // back to Binary for malformed bytes. Same decoder as the records
+        // crate so a value compares equal across read paths.
+        Some(Value::JsonbValue(b)) => match ProximaValue::from_jsonb_slice(&b) {
             Ok(j) => ProximaValue::Jsonb(j),
             Err(_) => ProximaValue::Binary(b),
         },

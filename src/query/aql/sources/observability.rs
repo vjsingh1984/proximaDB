@@ -38,6 +38,12 @@ impl ObservabilityAqlSource {
             SqlValueData::BytesValue(bytes) => serde_json::from_slice(&bytes)
                 .map(AqlValue::Jsonb)
                 .unwrap_or(AqlValue::Null),
+            // types.proto tag 9: JSONB by declaration — same JSON heuristic as
+            // BytesValue so a JSONB field is not silently nulled by the `_`
+            // wildcard.
+            SqlValueData::JsonbValue(bytes) => serde_json::from_slice(&bytes)
+                .map(AqlValue::Jsonb)
+                .unwrap_or(AqlValue::Null),
             SqlValueData::ObjectValue(obj) => {
                 let mut map = serde_json::Map::new();
                 for (key, value) in obj.fields {

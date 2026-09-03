@@ -61,6 +61,16 @@ impl VectorAqlSource {
                     AqlValue::Null
                 }
             }
+            // types.proto tag 9: JSONB by declaration — same JSON heuristic as
+            // BytesValue so a JSONB field is not silently nulled by the `_`
+            // wildcard.
+            SqlValueData::JsonbValue(b) => {
+                if let Ok(json) = serde_json::from_slice(b) {
+                    AqlValue::Jsonb(json)
+                } else {
+                    AqlValue::Null
+                }
+            }
             SqlValueData::ObjectValue(obj) => {
                 let mut map = serde_json::Map::new();
                 for (k, v) in &obj.fields {

@@ -277,8 +277,35 @@ fn normalize_type_path(path: &str) -> String {
     }
 }
 
+/// Depth delta of a line, with string-literal contents and trailing `//`
+/// comments masked — braces inside them (e.g. `write!(f, "{{")`) must not
+/// desync the counter for the rest of the file.
 fn brace_delta(line: &str) -> isize {
-    line.matches('{').count() as isize - line.matches('}').count() as isize
+    let mut cleaned = String::with_capacity(line.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                cleaned.push(' ');
+            }
+            '/' if chars.peek() == Some(&'/') => break,
+            _ => cleaned.push(c),
+        }
+    }
+    cleaned.matches('{').count() as isize - cleaned.matches('}').count() as isize
 }
 
 /// Whether a `#[derive(...)]` line includes a prost trait under the given
@@ -638,6 +665,8 @@ struct DescField {
     repeated: bool,
     proto3_optional: bool,
     is_map: bool,
+    /// (key kind, value kind) from the synthetic map-entry message.
+    map: Option<(String, String)>,
     oneof: Option<String>,
 }
 
@@ -693,10 +722,73 @@ fn enum_values(en: &prost_types::EnumDescriptorProto) -> Vec<(String, i32)> {
         .collect()
 }
 
+/// Map-entry messages by fully-qualified type name → (key kind, value kind).
+type MapEntries = BTreeMap<String, (String, String)>;
+
 fn build_desc_index(files: &[FileDescriptorProto]) -> DescIndex {
     let mut index = DescIndex::default();
+    let mut map_entries: MapEntries = BTreeMap::new();
 
-    fn walk(msg: &DescriptorProto, ancestors: &[String], index: &mut DescIndex) {
+    /// Key/value kinds of a synthetic map-entry message (fields 1 and 2).
+    fn entry_kinds(entry: &DescriptorProto) -> Option<(String, String)> {
+        let kind_at = |number: i32| {
+            entry
+                .field
+                .iter()
+                .find(|f| f.number == Some(number))
+                .and_then(|f| f.r#type)
+                .and_then(|v| Type::try_from(v).ok())
+                .and_then(|t| kind_of(&t))
+                .map(str::to_string)
+        };
+        Some((kind_at(1)?, kind_at(2)?))
+    }
+
+    fn collect_entries(
+        msg: &DescriptorProto,
+        package: &str,
+        ancestors: &[String],
+        out: &mut MapEntries,
+    ) {
+        let full = if ancestors.is_empty() {
+            msg.name.clone().unwrap_or_default()
+        } else {
+            format!(
+                "{}.{}",
+                ancestors.join("."),
+                msg.name.clone().unwrap_or_default()
+            )
+        };
+        for nested in &msg.nested_type {
+            let is_map_entry = nested
+                .options
+                .as_ref()
+                .is_some_and(|o| o.map_entry.unwrap_or(false));
+            if is_map_entry {
+                if let Some(kinds) = entry_kinds(nested) {
+                    out.insert(
+                        // protoc emits fully-qualified (dot-prefixed) type names.
+                        format!(
+                            ".{package}.{full}.{}",
+                            nested.name.clone().unwrap_or_default()
+                        ),
+                        kinds,
+                    );
+                }
+            } else {
+                let mut chain = ancestors.to_vec();
+                chain.push(msg.name.clone().unwrap_or_default());
+                collect_entries(nested, package, &chain, out);
+            }
+        }
+    }
+
+    fn walk(
+        msg: &DescriptorProto,
+        ancestors: &[String],
+        map_entries: &MapEntries,
+        index: &mut DescIndex,
+    ) {
         let chain: Vec<String> = ancestors.iter().map(|a| snake(a)).collect();
         let join = |name: &str| {
             normalize_type_path(&if chain.is_empty() {
@@ -715,7 +807,7 @@ fn build_desc_index(files: &[FileDescriptorProto]) -> DescIndex {
             .collect();
 
         for field in &msg.field {
-            if let Some(f) = describe_field(field, &oneof_names) {
+            if let Some(f) = describe_field(field, &oneof_names, map_entries) {
                 out.fields.push(f);
             }
         }
@@ -748,7 +840,7 @@ fn build_desc_index(files: &[FileDescriptorProto]) -> DescIndex {
             if !is_map_entry {
                 let mut chain = ancestors.to_vec();
                 chain.push(msg.name.clone().unwrap_or_default());
-                walk(nested, &chain, index);
+                walk(nested, &chain, map_entries, index);
             }
         }
         for en in &msg.enum_type {
@@ -765,6 +857,13 @@ fn build_desc_index(files: &[FileDescriptorProto]) -> DescIndex {
         }
     }
 
+    // Two passes: map-entry kinds must be known before fields are described.
+    for file in files {
+        let package = file.package.clone().unwrap_or_default();
+        for msg in &file.message_type {
+            collect_entries(msg, &package, &[], &mut map_entries);
+        }
+    }
     for file in files {
         for en in &file.enum_type {
             index.enums.insert(
@@ -773,27 +872,36 @@ fn build_desc_index(files: &[FileDescriptorProto]) -> DescIndex {
             );
         }
         for msg in &file.message_type {
-            walk(msg, &[], &mut index);
+            walk(msg, &[], &map_entries, &mut index);
         }
     }
     index
 }
 
-fn describe_field(field: &FieldDescriptorProto, oneof_names: &[String]) -> Option<DescField> {
+fn describe_field(
+    field: &FieldDescriptorProto,
+    oneof_names: &[String],
+    map_entries: &MapEntries,
+) -> Option<DescField> {
     let ty: Type = field.r#type.and_then(|v| Type::try_from(v).ok())?;
     let label: Label = field.label.and_then(|v| Label::try_from(v).ok())?;
     let kind = kind_of(&ty)?;
     let name = field.name.clone().unwrap_or_default();
 
-    // Map fields: protoc gives each map field a synthetic nested message named
-    // `<FieldName>Entry` (PascalCased) referenced by type_name.
-    let entry_suffix = format!("{}Entry", pascal(&name));
+    // Map fields: protoc gives each map field a synthetic nested entry message
+    // (options.map_entry) referenced by fully-qualified type_name.
     let is_map = ty == Type::Message
         && label == Label::Repeated
         && field
             .type_name
             .as_deref()
-            .is_some_and(|tn| tn.ends_with(&entry_suffix));
+            .is_some_and(|tn| map_entries.contains_key(tn));
+    let map = field
+        .type_name
+        .as_deref()
+        .and_then(|tn| map_entries.get(tn))
+        .cloned()
+        .filter(|_| is_map);
 
     let oneof = field
         .oneof_index
@@ -807,6 +915,7 @@ fn describe_field(field: &FieldDescriptorProto, oneof_names: &[String]) -> Optio
         repeated: label == Label::Repeated && !is_map,
         proto3_optional: field.proto3_optional.unwrap_or(false),
         is_map,
+        map,
         oneof,
     })
 }
@@ -928,18 +1037,17 @@ impl Comparer {
                                 df.attr_kind()
                             ),
                         );
-                    } else if df.is_map
-                        && let Some((mk, _mv)) = &mf.map
-                        && mk != "string"
-                    {
-                        // Map key kinds are compared; the value kind's CLASS
-                        // (message/enum/scalar) already matched above.
-                        self.record(
-                            key,
-                            format!(
-                                "map field {name:?}: mirror key kind {mk:?}, proto keys are scalars"
-                            ),
-                        );
+                    } else if let (Some((dk, dv)), Some((mk, mv))) = (&df.map, &mf.map) {
+                        // Both key and value kinds must match the descriptor's
+                        // synthetic entry message.
+                        if mk != dk || mv != dv {
+                            self.record(
+                                key,
+                                format!(
+                                    "map field {name:?}: kinds mirror ({mk}, {mv}) vs proto ({dk}, {dv})"
+                                ),
+                            );
+                        }
                     }
                     if mf.repeated != df.repeated {
                         self.record(
@@ -1109,22 +1217,43 @@ impl Comparer {
                 }
             };
             let disc: BTreeMap<&String, i32> = menum.values.iter().map(|(n, v)| (n, *v)).collect();
-            // wire name -> discriminant, merged from both name tables (the
-            // hand-written mirrors sometimes carry only `as_str_name`).
-            let mut entries: Vec<(&str, i32)> = Vec::new();
+            // Each name table is validated INDEPENDENTLY (merging them would
+            // let a correct from_str_name mask a corrupted as_str_name — the
+            // table live surfaces consume for serialization).
+            let mut as_table: BTreeMap<&str, i32> = BTreeMap::new();
             for (variant, wire) in &menum.as_str_name {
                 if let Some(&d) = disc.get(variant) {
-                    entries.push((wire.as_str(), d));
+                    as_table.insert(wire.as_str(), d);
+                } else {
+                    self.record(
+                        key,
+                        format!("as_str_name arm for unknown variant {variant:?}"),
+                    );
                 }
             }
+            let mut from_table: BTreeMap<&str, i32> = BTreeMap::new();
             for (wire, variant) in &menum.from_str_name {
                 if let Some(&d) = disc.get(variant) {
-                    entries.push((wire.as_str(), d));
+                    from_table.insert(wire.as_str(), d);
+                } else {
+                    self.record(
+                        key,
+                        format!("from_str_name arm for unknown variant {variant:?}"),
+                    );
                 }
             }
-            let wire_to_disc: BTreeMap<&str, i32> = entries.into_iter().collect();
+            for (wire, as_d) in &as_table {
+                if let Some(&from_d) = from_table.get(wire)
+                    && from_d != *as_d
+                {
+                    self.record(
+                        key,
+                        format!("enum value {wire:?}: as_str_name says {as_d} but from_str_name says {from_d}"),
+                    );
+                }
+            }
 
-            if wire_to_disc.is_empty() {
+            if as_table.is_empty() && from_table.is_empty() {
                 // No name table at all: fall back to comparing the discriminant
                 // multisets (weaker — a renamed value would pass, a missing or
                 // renumbered one would not).
@@ -1141,13 +1270,15 @@ impl Comparer {
                 continue;
             }
             for (wire, number) in dvalues {
-                match wire_to_disc.get(wire.as_str()) {
+                let lookup = |table: &BTreeMap<&str, i32>| table.get(wire.as_str()).copied();
+                let found = lookup(&from_table).or_else(|| lookup(&as_table));
+                match found {
                     None => self.record(
                         key,
                         format!("enum value {wire:?} = {number} missing from mirror"),
                     ),
-                    Some(&d) if d == *number => {}
-                    Some(&d) => self.record(
+                    Some(d) if d == *number => {}
+                    Some(d) => self.record(
                         key,
                         format!(
                             "enum value {wire:?}: discriminant mismatch mirror {d} vs proto {number}"
@@ -1155,7 +1286,7 @@ impl Comparer {
                     ),
                 }
             }
-            for wire in wire_to_disc.keys() {
+            for wire in as_table.keys().chain(from_table.keys()) {
                 if !dvalues.iter().any(|(w, _)| w == wire) {
                     self.record(
                         key,
@@ -1181,8 +1312,28 @@ impl Comparer {
 // ---------------------------------------------------------------------------
 
 fn compile_descriptor_set() -> Option<Vec<u8>> {
+    // Probe protoc BEFORE touching the repository tree so the documented
+    // graceful skip holds even where proto/ is absent (e.g. a published crate
+    // running its tests without the repo checkout).
+    let protoc = std::env::var_os("PROTOC").unwrap_or_else(|| "protoc".into());
+    match Command::new(&protoc).arg("--version").output() {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "SKIP: protoc not found (PROTOC unset) — TD-PROTO-2 mirror conformance check \
+                 did not run. CI installs protobuf-compiler, so this gates there."
+            );
+            return None;
+        }
+        Err(err) => panic!("failed to spawn protoc: {err}"),
+    }
+
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest.ancestors().nth(3)?.to_path_buf();
+    let Some(repo_root) = manifest.ancestors().nth(3) else {
+        eprintln!("SKIP: repository root not found above the crate manifest");
+        return None;
+    };
+    let repo_root = repo_root.to_path_buf();
     let proto_root = repo_root.join("proto");
 
     let mut inputs = vec![proto_root.join("proximadb/explain.proto")];
@@ -1201,7 +1352,6 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     let desc_path = out_dir.join("descriptor.bin");
     let _ = std::fs::remove_file(&desc_path);
 
-    let protoc = std::env::var_os("PROTOC").unwrap_or_else(|| "protoc".into());
     let output = match Command::new(&protoc)
         .arg("--include_imports")
         .arg("--descriptor_set_out")
