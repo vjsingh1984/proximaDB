@@ -956,6 +956,65 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+  publish-npm:
+    name: Publish Node SDK to npm
+    needs: [prepare, build-binaries, create-release]
+    runs-on: ubuntu-latest
+    # Same gating as publish-crates: no dry-runs, no pre-releases, artifacts validated.
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@anvailabs/proximadb-client
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # The SDK is a standalone package (single public dep: openapi-fetch);
+      # its own version field is the source of truth — the release version
+      # and the package version are bumped together in the release commit.
+      - name: Build
+        working-directory: clients/nodejs-embedded
+        run: |
+          npm install
+          npm run build
+
+      # Idempotent: the tag's version may already be on npm (manual bootstrap
+      # publish, or a re-run after a partial failure) — skip, don't fail.
+      - name: Publish to npm (skip if already published)
+        working-directory: clients/nodejs-embedded
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if curl -sf -A "proximadb-release" \
+            "https://registry.npmjs.org/@anvailabs%2fproximadb-client" \
+            | grep -q "\"${VERSION}\""; then
+            echo "::notice::${VERSION} already on npm — skipping"
+          else
+            npm publish --access public
+          fi
+
+      - name: Verify the registry actually has this version
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -sf -A "proximadb-release" \
+              "https://registry.npmjs.org/@anvailabs%2fproximadb-client" \
+              | grep -q "\"${VERSION}\""; then
+              echo "npm: @anvailabs/proximadb-client ${VERSION} live"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::${VERSION} not on npm after publish"
+          exit 1
+
   # ============================================================================
   # UPDATE HOMEBREW FORMULA - macOS package manager
   # ============================================================================

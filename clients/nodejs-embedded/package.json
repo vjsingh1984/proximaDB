@@ -1,5 +1,5 @@
 {
-  "name": "@proximadb/client",
+  "name": "@anvailabs/proximadb-client",
   "version": "0.3.0",
   "description": "TypeScript/Node.js SDK for ProximaDB vector database",
   "main": "dist/index.js",
@@ -41,7 +41,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/proximadb/proximadb.git",
+    "url": "git+https://github.com/anvai-labs/proximaDB.git",
     "directory": "clients/nodejs-embedded"
   },
   "bugs": {
@@ -65,5 +65,8 @@
   "overrides": {
     "js-yaml": "^4.3.0",
     "brace-expansion": "^2.1.4"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
