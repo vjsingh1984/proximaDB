@@ -175,5 +175,45 @@ mod tests {
             enterprise_to_storage_user_context(EnterpriseUserContext::system_admin());
         assert_eq!(storage_user.user_id, "system");
         assert_eq!(storage_user.tenant_id, "system");
+        // Roles AND permissions must each land in their own Vec — a swap or
+        // drop here silently checks the wrong RBAC list downstream.
+        assert!(storage_user.roles.contains(&"system_admin".to_string()));
+        assert!(
+            storage_user
+                .permissions
+                .contains(&"system_admin".to_string())
+        );
+        assert!(!storage_user.roles.is_empty());
+        assert!(!storage_user.permissions.is_empty());
+    }
+
+    /// Negative control for the `system_admin` bypass in `has_permission`:
+    /// a context WITHOUT the bypass must be denied an ungranted permission.
+    #[test]
+    fn non_admin_context_is_denied_ungranted_permissions() {
+        let ctx = EnterpriseUserContext {
+            user_id: "analyst".to_string(),
+            email: "analyst@example.test".to_string(),
+            display_name: "Analyst".to_string(),
+            tenant_id: "acme".to_string(),
+            organization_id: "acme".to_string(),
+            roles: vec!["reader".to_string()],
+            permissions: ["vector:read".to_string()].into_iter().collect(),
+            security_clearance: SecurityClearance::Internal,
+            department: None,
+            cost_center: None,
+            session_id: "s1".to_string(),
+            login_timestamp: Utc::now(),
+            last_activity: Utc::now(),
+            provider_context: ProviderUserContext::Generic {
+                provider_user_id: "analyst".to_string(),
+                attributes: HashMap::new(),
+            },
+        };
+        assert!(ctx.has_permission("vector:read"));
+        assert!(!ctx.has_permission("vector:write"));
+        assert!(!ctx.has_permission("admin:delete"));
+        assert!(ctx.has_role("reader"));
+        assert!(!ctx.has_role("system_admin"));
     }
 }
