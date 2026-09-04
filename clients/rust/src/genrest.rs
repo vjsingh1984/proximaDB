@@ -1539,6 +1539,349 @@ pub mod types {
             Default::default()
         }
     }
+    /// `status` is always `"dropped"`; the `dropped` flag
+    /// distinguishes an actual removal from a no-op.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "`status` is always `\"dropped\"`; the `dropped` flag\ndistinguishes an actual removal from a no-op.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "dropped",
+    ///    "status"
+    ///  ],
+    ///  "properties": {
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "dropped": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "status": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "dropped"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AffinityDeleteResponse {
+        pub collection_id: ::std::string::String,
+        pub dropped: bool,
+        pub status: AffinityDeleteResponseStatus,
+    }
+    impl AffinityDeleteResponse {
+        pub fn builder() -> builder::AffinityDeleteResponse {
+            Default::default()
+        }
+    }
+    ///`AffinityDeleteResponseStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "dropped"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum AffinityDeleteResponseStatus {
+        #[serde(rename = "dropped")]
+        Dropped,
+    }
+    impl ::std::fmt::Display for AffinityDeleteResponseStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Dropped => f.write_str("dropped"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for AffinityDeleteResponseStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "dropped" => Ok(Self::Dropped),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AffinityDeleteResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AffinityDeleteResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AffinityDeleteResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`AffinityListItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "age_seconds",
+    ///    "collection_id",
+    ///    "node_id",
+    ///    "query_count",
+    ///    "stale"
+    ///  ],
+    ///  "properties": {
+    ///    "age_seconds": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "node_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "query_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "stale": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AffinityListItem {
+        pub age_seconds: u64,
+        pub collection_id: ::std::string::String,
+        pub node_id: ::std::string::String,
+        pub query_count: u64,
+        pub stale: bool,
+    }
+    impl AffinityListItem {
+        pub fn builder() -> builder::AffinityListItem {
+            Default::default()
+        }
+    }
+    ///`AffinityListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "count",
+    ///    "items"
+    ///  ],
+    ///  "properties": {
+    ///    "count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "items": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/AffinityListItem"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AffinityListResponse {
+        pub count: u64,
+        pub items: ::std::vec::Vec<AffinityListItem>,
+    }
+    impl AffinityListResponse {
+        pub fn builder() -> builder::AffinityListResponse {
+            Default::default()
+        }
+    }
+    /// Internally tagged by `status` (snake_case). `status:
+    /// "affinitized"` carries the entry — including STALE entries
+    /// (routing already ignores them; `stale: true` flags them for the
+    /// operator) — with `query_count` (monotonic queries served while
+    /// this node held affinity) and `age_seconds` (seconds since the
+    /// last recorded query). `status: "not_affinitized"` means no
+    /// entry exists at all.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Internally tagged by `status` (snake_case). `status:\n\"affinitized\"` carries the entry — including STALE entries\n(routing already ignores them; `stale: true` flags them for the\noperator) — with `query_count` (monotonic queries served while\nthis node held affinity) and `age_seconds` (seconds since the\nlast recorded query). `status: \"not_affinitized\"` means no\nentry exists at all.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "status"
+    ///  ],
+    ///  "properties": {
+    ///    "age_seconds": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "node_id": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "query_count": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "stale": {
+    ///      "type": [
+    ///        "boolean",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "status": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "affinitized",
+    ///        "not_affinitized"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AffinityResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub age_seconds: ::std::option::Option<u64>,
+        pub collection_id: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub node_id: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub query_count: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub stale: ::std::option::Option<bool>,
+        pub status: AffinityResponseStatus,
+    }
+    impl AffinityResponse {
+        pub fn builder() -> builder::AffinityResponse {
+            Default::default()
+        }
+    }
+    ///`AffinityResponseStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "affinitized",
+    ///    "not_affinitized"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum AffinityResponseStatus {
+        #[serde(rename = "affinitized")]
+        Affinitized,
+        #[serde(rename = "not_affinitized")]
+        NotAffinitized,
+    }
+    impl ::std::fmt::Display for AffinityResponseStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Affinitized => f.write_str("affinitized"),
+                Self::NotAffinitized => f.write_str("not_affinitized"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for AffinityResponseStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "affinitized" => Ok(Self::Affinitized),
+                "not_affinitized" => Ok(Self::NotAffinitized),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AffinityResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AffinityResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AffinityResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
     ///`ApplyModelRegistryMutationRequest`
     ///
     /// <details><summary>JSON schema</summary>
@@ -1573,6 +1916,96 @@ pub mod types {
     impl ApplyModelRegistryMutationRequest {
         pub fn builder() -> builder::ApplyModelRegistryMutationRequest {
             Default::default()
+        }
+    }
+    /// Why an assignment was made (locked vocabulary for dashboards /
+    /// EXPLAIN). `catalog_replay` = loaded from durable state at
+    /// restart, not freshly assigned.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Why an assignment was made (locked vocabulary for dashboards /\nEXPLAIN). `catalog_replay` = loaded from durable state at\nrestart, not freshly assigned.\n",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "create",
+    ///    "operator",
+    ///    "failover",
+    ///    "rebalance",
+    ///    "catalog_replay"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum AssignmentReason {
+        #[serde(rename = "create")]
+        Create,
+        #[serde(rename = "operator")]
+        Operator,
+        #[serde(rename = "failover")]
+        Failover,
+        #[serde(rename = "rebalance")]
+        Rebalance,
+        #[serde(rename = "catalog_replay")]
+        CatalogReplay,
+    }
+    impl ::std::fmt::Display for AssignmentReason {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Create => f.write_str("create"),
+                Self::Operator => f.write_str("operator"),
+                Self::Failover => f.write_str("failover"),
+                Self::Rebalance => f.write_str("rebalance"),
+                Self::CatalogReplay => f.write_str("catalog_replay"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for AssignmentReason {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "create" => Ok(Self::Create),
+                "operator" => Ok(Self::Operator),
+                "failover" => Ok(Self::Failover),
+                "rebalance" => Ok(Self::Rebalance),
+                "catalog_replay" => Ok(Self::CatalogReplay),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AssignmentReason {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AssignmentReason {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AssignmentReason {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
         }
     }
     ///`BatchCreateEdgesGraphId`
@@ -8114,6 +8547,377 @@ pub mod types {
             Default::default()
         }
     }
+    ///`PinListItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "pinned_at_ns",
+    ///    "replicas",
+    ///    "target"
+    ///  ],
+    ///  "properties": {
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "pinned_at_ns": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "replicas": {
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "target": {
+    ///      "$ref": "#/components/schemas/PinTarget"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PinListItem {
+        pub collection_id: ::std::string::String,
+        pub pinned_at_ns: i64,
+        pub replicas: u32,
+        pub target: PinTarget,
+    }
+    impl PinListItem {
+        pub fn builder() -> builder::PinListItem {
+            Default::default()
+        }
+    }
+    ///`PinListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "count",
+    ///    "items"
+    ///  ],
+    ///  "properties": {
+    ///    "count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "items": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/PinListItem"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PinListResponse {
+        pub count: u64,
+        pub items: ::std::vec::Vec<PinListItem>,
+    }
+    impl PinListResponse {
+        pub fn builder() -> builder::PinListResponse {
+            Default::default()
+        }
+    }
+    /// Body for `PATCH /api/v2/collections/{collection_id}/pin`. Either
+    /// `{pinned: true, target: ..., replicas?: ...}` or `{pinned: false}`
+    /// (target/replicas ignored when unpinning; `target` is REQUIRED
+    /// when pinning — a plain-text 400 otherwise). `replicas` defaults
+    /// to 1.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Body for `PATCH /api/v2/collections/{collection_id}/pin`. Either\n`{pinned: true, target: ..., replicas?: ...}` or `{pinned: false}`\n(target/replicas ignored when unpinning; `target` is REQUIRED\nwhen pinning — a plain-text 400 otherwise). `replicas` defaults\nto 1.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "pinned"
+    ///  ],
+    ///  "properties": {
+    ///    "pinned": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "replicas": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "target": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/PinTarget"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PinRequest {
+        pub pinned: bool,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub replicas: ::std::option::Option<u32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub target: ::std::option::Option<PinTarget>,
+    }
+    impl PinRequest {
+        pub fn builder() -> builder::PinRequest {
+            Default::default()
+        }
+    }
+    /// Internally tagged by `status` (snake_case). `status: "pinned"`
+    /// carries `target`/`replicas`/`pinned_at_ns`; `status: "unpinned"`
+    /// carries `was_pinned` (true when the request removed an existing
+    /// pin — useful for audit logs; false on a no-op or read of an
+    /// unpinned collection).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Internally tagged by `status` (snake_case). `status: \"pinned\"`\ncarries `target`/`replicas`/`pinned_at_ns`; `status: \"unpinned\"`\ncarries `was_pinned` (true when the request removed an existing\npin — useful for audit logs; false on a no-op or read of an\nunpinned collection).\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "status"
+    ///  ],
+    ///  "properties": {
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "pinned_at_ns": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    },
+    ///    "replicas": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "status": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "pinned",
+    ///        "unpinned"
+    ///      ]
+    ///    },
+    ///    "target": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/PinTarget"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    },
+    ///    "was_pinned": {
+    ///      "type": [
+    ///        "boolean",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PinResponse {
+        pub collection_id: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub pinned_at_ns: ::std::option::Option<i64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub replicas: ::std::option::Option<u32>,
+        pub status: PinResponseStatus,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub target: ::std::option::Option<PinTarget>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub was_pinned: ::std::option::Option<bool>,
+    }
+    impl PinResponse {
+        pub fn builder() -> builder::PinResponse {
+            Default::default()
+        }
+    }
+    ///`PinResponseStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "pinned",
+    ///    "unpinned"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum PinResponseStatus {
+        #[serde(rename = "pinned")]
+        Pinned,
+        #[serde(rename = "unpinned")]
+        Unpinned,
+    }
+    impl ::std::fmt::Display for PinResponseStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Pinned => f.write_str("pinned"),
+                Self::Unpinned => f.write_str("unpinned"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for PinResponseStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "pinned" => Ok(Self::Pinned),
+                "unpinned" => Ok(Self::Unpinned),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for PinResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for PinResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for PinResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    /// Physical medium to pin to. `cloud` effectively means "do not
+    /// promote this collection" (an explicit unpin-in-spirit).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Physical medium to pin to. `cloud` effectively means \"do not\npromote this collection\" (an explicit unpin-in-spirit).\n",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "memory",
+    ///    "nvme_ssd",
+    ///    "cloud"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum PinTarget {
+        #[serde(rename = "memory")]
+        Memory,
+        #[serde(rename = "nvme_ssd")]
+        NvmeSsd,
+        #[serde(rename = "cloud")]
+        Cloud,
+    }
+    impl ::std::fmt::Display for PinTarget {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Memory => f.write_str("memory"),
+                Self::NvmeSsd => f.write_str("nvme_ssd"),
+                Self::Cloud => f.write_str("cloud"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for PinTarget {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "memory" => Ok(Self::Memory),
+                "nvme_ssd" => Ok(Self::NvmeSsd),
+                "cloud" => Ok(Self::Cloud),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for PinTarget {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for PinTarget {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for PinTarget {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
     /// TD-064: predicate-aware recall shortfall (REST wire shape).
     ///
     /// Mirrors `observability::search_plan_trace::PredicateShortfall` as an
@@ -8174,6 +8978,423 @@ pub mod types {
     }
     impl PredicateShortfallWire {
         pub fn builder() -> builder::PredicateShortfallWire {
+            Default::default()
+        }
+    }
+    ///`PrimaryPod`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "assigned_at_ns",
+    ///    "pod",
+    ///    "reason"
+    ///  ],
+    ///  "properties": {
+    ///    "assigned_at_ns": {
+    ///      "description": "Wall-clock nanoseconds when last set; reassignments advance it.",
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "pod": {
+    ///      "description": "Pod identifier (typically a k8s pod name); opaque.",
+    ///      "type": "string"
+    ///    },
+    ///    "reason": {
+    ///      "$ref": "#/components/schemas/AssignmentReason"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PrimaryPod {
+        ///Wall-clock nanoseconds when last set; reassignments advance it.
+        pub assigned_at_ns: i64,
+        ///Pod identifier (typically a k8s pod name); opaque.
+        pub pod: ::std::string::String,
+        pub reason: AssignmentReason,
+    }
+    impl PrimaryPod {
+        pub fn builder() -> builder::PrimaryPod {
+            Default::default()
+        }
+    }
+    /// Body for `PUT /api/v2/primary-pod/{tenant_id}/{collection_id}`.
+    /// `reason` defaults to `"operator"` when omitted.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Body for `PUT /api/v2/primary-pod/{tenant_id}/{collection_id}`.\n`reason` defaults to `\"operator\"` when omitted.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "pod"
+    ///  ],
+    ///  "properties": {
+    ///    "pod": {
+    ///      "type": "string"
+    ///    },
+    ///    "reason": {
+    ///      "$ref": "#/components/schemas/AssignmentReason"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PrimaryPodAssignRequest {
+        pub pod: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub reason: ::std::option::Option<AssignmentReason>,
+    }
+    impl PrimaryPodAssignRequest {
+        pub fn builder() -> builder::PrimaryPodAssignRequest {
+            Default::default()
+        }
+    }
+    ///`PrimaryPodAssignResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "primary",
+    ///    "tenant_id"
+    ///  ],
+    ///  "properties": {
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "previous": {
+    ///      "description": "The prior binding on re-assignment; null on first assignment.",
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/PrimaryPod"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    },
+    ///    "primary": {
+    ///      "$ref": "#/components/schemas/PrimaryPod"
+    ///    },
+    ///    "tenant_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PrimaryPodAssignResponse {
+        pub collection_id: ::std::string::String,
+        ///The prior binding on re-assignment; null on first assignment.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub previous: ::std::option::Option<PrimaryPod>,
+        pub primary: PrimaryPod,
+        pub tenant_id: ::std::string::String,
+    }
+    impl PrimaryPodAssignResponse {
+        pub fn builder() -> builder::PrimaryPodAssignResponse {
+            Default::default()
+        }
+    }
+    ///`PrimaryPodListItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "primary",
+    ///    "tenant_id"
+    ///  ],
+    ///  "properties": {
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "primary": {
+    ///      "$ref": "#/components/schemas/PrimaryPod"
+    ///    },
+    ///    "tenant_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PrimaryPodListItem {
+        pub collection_id: ::std::string::String,
+        pub primary: PrimaryPod,
+        pub tenant_id: ::std::string::String,
+    }
+    impl PrimaryPodListItem {
+        pub fn builder() -> builder::PrimaryPodListItem {
+            Default::default()
+        }
+    }
+    ///`PrimaryPodListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "count",
+    ///    "items"
+    ///  ],
+    ///  "properties": {
+    ///    "count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "items": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/PrimaryPodListItem"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PrimaryPodListResponse {
+        pub count: u64,
+        pub items: ::std::vec::Vec<PrimaryPodListItem>,
+    }
+    impl PrimaryPodListResponse {
+        pub fn builder() -> builder::PrimaryPodListResponse {
+            Default::default()
+        }
+    }
+    /// Internally tagged by `status` (snake_case). `status: "bound"`
+    /// carries `primary`; `status: "unbound"` means no binding (never
+    /// a 404).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Internally tagged by `status` (snake_case). `status: \"bound\"`\ncarries `primary`; `status: \"unbound\"` means no binding (never\na 404).\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "status",
+    ///    "tenant_id"
+    ///  ],
+    ///  "properties": {
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "primary": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/PrimaryPod"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    },
+    ///    "status": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "bound",
+    ///        "unbound"
+    ///      ]
+    ///    },
+    ///    "tenant_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PrimaryPodLookupResponse {
+        pub collection_id: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub primary: ::std::option::Option<PrimaryPod>,
+        pub status: PrimaryPodLookupResponseStatus,
+        pub tenant_id: ::std::string::String,
+    }
+    impl PrimaryPodLookupResponse {
+        pub fn builder() -> builder::PrimaryPodLookupResponse {
+            Default::default()
+        }
+    }
+    ///`PrimaryPodLookupResponseStatus`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "bound",
+    ///    "unbound"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum PrimaryPodLookupResponseStatus {
+        #[serde(rename = "bound")]
+        Bound,
+        #[serde(rename = "unbound")]
+        Unbound,
+    }
+    impl ::std::fmt::Display for PrimaryPodLookupResponseStatus {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Bound => f.write_str("bound"),
+                Self::Unbound => f.write_str("unbound"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for PrimaryPodLookupResponseStatus {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "bound" => Ok(Self::Bound),
+                "unbound" => Ok(Self::Unbound),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for PrimaryPodLookupResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for PrimaryPodLookupResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for PrimaryPodLookupResponseStatus {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    /// The FLAT error shape the primary-pod operator endpoints return
+    /// (`{error, message, code}`, `error` a short machine-readable
+    /// slug). Same convention as `AbacOperatorErrorResponse`; carried
+    /// as its own schema because the two handler families define the
+    /// type independently.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "The FLAT error shape the primary-pod operator endpoints return\n(`{error, message, code}`, `error` a short machine-readable\nslug). Same convention as `AbacOperatorErrorResponse`; carried\nas its own schema because the two handler families define the\ntype independently.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "code",
+    ///    "error",
+    ///    "message"
+    ///  ],
+    ///  "properties": {
+    ///    "code": {
+    ///      "type": "integer"
+    ///    },
+    ///    "error": {
+    ///      "type": "string"
+    ///    },
+    ///    "message": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PrimaryPodOperatorErrorResponse {
+        pub code: i64,
+        pub error: ::std::string::String,
+        pub message: ::std::string::String,
+    }
+    impl PrimaryPodOperatorErrorResponse {
+        pub fn builder() -> builder::PrimaryPodOperatorErrorResponse {
+            Default::default()
+        }
+    }
+    ///`PrimaryPodUnassignResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "removed",
+    ///    "tenant_id"
+    ///  ],
+    ///  "properties": {
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "removed": {
+    ///      "description": "True when a binding was actually removed; false when nothing was bound.",
+    ///      "type": "boolean"
+    ///    },
+    ///    "tenant_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PrimaryPodUnassignResponse {
+        pub collection_id: ::std::string::String,
+        ///True when a binding was actually removed; false when nothing was bound.
+        pub removed: bool,
+        pub tenant_id: ::std::string::String,
+    }
+    impl PrimaryPodUnassignResponse {
+        pub fn builder() -> builder::PrimaryPodUnassignResponse {
             Default::default()
         }
     }
@@ -11820,6 +13041,341 @@ pub mod types {
                     grant_enforcement: Ok(value.grant_enforcement),
                     tenant_stable_id: Ok(value.tenant_stable_id),
                     updated_at_ms: Ok(value.updated_at_ms),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AffinityDeleteResponse {
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            dropped: ::std::result::Result<bool, ::std::string::String>,
+            status:
+                ::std::result::Result<super::AffinityDeleteResponseStatus, ::std::string::String>,
+        }
+        impl ::std::default::Default for AffinityDeleteResponse {
+            fn default() -> Self {
+                Self {
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    dropped: Err("no value supplied for dropped".to_string()),
+                    status: Err("no value supplied for status".to_string()),
+                }
+            }
+        }
+        impl AffinityDeleteResponse {
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn dropped<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dropped = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for dropped: {e}"));
+                self
+            }
+            pub fn status<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AffinityDeleteResponseStatus>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.status = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for status: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AffinityDeleteResponse> for super::AffinityDeleteResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AffinityDeleteResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection_id: value.collection_id?,
+                    dropped: value.dropped?,
+                    status: value.status?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AffinityDeleteResponse> for AffinityDeleteResponse {
+            fn from(value: super::AffinityDeleteResponse) -> Self {
+                Self {
+                    collection_id: Ok(value.collection_id),
+                    dropped: Ok(value.dropped),
+                    status: Ok(value.status),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AffinityListItem {
+            age_seconds: ::std::result::Result<u64, ::std::string::String>,
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            query_count: ::std::result::Result<u64, ::std::string::String>,
+            stale: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for AffinityListItem {
+            fn default() -> Self {
+                Self {
+                    age_seconds: Err("no value supplied for age_seconds".to_string()),
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    node_id: Err("no value supplied for node_id".to_string()),
+                    query_count: Err("no value supplied for query_count".to_string()),
+                    stale: Err("no value supplied for stale".to_string()),
+                }
+            }
+        }
+        impl AffinityListItem {
+            pub fn age_seconds<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.age_seconds = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for age_seconds: {e}"));
+                self
+            }
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for node_id: {e}"));
+                self
+            }
+            pub fn query_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query_count: {e}"));
+                self
+            }
+            pub fn stale<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.stale = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for stale: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AffinityListItem> for super::AffinityListItem {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AffinityListItem,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    age_seconds: value.age_seconds?,
+                    collection_id: value.collection_id?,
+                    node_id: value.node_id?,
+                    query_count: value.query_count?,
+                    stale: value.stale?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AffinityListItem> for AffinityListItem {
+            fn from(value: super::AffinityListItem) -> Self {
+                Self {
+                    age_seconds: Ok(value.age_seconds),
+                    collection_id: Ok(value.collection_id),
+                    node_id: Ok(value.node_id),
+                    query_count: Ok(value.query_count),
+                    stale: Ok(value.stale),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AffinityListResponse {
+            count: ::std::result::Result<u64, ::std::string::String>,
+            items: ::std::result::Result<
+                ::std::vec::Vec<super::AffinityListItem>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for AffinityListResponse {
+            fn default() -> Self {
+                Self {
+                    count: Err("no value supplied for count".to_string()),
+                    items: Err("no value supplied for items".to_string()),
+                }
+            }
+        }
+        impl AffinityListResponse {
+            pub fn count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for count: {e}"));
+                self
+            }
+            pub fn items<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::AffinityListItem>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.items = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for items: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AffinityListResponse> for super::AffinityListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AffinityListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    count: value.count?,
+                    items: value.items?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AffinityListResponse> for AffinityListResponse {
+            fn from(value: super::AffinityListResponse) -> Self {
+                Self {
+                    count: Ok(value.count),
+                    items: Ok(value.items),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AffinityResponse {
+            age_seconds: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            node_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            query_count: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            stale: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            status: ::std::result::Result<super::AffinityResponseStatus, ::std::string::String>,
+        }
+        impl ::std::default::Default for AffinityResponse {
+            fn default() -> Self {
+                Self {
+                    age_seconds: Ok(Default::default()),
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    node_id: Ok(Default::default()),
+                    query_count: Ok(Default::default()),
+                    stale: Ok(Default::default()),
+                    status: Err("no value supplied for status".to_string()),
+                }
+            }
+        }
+        impl AffinityResponse {
+            pub fn age_seconds<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.age_seconds = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for age_seconds: {e}"));
+                self
+            }
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for node_id: {e}"));
+                self
+            }
+            pub fn query_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query_count: {e}"));
+                self
+            }
+            pub fn stale<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.stale = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for stale: {e}"));
+                self
+            }
+            pub fn status<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AffinityResponseStatus>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.status = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for status: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AffinityResponse> for super::AffinityResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AffinityResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    age_seconds: value.age_seconds?,
+                    collection_id: value.collection_id?,
+                    node_id: value.node_id?,
+                    query_count: value.query_count?,
+                    stale: value.stale?,
+                    status: value.status?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AffinityResponse> for AffinityResponse {
+            fn from(value: super::AffinityResponse) -> Self {
+                Self {
+                    age_seconds: Ok(value.age_seconds),
+                    collection_id: Ok(value.collection_id),
+                    node_id: Ok(value.node_id),
+                    query_count: Ok(value.query_count),
+                    stale: Ok(value.stale),
+                    status: Ok(value.status),
                 }
             }
         }
@@ -19365,6 +20921,327 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct PinListItem {
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            pinned_at_ns: ::std::result::Result<i64, ::std::string::String>,
+            replicas: ::std::result::Result<u32, ::std::string::String>,
+            target: ::std::result::Result<super::PinTarget, ::std::string::String>,
+        }
+        impl ::std::default::Default for PinListItem {
+            fn default() -> Self {
+                Self {
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    pinned_at_ns: Err("no value supplied for pinned_at_ns".to_string()),
+                    replicas: Err("no value supplied for replicas".to_string()),
+                    target: Err("no value supplied for target".to_string()),
+                }
+            }
+        }
+        impl PinListItem {
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn pinned_at_ns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.pinned_at_ns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for pinned_at_ns: {e}"));
+                self
+            }
+            pub fn replicas<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.replicas = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for replicas: {e}"));
+                self
+            }
+            pub fn target<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::PinTarget>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for target: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PinListItem> for super::PinListItem {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PinListItem,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection_id: value.collection_id?,
+                    pinned_at_ns: value.pinned_at_ns?,
+                    replicas: value.replicas?,
+                    target: value.target?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PinListItem> for PinListItem {
+            fn from(value: super::PinListItem) -> Self {
+                Self {
+                    collection_id: Ok(value.collection_id),
+                    pinned_at_ns: Ok(value.pinned_at_ns),
+                    replicas: Ok(value.replicas),
+                    target: Ok(value.target),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PinListResponse {
+            count: ::std::result::Result<u64, ::std::string::String>,
+            items:
+                ::std::result::Result<::std::vec::Vec<super::PinListItem>, ::std::string::String>,
+        }
+        impl ::std::default::Default for PinListResponse {
+            fn default() -> Self {
+                Self {
+                    count: Err("no value supplied for count".to_string()),
+                    items: Err("no value supplied for items".to_string()),
+                }
+            }
+        }
+        impl PinListResponse {
+            pub fn count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for count: {e}"));
+                self
+            }
+            pub fn items<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::PinListItem>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.items = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for items: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PinListResponse> for super::PinListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PinListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    count: value.count?,
+                    items: value.items?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PinListResponse> for PinListResponse {
+            fn from(value: super::PinListResponse) -> Self {
+                Self {
+                    count: Ok(value.count),
+                    items: Ok(value.items),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PinRequest {
+            pinned: ::std::result::Result<bool, ::std::string::String>,
+            replicas: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            target: ::std::result::Result<
+                ::std::option::Option<super::PinTarget>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for PinRequest {
+            fn default() -> Self {
+                Self {
+                    pinned: Err("no value supplied for pinned".to_string()),
+                    replicas: Ok(Default::default()),
+                    target: Ok(Default::default()),
+                }
+            }
+        }
+        impl PinRequest {
+            pub fn pinned<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.pinned = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for pinned: {e}"));
+                self
+            }
+            pub fn replicas<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.replicas = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for replicas: {e}"));
+                self
+            }
+            pub fn target<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::PinTarget>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for target: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PinRequest> for super::PinRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PinRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    pinned: value.pinned?,
+                    replicas: value.replicas?,
+                    target: value.target?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PinRequest> for PinRequest {
+            fn from(value: super::PinRequest) -> Self {
+                Self {
+                    pinned: Ok(value.pinned),
+                    replicas: Ok(value.replicas),
+                    target: Ok(value.target),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PinResponse {
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            pinned_at_ns: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            replicas: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            status: ::std::result::Result<super::PinResponseStatus, ::std::string::String>,
+            target: ::std::result::Result<
+                ::std::option::Option<super::PinTarget>,
+                ::std::string::String,
+            >,
+            was_pinned: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        }
+        impl ::std::default::Default for PinResponse {
+            fn default() -> Self {
+                Self {
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    pinned_at_ns: Ok(Default::default()),
+                    replicas: Ok(Default::default()),
+                    status: Err("no value supplied for status".to_string()),
+                    target: Ok(Default::default()),
+                    was_pinned: Ok(Default::default()),
+                }
+            }
+        }
+        impl PinResponse {
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn pinned_at_ns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.pinned_at_ns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for pinned_at_ns: {e}"));
+                self
+            }
+            pub fn replicas<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.replicas = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for replicas: {e}"));
+                self
+            }
+            pub fn status<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::PinResponseStatus>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.status = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for status: {e}"));
+                self
+            }
+            pub fn target<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::PinTarget>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for target: {e}"));
+                self
+            }
+            pub fn was_pinned<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.was_pinned = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for was_pinned: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PinResponse> for super::PinResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PinResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection_id: value.collection_id?,
+                    pinned_at_ns: value.pinned_at_ns?,
+                    replicas: value.replicas?,
+                    status: value.status?,
+                    target: value.target?,
+                    was_pinned: value.was_pinned?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PinResponse> for PinResponse {
+            fn from(value: super::PinResponse) -> Self {
+                Self {
+                    collection_id: Ok(value.collection_id),
+                    pinned_at_ns: Ok(value.pinned_at_ns),
+                    replicas: Ok(value.replicas),
+                    status: Ok(value.status),
+                    target: Ok(value.target),
+                    was_pinned: Ok(value.was_pinned),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct PredicateShortfallWire {
             ann_filtering_mode: ::std::result::Result<::std::string::String, ::std::string::String>,
             oversample_pool: ::std::result::Result<i32, ::std::string::String>,
@@ -19443,6 +21320,567 @@ pub mod types {
                     oversample_pool: Ok(value.oversample_pool),
                     requested_k: Ok(value.requested_k),
                     returned_k: Ok(value.returned_k),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PrimaryPod {
+            assigned_at_ns: ::std::result::Result<i64, ::std::string::String>,
+            pod: ::std::result::Result<::std::string::String, ::std::string::String>,
+            reason: ::std::result::Result<super::AssignmentReason, ::std::string::String>,
+        }
+        impl ::std::default::Default for PrimaryPod {
+            fn default() -> Self {
+                Self {
+                    assigned_at_ns: Err("no value supplied for assigned_at_ns".to_string()),
+                    pod: Err("no value supplied for pod".to_string()),
+                    reason: Err("no value supplied for reason".to_string()),
+                }
+            }
+        }
+        impl PrimaryPod {
+            pub fn assigned_at_ns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.assigned_at_ns = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for assigned_at_ns: {e}")
+                });
+                self
+            }
+            pub fn pod<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.pod = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for pod: {e}"));
+                self
+            }
+            pub fn reason<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AssignmentReason>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.reason = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for reason: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PrimaryPod> for super::PrimaryPod {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PrimaryPod,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    assigned_at_ns: value.assigned_at_ns?,
+                    pod: value.pod?,
+                    reason: value.reason?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PrimaryPod> for PrimaryPod {
+            fn from(value: super::PrimaryPod) -> Self {
+                Self {
+                    assigned_at_ns: Ok(value.assigned_at_ns),
+                    pod: Ok(value.pod),
+                    reason: Ok(value.reason),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PrimaryPodAssignRequest {
+            pod: ::std::result::Result<::std::string::String, ::std::string::String>,
+            reason: ::std::result::Result<
+                ::std::option::Option<super::AssignmentReason>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for PrimaryPodAssignRequest {
+            fn default() -> Self {
+                Self {
+                    pod: Err("no value supplied for pod".to_string()),
+                    reason: Ok(Default::default()),
+                }
+            }
+        }
+        impl PrimaryPodAssignRequest {
+            pub fn pod<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.pod = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for pod: {e}"));
+                self
+            }
+            pub fn reason<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::AssignmentReason>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.reason = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for reason: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PrimaryPodAssignRequest> for super::PrimaryPodAssignRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PrimaryPodAssignRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    pod: value.pod?,
+                    reason: value.reason?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PrimaryPodAssignRequest> for PrimaryPodAssignRequest {
+            fn from(value: super::PrimaryPodAssignRequest) -> Self {
+                Self {
+                    pod: Ok(value.pod),
+                    reason: Ok(value.reason),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PrimaryPodAssignResponse {
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            previous: ::std::result::Result<
+                ::std::option::Option<super::PrimaryPod>,
+                ::std::string::String,
+            >,
+            primary: ::std::result::Result<super::PrimaryPod, ::std::string::String>,
+            tenant_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for PrimaryPodAssignResponse {
+            fn default() -> Self {
+                Self {
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    previous: Ok(Default::default()),
+                    primary: Err("no value supplied for primary".to_string()),
+                    tenant_id: Err("no value supplied for tenant_id".to_string()),
+                }
+            }
+        }
+        impl PrimaryPodAssignResponse {
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn previous<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::PrimaryPod>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.previous = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for previous: {e}"));
+                self
+            }
+            pub fn primary<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::PrimaryPod>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.primary = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for primary: {e}"));
+                self
+            }
+            pub fn tenant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PrimaryPodAssignResponse> for super::PrimaryPodAssignResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PrimaryPodAssignResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection_id: value.collection_id?,
+                    previous: value.previous?,
+                    primary: value.primary?,
+                    tenant_id: value.tenant_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PrimaryPodAssignResponse> for PrimaryPodAssignResponse {
+            fn from(value: super::PrimaryPodAssignResponse) -> Self {
+                Self {
+                    collection_id: Ok(value.collection_id),
+                    previous: Ok(value.previous),
+                    primary: Ok(value.primary),
+                    tenant_id: Ok(value.tenant_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PrimaryPodListItem {
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            primary: ::std::result::Result<super::PrimaryPod, ::std::string::String>,
+            tenant_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for PrimaryPodListItem {
+            fn default() -> Self {
+                Self {
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    primary: Err("no value supplied for primary".to_string()),
+                    tenant_id: Err("no value supplied for tenant_id".to_string()),
+                }
+            }
+        }
+        impl PrimaryPodListItem {
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn primary<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::PrimaryPod>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.primary = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for primary: {e}"));
+                self
+            }
+            pub fn tenant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PrimaryPodListItem> for super::PrimaryPodListItem {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PrimaryPodListItem,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection_id: value.collection_id?,
+                    primary: value.primary?,
+                    tenant_id: value.tenant_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PrimaryPodListItem> for PrimaryPodListItem {
+            fn from(value: super::PrimaryPodListItem) -> Self {
+                Self {
+                    collection_id: Ok(value.collection_id),
+                    primary: Ok(value.primary),
+                    tenant_id: Ok(value.tenant_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PrimaryPodListResponse {
+            count: ::std::result::Result<u64, ::std::string::String>,
+            items: ::std::result::Result<
+                ::std::vec::Vec<super::PrimaryPodListItem>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for PrimaryPodListResponse {
+            fn default() -> Self {
+                Self {
+                    count: Err("no value supplied for count".to_string()),
+                    items: Err("no value supplied for items".to_string()),
+                }
+            }
+        }
+        impl PrimaryPodListResponse {
+            pub fn count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for count: {e}"));
+                self
+            }
+            pub fn items<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::PrimaryPodListItem>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.items = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for items: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PrimaryPodListResponse> for super::PrimaryPodListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PrimaryPodListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    count: value.count?,
+                    items: value.items?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PrimaryPodListResponse> for PrimaryPodListResponse {
+            fn from(value: super::PrimaryPodListResponse) -> Self {
+                Self {
+                    count: Ok(value.count),
+                    items: Ok(value.items),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PrimaryPodLookupResponse {
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            primary: ::std::result::Result<
+                ::std::option::Option<super::PrimaryPod>,
+                ::std::string::String,
+            >,
+            status:
+                ::std::result::Result<super::PrimaryPodLookupResponseStatus, ::std::string::String>,
+            tenant_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for PrimaryPodLookupResponse {
+            fn default() -> Self {
+                Self {
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    primary: Ok(Default::default()),
+                    status: Err("no value supplied for status".to_string()),
+                    tenant_id: Err("no value supplied for tenant_id".to_string()),
+                }
+            }
+        }
+        impl PrimaryPodLookupResponse {
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn primary<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::PrimaryPod>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.primary = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for primary: {e}"));
+                self
+            }
+            pub fn status<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::PrimaryPodLookupResponseStatus>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.status = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for status: {e}"));
+                self
+            }
+            pub fn tenant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PrimaryPodLookupResponse> for super::PrimaryPodLookupResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PrimaryPodLookupResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection_id: value.collection_id?,
+                    primary: value.primary?,
+                    status: value.status?,
+                    tenant_id: value.tenant_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PrimaryPodLookupResponse> for PrimaryPodLookupResponse {
+            fn from(value: super::PrimaryPodLookupResponse) -> Self {
+                Self {
+                    collection_id: Ok(value.collection_id),
+                    primary: Ok(value.primary),
+                    status: Ok(value.status),
+                    tenant_id: Ok(value.tenant_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PrimaryPodOperatorErrorResponse {
+            code: ::std::result::Result<i64, ::std::string::String>,
+            error: ::std::result::Result<::std::string::String, ::std::string::String>,
+            message: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for PrimaryPodOperatorErrorResponse {
+            fn default() -> Self {
+                Self {
+                    code: Err("no value supplied for code".to_string()),
+                    error: Err("no value supplied for error".to_string()),
+                    message: Err("no value supplied for message".to_string()),
+                }
+            }
+        }
+        impl PrimaryPodOperatorErrorResponse {
+            pub fn code<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.code = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for code: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn message<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.message = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for message: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PrimaryPodOperatorErrorResponse>
+            for super::PrimaryPodOperatorErrorResponse
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PrimaryPodOperatorErrorResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    code: value.code?,
+                    error: value.error?,
+                    message: value.message?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PrimaryPodOperatorErrorResponse>
+            for PrimaryPodOperatorErrorResponse
+        {
+            fn from(value: super::PrimaryPodOperatorErrorResponse) -> Self {
+                Self {
+                    code: Ok(value.code),
+                    error: Ok(value.error),
+                    message: Ok(value.message),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct PrimaryPodUnassignResponse {
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            removed: ::std::result::Result<bool, ::std::string::String>,
+            tenant_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for PrimaryPodUnassignResponse {
+            fn default() -> Self {
+                Self {
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    removed: Err("no value supplied for removed".to_string()),
+                    tenant_id: Err("no value supplied for tenant_id".to_string()),
+                }
+            }
+        }
+        impl PrimaryPodUnassignResponse {
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn removed<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.removed = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for removed: {e}"));
+                self
+            }
+            pub fn tenant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<PrimaryPodUnassignResponse> for super::PrimaryPodUnassignResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: PrimaryPodUnassignResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection_id: value.collection_id?,
+                    removed: value.removed?,
+                    tenant_id: value.tenant_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::PrimaryPodUnassignResponse> for PrimaryPodUnassignResponse {
+            fn from(value: super::PrimaryPodUnassignResponse) -> Self {
+                Self {
+                    collection_id: Ok(value.collection_id),
+                    removed: Ok(value.removed),
+                    tenant_id: Ok(value.tenant_id),
                 }
             }
         }
@@ -22895,6 +25333,48 @@ impl Client {
     pub fn create_collection(&self) -> builder::CreateCollection<'_> {
         builder::CreateCollection::new(self)
     }
+    /// List every cache-affinity entry on this node
+    ///
+    /// Sorted by collection_id; includes stale entries so operators
+    /// can see which collections went cold.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler.
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/collections/affinity`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_collection_affinities()
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_collection_affinities(&self) -> builder::ListCollectionAffinities<'_> {
+        builder::ListCollectionAffinities::new(self)
+    }
+    /// List every pinned collection
+    ///
+    /// Operator-dashboard view of all currently pinned collections
+    /// (cross-tenant — the registry is collection-keyed).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler.
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/collections/pinning`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_collection_pins()
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_collection_pins(&self) -> builder::ListCollectionPins<'_> {
+        builder::ListCollectionPins::new(self)
+    }
     /// Get collection details
     ///
     /// Get collection details including schema and statistics.
@@ -22947,6 +25427,56 @@ impl Client {
     /// ```
     pub fn delete_collection(&self) -> builder::DeleteCollection<'_> {
         builder::DeleteCollection::new(self)
+    }
+    /// Read this node's cache-affinity entry for a collection
+    ///
+    /// Returns `status: "affinitized"` (with query count, age, and a
+    /// `stale` flag) when an entry exists — including stale entries,
+    /// so operators can see which collections went cold — and
+    /// `status: "not_affinitized"` when there is no entry at all.
+    /// Routing has already stopped using stale entries.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (the affinity registry is per-node, collection-keyed).
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/collections/{collection_id}/affinity`
+    ///
+    /// Arguments:
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_collection_affinity()
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_collection_affinity(&self) -> builder::GetCollectionAffinity<'_> {
+        builder::GetCollectionAffinity::new(self)
+    }
+    /// Drop this node's cache-affinity entry for a collection
+    ///
+    /// Invalidates the affinity hint so routing re-evaluates on the
+    /// next query. 200 always; `dropped` distinguishes an actual
+    /// removal from a no-op.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler.
+    ///
+    ///
+    /// Sends a `DELETE` request to `/api/v2/collections/{collection_id}/affinity`
+    ///
+    /// Arguments:
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_collection_affinity()
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_collection_affinity(&self) -> builder::DeleteCollectionAffinity<'_> {
+        builder::DeleteCollectionAffinity::new(self)
     }
     /// Ingest documents for native server-side embedding
     ///
@@ -23036,6 +25566,58 @@ impl Client {
     /// ```
     pub fn delete_entity_v2(&self) -> builder::DeleteEntityV2<'_> {
         builder::DeleteEntityV2::new(self)
+    }
+    /// Read a collection's pin state
+    ///
+    /// 200 with `status: "pinned"` + state when pinned; 200 with
+    /// `status: "unpinned"` when not pinned.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (the pin registry is collection-keyed, not
+    /// tenant-scoped).
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/collections/{collection_id}/pin`
+    ///
+    /// Arguments:
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_collection_pin()
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_collection_pin(&self) -> builder::GetCollectionPin<'_> {
+        builder::GetCollectionPin::new(self)
+    }
+    /// Set or clear a collection pin
+    ///
+    /// Pins a collection to a physical medium (or unpins it). Returns
+    /// immediately with the new pin state; physical data movement
+    /// happens out of band — the access-pattern engine reads the
+    /// registry on its next evaluation.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (the pin registry is collection-keyed, not
+    /// tenant-scoped).
+    ///
+    ///
+    /// Sends a `PATCH` request to `/api/v2/collections/{collection_id}/pin`
+    ///
+    /// Arguments:
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.patch_collection_pin()
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn patch_collection_pin(&self) -> builder::PatchCollectionPin<'_> {
+        builder::PatchCollectionPin::new(self)
     }
     /// Insert or upsert ProximaRecord batches
     ///
@@ -23928,6 +26510,109 @@ impl Client {
     /// ```
     pub fn ingest_metrics(&self) -> builder::IngestMetrics<'_> {
         builder::IngestMetrics::new(self)
+    }
+    /// List every primary-pod binding (all tenants)
+    ///
+    /// Cross-tenant operator view — the registry is keyed by
+    /// (tenant_id, collection_id).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler.
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/primary-pod`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_primary_pods()
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_primary_pods(&self) -> builder::ListPrimaryPods<'_> {
+        builder::ListPrimaryPods::new(self)
+    }
+    /// Look up a (tenant, collection)'s primary pod
+    ///
+    /// 200 with `status: "bound"` + the assignment when one exists;
+    /// 200 with `status: "unbound"` when none does (never 404).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the `tenant_id` PATH segment governs.
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`
+    ///
+    /// Arguments:
+    /// - `tenant_id`
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_primary_pod()
+    /// .tenant_id(tenant_id)
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_primary_pod(&self) -> builder::GetPrimaryPod<'_> {
+        builder::GetPrimaryPod::new(self)
+    }
+    /// Assign a (tenant, collection)'s primary pod
+    ///
+    /// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+    /// cross-tenant placement and drive WAL write routing. The
+    /// assignment is mirrored to the catalog; a mirror failure is
+    /// logged and counted but does NOT fail the request (PUT-success
+    /// means the binding is in effect for routing; the catalog
+    /// reconciles on the next write).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the `tenant_id` PATH segment governs.
+    ///
+    ///
+    /// Sends a `PUT` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`
+    ///
+    /// Arguments:
+    /// - `tenant_id`
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.put_primary_pod()
+    /// .tenant_id(tenant_id)
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn put_primary_pod(&self) -> builder::PutPrimaryPod<'_> {
+        builder::PutPrimaryPod::new(self)
+    }
+    /// Unassign a (tenant, collection)'s primary pod
+    ///
+    /// 200 always; `removed` distinguishes an actual removal from a
+    /// no-op. Catalog-mirror policy is the same as PUT (logged, not
+    /// fatal).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the `tenant_id` PATH segment governs.
+    ///
+    ///
+    /// Sends a `DELETE` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`
+    ///
+    /// Arguments:
+    /// - `tenant_id`
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_primary_pod()
+    /// .tenant_id(tenant_id)
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_primary_pod(&self) -> builder::DeletePrimaryPod<'_> {
+        builder::DeletePrimaryPod::new(self)
     }
     /// Execute AQL or UQL through the shared query facade
     ///
@@ -25774,6 +28459,132 @@ pub mod builder {
             }
         }
     }
+    /// Builder for [`Client::list_collection_affinities`]
+    ///
+    /// [`Client::list_collection_affinities`]: super::Client::list_collection_affinities
+    #[derive(Debug, Clone)]
+    pub struct ListCollectionAffinities<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListCollectionAffinities<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/collections/affinity`
+        pub async fn send(self) -> Result<ResponseValue<types::AffinityListResponse>, Error<()>> {
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/collections/affinity", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_collection_affinities",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::list_collection_pins`]
+    ///
+    /// [`Client::list_collection_pins`]: super::Client::list_collection_pins
+    #[derive(Debug, Clone)]
+    pub struct ListCollectionPins<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListCollectionPins<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/collections/pinning`
+        pub async fn send(self) -> Result<ResponseValue<types::PinListResponse>, Error<()>> {
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/collections/pinning", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_collection_pins",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
     /// Builder for [`Client::get_collection`]
     ///
     /// [`Client::get_collection`]: super::Client::get_collection
@@ -25942,6 +28753,166 @@ pub mod builder {
                 404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_collection_affinity`]
+    ///
+    /// [`Client::get_collection_affinity`]: super::Client::get_collection_affinity
+    #[derive(Debug, Clone)]
+    pub struct GetCollectionAffinity<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetCollectionAffinity<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/collections/{collection_id}/affinity`
+        pub async fn send(self) -> Result<ResponseValue<types::AffinityResponse>, Error<()>> {
+            let Self {
+                client,
+                collection_id,
+                x_tenant_id,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/affinity",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_collection_affinity",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_collection_affinity`]
+    ///
+    /// [`Client::delete_collection_affinity`]: super::Client::delete_collection_affinity
+    #[derive(Debug, Clone)]
+    pub struct DeleteCollectionAffinity<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeleteCollectionAffinity<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/collections/{collection_id}/affinity`
+        pub async fn send(self) -> Result<ResponseValue<types::AffinityDeleteResponse>, Error<()>> {
+            let Self {
+                client,
+                collection_id,
+                x_tenant_id,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/affinity",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_collection_affinity",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -26499,6 +29470,192 @@ pub mod builder {
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_collection_pin`]
+    ///
+    /// [`Client::get_collection_pin`]: super::Client::get_collection_pin
+    #[derive(Debug, Clone)]
+    pub struct GetCollectionPin<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetCollectionPin<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/collections/{collection_id}/pin`
+        pub async fn send(self) -> Result<ResponseValue<types::PinResponse>, Error<()>> {
+            let Self {
+                client,
+                collection_id,
+                x_tenant_id,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/pin",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_collection_pin",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::patch_collection_pin`]
+    ///
+    /// [`Client::patch_collection_pin`]: super::Client::patch_collection_pin
+    #[derive(Debug, Clone)]
+    pub struct PatchCollectionPin<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::PinRequest, String>,
+    }
+    impl<'a> PatchCollectionPin<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::PinRequest>,
+            <V as std::convert::TryInto<types::PinRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `PinRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::PinRequest) -> types::builder::PinRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `PATCH` request to `/api/v2/collections/{collection_id}/pin`
+        pub async fn send(self) -> Result<ResponseValue<types::PinResponse>, Error<ByteStream>> {
+            let Self {
+                client,
+                collection_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::PinRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/pin",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .patch(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "patch_collection_pin",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(ResponseValue::stream(response))),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -30635,6 +33792,426 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::list_primary_pods`]
+    ///
+    /// [`Client::list_primary_pods`]: super::Client::list_primary_pods
+    #[derive(Debug, Clone)]
+    pub struct ListPrimaryPods<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListPrimaryPods<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/primary-pod`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::PrimaryPodListResponse>,
+            Error<types::PrimaryPodOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/primary-pod", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_primary_pods",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_primary_pod`]
+    ///
+    /// [`Client::get_primary_pod`]: super::Client::get_primary_pod
+    #[derive(Debug, Clone)]
+    pub struct GetPrimaryPod<'a> {
+        client: &'a super::Client,
+        tenant_id: Result<::std::string::String, String>,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetPrimaryPod<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                tenant_id: Err("tenant_id was not initialized".to_string()),
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.tenant_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::PrimaryPodLookupResponse>,
+            Error<types::PrimaryPodOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                tenant_id,
+                collection_id,
+                x_tenant_id,
+            } = self;
+            let tenant_id = tenant_id.map_err(Error::InvalidRequest)?;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/primary-pod/{}/{}",
+                client.baseurl,
+                encode_path(&tenant_id.to_string()),
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_primary_pod",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::put_primary_pod`]
+    ///
+    /// [`Client::put_primary_pod`]: super::Client::put_primary_pod
+    #[derive(Debug, Clone)]
+    pub struct PutPrimaryPod<'a> {
+        client: &'a super::Client,
+        tenant_id: Result<::std::string::String, String>,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::PrimaryPodAssignRequest, String>,
+    }
+    impl<'a> PutPrimaryPod<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                tenant_id: Err("tenant_id was not initialized".to_string()),
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.tenant_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::PrimaryPodAssignRequest>,
+            <V as std::convert::TryInto<types::PrimaryPodAssignRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `PrimaryPodAssignRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::PrimaryPodAssignRequest,
+                ) -> types::builder::PrimaryPodAssignRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `PUT` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::PrimaryPodAssignResponse>,
+            Error<types::PrimaryPodOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                tenant_id,
+                collection_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let tenant_id = tenant_id.map_err(Error::InvalidRequest)?;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::PrimaryPodAssignRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/primary-pod/{}/{}",
+                client.baseurl,
+                encode_path(&tenant_id.to_string()),
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .put(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "put_primary_pod",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_primary_pod`]
+    ///
+    /// [`Client::delete_primary_pod`]: super::Client::delete_primary_pod
+    #[derive(Debug, Clone)]
+    pub struct DeletePrimaryPod<'a> {
+        client: &'a super::Client,
+        tenant_id: Result<::std::string::String, String>,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeletePrimaryPod<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                tenant_id: Err("tenant_id was not initialized".to_string()),
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.tenant_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::PrimaryPodUnassignResponse>,
+            Error<types::PrimaryPodOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                tenant_id,
+                collection_id,
+                x_tenant_id,
+            } = self;
+            let tenant_id = tenant_id.map_err(Error::InvalidRequest)?;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/primary-pod/{}/{}",
+                client.baseurl,
+                encode_path(&tenant_id.to_string()),
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_primary_pod",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

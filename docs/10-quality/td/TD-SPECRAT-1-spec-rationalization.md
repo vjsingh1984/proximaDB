@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1 (observability+nl) & 2 (stub-rule fixes, TD-SPECRAT-2) landed; wave 3 (ABAC) landing
+| Status | Waves 1 (observability+nl), 2 (stub-rule fixes, TD-SPECRAT-2), 3 (ABAC) landed; wave 4 (collections admin) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -132,3 +132,48 @@ ingest, prepared-SQL, external-collections, model-registries, events,
 progressive/rank search. Legacy `/api/v1` is excluded (retiring per
 SUPPORTED_SURFACE); Iceberg-REST is excluded (an external standard
 protocol consumed directly by Spark/Trino — not our OpenAPI→SDK loop).
+
+== Wave 4: collections-admin operator surfaces (this PR)
+
+**Exposed (6 paths / 10 operations; spec 54 → 60):**
+
+* `/api/v2/collections/{collection_id}/pin` — PATCH set/clear + GET read
+  (`pinning.rs`; the pin registry, hot for the access-pattern engine).
+* `/api/v2/collections/pinning` — GET list.
+* `/api/v2/collections/{collection_id}/affinity` — GET inspect + DELETE
+  invalidate (`affinity.rs`; per-node cache-affinity registry).
+* `/api/v2/collections/affinity` — GET list.
+* `/api/v2/primary-pod/{tenant_id}/{collection_id}` — GET lookup + PUT
+  assign + DELETE unassign (`primary_pod.rs`; WAL write routing).
+* `/api/v2/primary-pod` — GET list.
+
+Rationalization notes specific to this surface:
+
+* **Real, not stubs:** every handler reads/writes the live registry the
+  router/policy engine consults; pinning matches the operator UX contract
+  (immediate ack, movement out of band); primary-pod PUT mirrors to the
+  catalog with mirror-failure-is-not-fatal semantics (documented in the
+  spec).
+* **Permission asymmetry documented, not hidden:** pinning + affinity
+  carry NO per-route permission gate (any authenticated caller; the
+  global auth middleware still applies), while primary-pod is
+  operator-gated (`SystemAdmin` ∪ `ConfigureSystem`) inside each
+  handler. The spec says which is which per operation.
+* **Tenant scoping documented:** pinning/affinity registries are
+  collection-keyed and cross-tenant by construction; primary-pod is
+  `(tenant_id, collection_id)`-scoped via the path. Every op carries the
+  "X-Tenant-ID header not consulted" note (wave-3 convention).
+* **Internally-tagged responses** (`{"status": "pinned", ...}`) modeled
+  as a single object with a `status` enum + variant fields optional —
+  wire-exact and codegen-robust (unlike a `oneOf`, which openapi-python-
+  client cannot discriminate on an internal tag).
+* **Plain-text error body on the pin 400** (the axum `(StatusCode,
+  String)` path) documented as `text/plain` — not silently dressed up as
+  a JSON envelope.
+* **Stale doc comments:** the handler doc comments in `pinning.rs` /
+  `affinity.rs` / `primary_pod.rs` still say `/api/v1/...` while the
+  mount is `/api/v2/...` — the spec follows the mount (wave-1 census
+  rule); fixing the comments is left to a sweep, not this wave.
+
+**No code changes required** — all handlers are live and mounted
+unconditionally (no feature gate, unlike ABAC wave 3).

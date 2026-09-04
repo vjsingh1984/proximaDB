@@ -157,6 +157,66 @@ func (e AbacGrantEnforcement) Valid() bool {
 	}
 }
 
+// Defines values for AffinityDeleteResponseStatus.
+const (
+	Dropped AffinityDeleteResponseStatus = "dropped"
+)
+
+// Valid indicates whether the value is a known member of the AffinityDeleteResponseStatus enum.
+func (e AffinityDeleteResponseStatus) Valid() bool {
+	switch e {
+	case Dropped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AffinityResponseStatus.
+const (
+	Affinitized    AffinityResponseStatus = "affinitized"
+	NotAffinitized AffinityResponseStatus = "not_affinitized"
+)
+
+// Valid indicates whether the value is a known member of the AffinityResponseStatus enum.
+func (e AffinityResponseStatus) Valid() bool {
+	switch e {
+	case Affinitized:
+		return true
+	case NotAffinitized:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AssignmentReason.
+const (
+	CatalogReplay AssignmentReason = "catalog_replay"
+	Create        AssignmentReason = "create"
+	Failover      AssignmentReason = "failover"
+	Operator      AssignmentReason = "operator"
+	Rebalance     AssignmentReason = "rebalance"
+)
+
+// Valid indicates whether the value is a known member of the AssignmentReason enum.
+func (e AssignmentReason) Valid() bool {
+	switch e {
+	case CatalogReplay:
+		return true
+	case Create:
+		return true
+	case Failover:
+		return true
+	case Operator:
+		return true
+	case Rebalance:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CatalogDimensionPolicy0.
 const (
 	Fixed CatalogDimensionPolicy0 = "fixed"
@@ -322,6 +382,63 @@ const (
 func (e CatalogModelRegistryMutation4Operation) Valid() bool {
 	switch e {
 	case UpsertDeployment:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PinResponseStatus.
+const (
+	Pinned   PinResponseStatus = "pinned"
+	Unpinned PinResponseStatus = "unpinned"
+)
+
+// Valid indicates whether the value is a known member of the PinResponseStatus enum.
+func (e PinResponseStatus) Valid() bool {
+	switch e {
+	case Pinned:
+		return true
+	case Unpinned:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PinTarget.
+const (
+	Cloud   PinTarget = "cloud"
+	Memory  PinTarget = "memory"
+	NvmeSsd PinTarget = "nvme_ssd"
+)
+
+// Valid indicates whether the value is a known member of the PinTarget enum.
+func (e PinTarget) Valid() bool {
+	switch e {
+	case Cloud:
+		return true
+	case Memory:
+		return true
+	case NvmeSsd:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PrimaryPodLookupResponseStatus.
+const (
+	Bound   PrimaryPodLookupResponseStatus = "bound"
+	Unbound PrimaryPodLookupResponseStatus = "unbound"
+)
+
+// Valid indicates whether the value is a known member of the PrimaryPodLookupResponseStatus enum.
+func (e PrimaryPodLookupResponseStatus) Valid() bool {
+	switch e {
+	case Bound:
+		return true
+	case Unbound:
 		return true
 	default:
 		return false
@@ -657,6 +774,51 @@ type AbacTenantSecurityPosture struct {
 	UpdatedAtMs      int64                `json:"updated_at_ms"`
 }
 
+// AffinityDeleteResponse `status` is always `"dropped"`; the `dropped` flag
+// distinguishes an actual removal from a no-op.
+type AffinityDeleteResponse struct {
+	CollectionId string                       `json:"collection_id"`
+	Dropped      bool                         `json:"dropped"`
+	Status       AffinityDeleteResponseStatus `json:"status"`
+}
+
+// AffinityDeleteResponseStatus defines model for AffinityDeleteResponse.Status.
+type AffinityDeleteResponseStatus string
+
+// AffinityListItem defines model for AffinityListItem.
+type AffinityListItem struct {
+	AgeSeconds   uint64 `json:"age_seconds"`
+	CollectionId string `json:"collection_id"`
+	NodeId       string `json:"node_id"`
+	QueryCount   uint64 `json:"query_count"`
+	Stale        bool   `json:"stale"`
+}
+
+// AffinityListResponse defines model for AffinityListResponse.
+type AffinityListResponse struct {
+	Count uint64             `json:"count"`
+	Items []AffinityListItem `json:"items"`
+}
+
+// AffinityResponse Internally tagged by `status` (snake_case). `status:
+// "affinitized"` carries the entry — including STALE entries
+// (routing already ignores them; `stale: true` flags them for the
+// operator) — with `query_count` (monotonic queries served while
+// this node held affinity) and `age_seconds` (seconds since the
+// last recorded query). `status: "not_affinitized"` means no
+// entry exists at all.
+type AffinityResponse struct {
+	AgeSeconds   *uint64                `json:"age_seconds,omitempty"`
+	CollectionId string                 `json:"collection_id"`
+	NodeId       *string                `json:"node_id,omitempty"`
+	QueryCount   *uint64                `json:"query_count,omitempty"`
+	Stale        *bool                  `json:"stale,omitempty"`
+	Status       AffinityResponseStatus `json:"status"`
+}
+
+// AffinityResponseStatus defines model for AffinityResponse.Status.
+type AffinityResponseStatus string
+
 // ApplyModelRegistryMutationRequest defines model for ApplyModelRegistryMutationRequest.
 type ApplyModelRegistryMutationRequest struct {
 	// ExpectedRevision Optimistic concurrency token returned by the previous read or mutation.
@@ -667,6 +829,11 @@ type ApplyModelRegistryMutationRequest struct {
 	// of replacing a whole registry document.
 	Mutation CatalogModelRegistryMutation `json:"mutation"`
 }
+
+// AssignmentReason Why an assignment was made (locked vocabulary for dashboards /
+// EXPLAIN). `catalog_replay` = loaded from durable state at
+// restart, not freshly assigned.
+type AssignmentReason string
 
 // BatchCreateEdgesRequest Body for `POST /api/v2/graphs/{id}/edges/batch`.
 type BatchCreateEdgesRequest struct {
@@ -1789,6 +1956,55 @@ type ObservabilityIngestResponse struct {
 	Success  bool   `json:"success"`
 }
 
+// PinListItem defines model for PinListItem.
+type PinListItem struct {
+	CollectionId string `json:"collection_id"`
+	PinnedAtNs   int64  `json:"pinned_at_ns"`
+	Replicas     uint32 `json:"replicas"`
+
+	// Target Physical medium to pin to. `cloud` effectively means "do not
+	// promote this collection" (an explicit unpin-in-spirit).
+	Target PinTarget `json:"target"`
+}
+
+// PinListResponse defines model for PinListResponse.
+type PinListResponse struct {
+	Count uint64        `json:"count"`
+	Items []PinListItem `json:"items"`
+}
+
+// PinRequest Body for `PATCH /api/v2/collections/{collection_id}/pin`. Either
+// `{pinned: true, target: ..., replicas?: ...}` or `{pinned: false}`
+// (target/replicas ignored when unpinning; `target` is REQUIRED
+// when pinning — a plain-text 400 otherwise). `replicas` defaults
+// to 1.
+type PinRequest struct {
+	Pinned   bool       `json:"pinned"`
+	Replicas *uint32    `json:"replicas,omitempty"`
+	Target   *PinTarget `json:"target,omitempty"`
+}
+
+// PinResponse Internally tagged by `status` (snake_case). `status: "pinned"`
+// carries `target`/`replicas`/`pinned_at_ns`; `status: "unpinned"`
+// carries `was_pinned` (true when the request removed an existing
+// pin — useful for audit logs; false on a no-op or read of an
+// unpinned collection).
+type PinResponse struct {
+	CollectionId string            `json:"collection_id"`
+	PinnedAtNs   *int64            `json:"pinned_at_ns,omitempty"`
+	Replicas     *uint32           `json:"replicas,omitempty"`
+	Status       PinResponseStatus `json:"status"`
+	Target       *PinTarget        `json:"target,omitempty"`
+	WasPinned    *bool             `json:"was_pinned,omitempty"`
+}
+
+// PinResponseStatus defines model for PinResponse.Status.
+type PinResponseStatus string
+
+// PinTarget Physical medium to pin to. `cloud` effectively means "do not
+// promote this collection" (an explicit unpin-in-spirit).
+type PinTarget string
+
 // PredicateShortfallWire TD-064: predicate-aware recall shortfall (REST wire shape).
 //
 // Mirrors `observability::search_plan_trace::PredicateShortfall` as an
@@ -1808,6 +2024,87 @@ type PredicateShortfallWire struct {
 
 	// ReturnedK Results actually returned after predicate filtering + merge.
 	ReturnedK int32 `json:"returned_k"`
+}
+
+// PrimaryPod defines model for PrimaryPod.
+type PrimaryPod struct {
+	// AssignedAtNs Wall-clock nanoseconds when last set; reassignments advance it.
+	AssignedAtNs int64 `json:"assigned_at_ns"`
+
+	// Pod Pod identifier (typically a k8s pod name); opaque.
+	Pod string `json:"pod"`
+
+	// Reason Why an assignment was made (locked vocabulary for dashboards /
+	// EXPLAIN). `catalog_replay` = loaded from durable state at
+	// restart, not freshly assigned.
+	Reason AssignmentReason `json:"reason"`
+}
+
+// PrimaryPodAssignRequest Body for `PUT /api/v2/primary-pod/{tenant_id}/{collection_id}`.
+// `reason` defaults to `"operator"` when omitted.
+type PrimaryPodAssignRequest struct {
+	Pod string `json:"pod"`
+
+	// Reason Why an assignment was made (locked vocabulary for dashboards /
+	// EXPLAIN). `catalog_replay` = loaded from durable state at
+	// restart, not freshly assigned.
+	Reason *AssignmentReason `json:"reason,omitempty"`
+}
+
+// PrimaryPodAssignResponse defines model for PrimaryPodAssignResponse.
+type PrimaryPodAssignResponse struct {
+	CollectionId string `json:"collection_id"`
+
+	// Previous The prior binding on re-assignment; null on first assignment.
+	Previous *PrimaryPod `json:"previous,omitempty"`
+	Primary  PrimaryPod  `json:"primary"`
+	TenantId string      `json:"tenant_id"`
+}
+
+// PrimaryPodListItem defines model for PrimaryPodListItem.
+type PrimaryPodListItem struct {
+	CollectionId string     `json:"collection_id"`
+	Primary      PrimaryPod `json:"primary"`
+	TenantId     string     `json:"tenant_id"`
+}
+
+// PrimaryPodListResponse defines model for PrimaryPodListResponse.
+type PrimaryPodListResponse struct {
+	Count uint64               `json:"count"`
+	Items []PrimaryPodListItem `json:"items"`
+}
+
+// PrimaryPodLookupResponse Internally tagged by `status` (snake_case). `status: "bound"`
+// carries `primary`; `status: "unbound"` means no binding (never
+// a 404).
+type PrimaryPodLookupResponse struct {
+	CollectionId string                         `json:"collection_id"`
+	Primary      *PrimaryPod                    `json:"primary,omitempty"`
+	Status       PrimaryPodLookupResponseStatus `json:"status"`
+	TenantId     string                         `json:"tenant_id"`
+}
+
+// PrimaryPodLookupResponseStatus defines model for PrimaryPodLookupResponse.Status.
+type PrimaryPodLookupResponseStatus string
+
+// PrimaryPodOperatorErrorResponse The FLAT error shape the primary-pod operator endpoints return
+// (`{error, message, code}`, `error` a short machine-readable
+// slug). Same convention as `AbacOperatorErrorResponse`; carried
+// as its own schema because the two handler families define the
+// type independently.
+type PrimaryPodOperatorErrorResponse struct {
+	Code    int    `json:"code"`
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+// PrimaryPodUnassignResponse defines model for PrimaryPodUnassignResponse.
+type PrimaryPodUnassignResponse struct {
+	CollectionId string `json:"collection_id"`
+
+	// Removed True when a binding was actually removed; false when nothing was bound.
+	Removed  bool   `json:"removed"`
+	TenantId string `json:"tenant_id"`
 }
 
 // ProbeResponse defines model for ProbeResponse.
@@ -2441,6 +2738,20 @@ type BadRequest = ErrorResponse
 // bug reports.
 type NotFound = ErrorResponse
 
+// PodForbidden The FLAT error shape the primary-pod operator endpoints return
+// (`{error, message, code}`, `error` a short machine-readable
+// slug). Same convention as `AbacOperatorErrorResponse`; carried
+// as its own schema because the two handler families define the
+// type independently.
+type PodForbidden = PrimaryPodOperatorErrorResponse
+
+// PodUnauthorized The FLAT error shape the primary-pod operator endpoints return
+// (`{error, message, code}`, `error` a short machine-readable
+// slug). Same convention as `AbacOperatorErrorResponse`; carried
+// as its own schema because the two handler families define the
+// type independently.
+type PodUnauthorized = PrimaryPodOperatorErrorResponse
+
 // Unauthorized Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 //
 // `request_id` (also returned in the `X-Request-ID` response header) is present
@@ -2559,6 +2870,18 @@ type CreateCollectionParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// ListCollectionAffinitiesParams defines parameters for ListCollectionAffinities.
+type ListCollectionAffinitiesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ListCollectionPinsParams defines parameters for ListCollectionPins.
+type ListCollectionPinsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // DeleteCollectionParams defines parameters for DeleteCollection.
 type DeleteCollectionParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
@@ -2567,6 +2890,18 @@ type DeleteCollectionParams struct {
 
 // GetCollectionParams defines parameters for GetCollection.
 type GetCollectionParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteCollectionAffinityParams defines parameters for DeleteCollectionAffinity.
+type DeleteCollectionAffinityParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetCollectionAffinityParams defines parameters for GetCollectionAffinity.
+type GetCollectionAffinityParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
@@ -2597,6 +2932,18 @@ type DeleteEntityV2Params struct {
 
 // GetEntityV2Params defines parameters for GetEntityV2.
 type GetEntityV2Params struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetCollectionPinParams defines parameters for GetCollectionPin.
+type GetCollectionPinParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// PatchCollectionPinParams defines parameters for PatchCollectionPin.
+type PatchCollectionPinParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
@@ -2872,6 +3219,30 @@ type IngestMetricsParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// ListPrimaryPodsParams defines parameters for ListPrimaryPods.
+type ListPrimaryPodsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeletePrimaryPodParams defines parameters for DeletePrimaryPod.
+type DeletePrimaryPodParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetPrimaryPodParams defines parameters for GetPrimaryPod.
+type GetPrimaryPodParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// PutPrimaryPodParams defines parameters for PutPrimaryPod.
+type PutPrimaryPodParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // ExecuteQueryParams defines parameters for ExecuteQuery.
 type ExecuteQueryParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
@@ -2934,6 +3305,9 @@ type UpsertEntityV2JSONRequestBody = UpsertEntityRequest
 
 // SearchEntitiesV2JSONRequestBody defines body for SearchEntitiesV2 for application/json ContentType.
 type SearchEntitiesV2JSONRequestBody = SearchEntitiesRequest
+
+// PatchCollectionPinJSONRequestBody defines body for PatchCollectionPin for application/json ContentType.
+type PatchCollectionPinJSONRequestBody = PinRequest
 
 // InsertRecordsJSONRequestBody defines body for InsertRecords for application/json ContentType.
 type InsertRecordsJSONRequestBody = InsertRecordsRequest
@@ -3015,6 +3389,9 @@ type AggregateMetricsJSONRequestBody = MetricAggregationInput
 
 // IngestMetricsJSONRequestBody defines body for IngestMetrics for application/json ContentType.
 type IngestMetricsJSONRequestBody = BulkMetricIngestRequest
+
+// PutPrimaryPodJSONRequestBody defines body for PutPrimaryPod for application/json ContentType.
+type PutPrimaryPodJSONRequestBody = PrimaryPodAssignRequest
 
 // ExecuteQueryJSONRequestBody defines body for ExecuteQuery for application/json ContentType.
 type ExecuteQueryJSONRequestBody = QueryRequest
@@ -5377,6 +5754,26 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v2/collections (the `CreateCollection` operationId).
 	CreateCollection(ctx context.Context, params *CreateCollectionParams, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCollectionAffinities List every cache-affinity entry on this node.
+	//
+	// Sorted by collection_id; includes stale entries so operators
+	// can see which collections went cold.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler.
+	//
+	// Corresponds with GET /api/v2/collections/affinity (the `ListCollectionAffinities` operationId).
+	ListCollectionAffinities(ctx context.Context, params *ListCollectionAffinitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCollectionPins List every pinned collection.
+	//
+	// Operator-dashboard view of all currently pinned collections
+	// (cross-tenant — the registry is collection-keyed).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler.
+	//
+	// Corresponds with GET /api/v2/collections/pinning (the `ListCollectionPins` operationId).
+	ListCollectionPins(ctx context.Context, params *ListCollectionPinsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteCollection Delete a collection.
 	//
 	// Delete a collection by ID/name. This v2 route keeps SDK lifecycle methods on
@@ -5405,6 +5802,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/collections/{collection_id} (the `GetCollection` operationId).
 	GetCollection(ctx context.Context, collectionId string, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteCollectionAffinity Drop this node's cache-affinity entry for a collection.
+	//
+	// Invalidates the affinity hint so routing re-evaluates on the
+	// next query. 200 always; `dropped` distinguishes an actual
+	// removal from a no-op.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler.
+	//
+	// Corresponds with DELETE /api/v2/collections/{collection_id}/affinity (the `DeleteCollectionAffinity` operationId).
+	DeleteCollectionAffinity(ctx context.Context, collectionId string, params *DeleteCollectionAffinityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCollectionAffinity Read this node's cache-affinity entry for a collection.
+	//
+	// Returns `status: "affinitized"` (with query count, age, and a
+	// `stale` flag) when an entry exists — including stale entries,
+	// so operators can see which collections went cold — and
+	// `status: "not_affinitized"` when there is no entry at all.
+	// Routing has already stopped using stale entries.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the affinity registry is per-node, collection-keyed).
+	//
+	// Corresponds with GET /api/v2/collections/{collection_id}/affinity (the `GetCollectionAffinity` operationId).
+	GetCollectionAffinity(ctx context.Context, collectionId string, params *GetCollectionAffinityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestDocumentsWithBody Ingest documents for native server-side embedding.
 	//
@@ -5445,6 +5866,47 @@ type ClientInterface interface {
 
 	// GetEntityV2 performs a GET /api/v2/collections/{collection_id}/entities/{entity_id} (the `GetEntityV2` operationId) request.
 	GetEntityV2(ctx context.Context, collectionId string, entityId string, params *GetEntityV2Params, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCollectionPin Read a collection's pin state.
+	//
+	// 200 with `status: "pinned"` + state when pinned; 200 with
+	// `status: "unpinned"` when not pinned.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the pin registry is collection-keyed, not
+	// tenant-scoped).
+	//
+	// Corresponds with GET /api/v2/collections/{collection_id}/pin (the `GetCollectionPin` operationId).
+	GetCollectionPin(ctx context.Context, collectionId string, params *GetCollectionPinParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchCollectionPinWithBody Set or clear a collection pin.
+	//
+	// Pins a collection to a physical medium (or unpins it). Returns
+	// immediately with the new pin state; physical data movement
+	// happens out of band — the access-pattern engine reads the
+	// registry on its next evaluation.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the pin registry is collection-keyed, not
+	// tenant-scoped).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v2/collections/{collection_id}/pin (the `PatchCollectionPin` operationId).
+	PatchCollectionPinWithBody(ctx context.Context, collectionId string, params *PatchCollectionPinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchCollectionPin Set or clear a collection pin.
+	//
+	// Pins a collection to a physical medium (or unpins it). Returns
+	// immediately with the new pin state; physical data movement
+	// happens out of band — the access-pattern engine reads the
+	// registry on its next evaluation.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the pin registry is collection-keyed, not
+	// tenant-scoped).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v2/collections/{collection_id}/pin (the `PatchCollectionPin` operationId).
+	PatchCollectionPin(ctx context.Context, collectionId string, params *PatchCollectionPinParams, body PatchCollectionPinJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InsertRecordsWithBody Insert or upsert ProximaRecord batches.
 	//
@@ -6161,6 +6623,69 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
 	IngestMetrics(ctx context.Context, namespace string, params *IngestMetricsParams, body IngestMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListPrimaryPods List every primary-pod binding (all tenants).
+	//
+	// Cross-tenant operator view — the registry is keyed by
+	// (tenant_id, collection_id).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler.
+	//
+	// Corresponds with GET /api/v2/primary-pod (the `ListPrimaryPods` operationId).
+	ListPrimaryPods(ctx context.Context, params *ListPrimaryPodsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePrimaryPod Unassign a (tenant, collection)'s primary pod.
+	//
+	// 200 always; `removed` distinguishes an actual removal from a
+	// no-op. Catalog-mirror policy is the same as PUT (logged, not
+	// fatal).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the `tenant_id` PATH segment governs.
+	//
+	// Corresponds with DELETE /api/v2/primary-pod/{tenant_id}/{collection_id} (the `DeletePrimaryPod` operationId).
+	DeletePrimaryPod(ctx context.Context, tenantId string, collectionId string, params *DeletePrimaryPodParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPrimaryPod Look up a (tenant, collection)'s primary pod.
+	//
+	// 200 with `status: "bound"` + the assignment when one exists;
+	// 200 with `status: "unbound"` when none does (never 404).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the `tenant_id` PATH segment governs.
+	//
+	// Corresponds with GET /api/v2/primary-pod/{tenant_id}/{collection_id} (the `GetPrimaryPod` operationId).
+	GetPrimaryPod(ctx context.Context, tenantId string, collectionId string, params *GetPrimaryPodParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutPrimaryPodWithBody Assign a (tenant, collection)'s primary pod.
+	//
+	// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+	// cross-tenant placement and drive WAL write routing. The
+	// assignment is mirrored to the catalog; a mirror failure is
+	// logged and counted but does NOT fail the request (PUT-success
+	// means the binding is in effect for routing; the catalog
+	// reconciles on the next write).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the `tenant_id` PATH segment governs.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/primary-pod/{tenant_id}/{collection_id} (the `PutPrimaryPod` operationId).
+	PutPrimaryPodWithBody(ctx context.Context, tenantId string, collectionId string, params *PutPrimaryPodParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutPrimaryPod Assign a (tenant, collection)'s primary pod.
+	//
+	// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+	// cross-tenant placement and drive WAL write routing. The
+	// assignment is mirrored to the catalog; a mirror failure is
+	// logged and counted but does NOT fail the request (PUT-success
+	// means the binding is in effect for routing; the catalog
+	// reconciles on the next write).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the `tenant_id` PATH segment governs.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/primary-pod/{tenant_id}/{collection_id} (the `PutPrimaryPod` operationId).
+	PutPrimaryPod(ctx context.Context, tenantId string, collectionId string, params *PutPrimaryPodParams, body PutPrimaryPodJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ExecuteQueryWithBody Execute AQL or UQL through the shared query facade.
 	//
 	// The canonical unified query surface: UQL (unified multi-modal), federated SQL
@@ -6778,6 +7303,46 @@ func (c *Client) CreateCollection(ctx context.Context, params *CreateCollectionP
 	return c.Client.Do(req)
 }
 
+// ListCollectionAffinities List every cache-affinity entry on this node.
+//
+// Sorted by collection_id; includes stale entries so operators
+// can see which collections went cold.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler.
+//
+// Corresponds with GET /api/v2/collections/affinity (the `ListCollectionAffinities` operationId).
+func (c *Client) ListCollectionAffinities(ctx context.Context, params *ListCollectionAffinitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCollectionAffinitiesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCollectionPins List every pinned collection.
+//
+// Operator-dashboard view of all currently pinned collections
+// (cross-tenant — the registry is collection-keyed).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler.
+//
+// Corresponds with GET /api/v2/collections/pinning (the `ListCollectionPins` operationId).
+func (c *Client) ListCollectionPins(ctx context.Context, params *ListCollectionPinsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCollectionPinsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // DeleteCollection Delete a collection.
 //
 // Delete a collection by ID/name. This v2 route keeps SDK lifecycle methods on
@@ -6817,6 +7382,50 @@ func (c *Client) DeleteCollection(ctx context.Context, collectionId string, para
 // Corresponds with GET /api/v2/collections/{collection_id} (the `GetCollection` operationId).
 func (c *Client) GetCollection(ctx context.Context, collectionId string, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCollectionRequest(c.Server, collectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteCollectionAffinity Drop this node's cache-affinity entry for a collection.
+//
+// Invalidates the affinity hint so routing re-evaluates on the
+// next query. 200 always; `dropped` distinguishes an actual
+// removal from a no-op.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler.
+//
+// Corresponds with DELETE /api/v2/collections/{collection_id}/affinity (the `DeleteCollectionAffinity` operationId).
+func (c *Client) DeleteCollectionAffinity(ctx context.Context, collectionId string, params *DeleteCollectionAffinityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteCollectionAffinityRequest(c.Server, collectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCollectionAffinity Read this node's cache-affinity entry for a collection.
+//
+// Returns `status: "affinitized"` (with query count, age, and a
+// `stale` flag) when an entry exists — including stale entries,
+// so operators can see which collections went cold — and
+// `status: "not_affinitized"` when there is no entry at all.
+// Routing has already stopped using stale entries.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the affinity registry is per-node, collection-keyed).
+//
+// Corresponds with GET /api/v2/collections/{collection_id}/affinity (the `GetCollectionAffinity` operationId).
+func (c *Client) GetCollectionAffinity(ctx context.Context, collectionId string, params *GetCollectionAffinityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCollectionAffinityRequest(c.Server, collectionId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6937,6 +7546,77 @@ func (c *Client) DeleteEntityV2(ctx context.Context, collectionId string, entity
 // GetEntityV2 performs a GET /api/v2/collections/{collection_id}/entities/{entity_id} (the `GetEntityV2` operationId) request.
 func (c *Client) GetEntityV2(ctx context.Context, collectionId string, entityId string, params *GetEntityV2Params, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetEntityV2Request(c.Server, collectionId, entityId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCollectionPin Read a collection's pin state.
+//
+// 200 with `status: "pinned"` + state when pinned; 200 with
+// `status: "unpinned"` when not pinned.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the pin registry is collection-keyed, not
+// tenant-scoped).
+//
+// Corresponds with GET /api/v2/collections/{collection_id}/pin (the `GetCollectionPin` operationId).
+func (c *Client) GetCollectionPin(ctx context.Context, collectionId string, params *GetCollectionPinParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCollectionPinRequest(c.Server, collectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchCollectionPinWithBody Set or clear a collection pin.
+//
+// Pins a collection to a physical medium (or unpins it). Returns
+// immediately with the new pin state; physical data movement
+// happens out of band — the access-pattern engine reads the
+// registry on its next evaluation.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the pin registry is collection-keyed, not
+// tenant-scoped).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v2/collections/{collection_id}/pin (the `PatchCollectionPin` operationId).
+func (c *Client) PatchCollectionPinWithBody(ctx context.Context, collectionId string, params *PatchCollectionPinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchCollectionPinRequestWithBody(c.Server, collectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchCollectionPin Set or clear a collection pin.
+//
+// Pins a collection to a physical medium (or unpins it). Returns
+// immediately with the new pin state; physical data movement
+// happens out of band — the access-pattern engine reads the
+// registry on its next evaluation.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the pin registry is collection-keyed, not
+// tenant-scoped).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v2/collections/{collection_id}/pin (the `PatchCollectionPin` operationId).
+func (c *Client) PatchCollectionPin(ctx context.Context, collectionId string, params *PatchCollectionPinParams, body PatchCollectionPinJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchCollectionPinRequest(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8332,6 +9012,119 @@ func (c *Client) IngestMetrics(ctx context.Context, namespace string, params *In
 	return c.Client.Do(req)
 }
 
+// ListPrimaryPods List every primary-pod binding (all tenants).
+//
+// Cross-tenant operator view — the registry is keyed by
+// (tenant_id, collection_id).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler.
+//
+// Corresponds with GET /api/v2/primary-pod (the `ListPrimaryPods` operationId).
+func (c *Client) ListPrimaryPods(ctx context.Context, params *ListPrimaryPodsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPrimaryPodsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePrimaryPod Unassign a (tenant, collection)'s primary pod.
+//
+// 200 always; `removed` distinguishes an actual removal from a
+// no-op. Catalog-mirror policy is the same as PUT (logged, not
+// fatal).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the `tenant_id` PATH segment governs.
+//
+// Corresponds with DELETE /api/v2/primary-pod/{tenant_id}/{collection_id} (the `DeletePrimaryPod` operationId).
+func (c *Client) DeletePrimaryPod(ctx context.Context, tenantId string, collectionId string, params *DeletePrimaryPodParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePrimaryPodRequest(c.Server, tenantId, collectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPrimaryPod Look up a (tenant, collection)'s primary pod.
+//
+// 200 with `status: "bound"` + the assignment when one exists;
+// 200 with `status: "unbound"` when none does (never 404).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the `tenant_id` PATH segment governs.
+//
+// Corresponds with GET /api/v2/primary-pod/{tenant_id}/{collection_id} (the `GetPrimaryPod` operationId).
+func (c *Client) GetPrimaryPod(ctx context.Context, tenantId string, collectionId string, params *GetPrimaryPodParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPrimaryPodRequest(c.Server, tenantId, collectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutPrimaryPodWithBody Assign a (tenant, collection)'s primary pod.
+//
+// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+// cross-tenant placement and drive WAL write routing. The
+// assignment is mirrored to the catalog; a mirror failure is
+// logged and counted but does NOT fail the request (PUT-success
+// means the binding is in effect for routing; the catalog
+// reconciles on the next write).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the `tenant_id` PATH segment governs.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/primary-pod/{tenant_id}/{collection_id} (the `PutPrimaryPod` operationId).
+func (c *Client) PutPrimaryPodWithBody(ctx context.Context, tenantId string, collectionId string, params *PutPrimaryPodParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPrimaryPodRequestWithBody(c.Server, tenantId, collectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutPrimaryPod Assign a (tenant, collection)'s primary pod.
+//
+// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+// cross-tenant placement and drive WAL write routing. The
+// assignment is mirrored to the catalog; a mirror failure is
+// logged and counted but does NOT fail the request (PUT-success
+// means the binding is in effect for routing; the catalog
+// reconciles on the next write).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the `tenant_id` PATH segment governs.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/primary-pod/{tenant_id}/{collection_id} (the `PutPrimaryPod` operationId).
+func (c *Client) PutPrimaryPod(ctx context.Context, tenantId string, collectionId string, params *PutPrimaryPodParams, body PutPrimaryPodJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPrimaryPodRequest(c.Server, tenantId, collectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ExecuteQueryWithBody Execute AQL or UQL through the shared query facade.
 //
 // The canonical unified query surface: UQL (unified multi-modal), federated SQL
@@ -9435,6 +10228,90 @@ func NewCreateCollectionRequestWithBody(server string, params *CreateCollectionP
 	return req, nil
 }
 
+// NewListCollectionAffinitiesRequest constructs an http.Request for the ListCollectionAffinities method
+func NewListCollectionAffinitiesRequest(server string, params *ListCollectionAffinitiesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/affinity")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListCollectionPinsRequest constructs an http.Request for the ListCollectionPins method
+func NewListCollectionPinsRequest(server string, params *ListCollectionPinsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/pinning")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewDeleteCollectionRequest constructs an http.Request for the DeleteCollection method
 func NewDeleteCollectionRequest(server string, collectionId string, params *DeleteCollectionParams) (*http.Request, error) {
 	var err error
@@ -9501,6 +10378,104 @@ func NewGetCollectionRequest(server string, collectionId string, params *GetColl
 	}
 
 	operationPath := fmt.Sprintf("/api/v2/collections/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteCollectionAffinityRequest constructs an http.Request for the DeleteCollectionAffinity method
+func NewDeleteCollectionAffinityRequest(server string, collectionId string, params *DeleteCollectionAffinityParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/affinity", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetCollectionAffinityRequest constructs an http.Request for the GetCollectionAffinity method
+func NewGetCollectionAffinityRequest(server string, collectionId string, params *GetCollectionAffinityParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/affinity", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9812,6 +10787,117 @@ func NewGetEntityV2Request(server string, collectionId string, entityId string, 
 	if err != nil {
 		return nil, err
 	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetCollectionPinRequest constructs an http.Request for the GetCollectionPin method
+func NewGetCollectionPinRequest(server string, collectionId string, params *GetCollectionPinParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/pin", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPatchCollectionPinRequest calls the generic PatchCollectionPin builder with application/json body
+func NewPatchCollectionPinRequest(server string, collectionId string, params *PatchCollectionPinParams, body PatchCollectionPinJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchCollectionPinRequestWithBody(server, collectionId, params, "application/json", bodyReader)
+}
+
+// NewPatchCollectionPinRequestWithBody constructs an http.Request for the PatchCollectionPin method, with any body, and a specified content type
+func NewPatchCollectionPinRequestWithBody(server string, collectionId string, params *PatchCollectionPinParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/pin", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	if params != nil {
 
@@ -12139,6 +13225,229 @@ func NewIngestMetricsRequestWithBody(server string, namespace string, params *In
 	return req, nil
 }
 
+// NewListPrimaryPodsRequest constructs an http.Request for the ListPrimaryPods method
+func NewListPrimaryPodsRequest(server string, params *ListPrimaryPodsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/primary-pod")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeletePrimaryPodRequest constructs an http.Request for the DeletePrimaryPod method
+func NewDeletePrimaryPodRequest(server string, tenantId string, collectionId string, params *DeletePrimaryPodParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "tenant_id", tenantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/primary-pod/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetPrimaryPodRequest constructs an http.Request for the GetPrimaryPod method
+func NewGetPrimaryPodRequest(server string, tenantId string, collectionId string, params *GetPrimaryPodParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "tenant_id", tenantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/primary-pod/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPutPrimaryPodRequest calls the generic PutPrimaryPod builder with application/json body
+func NewPutPrimaryPodRequest(server string, tenantId string, collectionId string, params *PutPrimaryPodParams, body PutPrimaryPodJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutPrimaryPodRequestWithBody(server, tenantId, collectionId, params, "application/json", bodyReader)
+}
+
+// NewPutPrimaryPodRequestWithBody constructs an http.Request for the PutPrimaryPod method, with any body, and a specified content type
+func NewPutPrimaryPodRequestWithBody(server string, tenantId string, collectionId string, params *PutPrimaryPodParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "tenant_id", tenantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/primary-pod/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewExecuteQueryRequest calls the generic ExecuteQuery builder with application/json body
 func NewExecuteQueryRequest(server string, params *ExecuteQueryParams, body ExecuteQueryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -12803,6 +14112,30 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v2/collections (the `CreateCollection` operationId).
 	CreateCollectionWithResponse(ctx context.Context, params *CreateCollectionParams, body CreateCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCollectionHTTPResp, error)
 
+	// ListCollectionAffinitiesWithResponse List every cache-affinity entry on this node.
+	//
+	// Sorted by collection_id; includes stale entries so operators
+	// can see which collections went cold.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/collections/affinity (the `ListCollectionAffinities` operationId).
+	ListCollectionAffinitiesWithResponse(ctx context.Context, params *ListCollectionAffinitiesParams, reqEditors ...RequestEditorFn) (*ListCollectionAffinitiesHTTPResp, error)
+
+	// ListCollectionPinsWithResponse List every pinned collection.
+	//
+	// Operator-dashboard view of all currently pinned collections
+	// (cross-tenant — the registry is collection-keyed).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/collections/pinning (the `ListCollectionPins` operationId).
+	ListCollectionPinsWithResponse(ctx context.Context, params *ListCollectionPinsParams, reqEditors ...RequestEditorFn) (*ListCollectionPinsHTTPResp, error)
+
 	// DeleteCollectionWithResponse Delete a collection.
 	//
 	// Delete a collection by ID/name. This v2 route keeps SDK lifecycle methods on
@@ -12835,6 +14168,34 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v2/collections/{collection_id} (the `GetCollection` operationId).
 	GetCollectionWithResponse(ctx context.Context, collectionId string, params *GetCollectionParams, reqEditors ...RequestEditorFn) (*GetCollectionHTTPResp, error)
+
+	// DeleteCollectionAffinityWithResponse Drop this node's cache-affinity entry for a collection.
+	//
+	// Invalidates the affinity hint so routing re-evaluates on the
+	// next query. 200 always; `dropped` distinguishes an actual
+	// removal from a no-op.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/collections/{collection_id}/affinity (the `DeleteCollectionAffinity` operationId).
+	DeleteCollectionAffinityWithResponse(ctx context.Context, collectionId string, params *DeleteCollectionAffinityParams, reqEditors ...RequestEditorFn) (*DeleteCollectionAffinityHTTPResp, error)
+
+	// GetCollectionAffinityWithResponse Read this node's cache-affinity entry for a collection.
+	//
+	// Returns `status: "affinitized"` (with query count, age, and a
+	// `stale` flag) when an entry exists — including stale entries,
+	// so operators can see which collections went cold — and
+	// `status: "not_affinitized"` when there is no entry at all.
+	// Routing has already stopped using stale entries.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the affinity registry is per-node, collection-keyed).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/collections/{collection_id}/affinity (the `GetCollectionAffinity` operationId).
+	GetCollectionAffinityWithResponse(ctx context.Context, collectionId string, params *GetCollectionAffinityParams, reqEditors ...RequestEditorFn) (*GetCollectionAffinityHTTPResp, error)
 
 	// IngestDocumentsWithBodyWithResponse Ingest documents for native server-side embedding.
 	//
@@ -12883,6 +14244,49 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, params *GetEntityV2Params, reqEditors ...RequestEditorFn) (*GetEntityV2HTTPResp, error)
+
+	// GetCollectionPinWithResponse Read a collection's pin state.
+	//
+	// 200 with `status: "pinned"` + state when pinned; 200 with
+	// `status: "unpinned"` when not pinned.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the pin registry is collection-keyed, not
+	// tenant-scoped).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/collections/{collection_id}/pin (the `GetCollectionPin` operationId).
+	GetCollectionPinWithResponse(ctx context.Context, collectionId string, params *GetCollectionPinParams, reqEditors ...RequestEditorFn) (*GetCollectionPinHTTPResp, error)
+
+	// PatchCollectionPinWithBodyWithResponse Set or clear a collection pin.
+	//
+	// Pins a collection to a physical medium (or unpins it). Returns
+	// immediately with the new pin state; physical data movement
+	// happens out of band — the access-pattern engine reads the
+	// registry on its next evaluation.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the pin registry is collection-keyed, not
+	// tenant-scoped).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/collections/{collection_id}/pin (the `PatchCollectionPin` operationId).
+	PatchCollectionPinWithBodyWithResponse(ctx context.Context, collectionId string, params *PatchCollectionPinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchCollectionPinHTTPResp, error)
+
+	// PatchCollectionPinWithResponse Set or clear a collection pin.
+	//
+	// Pins a collection to a physical medium (or unpins it). Returns
+	// immediately with the new pin state; physical data movement
+	// happens out of band — the access-pattern engine reads the
+	// registry on its next evaluation.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the pin registry is collection-keyed, not
+	// tenant-scoped).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/collections/{collection_id}/pin (the `PatchCollectionPin` operationId).
+	PatchCollectionPinWithResponse(ctx context.Context, collectionId string, params *PatchCollectionPinParams, body PatchCollectionPinJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchCollectionPinHTTPResp, error)
 
 	// InsertRecordsWithBodyWithResponse Insert or upsert ProximaRecord batches.
 	//
@@ -13630,6 +15034,75 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
 	IngestMetricsWithResponse(ctx context.Context, namespace string, params *IngestMetricsParams, body IngestMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestMetricsHTTPResp, error)
+
+	// ListPrimaryPodsWithResponse List every primary-pod binding (all tenants).
+	//
+	// Cross-tenant operator view — the registry is keyed by
+	// (tenant_id, collection_id).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/primary-pod (the `ListPrimaryPods` operationId).
+	ListPrimaryPodsWithResponse(ctx context.Context, params *ListPrimaryPodsParams, reqEditors ...RequestEditorFn) (*ListPrimaryPodsHTTPResp, error)
+
+	// DeletePrimaryPodWithResponse Unassign a (tenant, collection)'s primary pod.
+	//
+	// 200 always; `removed` distinguishes an actual removal from a
+	// no-op. Catalog-mirror policy is the same as PUT (logged, not
+	// fatal).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the `tenant_id` PATH segment governs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/primary-pod/{tenant_id}/{collection_id} (the `DeletePrimaryPod` operationId).
+	DeletePrimaryPodWithResponse(ctx context.Context, tenantId string, collectionId string, params *DeletePrimaryPodParams, reqEditors ...RequestEditorFn) (*DeletePrimaryPodHTTPResp, error)
+
+	// GetPrimaryPodWithResponse Look up a (tenant, collection)'s primary pod.
+	//
+	// 200 with `status: "bound"` + the assignment when one exists;
+	// 200 with `status: "unbound"` when none does (never 404).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the `tenant_id` PATH segment governs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/primary-pod/{tenant_id}/{collection_id} (the `GetPrimaryPod` operationId).
+	GetPrimaryPodWithResponse(ctx context.Context, tenantId string, collectionId string, params *GetPrimaryPodParams, reqEditors ...RequestEditorFn) (*GetPrimaryPodHTTPResp, error)
+
+	// PutPrimaryPodWithBodyWithResponse Assign a (tenant, collection)'s primary pod.
+	//
+	// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+	// cross-tenant placement and drive WAL write routing. The
+	// assignment is mirrored to the catalog; a mirror failure is
+	// logged and counted but does NOT fail the request (PUT-success
+	// means the binding is in effect for routing; the catalog
+	// reconciles on the next write).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the `tenant_id` PATH segment governs.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/primary-pod/{tenant_id}/{collection_id} (the `PutPrimaryPod` operationId).
+	PutPrimaryPodWithBodyWithResponse(ctx context.Context, tenantId string, collectionId string, params *PutPrimaryPodParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPrimaryPodHTTPResp, error)
+
+	// PutPrimaryPodWithResponse Assign a (tenant, collection)'s primary pod.
+	//
+	// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+	// cross-tenant placement and drive WAL write routing. The
+	// assignment is mirrored to the catalog; a mirror failure is
+	// logged and counted but does NOT fail the request (PUT-success
+	// means the binding is in effect for routing; the catalog
+	// reconciles on the next write).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the `tenant_id` PATH segment governs.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/primary-pod/{tenant_id}/{collection_id} (the `PutPrimaryPod` operationId).
+	PutPrimaryPodWithResponse(ctx context.Context, tenantId string, collectionId string, params *PutPrimaryPodParams, body PutPrimaryPodJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPrimaryPodHTTPResp, error)
 
 	// ExecuteQueryWithBodyWithResponse Execute AQL or UQL through the shared query facade.
 	//
@@ -14771,6 +16244,88 @@ func (r CreateCollectionHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListCollectionAffinitiesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AffinityListResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCollectionAffinitiesHTTPResp) GetJSON200() *AffinityListResponse {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCollectionAffinitiesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCollectionAffinitiesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCollectionAffinitiesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCollectionAffinitiesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListCollectionPinsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PinListResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCollectionPinsHTTPResp) GetJSON200() *PinListResponse {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCollectionPinsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCollectionPinsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCollectionPinsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCollectionPinsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type DeleteCollectionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14861,6 +16416,88 @@ func (r GetCollectionHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetCollectionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteCollectionAffinityHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AffinityDeleteResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteCollectionAffinityHTTPResp) GetJSON200() *AffinityDeleteResponse {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteCollectionAffinityHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteCollectionAffinityHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteCollectionAffinityHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteCollectionAffinityHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCollectionAffinityHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AffinityResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCollectionAffinityHTTPResp) GetJSON200() *AffinityResponse {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCollectionAffinityHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCollectionAffinityHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCollectionAffinityHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCollectionAffinityHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -15136,6 +16773,88 @@ func (r GetEntityV2HTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetEntityV2HTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCollectionPinHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PinResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCollectionPinHTTPResp) GetJSON200() *PinResponse {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCollectionPinHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCollectionPinHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCollectionPinHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCollectionPinHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchCollectionPinHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PinResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchCollectionPinHTTPResp) GetJSON200() *PinResponse {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchCollectionPinHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchCollectionPinHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchCollectionPinHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchCollectionPinHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -17181,6 +18900,226 @@ func (r IngestMetricsHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListPrimaryPodsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrimaryPodListResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *PodUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *PodForbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPrimaryPodsHTTPResp) GetJSON200() *PrimaryPodListResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListPrimaryPodsHTTPResp) GetJSON401() *PodUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListPrimaryPodsHTTPResp) GetJSON403() *PodForbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPrimaryPodsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPrimaryPodsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPrimaryPodsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPrimaryPodsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePrimaryPodHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrimaryPodUnassignResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *PodUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *PodForbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeletePrimaryPodHTTPResp) GetJSON200() *PrimaryPodUnassignResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeletePrimaryPodHTTPResp) GetJSON401() *PodUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeletePrimaryPodHTTPResp) GetJSON403() *PodForbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePrimaryPodHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePrimaryPodHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePrimaryPodHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePrimaryPodHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPrimaryPodHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrimaryPodLookupResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *PodUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *PodForbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPrimaryPodHTTPResp) GetJSON200() *PrimaryPodLookupResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetPrimaryPodHTTPResp) GetJSON401() *PodUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetPrimaryPodHTTPResp) GetJSON403() *PodForbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPrimaryPodHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPrimaryPodHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPrimaryPodHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPrimaryPodHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PutPrimaryPodHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrimaryPodAssignResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *PodUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *PodForbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PutPrimaryPodHTTPResp) GetJSON200() *PrimaryPodAssignResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutPrimaryPodHTTPResp) GetJSON401() *PodUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutPrimaryPodHTTPResp) GetJSON403() *PodForbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r PutPrimaryPodHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutPrimaryPodHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutPrimaryPodHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutPrimaryPodHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ExecuteQueryHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -17936,6 +19875,42 @@ func (c *ClientWithResponses) CreateCollectionWithResponse(ctx context.Context, 
 	return ParseCreateCollectionHTTPResp(rsp)
 }
 
+// ListCollectionAffinitiesWithResponse List every cache-affinity entry on this node.
+//
+// Sorted by collection_id; includes stale entries so operators
+// can see which collections went cold.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/collections/affinity (the `ListCollectionAffinities` operationId).
+func (c *ClientWithResponses) ListCollectionAffinitiesWithResponse(ctx context.Context, params *ListCollectionAffinitiesParams, reqEditors ...RequestEditorFn) (*ListCollectionAffinitiesHTTPResp, error) {
+	rsp, err := c.ListCollectionAffinities(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCollectionAffinitiesHTTPResp(rsp)
+}
+
+// ListCollectionPinsWithResponse List every pinned collection.
+//
+// Operator-dashboard view of all currently pinned collections
+// (cross-tenant — the registry is collection-keyed).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/collections/pinning (the `ListCollectionPins` operationId).
+func (c *ClientWithResponses) ListCollectionPinsWithResponse(ctx context.Context, params *ListCollectionPinsParams, reqEditors ...RequestEditorFn) (*ListCollectionPinsHTTPResp, error) {
+	rsp, err := c.ListCollectionPins(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCollectionPinsHTTPResp(rsp)
+}
+
 // DeleteCollectionWithResponse Delete a collection.
 //
 // Delete a collection by ID/name. This v2 route keeps SDK lifecycle methods on
@@ -17979,6 +19954,46 @@ func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, col
 		return nil, err
 	}
 	return ParseGetCollectionHTTPResp(rsp)
+}
+
+// DeleteCollectionAffinityWithResponse Drop this node's cache-affinity entry for a collection.
+//
+// Invalidates the affinity hint so routing re-evaluates on the
+// next query. 200 always; `dropped` distinguishes an actual
+// removal from a no-op.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/collections/{collection_id}/affinity (the `DeleteCollectionAffinity` operationId).
+func (c *ClientWithResponses) DeleteCollectionAffinityWithResponse(ctx context.Context, collectionId string, params *DeleteCollectionAffinityParams, reqEditors ...RequestEditorFn) (*DeleteCollectionAffinityHTTPResp, error) {
+	rsp, err := c.DeleteCollectionAffinity(ctx, collectionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteCollectionAffinityHTTPResp(rsp)
+}
+
+// GetCollectionAffinityWithResponse Read this node's cache-affinity entry for a collection.
+//
+// Returns `status: "affinitized"` (with query count, age, and a
+// `stale` flag) when an entry exists — including stale entries,
+// so operators can see which collections went cold — and
+// `status: "not_affinitized"` when there is no entry at all.
+// Routing has already stopped using stale entries.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the affinity registry is per-node, collection-keyed).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/collections/{collection_id}/affinity (the `GetCollectionAffinity` operationId).
+func (c *ClientWithResponses) GetCollectionAffinityWithResponse(ctx context.Context, collectionId string, params *GetCollectionAffinityParams, reqEditors ...RequestEditorFn) (*GetCollectionAffinityHTTPResp, error) {
+	rsp, err := c.GetCollectionAffinity(ctx, collectionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCollectionAffinityHTTPResp(rsp)
 }
 
 // IngestDocumentsWithBodyWithResponse Ingest documents for native server-side embedding.
@@ -18075,6 +20090,67 @@ func (c *ClientWithResponses) GetEntityV2WithResponse(ctx context.Context, colle
 		return nil, err
 	}
 	return ParseGetEntityV2HTTPResp(rsp)
+}
+
+// GetCollectionPinWithResponse Read a collection's pin state.
+//
+// 200 with `status: "pinned"` + state when pinned; 200 with
+// `status: "unpinned"` when not pinned.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the pin registry is collection-keyed, not
+// tenant-scoped).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/collections/{collection_id}/pin (the `GetCollectionPin` operationId).
+func (c *ClientWithResponses) GetCollectionPinWithResponse(ctx context.Context, collectionId string, params *GetCollectionPinParams, reqEditors ...RequestEditorFn) (*GetCollectionPinHTTPResp, error) {
+	rsp, err := c.GetCollectionPin(ctx, collectionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCollectionPinHTTPResp(rsp)
+}
+
+// PatchCollectionPinWithBodyWithResponse Set or clear a collection pin.
+//
+// Pins a collection to a physical medium (or unpins it). Returns
+// immediately with the new pin state; physical data movement
+// happens out of band — the access-pattern engine reads the
+// registry on its next evaluation.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the pin registry is collection-keyed, not
+// tenant-scoped).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/collections/{collection_id}/pin (the `PatchCollectionPin` operationId).
+func (c *ClientWithResponses) PatchCollectionPinWithBodyWithResponse(ctx context.Context, collectionId string, params *PatchCollectionPinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchCollectionPinHTTPResp, error) {
+	rsp, err := c.PatchCollectionPinWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchCollectionPinHTTPResp(rsp)
+}
+
+// PatchCollectionPinWithResponse Set or clear a collection pin.
+//
+// Pins a collection to a physical medium (or unpins it). Returns
+// immediately with the new pin state; physical data movement
+// happens out of band — the access-pattern engine reads the
+// registry on its next evaluation.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the pin registry is collection-keyed, not
+// tenant-scoped).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/collections/{collection_id}/pin (the `PatchCollectionPin` operationId).
+func (c *ClientWithResponses) PatchCollectionPinWithResponse(ctx context.Context, collectionId string, params *PatchCollectionPinParams, body PatchCollectionPinJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchCollectionPinHTTPResp, error) {
+	rsp, err := c.PatchCollectionPin(ctx, collectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchCollectionPinHTTPResp(rsp)
 }
 
 // InsertRecordsWithBodyWithResponse Insert or upsert ProximaRecord batches.
@@ -19226,6 +21302,105 @@ func (c *ClientWithResponses) IngestMetricsWithResponse(ctx context.Context, nam
 	return ParseIngestMetricsHTTPResp(rsp)
 }
 
+// ListPrimaryPodsWithResponse List every primary-pod binding (all tenants).
+//
+// Cross-tenant operator view — the registry is keyed by
+// (tenant_id, collection_id).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/primary-pod (the `ListPrimaryPods` operationId).
+func (c *ClientWithResponses) ListPrimaryPodsWithResponse(ctx context.Context, params *ListPrimaryPodsParams, reqEditors ...RequestEditorFn) (*ListPrimaryPodsHTTPResp, error) {
+	rsp, err := c.ListPrimaryPods(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPrimaryPodsHTTPResp(rsp)
+}
+
+// DeletePrimaryPodWithResponse Unassign a (tenant, collection)'s primary pod.
+//
+// 200 always; `removed` distinguishes an actual removal from a
+// no-op. Catalog-mirror policy is the same as PUT (logged, not
+// fatal).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the `tenant_id` PATH segment governs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/primary-pod/{tenant_id}/{collection_id} (the `DeletePrimaryPod` operationId).
+func (c *ClientWithResponses) DeletePrimaryPodWithResponse(ctx context.Context, tenantId string, collectionId string, params *DeletePrimaryPodParams, reqEditors ...RequestEditorFn) (*DeletePrimaryPodHTTPResp, error) {
+	rsp, err := c.DeletePrimaryPod(ctx, tenantId, collectionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePrimaryPodHTTPResp(rsp)
+}
+
+// GetPrimaryPodWithResponse Look up a (tenant, collection)'s primary pod.
+//
+// 200 with `status: "bound"` + the assignment when one exists;
+// 200 with `status: "unbound"` when none does (never 404).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the `tenant_id` PATH segment governs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/primary-pod/{tenant_id}/{collection_id} (the `GetPrimaryPod` operationId).
+func (c *ClientWithResponses) GetPrimaryPodWithResponse(ctx context.Context, tenantId string, collectionId string, params *GetPrimaryPodParams, reqEditors ...RequestEditorFn) (*GetPrimaryPodHTTPResp, error) {
+	rsp, err := c.GetPrimaryPod(ctx, tenantId, collectionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPrimaryPodHTTPResp(rsp)
+}
+
+// PutPrimaryPodWithBodyWithResponse Assign a (tenant, collection)'s primary pod.
+//
+// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+// cross-tenant placement and drive WAL write routing. The
+// assignment is mirrored to the catalog; a mirror failure is
+// logged and counted but does NOT fail the request (PUT-success
+// means the binding is in effect for routing; the catalog
+// reconciles on the next write).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the `tenant_id` PATH segment governs.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/primary-pod/{tenant_id}/{collection_id} (the `PutPrimaryPod` operationId).
+func (c *ClientWithResponses) PutPrimaryPodWithBodyWithResponse(ctx context.Context, tenantId string, collectionId string, params *PutPrimaryPodParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPrimaryPodHTTPResp, error) {
+	rsp, err := c.PutPrimaryPodWithBody(ctx, tenantId, collectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPrimaryPodHTTPResp(rsp)
+}
+
+// PutPrimaryPodWithResponse Assign a (tenant, collection)'s primary pod.
+//
+// Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+// cross-tenant placement and drive WAL write routing. The
+// assignment is mirrored to the catalog; a mirror failure is
+// logged and counted but does NOT fail the request (PUT-success
+// means the binding is in effect for routing; the catalog
+// reconciles on the next write).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the `tenant_id` PATH segment governs.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/primary-pod/{tenant_id}/{collection_id} (the `PutPrimaryPod` operationId).
+func (c *ClientWithResponses) PutPrimaryPodWithResponse(ctx context.Context, tenantId string, collectionId string, params *PutPrimaryPodParams, body PutPrimaryPodJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPrimaryPodHTTPResp, error) {
+	rsp, err := c.PutPrimaryPod(ctx, tenantId, collectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPrimaryPodHTTPResp(rsp)
+}
+
 // ExecuteQueryWithBodyWithResponse Execute AQL or UQL through the shared query facade.
 //
 // The canonical unified query surface: UQL (unified multi-modal), federated SQL
@@ -20173,6 +22348,58 @@ func ParseCreateCollectionHTTPResp(rsp *http.Response) (*CreateCollectionHTTPRes
 	return response, nil
 }
 
+// ParseListCollectionAffinitiesHTTPResp parses an HTTP response from a ListCollectionAffinitiesWithResponse call
+func ParseListCollectionAffinitiesHTTPResp(rsp *http.Response) (*ListCollectionAffinitiesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCollectionAffinitiesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AffinityListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListCollectionPinsHTTPResp parses an HTTP response from a ListCollectionPinsWithResponse call
+func ParseListCollectionPinsHTTPResp(rsp *http.Response) (*ListCollectionPinsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCollectionPinsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PinListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseDeleteCollectionHTTPResp parses an HTTP response from a DeleteCollectionWithResponse call
 func ParseDeleteCollectionHTTPResp(rsp *http.Response) (*DeleteCollectionHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -20233,6 +22460,58 @@ func ParseGetCollectionHTTPResp(rsp *http.Response) (*GetCollectionHTTPResp, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteCollectionAffinityHTTPResp parses an HTTP response from a DeleteCollectionAffinityWithResponse call
+func ParseDeleteCollectionAffinityHTTPResp(rsp *http.Response) (*DeleteCollectionAffinityHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteCollectionAffinityHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AffinityDeleteResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCollectionAffinityHTTPResp parses an HTTP response from a GetCollectionAffinityWithResponse call
+func ParseGetCollectionAffinityHTTPResp(rsp *http.Response) (*GetCollectionAffinityHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCollectionAffinityHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AffinityResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
@@ -20433,6 +22712,58 @@ func ParseGetEntityV2HTTPResp(rsp *http.Response) (*GetEntityV2HTTPResp, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCollectionPinHTTPResp parses an HTTP response from a GetCollectionPinWithResponse call
+func ParseGetCollectionPinHTTPResp(rsp *http.Response) (*GetCollectionPinHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCollectionPinHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PinResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchCollectionPinHTTPResp parses an HTTP response from a PatchCollectionPinWithResponse call
+func ParsePatchCollectionPinHTTPResp(rsp *http.Response) (*PatchCollectionPinHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchCollectionPinHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PinResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
@@ -21872,6 +24203,166 @@ func ParseIngestMetricsHTTPResp(rsp *http.Response) (*IngestMetricsHTTPResp, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPrimaryPodsHTTPResp parses an HTTP response from a ListPrimaryPodsWithResponse call
+func ParseListPrimaryPodsHTTPResp(rsp *http.Response) (*ListPrimaryPodsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPrimaryPodsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrimaryPodListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest PodUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest PodForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePrimaryPodHTTPResp parses an HTTP response from a DeletePrimaryPodWithResponse call
+func ParseDeletePrimaryPodHTTPResp(rsp *http.Response) (*DeletePrimaryPodHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePrimaryPodHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrimaryPodUnassignResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest PodUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest PodForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPrimaryPodHTTPResp parses an HTTP response from a GetPrimaryPodWithResponse call
+func ParseGetPrimaryPodHTTPResp(rsp *http.Response) (*GetPrimaryPodHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPrimaryPodHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrimaryPodLookupResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest PodUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest PodForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutPrimaryPodHTTPResp parses an HTTP response from a PutPrimaryPodWithResponse call
+func ParsePutPrimaryPodHTTPResp(rsp *http.Response) (*PutPrimaryPodHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutPrimaryPodHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrimaryPodAssignResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest PodUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest PodForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 

@@ -1329,6 +1329,192 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/collections/{collection_id}/pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a collection's pin state.
+         * @description 200 with `status: "pinned"` + state when pinned; 200 with
+         *     `status: "unpinned"` when not pinned.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (the pin registry is collection-keyed, not
+         *     tenant-scoped).
+         */
+        get: operations["getCollectionPin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set or clear a collection pin.
+         * @description Pins a collection to a physical medium (or unpins it). Returns
+         *     immediately with the new pin state; physical data movement
+         *     happens out of band — the access-pattern engine reads the
+         *     registry on its next evaluation.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (the pin registry is collection-keyed, not
+         *     tenant-scoped).
+         */
+        patch: operations["patchCollectionPin"];
+        trace?: never;
+    };
+    "/api/v2/collections/pinning": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every pinned collection.
+         * @description Operator-dashboard view of all currently pinned collections
+         *     (cross-tenant — the registry is collection-keyed).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler.
+         */
+        get: operations["listCollectionPins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/collections/{collection_id}/affinity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read this node's cache-affinity entry for a collection.
+         * @description Returns `status: "affinitized"` (with query count, age, and a
+         *     `stale` flag) when an entry exists — including stale entries,
+         *     so operators can see which collections went cold — and
+         *     `status: "not_affinitized"` when there is no entry at all.
+         *     Routing has already stopped using stale entries.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (the affinity registry is per-node, collection-keyed).
+         */
+        get: operations["getCollectionAffinity"];
+        put?: never;
+        post?: never;
+        /**
+         * Drop this node's cache-affinity entry for a collection.
+         * @description Invalidates the affinity hint so routing re-evaluates on the
+         *     next query. 200 always; `dropped` distinguishes an actual
+         *     removal from a no-op.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler.
+         */
+        delete: operations["deleteCollectionAffinity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/collections/affinity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every cache-affinity entry on this node.
+         * @description Sorted by collection_id; includes stale entries so operators
+         *     can see which collections went cold.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler.
+         */
+        get: operations["listCollectionAffinities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/primary-pod/{tenant_id}/{collection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant_id: string;
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Look up a (tenant, collection)'s primary pod.
+         * @description 200 with `status: "bound"` + the assignment when one exists;
+         *     200 with `status: "unbound"` when none does (never 404).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the `tenant_id` PATH segment governs.
+         */
+        get: operations["getPrimaryPod"];
+        /**
+         * Assign a (tenant, collection)'s primary pod.
+         * @description Operator-gated (SystemAdmin ∪ ConfigureSystem) — these expose
+         *     cross-tenant placement and drive WAL write routing. The
+         *     assignment is mirrored to the catalog; a mirror failure is
+         *     logged and counted but does NOT fail the request (PUT-success
+         *     means the binding is in effect for routing; the catalog
+         *     reconciles on the next write).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the `tenant_id` PATH segment governs.
+         */
+        put: operations["putPrimaryPod"];
+        post?: never;
+        /**
+         * Unassign a (tenant, collection)'s primary pod.
+         * @description 200 always; `removed` distinguishes an actual removal from a
+         *     no-op. Catalog-mirror policy is the same as PUT (logged, not
+         *     fatal).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the `tenant_id` PATH segment governs.
+         */
+        delete: operations["deletePrimaryPod"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/primary-pod": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every primary-pod binding (all tenants).
+         * @description Cross-tenant operator view — the registry is keyed by
+         *     (tenant_id, collection_id).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler.
+         */
+        get: operations["listPrimaryPods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3254,6 +3440,172 @@ export interface components {
             /** Format: int64 */
             updated_at_ms: number;
         };
+        /**
+         * @description Physical medium to pin to. `cloud` effectively means "do not
+         *     promote this collection" (an explicit unpin-in-spirit).
+         * @enum {string}
+         */
+        PinTarget: "memory" | "nvme_ssd" | "cloud";
+        /**
+         * @description Body for `PATCH /api/v2/collections/{collection_id}/pin`. Either
+         *     `{pinned: true, target: ..., replicas?: ...}` or `{pinned: false}`
+         *     (target/replicas ignored when unpinning; `target` is REQUIRED
+         *     when pinning — a plain-text 400 otherwise). `replicas` defaults
+         *     to 1.
+         */
+        PinRequest: {
+            pinned: boolean;
+            target?: components["schemas"]["PinTarget"] | null;
+            /** Format: uint32 */
+            replicas?: number | null;
+        };
+        /**
+         * @description Internally tagged by `status` (snake_case). `status: "pinned"`
+         *     carries `target`/`replicas`/`pinned_at_ns`; `status: "unpinned"`
+         *     carries `was_pinned` (true when the request removed an existing
+         *     pin — useful for audit logs; false on a no-op or read of an
+         *     unpinned collection).
+         */
+        PinResponse: {
+            /** @enum {string} */
+            status: "pinned" | "unpinned";
+            collection_id: string;
+            target?: components["schemas"]["PinTarget"] | null;
+            /** Format: uint32 */
+            replicas?: number | null;
+            /** Format: int64 */
+            pinned_at_ns?: number | null;
+            was_pinned?: boolean | null;
+        };
+        PinListItem: {
+            collection_id: string;
+            target: components["schemas"]["PinTarget"];
+            /** Format: uint32 */
+            replicas: number;
+            /** Format: int64 */
+            pinned_at_ns: number;
+        };
+        PinListResponse: {
+            /** Format: uint64 */
+            count: number;
+            items: components["schemas"]["PinListItem"][];
+        };
+        /**
+         * @description Internally tagged by `status` (snake_case). `status:
+         *     "affinitized"` carries the entry — including STALE entries
+         *     (routing already ignores them; `stale: true` flags them for the
+         *     operator) — with `query_count` (monotonic queries served while
+         *     this node held affinity) and `age_seconds` (seconds since the
+         *     last recorded query). `status: "not_affinitized"` means no
+         *     entry exists at all.
+         */
+        AffinityResponse: {
+            /** @enum {string} */
+            status: "affinitized" | "not_affinitized";
+            collection_id: string;
+            node_id?: string | null;
+            /** Format: uint64 */
+            query_count?: number | null;
+            /** Format: uint64 */
+            age_seconds?: number | null;
+            stale?: boolean | null;
+        };
+        /**
+         * @description `status` is always `"dropped"`; the `dropped` flag
+         *     distinguishes an actual removal from a no-op.
+         */
+        AffinityDeleteResponse: {
+            /** @enum {string} */
+            status: "dropped";
+            collection_id: string;
+            dropped: boolean;
+        };
+        AffinityListItem: {
+            collection_id: string;
+            node_id: string;
+            /** Format: uint64 */
+            query_count: number;
+            /** Format: uint64 */
+            age_seconds: number;
+            stale: boolean;
+        };
+        AffinityListResponse: {
+            /** Format: uint64 */
+            count: number;
+            items: components["schemas"]["AffinityListItem"][];
+        };
+        /**
+         * @description Why an assignment was made (locked vocabulary for dashboards /
+         *     EXPLAIN). `catalog_replay` = loaded from durable state at
+         *     restart, not freshly assigned.
+         * @enum {string}
+         */
+        AssignmentReason: "create" | "operator" | "failover" | "rebalance" | "catalog_replay";
+        PrimaryPod: {
+            /** @description Pod identifier (typically a k8s pod name); opaque. */
+            pod: string;
+            /**
+             * Format: int64
+             * @description Wall-clock nanoseconds when last set; reassignments advance it.
+             */
+            assigned_at_ns: number;
+            reason: components["schemas"]["AssignmentReason"];
+        };
+        /**
+         * @description Internally tagged by `status` (snake_case). `status: "bound"`
+         *     carries `primary`; `status: "unbound"` means no binding (never
+         *     a 404).
+         */
+        PrimaryPodLookupResponse: {
+            /** @enum {string} */
+            status: "bound" | "unbound";
+            tenant_id: string;
+            collection_id: string;
+            primary?: components["schemas"]["PrimaryPod"] | null;
+        };
+        /**
+         * @description Body for `PUT /api/v2/primary-pod/{tenant_id}/{collection_id}`.
+         *     `reason` defaults to `"operator"` when omitted.
+         */
+        PrimaryPodAssignRequest: {
+            pod: string;
+            reason?: components["schemas"]["AssignmentReason"];
+        };
+        PrimaryPodAssignResponse: {
+            tenant_id: string;
+            collection_id: string;
+            primary: components["schemas"]["PrimaryPod"];
+            /** @description The prior binding on re-assignment; null on first assignment. */
+            previous?: components["schemas"]["PrimaryPod"] | null;
+        };
+        PrimaryPodUnassignResponse: {
+            tenant_id: string;
+            collection_id: string;
+            /** @description True when a binding was actually removed; false when nothing was bound. */
+            removed: boolean;
+        };
+        PrimaryPodListItem: {
+            tenant_id: string;
+            collection_id: string;
+            primary: components["schemas"]["PrimaryPod"];
+        };
+        PrimaryPodListResponse: {
+            /** Format: uint64 */
+            count: number;
+            items: components["schemas"]["PrimaryPodListItem"][];
+        };
+        /**
+         * @description The FLAT error shape the primary-pod operator endpoints return
+         *     (`{error, message, code}`, `error` a short machine-readable
+         *     slug). Same convention as `AbacOperatorErrorResponse`; carried
+         *     as its own schema because the two handler families define the
+         *     type independently.
+         */
+        PrimaryPodOperatorErrorResponse: {
+            error: string;
+            message: string;
+            code: number;
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -3335,6 +3687,31 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["AbacOperatorErrorResponse"];
+            };
+        };
+        /**
+         * @description Missing auth context (401) — the request reached the handler
+         *     with no resolved principal (`error: "missing_auth_context"`).
+         */
+        PodUnauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["PrimaryPodOperatorErrorResponse"];
+            };
+        };
+        /**
+         * @description Authenticated but lacks `SystemAdmin` or `ConfigureSystem`
+         *     (`error: "operator_permission_required"`) — a cluster-scope
+         *     operator gate.
+         */
+        PodForbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["PrimaryPodOperatorErrorResponse"];
             };
         };
     };
@@ -5807,6 +6184,281 @@ export interface operations {
             401: components["responses"]["AbacUnauthorized"];
             403: components["responses"]["AbacForbidden"];
             503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    getCollectionPin: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current pin state (pinned or unpinned). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PinResponse"];
+                };
+            };
+        };
+    };
+    patchCollectionPin: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinRequest"];
+            };
+        };
+        responses: {
+            /** @description The resulting pin state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PinResponse"];
+                };
+            };
+            /**
+             * @description `pinned: true` without `target`. The body is PLAIN TEXT
+             *     (axum `(StatusCode, String)` error path), not JSON.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    listCollectionPins: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All pin entries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PinListResponse"];
+                };
+            };
+        };
+    };
+    getCollectionAffinity: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The affinity entry (or its absence). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AffinityResponse"];
+                };
+            };
+        };
+    };
+    deleteCollectionAffinity: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Drop outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AffinityDeleteResponse"];
+                };
+            };
+        };
+    };
+    listCollectionAffinities: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All affinity entries on this node. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AffinityListResponse"];
+                };
+            };
+        };
+    };
+    getPrimaryPod: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                tenant_id: string;
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The binding (bound or unbound). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrimaryPodLookupResponse"];
+                };
+            };
+            401: components["responses"]["PodUnauthorized"];
+            403: components["responses"]["PodForbidden"];
+        };
+    };
+    putPrimaryPod: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                tenant_id: string;
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrimaryPodAssignRequest"];
+            };
+        };
+        responses: {
+            /** @description The assignment (with the previous binding when re-assigning). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrimaryPodAssignResponse"];
+                };
+            };
+            401: components["responses"]["PodUnauthorized"];
+            403: components["responses"]["PodForbidden"];
+        };
+    };
+    deletePrimaryPod: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                tenant_id: string;
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unassign outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrimaryPodUnassignResponse"];
+                };
+            };
+            401: components["responses"]["PodUnauthorized"];
+            403: components["responses"]["PodForbidden"];
+        };
+    };
+    listPrimaryPods: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All bindings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrimaryPodListResponse"];
+                };
+            };
+            401: components["responses"]["PodUnauthorized"];
+            403: components["responses"]["PodForbidden"];
         };
     };
 }
