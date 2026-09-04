@@ -55,6 +55,9 @@ impl VectorAqlSource {
             SqlValueData::NumberValue(f) => AqlValue::Float(*f),
             SqlValueData::BoolValue(b) => AqlValue::Bool(*b),
             SqlValueData::BytesValue(b) => {
+                // Generic bytes may carry raw JSON from legacy producers — the
+                // heuristic stays; JSONB-declared fields (tag 9) are canonical
+                // MessagePack and decode through jsonb_to_json_lossy below.
                 if let Ok(json) = serde_json::from_slice(b) {
                     AqlValue::Jsonb(json)
                 } else {
@@ -65,11 +68,10 @@ impl VectorAqlSource {
             // BytesValue so a JSONB field is not silently nulled by the `_`
             // wildcard.
             SqlValueData::JsonbValue(b) => {
-                if let Ok(json) = serde_json::from_slice(b) {
-                    AqlValue::Jsonb(json)
-                } else {
-                    AqlValue::Null
-                }
+                // TD-PROTO-2: canonical MessagePack JSONB decode (the one
+                // sanctioned JSONB->JSON representation) — not a raw-JSON
+                // heuristic that diverges from the API-facing surfaces.
+                AqlValue::Jsonb(proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b))
             }
             SqlValueData::ObjectValue(obj) => {
                 let mut map = serde_json::Map::new();

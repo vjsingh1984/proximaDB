@@ -2,7 +2,7 @@
 //!
 //! The v1 proto packages are NOT code-generated: `build.rs` regenerates only the
 //! self-contained `proximadb.v2` package, and the v1 mirrors under
-//! `src/proto/*.v1.rs` (+ `src/ranking.rs`) are hand-maintained to protect
+//! The v1 mirrors (`crates/foundation/proximadb-proto/src/proto/*.v1.rs` + this crate's `src/ranking.rs`) are hand-maintained to protect
 //! hand-written serde impls. Nothing else checks that they still match the
 //! `.proto` sources — a field added to a proto but not to the mirror silently
 //! decodes to `None`/default on the binary wire, and a field added only to the
@@ -1367,8 +1367,11 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
 
     let mut inputs = vec![proto_root.join("proximadb/explain.proto")];
     let v1_dir = proto_root.join("proximadb/v1");
-    let mut v1_files: Vec<PathBuf> = std::fs::read_dir(&v1_dir)
-        .expect("read proto/proximadb/v1")
+    let Ok(v1_entries) = std::fs::read_dir(&v1_dir) else {
+        // proto/ absent (graceful-skip contract above): nothing to check.
+        return None;
+    };
+    let mut v1_files: Vec<PathBuf> = v1_entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "proto"))

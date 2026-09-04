@@ -142,6 +142,11 @@ jobs:
         with:
           filters: |
             rust:
+              # TD-PROTO-2 review: the v1-mirror drift guard (a #[cfg(test)]
+              # in proximadb-proto) runs ONLY in the rust lane — a proto-only
+              # change that forgets the hand-maintained v1 mirror must re-run
+              # it, so proto edits are rust-lane-visible.
+              - 'proto/**'
               - 'src/**'
               # Workspace members that `cargo` compiles, lints, and tests but that
               # the filter previously omitted — a crate-only or app-only change
