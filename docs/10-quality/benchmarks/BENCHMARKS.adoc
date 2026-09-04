@@ -314,5 +314,5 @@ Always benchmark with your own workload and hardware.
 
 * link:https://github.com/erikbern/ann-benchmarks/[ANN-Benchmarks]
 * link:https://github.com/qdrant/vector-db-benchmark[VectorDBBench]
-* link:/benchmarks/ENGINE_PERFORMANCE_BENCHMARK.adoc[Internal Technical Reports]
-* link:/PERFORMANCE.adoc[Performance Tuning Guide]
+* link:ENGINE_PERFORMANCE_BENCHMARK.adoc[Internal Technical Reports]
+* Performance Tuning Guide
