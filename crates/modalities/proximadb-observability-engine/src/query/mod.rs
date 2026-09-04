@@ -527,7 +527,7 @@ impl ObservabilityQueryEngine {
             // and made key:value attribute filters silently drop matching
             // logs — decode to compact JSON text (canonical representation).
             Some(Value::JsonbValue(b)) => {
-                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b).to_string()
+                proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(b)
             }
             Some(Value::NullValue(_)) => "null".to_string(),
             Some(Value::ArrayValue(_)) => "[array]".to_string(),

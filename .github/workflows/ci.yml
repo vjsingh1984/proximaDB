@@ -1597,6 +1597,12 @@ jobs:
           - test-type: doc
             args: "--doc"
             threads: 4
+    env:
+      # TD-PROTO-2: the v1-mirror conformance guard runs in this job (unit
+      # lane). Requiring protoc keeps a skip distinguishable from a pass —
+      # if the protobuf-compiler install ever quietly fails, the gate FAILS
+      # instead of disarming to green.
+      REQUIRE_PROTOC: "1"
     steps:
       - name: Reclaim disk space
         # ubuntu-latest ships ~25 GB of preinstalled toolchains this build never

@@ -96,11 +96,34 @@ impl DocumentBlock {
                 null_count: 0,
             };
 
+            // JSONB paths: track the running extremum by its rendered key so
+            // each document decodes+renders ONCE (comparing via
+            // compare_values would decode both sides on every step — O(B)
+            // decodes per stat instead of O(1) amortized).
+            let mut jsonb_min: Option<(SqlValue, String)> = None;
+            let mut jsonb_max: Option<(SqlValue, String)> = None;
+
             for (_, doc) in &documents {
                 if let Some(value) = Self::extract_path_value(doc, path) {
                     stats.count += 1;
                     if Self::is_null(&value) {
                         stats.null_count += 1;
+                    } else if let Some(
+                        crate::proto::proximadb_v1::sql_value::Value::JsonbValue(bytes),
+                    ) = &value.value
+                    {
+                        let key =
+                            proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(bytes);
+                        jsonb_min = Some(match jsonb_min.take() {
+                            None => (value.clone(), key.clone()),
+                            Some((mv, mk)) if mk <= key => (mv, mk),
+                            Some(_) => (value.clone(), key.clone()),
+                        });
+                        jsonb_max = Some(match jsonb_max.take() {
+                            None => (value.clone(), key.clone()),
+                            Some((mv, mk)) if mk >= key => (mv, mk),
+                            Some(_) => (value.clone(), key),
+                        });
                     } else {
                         // Update min/max
                         stats.min_value =
@@ -115,6 +138,13 @@ impl DocumentBlock {
                             ));
                     }
                 }
+            }
+
+            if let Some((value, _)) = jsonb_min {
+                stats.min_value = Some(value);
+            }
+            if let Some((value, _)) = jsonb_max {
+                stats.max_value = Some(value);
             }
 
             if stats.count > 0 {
@@ -279,8 +309,8 @@ impl DocumentBlock {
             // canonical rendering.
             (Some(SqlVal::JsonbValue(ja)), Some(SqlVal::JsonbValue(jb))) if ja == jb => 0,
             (Some(SqlVal::JsonbValue(ja)), Some(SqlVal::JsonbValue(jb))) => {
-                let ra = proximadb_data_model::ProximaValue::jsonb_to_json_lossy(ja).to_string();
-                let rb = proximadb_data_model::ProximaValue::jsonb_to_json_lossy(jb).to_string();
+                let ra = proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(ja);
+                let rb = proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(jb);
                 ra.cmp(&rb) as i32
             }
             (Some(SqlVal::BoolValue(ba)), Some(SqlVal::BoolValue(bb))) => ba.cmp(bb) as i32,

@@ -267,7 +267,7 @@ impl From<&proximadb_proto::proximadb_v1::SqlValue> for MetadataValue {
             // placeholder made structured comparisons always miss; decode
             // to the canonical JSON text instead.
             Some(Value::JsonbValue(b)) => MetadataValue::String(Arc::from(
-                crate::ProximaValue::jsonb_to_json_lossy(b).to_string(),
+                crate::ProximaValue::jsonb_to_json_string_lossy(b),
             )),
             None => MetadataValue::Null,
         }

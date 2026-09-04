@@ -482,9 +482,9 @@ impl SstTextColumnReader {
                         }
                         // TD-PROTO-2: JSONB decodes to compact JSON text
                         // instead of being dropped by the `_` wildcard.
-                        crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b) => Some(
-                            proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b).to_string(),
-                        ),
+                        crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b) => {
+                            Some(proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(b))
+                        }
                         _ => None,
                     })
                 })

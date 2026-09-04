@@ -649,7 +649,7 @@ impl TantivyLogIndex {
             // path matched. (No legacy-index concern: the variant became
             // producible in this change.)
             Some(SqlValueVariant::JsonbValue(b)) => {
-                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b).to_string()
+                proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(b)
             }
             Some(SqlValueVariant::ArrayValue(arr)) => arr
                 .values

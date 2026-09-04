@@ -78,11 +78,37 @@ impl std::error::Error for FilterEvalError {}
 /// * `metadata` - The record's metadata as a proto `SqlValue` map
 pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlValue>) -> bool {
     evaluate_filter_resolved(expr, &|field| {
-        metadata
-            .get(field)
-            .and_then(|sql_value| sql_value.value.as_ref())
-            .map(sql_val_to_json)
+        if let Some(sql_value) = metadata.get(field) {
+            return sql_value.value.as_ref().map(sql_val_to_json);
+        }
+        // Dot traversal for JSON(B) roots — mirrors `resolve_proxima_value`
+        // so the SqlValue and ProximaTree paths agree for nested fields:
+        // `memory.type` resolves inside JsonbValue({"memory":{"type":…}}).
+        let (head, tail) = field.split_once('.')?;
+        let root = match metadata.get(head)?.value.as_ref()? {
+            SqlVal::ObjectValue(obj) => obj_to_json(obj),
+            // Canonical JSONB decodes to the document; legacy tag-8 bytes
+            // stay opaque (pre-PR behavior).
+            SqlVal::JsonbValue(bytes) => ProximaValue::jsonb_to_json_lossy(bytes),
+            _ => return None,
+        };
+        tail.split('.')
+            .try_fold(root, |value, segment| match value {
+                serde_json::Value::Object(object) => object.get(segment).cloned(),
+                _ => None,
+            })
     })
+}
+
+/// Flatten a proto `SqlObject` to JSON for dot traversal.
+fn obj_to_json(obj: &proximadb_proto::proximadb_v1::SqlObject) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (k, v) in &obj.fields {
+        if let Some(inner) = v.value.as_ref() {
+            map.insert(k.clone(), sql_val_to_json(inner));
+        }
+    }
+    serde_json::Value::Object(map)
 }
 
 /// Lower a proto `SqlValue` payload to `serde_json::Value` so the wire/`SqlValue`
@@ -721,6 +747,33 @@ mod tests {
             sql_val_to_json(&SqlVal::JsonbValue(vec![0xc1])),
             serde_json::Value::String("c1".to_string())
         );
+    }
+
+    #[test]
+    fn jsonb_dot_path_filtering_matches_the_proxima_tree_semantics() {
+        // Round 5: the SqlValue path must dot-traverse JSON(B) roots exactly
+        // like `resolve_proxima_value` does on the ProximaTree path —
+        // otherwise the same data filters differently per engine.
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "payload".to_string(),
+            make_sql_value(SqlVal::JsonbValue(
+                ProximaValue::to_jsonb_vec(&json!({"memory": {"type": "fact"}})).unwrap(),
+            )),
+        );
+        let filter = FilterExpression::Comparison {
+            field: "payload.memory.type".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!("fact"),
+        };
+        assert!(evaluate_filter(&filter, &metadata));
+
+        let miss = FilterExpression::Comparison {
+            field: "payload.memory.type".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!("fiction"),
+        };
+        assert!(!evaluate_filter(&miss, &metadata));
     }
 
     fn proxima_array_props(field: &str, values: &[&str]) -> ProximaTree {

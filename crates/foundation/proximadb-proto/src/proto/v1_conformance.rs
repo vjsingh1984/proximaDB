@@ -122,9 +122,10 @@ struct MirrorModel {
     messages: BTreeMap<String, MirrorMessage>,
     oneofs: BTreeMap<String, MirrorOneof>,
     enums: BTreeMap<String, MirrorEnum>,
-    /// tonic service stubs: full service name → method names (from the
-    /// client mod; the server mod repeats the same SERVICE_NAME).
-    services: BTreeMap<String, BTreeSet<String>>,
+    /// tonic service stubs: full service name → method name → streaming
+    /// flavor (`unary` / `server_streaming` / `streaming`), from the client
+    /// mod (the server mod repeats the same SERVICE_NAME).
+    services: BTreeMap<String, BTreeMap<String, String>>,
     anomalies: Vec<String>,
 }
 
@@ -449,10 +450,13 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
     let mut open_impl: Option<(String, usize)> = None;
     let mut in_from_str_name = false;
     let mut in_as_str_name = false;
-    // tonic service method buffering: module path → `pub async fn` names.
-    let mut mod_async_fns: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // tonic service method buffering: module path → (`pub async fn` name,
+    // streaming flavor).
+    let mut mod_async_fns: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
 
-    for raw in source.lines() {
+    let source_lines: Vec<String> = source.lines().map(str::to_string).collect();
+    for (line_index, raw) in source_lines.iter().enumerate() {
+        let raw = raw.as_str();
         let line = raw.trim();
 
         // ---- attributes (accumulate until brackets balance) ----
@@ -496,10 +500,28 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
         {
             let name = name.trim();
             if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                // Streaming flavor: the client body calls exactly one of
+                // self.inner.unary / .server_streaming / .streaming — scan
+                // ahead to the first such call (both client-streaming and
+                // bidi render as `.streaming` on the client side).
+                let all: Vec<&str> = source_lines.iter().map(String::as_str).collect();
+                let flavor = all
+                    .iter()
+                    .skip(line_index + 1)
+                    .take(24)
+                    .find_map(|l| {
+                        ["unary", "server_streaming", "streaming"]
+                            .iter()
+                            .find_map(|f| {
+                                l.contains(&format!("self.inner.{f}"))
+                                    .then(|| f.to_string())
+                            })
+                    })
+                    .unwrap_or_default();
                 mod_async_fns
                     .entry(module_key(&modules))
                     .or_default()
-                    .insert(name.to_string());
+                    .insert(name.to_string(), flavor);
             }
             continue;
         }
@@ -817,8 +839,8 @@ struct DescIndex {
     messages: BTreeMap<String, DescMessage>,
     /// (wire value name, number) per enum.
     enums: BTreeMap<String, Vec<(String, i32)>>,
-    /// Declared services: full name → method names.
-    services: BTreeMap<String, Vec<String>>,
+    /// Declared services: full name → (method name, streaming flavor).
+    services: BTreeMap<String, Vec<(String, String)>>,
 }
 
 fn kind_of(ty: &Type) -> Option<&'static str> {
@@ -997,7 +1019,24 @@ fn build_desc_index(files: &[FileDescriptorProto]) -> DescIndex {
         let package = file.package.clone().unwrap_or_default();
         for svc in &file.service {
             let name = format!("{package}.{}", svc.name.clone().unwrap_or_default());
-            let methods = svc.method.iter().filter_map(|m| m.name.clone()).collect();
+            let methods = svc
+                .method
+                .iter()
+                .filter_map(|m| {
+                    let name = m.name.clone()?;
+                    // Client-streaming and bidi both render `.streaming` on
+                    // the tonic client side, so they share one flavor bucket.
+                    let flavor = match (
+                        m.client_streaming.unwrap_or(false),
+                        m.server_streaming.unwrap_or(false),
+                    ) {
+                        (false, false) => "unary",
+                        (false, true) => "server_streaming",
+                        (true, _) => "streaming",
+                    };
+                    Some((name, flavor.to_string()))
+                })
+                .collect();
             index.services.insert(name, methods);
         }
         for en in &file.enum_type {
@@ -1117,12 +1156,13 @@ impl Comparer {
     }
 
     /// gRPC service stubs are consumer-facing surface: a deleted or
-    /// never-written stub (or a proto rpc with no mirror method) must fail
-    /// the gate, not surface as a downstream compile break.
+    /// never-written stub (or a proto rpc with no mirror method, or a stub
+    /// with the wrong streaming flavor) must fail the gate, not surface as a
+    /// downstream compile break.
     fn compare_services(&mut self, desc: &DescIndex, mirror: &MirrorModel) {
         for (name, dmethods) in &desc.services {
             // tonic renders rpc `AppendEntries` as fn `append_entries`.
-            let dset: BTreeSet<String> = dmethods.iter().map(|m| snake(m)).collect();
+            let dset: BTreeSet<String> = dmethods.iter().map(|(m, _)| snake(m)).collect();
             match mirror.services.get(name) {
                 None => self.record(
                     "(services)",
@@ -1131,7 +1171,7 @@ impl Comparer {
                     ),
                 ),
                 Some(mmethods) => {
-                    let mset: BTreeSet<&String> = mmethods.iter().collect();
+                    let mset: BTreeSet<&String> = mmethods.keys().collect();
                     let mset_owned: BTreeSet<String> =
                         mset.iter().map(|s| (*s).clone()).collect();
                     for missing in dset.difference(&mset_owned) {
@@ -1143,8 +1183,25 @@ impl Comparer {
                     for invented in mset_owned.difference(&dset) {
                         self.record(
                             "(services)",
-                            format!("service {name:?}: mirror method {invented:?} not declared in proto"),
+                            format!(
+                                "service {name:?}: mirror method {invented:?} not declared in proto"
+                            ),
                         );
+                    }
+                    // Streaming flavor: a hand-splice that renders a
+                    // streaming rpc as unary truncates/hangs the call.
+                    for (dmethod, dflavor) in dmethods {
+                        if let Some(mflavor) = mmethods.get(&snake(dmethod))
+                            && !mflavor.is_empty()
+                            && mflavor != dflavor
+                        {
+                            self.record(
+                                "(services)",
+                                format!(
+                                    "service {name:?}: rpc {dmethod:?} streaming flavor mismatch mirror {mflavor:?} vs proto {dflavor:?}"
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -1525,6 +1582,23 @@ impl Comparer {
 // protoc driver + entry point
 // ---------------------------------------------------------------------------
 
+/// The one skip arm: a missing protoc degrades to SKIP only on developer
+/// machines. Under `REQUIRE_PROTOC=1` (set by CI's unit-test job) the same
+/// condition FAILS, so the gate can never silently disarm where it is the
+/// only drift check — a skip and a pass stay distinguishable.
+fn skip_protoc_absent() -> Option<Vec<u8>> {
+    let message = "SKIP: protoc not found — TD-PROTO-2 mirror conformance check \
+         did not run. Install protobuf-compiler (or set PROTOC).";
+    if std::env::var_os("REQUIRE_PROTOC").is_some() {
+        panic!(
+            "TD-PROTO-2: protoc is REQUIRED here (REQUIRE_PROTOC=1) but not available — \
+                the conformance gate refuses to silently disarm. {message}"
+        );
+    }
+    eprintln!("{message}");
+    None
+}
+
 fn compile_descriptor_set() -> Option<Vec<u8>> {
     // Probe protoc BEFORE touching the repository tree so the documented
     // graceful skip holds even where proto/ is absent (e.g. a published crate
@@ -1533,11 +1607,7 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     match Command::new(&protoc).arg("--version").output() {
         Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "SKIP: protoc not found (PROTOC unset) — TD-PROTO-2 mirror conformance check \
-                 did not run. CI installs protobuf-compiler, so this gates there."
-            );
-            return None;
+            return skip_protoc_absent();
         }
         Err(err) => panic!("failed to spawn protoc: {err}"),
     }
@@ -1580,11 +1650,7 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     {
         Ok(output) => output,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "SKIP: protoc not found (PROTOC unset) — TD-PROTO-2 mirror conformance check \
-                 did not run. CI installs protobuf-compiler, so this gates there."
-            );
-            return None;
+            return skip_protoc_absent();
         }
         Err(err) => panic!("failed to spawn protoc: {err}"),
     };

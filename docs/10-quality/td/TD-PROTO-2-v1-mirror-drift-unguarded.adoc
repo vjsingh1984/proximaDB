@@ -239,6 +239,34 @@ findings and dispositions:
   parser now records and compares normalized message targets as well. The
   full zero-drift descriptor census remains green.
 
+**Round 6 (high effort, 2026-09-04) — 10 findings, 7 fixed, 3 dispositioned
+(conventions angle clean):**
+
+* Fixed: the last missed wildcard — the native Volcano vector-search
+  executor's metadata→JSON match rendered JSONB as SQL NULL in projections.
+  The SqlValue filter path now dot-traverses JSON(B) roots (`memory.type`
+  resolves inside a JsonbValue document) exactly like its ProximaTree twin,
+  pinned by `jsonb_dot_path_filtering_matches_the_proxima_tree_semantics`.
+* Fixed (guard): plain MESSAGE-field payload types are now compared (Rust
+  type text vs descriptor type_name; wrapped/map types conservatively
+  skipped); rpc STREAMING FLAVOR is compared (a hand-splice rendering a
+  streaming rpc as unary fails the gate; client/bidi share the client-side
+  `.streaming` bucket); and the gate can no longer silently disarm — under
+  `REQUIRE_PROTOC=1` (now set by CI's unit lane) a missing protoc FAILS
+  instead of skipping, keeping skip and pass distinguishable.
+* Fixed (efficiency): document-block min/max stats track the running JSONB
+  extremum by its rendered key (each document decodes once, not per
+  comparison); `jsonb_to_json_string_lossy` is the named seam for the ~10
+  string-only consumers (future direct MessagePack→text transcoder drops
+  in there).
+* Dispositioned: `full_precision_rank`'s two deliberate deltas vs the old
+  serde detour (Int64 precision preserved; NaN/∞ → unset instead of 0) are
+  now documented in the code — latent until that pipeline gains a live
+  constructor; the RankService/GraphService stubs are contract surface —
+  wiring them to the existing inherent impls (`rank_service.rs`) is tracked
+  follow-up; `valid_jsonb_bytes`'s single-authority consolidation (kernel
+  home) rides with the shared-converter follow-up.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

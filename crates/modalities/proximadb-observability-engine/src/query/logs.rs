@@ -503,7 +503,7 @@ impl LogAggregator {
             // byte-length placeholder collapsed distinct documents into
             // length buckets.
             Some(Value::JsonbValue(b)) => {
-                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b).to_string()
+                proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(b)
             }
             Some(Value::ArrayValue(arr)) => format!("<array:{}>", arr.values.len()),
             Some(Value::ObjectValue(obj)) => format!("<object:{}>", obj.fields.len()),

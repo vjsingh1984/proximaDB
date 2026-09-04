@@ -317,7 +317,7 @@ fn record_to_point(record: VectorRecord) -> TsPoint {
             Some(sql_value::Value::JsonbValue(b)) => {
                 tags.insert(
                     k,
-                    proximadb_data_model::ProximaValue::jsonb_to_json_lossy(&b).to_string(),
+                    proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(&b),
                 );
             }
             _ => {}

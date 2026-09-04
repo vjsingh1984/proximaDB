@@ -726,6 +726,14 @@ impl ProximaValue {
             Err(_) => Self::Binary(slice.to_vec()),
         }
     }
+
+    /// The string form of [`Self::jsonb_to_json_lossy`] for string-only
+    /// consumers (index text, group-by keys, tag rendering) — the seam where
+    /// a future direct MessagePack→text transcoder drops in without touching
+    /// call sites.
+    pub fn jsonb_to_json_string_lossy(slice: &[u8]) -> String {
+        Self::jsonb_to_json_lossy(slice).to_string()
+    }
 }
 
 #[cfg(test)]

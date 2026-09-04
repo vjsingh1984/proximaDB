@@ -608,7 +608,7 @@ pub fn sql_values_to_metadata_items(
                 // with the sibling map fn), not a byte-length placeholder.
                 Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b)) => Some(
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        proximadb_data_model::ProximaValue::jsonb_to_json_lossy(&b).to_string(),
+                        proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(&b),
                     ),
                 ),
                 Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => None,
