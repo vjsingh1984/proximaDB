@@ -232,10 +232,17 @@ impl Drop for LiveServer {
 }
 
 async fn connect(server: &LiveServer, subject: &str) -> PgClient {
-    let (client, connection) =
-        tokio_postgres::connect(&server.pg_conn_str(subject), tokio_postgres::NoTls)
-            .await
-            .unwrap_or_else(|error| panic!("connect {subject}: {error}"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let (client, connection) = loop {
+        match tokio_postgres::connect(&server.pg_conn_str(subject), tokio_postgres::NoTls).await {
+            Ok(connection) => break connection,
+            Err(error) if std::time::Instant::now() < deadline => {
+                sleep(Duration::from_millis(100)).await;
+                tracing::debug!(%error, %subject, "waiting for pgwire listener");
+            }
+            Err(error) => panic!("connect {subject}: {error}"),
+        }
+    };
     tokio::spawn(async move {
         if let Err(error) = connection.await {
             eprintln!("pgwire connection error: {error}");
