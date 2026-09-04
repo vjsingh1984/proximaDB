@@ -4,26 +4,6 @@
  */
 
 export interface paths {
-    "/api/v2/_meta/capabilities": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Negotiate server capabilities.
-         * @description Advertises API version, supported features, limits, and the error- envelope contract so SDKs can adapt instead of hard-coding assumptions.
-         */
-        get: operations["getCapabilities"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/collections": {
         parameters: {
             query?: never;
@@ -380,123 +360,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/document-collections": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List document collections. */
-        get: operations["listDocumentCollections"];
-        put?: never;
-        /** Create a document collection. */
-        post: operations["createDocumentCollection"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/document-collections/{collection}/documents": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                collection: string;
-            };
-            cookie?: never;
-        };
-        /** Query documents. */
-        get: operations["queryDocuments"];
-        put?: never;
-        /** Insert a document. */
-        post: operations["insertDocument"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List graph collections. */
-        get: operations["listGraphs"];
-        put?: never;
-        /** Create a graph collection. */
-        post: operations["createGraph"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs/{graph_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        /** Get a graph collection by id. */
-        get: operations["getGraph"];
-        put?: never;
-        post?: never;
-        /** Delete a graph collection. */
-        delete: operations["deleteGraph"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs/{graph_id}/edges": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create an edge in a graph. */
-        post: operations["createEdge"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs/{graph_id}/edges/batch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create multiple edges in a single call.
-         * @description Batch counterpart to `createEdge`.
-         */
-        post: operations["batchCreateEdges"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/graphs/{graph_id}/fusion-search": {
         parameters: {
             query?: never;
@@ -528,141 +391,6 @@ export interface paths {
          *     server-side baseline for the embedded-parity gate; mirrors `GraphOperationsService::impact_analysis`.
          */
         post: operations["impact_analysis_v2"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs/{graph_id}/nodes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create a node in a graph. */
-        post: operations["createNode"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs/{graph_id}/nodes/batch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create multiple nodes in a single call.
-         * @description Batch counterpart to `createNode`. Use this on bulk-ingest paths
-         *     where individual round-trips would dominate latency.
-         */
-        post: operations["batchCreateNodes"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs/{graph_id}/nodes/{node_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-                node_id: components["parameters"]["NodeId"];
-            };
-            cookie?: never;
-        };
-        /** Get a node by id. */
-        get: operations["getNode"];
-        put?: never;
-        post?: never;
-        /** Delete a node by id. */
-        delete: operations["deleteNode"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs/{graph_id}/stats": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        /** Get graph statistics. */
-        get: operations["getGraphStats"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/graphs/{graph_id}/traverse": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Traverse a graph from a start node. */
-        post: operations["traverseGraph"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/hybrid/index": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Index documents for BM25 full-text search. */
-        post: operations["hybridIndex"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/hybrid/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** BM25 + vector hybrid (fusion) search. */
-        post: operations["hybridSearch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -727,44 +455,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["resolveModelAlias"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/observability/namespaces/{namespace}/logs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                namespace: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Ingest a log entry. */
-        post: operations["ingestLog"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/observability/namespaces/{namespace}/logs/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                namespace: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Query logs. */
-        post: operations["queryLogs"];
         delete?: never;
         options?: never;
         head?: never;
@@ -886,6 +576,442 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/_meta/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Negotiate server capabilities.
+         * @description Advertises API version, supported features, limits, and the error- envelope contract so SDKs can adapt instead of hard-coding assumptions.
+         */
+        get: operations["getCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List graph collections. */
+        get: operations["listGraphs"];
+        put?: never;
+        /** Create a graph collection. */
+        post: operations["createGraph"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        /** Get a graph collection by id. */
+        get: operations["getGraph"];
+        put?: never;
+        post?: never;
+        /** Delete a graph collection. */
+        delete: operations["deleteGraph"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a node in a graph. */
+        post: operations["createNode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/nodes/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                node_id: components["parameters"]["NodeId"];
+            };
+            cookie?: never;
+        };
+        /** Get a node by id. */
+        get: operations["getNode"];
+        put?: never;
+        post?: never;
+        /** Delete a node by id. */
+        delete: operations["deleteNode"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/edges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create an edge in a graph. */
+        post: operations["createEdge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/nodes/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create multiple nodes in a single call.
+         * @description Batch counterpart to `createNode`. Use this on bulk-ingest paths
+         *     where individual round-trips would dominate latency.
+         */
+        post: operations["batchCreateNodes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/edges/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create multiple edges in a single call.
+         * @description Batch counterpart to `createEdge`.
+         */
+        post: operations["batchCreateEdges"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/traverse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Traverse a graph from a start node. */
+        post: operations["traverseGraph"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        /** Get graph statistics. */
+        get: operations["getGraphStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/hybrid/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** BM25 + vector hybrid (fusion) search. */
+        post: operations["hybridSearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/hybrid/index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Index documents for BM25 full-text search. */
+        post: operations["hybridIndex"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/document-collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List document collections. */
+        get: operations["listDocumentCollections"];
+        put?: never;
+        /** Create a document collection. */
+        post: operations["createDocumentCollection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/document-collections/{collection}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        /** Query documents. */
+        get: operations["queryDocuments"];
+        put?: never;
+        /** Insert a document. */
+        post: operations["insertDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest a log entry. */
+        post: operations["ingestLog"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/logs/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query logs. */
+        post: operations["queryLogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an observability namespace.
+         * @description Creates a namespace for log/metric/trace data with tiered retention.
+         *     Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+         *     365 days server-side.
+         */
+        post: operations["createObservabilityNamespace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/logs/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest a batch of log entries. */
+        post: operations["ingestLogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest a single metric sample. */
+        post: operations["ingestMetric"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/metrics/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest a batch of metric samples. */
+        post: operations["ingestMetrics"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/observability/namespaces/{namespace}/metrics/aggregate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aggregate a metric over a time range.
+         * @description Aggregation defaults to `avg` with a 60-second step. Results are
+         *     grouped by `group_by` label names and filtered by exact `labels` match.
+         */
+        post: operations["aggregateMetrics"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/nl/translate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Translate natural language to a query (AV-SQL).
+         * @description Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+         *     over the configured LLM (`config.llm`) and returns the normalized
+         *     query, the agent-selected views, and the final composed query string.
+         *     Requires the LLM integration to be configured; the result is
+         *     model-generated — validate before execution.
+         */
+        post: operations["translateNaturalLanguage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -899,69 +1025,24 @@ export interface components {
             /** @description Command-shaped mutation; whole-registry replacement is intentionally unsupported. */
             mutation: components["schemas"]["CatalogModelRegistryMutation"];
         };
-        /** @description Body for `POST /api/v2/graphs/{id}/edges/batch`. */
-        BatchCreateEdgesRequest: {
-            edges: components["schemas"]["EdgeInput"][];
-        };
-        /** @description Body for `POST /api/v2/graphs/{id}/nodes/batch`. */
-        BatchCreateNodesRequest: {
-            nodes: components["schemas"]["NodeInput"][];
-        };
-        /** @description Server returns a `GraphResponse<BatchResults<Edge>>` envelope. */
-        BatchEdgesResponse: {
-            data?: {
-                count?: number;
-                results?: components["schemas"]["EdgeResponse"][];
-            } & {
-                [key: string]: unknown;
-            };
-            success?: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description Server returns a `GraphResponse<BatchResults<Node>>` envelope. */
-        BatchNodesResponse: {
-            data?: {
-                count?: number;
-                results?: components["schemas"]["NodeResponse"][];
-            } & {
-                [key: string]: unknown;
-            };
-            success?: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        CapabilitiesResponse: {
-            api_version?: string;
-            error_envelope?: {
-                [key: string]: unknown;
-            };
-            features?: string[];
-            limits?: {
-                [key: string]: unknown;
-            };
-            surface?: string;
-        } & {
-            [key: string]: unknown;
-        };
         /** @description Content-addressed reference to bytes held outside xCatalog. */
         CatalogArtifactDescriptor: {
+            uri: string;
             digest: string;
-            media_type: string;
             /** Format: int64 */
             size_bytes: number;
-            uri: string;
+            media_type: string;
         };
         /** @description Mutable serving intent that always resolves to an immutable version/digest. */
         CatalogDeploymentBinding: {
-            artifact_digest: string;
-            endpoint: string;
             name: string;
-            runtime: string;
-            /** Format: int64 */
-            updated_at_ms: number;
             /** Format: int64 */
             version: number;
+            artifact_digest: string;
+            runtime: string;
+            endpoint: string;
+            /** Format: int64 */
+            updated_at_ms: number;
         };
         CatalogDimensionPolicy: "fixed" | "discrete" | {
             range: components["schemas"]["CatalogDimensionRange"];
@@ -972,95 +1053,95 @@ export interface components {
         };
         /** @description Exact rendered-input and tokenizer budget consumed by an embedding runtime. */
         CatalogEmbeddingInputContract: {
+            model_revision: string;
+            tokenizer_id: string;
+            tokenizer_revision: string;
+            tokenizer_fingerprint: string;
             /** Format: int32 */
             declared_context_limit: number;
+            /** Format: int32 */
+            effective_context_limit: number;
+            /** Format: int32 */
+            special_token_count: number;
+            document_template: string;
+            query_template: string;
             document_parameters?: {
                 [key: string]: string;
             };
-            document_template: string;
-            /** Format: int32 */
-            effective_context_limit: number;
-            model_revision: string;
             query_parameters?: {
                 [key: string]: string;
             };
-            query_template: string;
-            /** Format: int32 */
-            special_token_count: number;
-            tokenizer_fingerprint: string;
-            tokenizer_id: string;
-            tokenizer_revision: string;
         };
         /**
          * @description Registered embedding model: immutable versions plus separately mutable or
          *     append-only lifecycle records.
          */
         CatalogEmbeddingModelRegistry: {
-            aliases?: {
-                [key: string]: number;
-            };
-            decisions?: components["schemas"]["CatalogModelDecision"][];
-            deployments?: {
-                [key: string]: components["schemas"]["CatalogDeploymentBinding"];
-            };
-            evidence?: components["schemas"]["CatalogEvaluationEvidence"][];
-            name: string;
+            /** Format: int32 */
+            schema_version: number;
             /**
              * Format: int64
              * @description Optimistic concurrency token for catalog/API mutations. Old rows default
              *     to zero; every successful command increments it.
              */
             revision?: number;
-            /** Format: int32 */
-            schema_version: number;
-            tags?: {
-                [key: string]: string;
-            };
+            name: string;
             versions?: {
                 [key: string]: components["schemas"]["CatalogEmbeddingModelVersion"];
+            };
+            aliases?: {
+                [key: string]: number;
+            };
+            evidence?: components["schemas"]["CatalogEvaluationEvidence"][];
+            decisions?: components["schemas"]["CatalogModelDecision"][];
+            deployments?: {
+                [key: string]: components["schemas"]["CatalogDeploymentBinding"];
+            };
+            tags?: {
+                [key: string]: string;
             };
         };
         /** @description Immutable executable contract for one registered model version. */
         CatalogEmbeddingModelVersion: {
-            artifact: components["schemas"]["CatalogArtifactDescriptor"];
-            /** Format: int64 */
-            created_at_ms: number;
-            governance?: components["schemas"]["CatalogModelGovernance"];
-            input: components["schemas"]["CatalogEmbeddingInputContract"];
-            lineage?: components["schemas"]["CatalogModelLineage"];
-            output: components["schemas"]["CatalogEmbeddingOutputContract"];
-            provider_model_id: string;
-            source_run_id?: string | null;
             /** Format: int64 */
             version: number;
+            provider_model_id: string;
+            artifact: components["schemas"]["CatalogArtifactDescriptor"];
+            input: components["schemas"]["CatalogEmbeddingInputContract"];
+            output: components["schemas"]["CatalogEmbeddingOutputContract"];
+            governance?: components["schemas"]["CatalogModelGovernance"];
+            lineage?: components["schemas"]["CatalogModelLineage"];
+            /** Format: int64 */
+            created_at_ms: number;
+            source_run_id?: string | null;
         };
         CatalogEmbeddingOutputContract: {
-            dimension_policy: components["schemas"]["CatalogDimensionPolicy"];
             /** Format: int32 */
             native_dimension: number;
+            dimension_policy: components["schemas"]["CatalogDimensionPolicy"];
+            supported_dimensions: number[];
             normalized: boolean;
             pooling: string;
-            supported_dimensions: number[];
         };
         /** @description Append-only evaluation summary. Large row-level results remain external. */
         CatalogEvaluationEvidence: {
-            /** Format: int64 */
-            created_at_ms: number;
-            dataset_digest: string;
-            dataset_name: string;
-            evaluator: string;
             evidence_id: string;
+            /** Format: int64 */
+            version: number;
+            dataset_name: string;
+            dataset_digest: string;
+            evaluator: string;
             metrics: {
                 [key: string]: number;
             };
             /** Format: int64 */
-            version: number;
+            created_at_ms: number;
         };
         /** @description Digest-pinned input consumed by the execution that produced a model. */
         CatalogLineageInput: {
-            digest: string;
             kind: components["schemas"]["CatalogLineageInputKind"];
             name: string;
+            digest: string;
         };
         /** @enum {string} */
         CatalogLineageInputKind: "dataset" | "feature_set" | "model" | "artifact";
@@ -1073,14 +1154,14 @@ export interface components {
         };
         /** @description Append-only policy/audit decision, intentionally separate from evidence. */
         CatalogModelDecision: {
-            /** Format: int64 */
-            created_at_ms: number;
-            decision: components["schemas"]["CatalogModelDecisionKind"];
             decision_id: string;
+            /** Format: int64 */
+            version: number;
+            decision: components["schemas"]["CatalogModelDecisionKind"];
             evidence_ids: string[];
             principal: string;
             /** Format: int64 */
-            version: number;
+            created_at_ms: number;
         };
         /** @enum {string} */
         CatalogModelDecisionKind: "approved" | "rejected" | "deprecated";
@@ -1089,16 +1170,16 @@ export interface components {
          *     Approval decisions remain separate append-only audit records.
          */
         CatalogModelGovernance: {
-            access?: components["schemas"]["CatalogModelAccess"];
-            approved_runtimes?: string[];
             license_id?: string;
+            access?: components["schemas"]["CatalogModelAccess"];
             requires_remote_code?: boolean;
+            approved_runtimes?: string[];
         };
         /** @description MLMD/OpenLineage-shaped producer execution and its declared inputs. */
         CatalogModelLineage: {
+            producer_execution_id?: string | null;
             code_revision?: string | null;
             inputs?: components["schemas"]["CatalogLineageInput"][];
-            producer_execution_id?: string | null;
         };
         /**
          * @description Command-shaped mutations preserve version/evidence/decision immutability at
@@ -1106,33 +1187,28 @@ export interface components {
          *     of replacing a whole registry document.
          */
         CatalogModelRegistryMutation: {
+            payload: components["schemas"]["CatalogEmbeddingModelVersion"];
             /** @enum {string} */
             operation: "register_version";
-            payload: components["schemas"]["CatalogEmbeddingModelVersion"];
         } | {
+            payload: components["schemas"]["CatalogModelAliasMutation"];
             /** @enum {string} */
             operation: "set_alias";
-            payload: components["schemas"]["CatalogModelAliasMutation"];
         } | {
+            payload: components["schemas"]["CatalogEvaluationEvidence"];
             /** @enum {string} */
             operation: "append_evidence";
-            payload: components["schemas"]["CatalogEvaluationEvidence"];
         } | {
+            payload: components["schemas"]["CatalogModelDecision"];
             /** @enum {string} */
             operation: "record_decision";
-            payload: components["schemas"]["CatalogModelDecision"];
         } | {
+            payload: components["schemas"]["CatalogDeploymentBinding"];
             /** @enum {string} */
             operation: "upsert_deployment";
-            payload: components["schemas"]["CatalogDeploymentBinding"];
         };
         /** @description Collection statistics for v2 API */
         CollectionStatsV2: {
-            /**
-             * Format: int32
-             * @description Number of indexed fields
-             */
-            indexed_fields: number;
             /**
              * Format: int64
              * @description Total number of records, or `null` when the server does not know.
@@ -1152,12 +1228,32 @@ export interface components {
             storage_size_bytes: number;
             /**
              * Format: int32
+             * @description Number of indexed fields
+             */
+            indexed_fields: number;
+            /**
+             * Format: int32
              * @description Number of TEXT fields with dedicated storage
              */
             text_field_count: number;
         };
         /** @description Collection details response */
         CollectionV2Response: {
+            /** @description Collection ID */
+            collection_id: string;
+            /** @description Collection name */
+            name: string;
+            /**
+             * Format: int32
+             * @description Vector dimension
+             */
+            dimension: number;
+            /** @description Storage engine */
+            engine: string;
+            /** @description Distance metric */
+            distance_metric: string;
+            /** @description Whether ProximaRecord is enabled */
+            proxima_record_enabled: boolean;
             /**
              * @description Canonical embedding precision label for stored vectors.
              *
@@ -1166,8 +1262,9 @@ export interface components {
              *     set a non-default (Unspecified/Fp32) precision.
              */
             canonical_embedding_precision?: string | null;
-            /** @description Collection ID */
-            collection_id: string;
+            schema?: null | components["schemas"]["SchemaDefinition"];
+            /** @description Collection statistics */
+            stats: components["schemas"]["CollectionStatsV2"];
             /**
              * Format: int64
              * @description Monotonic server-owned content revision for cache revalidation.
@@ -1175,30 +1272,14 @@ export interface components {
             content_revision: number;
             /** @description Opaque validator that also fences server restarts. */
             content_revision_token: string;
-            /** @description Creation timestamp */
-            created_at: string;
-            /**
-             * Format: int32
-             * @description Vector dimension
-             */
-            dimension: number;
-            /** @description Distance metric */
-            distance_metric: string;
-            /** @description Storage engine */
-            engine: string;
             /**
              * @description Per-index config (HNSW/IVF params, is_primary) as persisted at create
              *     time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
              */
             index_specs: components["schemas"]["IndexSpecOutput"][];
-            /** @description Collection name */
-            name: string;
-            /** @description Whether ProximaRecord is enabled */
-            proxima_record_enabled: boolean;
             quantization?: null | components["schemas"]["QuantizationConfigOutput"];
-            schema?: null | components["schemas"]["SchemaDefinition"];
-            /** @description Collection statistics */
-            stats: components["schemas"]["CollectionStatsV2"];
+            /** @description Creation timestamp */
+            created_at: string;
             /** @description Last update timestamp */
             updated_at?: string | null;
         };
@@ -1206,6 +1287,8 @@ export interface components {
         CollectionV2Summary: {
             /** @description Collection ID */
             collection_id: string;
+            /** @description Collection name */
+            name: string;
             /**
              * Format: int32
              * @description Vector dimension
@@ -1213,8 +1296,6 @@ export interface components {
             dimension: number;
             /** @description Storage engine */
             engine: string;
-            /** @description Collection name */
-            name: string;
             /** @description Whether ProximaRecord is enabled */
             proxima_record_enabled: boolean;
             /**
@@ -1247,28 +1328,21 @@ export interface components {
          *     ```
          */
         CreateCollectionV2Request: {
-            /**
-             * @description Canonical embedding precision for stored vectors
-             *
-             *     Options: "fp32" (default), "fp16", "bf16", "int8", "uint8".
-             *     Accepts the same string forms as the gRPC / Arrow Flight surfaces
-             *     (e.g. "half", "float16", "EMBEDDING_PRECISION_FP16"). The DDL
-             *     service applies the same normalisation, so SDKs and pgwire
-             *     converge on the same enum discriminant.
-             */
-            canonical_embedding_precision?: string | null;
+            /** @description Collection name (required) */
+            name: string;
             /**
              * Format: int32
              * @description Vector dimension (required)
              */
             dimension: number;
             /**
-             * @description Distance metric for vector similarity
+             * @description Storage engine selection
              *
-             *     Options: "cosine", "euclidean", "dot_product"
-             *     Default: "cosine"
+             *     Options: "auto", "sst", "helix", "viper", "swift", "nova", "raptor", "tst"
+             *     Default: "auto" (system selects optimal engine)
              */
-            distance_metric?: string | null;
+            engine?: string | null;
+            schema?: null | components["schemas"]["SchemaDefinition"];
             /**
              * @description Enable ProximaRecord support for this collection
              *
@@ -1281,12 +1355,27 @@ export interface components {
              */
             enable_proxima_record?: boolean | null;
             /**
-             * @description Storage engine selection
+             * @description Distance metric for vector similarity
              *
-             *     Options: "auto", "sst", "helix", "viper", "swift", "nova", "raptor", "tst"
-             *     Default: "auto" (system selects optimal engine)
+             *     Options: "cosine", "euclidean", "dot_product"
+             *     Default: "cosine"
              */
-            engine?: string | null;
+            distance_metric?: string | null;
+            /**
+             * Format: int64
+             * @description Initial capacity hint for pre-allocation
+             */
+            initial_capacity?: number | null;
+            /**
+             * @description Canonical embedding precision for stored vectors
+             *
+             *     Options: "fp32" (default), "fp16", "bf16", "int8", "uint8".
+             *     Accepts the same string forms as the gRPC / Arrow Flight surfaces
+             *     (e.g. "half", "float16", "EMBEDDING_PRECISION_FP16"). The DDL
+             *     service applies the same normalisation, so SDKs and pgwire
+             *     converge on the same enum discriminant.
+             */
+            canonical_embedding_precision?: string | null;
             /**
              * @description Index configurations (e.g. an explicit IVF or HNSW index).
              *
@@ -1295,29 +1384,21 @@ export interface components {
              *     to the IVF arm). When omitted, the engine selects a default (HNSW).
              */
             index_configs?: components["schemas"]["IndexConfigInput"][] | null;
-            index_policy?: null | components["schemas"]["IndexPolicyInput"];
-            /**
-             * Format: int64
-             * @description Initial capacity hint for pre-allocation
-             */
-            initial_capacity?: number | null;
-            /** @description Collection name (required) */
-            name: string;
-            quantization?: null | components["schemas"]["QuantizationConfigInput"];
-            schema?: null | components["schemas"]["SchemaDefinition"];
             /**
              * @description Operator metadata tags, e.g. `"recall_target:0.95"`,
              *     `"target_vector_count:1000"`, `"modalities:text,image"`. Consumed by the
              *     recall advisor / route-health (`services/collection/recall_target.rs`).
              */
             tags?: string[] | null;
+            quantization?: null | components["schemas"]["QuantizationConfigInput"];
+            index_policy?: null | components["schemas"]["IndexPolicyInput"];
         };
         /** @description Response for collection creation */
         CreateCollectionV2Response: {
             /** @description Collection ID (same as name) */
             collection_id: string;
-            /** @description Creation timestamp */
-            created_at: string;
+            /** @description Collection name */
+            name: string;
             /**
              * Format: int32
              * @description Vector dimension
@@ -1325,56 +1406,28 @@ export interface components {
             dimension: number;
             /** @description Selected storage engine */
             engine: string;
-            /** @description Collection name */
-            name: string;
             /** @description Whether ProximaRecord is enabled */
             proxima_record_enabled: boolean;
             /** @description Schema ID (if schema was defined) */
             schema_id?: string | null;
-        };
-        /** @description Wrapped envelope: server expects `{"edge": EdgeInput}`. */
-        CreateEdgeRequest: {
-            edge: components["schemas"]["EdgeInput"];
-        };
-        CreateGraphRequest: {
-            description?: string | null;
-            /** @description Unique identifier for the new graph collection. */
-            graph_id: string;
-            /** @description Optional human-readable name (defaults to graph_id). */
-            name?: string | null;
+            /** @description Creation timestamp */
+            created_at: string;
         };
         CreateModelRegistryRequest: {
             /** @description Tenant-local registry name. Must be one traversal-free catalog segment. */
             name: string;
         };
-        /** @description Wrapped envelope: server expects `{"node": NodeInput}`. */
-        CreateNodeRequest: {
-            node: components["schemas"]["NodeInput"];
-        };
         /** @description Response for deleting a collection through the v2 API. */
         DeleteCollectionV2Response: {
-            /** @description Deleted collection ID. */
-            collection_id: string;
             /** @description Whether the delete request was accepted. */
             success: boolean;
-        };
-        /**
-         * @description 204 No Content on success with an empty `GraphResponse` envelope;
-         *     404 Not Found with an error envelope when the graph is missing.
-         */
-        DeleteGraphResponse: {
-            success?: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        DeleteNodeResponse: {
-            id?: string;
-            success?: boolean;
-        } & {
-            [key: string]: unknown;
+            /** @description Deleted collection ID. */
+            collection_id: string;
         };
         /** @description Response for deleting a single record. */
         DeleteRecordV2Response: {
+            /** @description Whether the delete tombstone was accepted. */
+            success: boolean;
             /** @description Deleted record ID. */
             id: string;
             /**
@@ -1382,57 +1435,23 @@ export interface components {
              * @description Processing latency in microseconds.
              */
             processing_time_us: number;
-            /** @description Whether the delete tombstone was accepted. */
-            success: boolean;
-        };
-        /**
-         * @description Edge payload nested inside `CreateEdgeRequest.edge`. Matches
-         *     `RestEdgeInput` in proximadb-api's graph handler.
-         */
-        EdgeInput: {
-            edge_type: string;
-            from_node_id: string;
-            id: string;
-            properties?: {
-                [key: string]: unknown;
-            };
-            to_node_id: string;
-            /** Format: double */
-            weight?: number | null;
-        };
-        EdgeResponse: {
-            edge_type?: string | null;
-            from_node_id?: string;
-            id: string;
-            properties?: {
-                [key: string]: unknown;
-            } | null;
-            to_node_id?: string;
-            /** Format: double */
-            weight?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        EmbeddingInput: {
-            modality?: string | null;
-            model_id?: string | null;
-            vector: number[];
         };
         EntityDto: {
+            id: string;
             collection_id: string;
             flexible_metadata: {
                 [key: string]: unknown;
             };
-            id: string;
         };
         EntityEmbeddingInput: {
+            model_id: string;
+            modality?: string | null;
+            vector: number[];
             /** Format: int32 */
             dimension?: number;
-            modality?: string | null;
-            model_id: string;
-            vector: number[];
         };
         EntityProvenanceInput: {
+            source_id?: string;
             chunk_id?: string;
             /** Format: int32 */
             chunk_position?: number;
@@ -1440,17 +1459,16 @@ export interface components {
             metadata?: {
                 [key: string]: string;
             };
-            source_id?: string;
         };
         EntityRelationInput: {
+            source_entity_id: string;
+            target_entity_id: string;
+            relation_type: string;
+            /** Format: float */
+            weight?: number;
             properties?: {
                 [key: string]: string;
             };
-            relation_type: string;
-            source_entity_id: string;
-            target_entity_id: string;
-            /** Format: float */
-            weight?: number;
         };
         EntitySearchResult: {
             entity: components["schemas"]["EntityDto"];
@@ -1460,20 +1478,20 @@ export interface components {
         /** @description Inner body of [`ErrorResponse`]. */
         ErrorBody: {
             /**
-             * Format: int32
-             * @description HTTP status code.
-             */
-            code: number;
-            /** @description Optional structured context (e.g. migration hints). */
-            details?: Record<string, never> | null;
-            message: string;
-            /** @description Correlation id (matches the X-Request-ID header). */
-            request_id?: string | null;
-            /**
              * @description Stable machine-readable error code (snake_case).
              * @example collection_not_found
              */
             type: string;
+            message: string;
+            /**
+             * Format: int32
+             * @description HTTP status code.
+             */
+            code: number;
+            /** @description Correlation id (matches the X-Request-ID header). */
+            request_id?: string | null;
+            /** @description Optional structured context (e.g. migration hints). */
+            details?: Record<string, never> | null;
         };
         /**
          * @description Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
@@ -1486,11 +1504,15 @@ export interface components {
             error: components["schemas"]["ErrorBody"];
         };
         ExplainQueryRequest: {
-            collection?: string | null;
             language: components["schemas"]["QueryLanguage"];
             query: string;
+            collection?: string | null;
         };
         FusionHit: {
+            oid: string;
+            /** Format: float */
+            score: number;
+            source_count: number;
             /**
              * @description Graph node label(s) of the reached node. Exposed so cross-modal-joint
              *     consumers can correlate a fused hit by its graph label without a separate
@@ -1498,17 +1520,47 @@ export interface components {
              *     near-free to fill. Additive + back-compat (empty until populated).
              */
             labels?: string[];
-            oid: string;
-            /** Format: float */
-            score: number;
-            source_count: number;
         };
         FusionSearchRequest: {
+            /** @description Vector collection to seed from (its records co-indexed with this graph by `oid`). */
+            vector_collection: string;
+            /** @description Query embedding for the ANN seed. */
+            query_vector: number[];
+            limit?: number;
+            /**
+             * Format: int32
+             * @description k-hop expansion depth (bounded; default 1 — the validated sweet spot).
+             */
+            max_depth?: number;
+            edge_types?: string[];
+            /** @description How many of the top vector seeds to expand from (bounded expansion). */
+            max_seeds?: number;
+            /** Format: float */
+            vector_weight?: number | null;
+            /** Format: float */
+            graph_weight?: number | null;
+            /** @description Use the rank-based RRF fallback instead of PIT-calibrated linear. */
+            rrf?: boolean;
             /**
              * Format: float
              * @description Consensus boost added to any `oid` present in ≥2 sources.
              */
             consensus_beta?: number | null;
+            /** @description Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`. */
+            grain?: string | null;
+            /**
+             * Format: float
+             * @description Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+             *     When absent, fusion is unbounded.
+             */
+            min_weight_fraction?: number | null;
+            total_budget?: number | null;
+            /**
+             * @description Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
+             *     collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
+             *     (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
+             */
+            text_query?: string | null;
             /**
              * @description Collection whose document index to BM25-search. Defaults to `vector_collection` (documents
              *     co-indexed with the vectors share the record `oid`, so they merge by `oid`).
@@ -1519,129 +1571,66 @@ export interface components {
              * @description Document modality weight (mirrors `vector_weight` / `graph_weight`). Defaults to 1.0.
              */
             document_weight?: number | null;
-            edge_types?: string[];
-            /** @description Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`. */
-            grain?: string | null;
-            /** Format: float */
-            graph_weight?: number | null;
-            limit?: number;
-            /**
-             * Format: int32
-             * @description k-hop expansion depth (bounded; default 1 — the validated sweet spot).
-             */
-            max_depth?: number;
-            /** @description How many of the top vector seeds to expand from (bounded expansion). */
-            max_seeds?: number;
-            /**
-             * Format: float
-             * @description Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
-             *     When absent, fusion is unbounded.
-             */
-            min_weight_fraction?: number | null;
-            /** @description Query embedding for the ANN seed. */
-            query_vector: number[];
-            /** @description Use the rank-based RRF fallback instead of PIT-calibrated linear. */
-            rrf?: boolean;
-            /**
-             * @description Optional BM25/full-text query (TD-138). When present (and non-empty), fusion also searches the
-             *     collection's document index and merges BM25 hits into the result by shared `oid` — tri-modal
-             *     (vector + graph + document) fusion. Absent ⇒ vector+graph only (unchanged).
-             */
-            text_query?: string | null;
-            total_budget?: number | null;
-            /** @description Vector collection to seed from (its records co-indexed with this graph by `oid`). */
-            vector_collection: string;
-            /** Format: float */
-            vector_weight?: number | null;
         };
         FusionSearchResponse: {
             results: components["schemas"]["FusionHit"][];
             stats: components["schemas"]["FusionStatsDto"];
         };
         FusionStatsDto: {
-            candidates_in: number;
-            items_out: number;
             sources_fused: number;
             sources_skipped: number;
-        };
-        /**
-         * @description Server returns a `GraphResponse<T>` envelope around graph
-         *     collection metadata. The fields below are the common subset
-         *     SDKs rely on; extra server-side fields are passed through.
-         */
-        GraphCollectionResponse: {
-            description?: string | null;
-            edge_count?: number | null;
-            graph_id?: string;
-            name?: string | null;
-            node_count?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        GraphStatsResponse: {
-            /** Format: double */
-            density?: number | null;
-            edge_count?: number;
-            node_count?: number;
-        } & {
-            [key: string]: unknown;
-        };
-        HealthResponse: {
-            status?: string;
-            uptime_seconds?: number;
-            version?: string;
-        } & {
-            [key: string]: unknown;
+            candidates_in: number;
+            items_out: number;
         };
         /** @description REST input for HNSW index params (mirrors proto `HnswConfig`). */
         HnswConfigInput: {
             /** Format: int32 */
+            m?: number | null;
+            /** Format: int32 */
             ef_construction?: number | null;
             /** Format: int32 */
             ef_search?: number | null;
-            /** Format: int32 */
-            m?: number | null;
         };
         /** @description REST output for HNSW params (mirrors gRPC `V2HnswConfig`). */
         HnswConfigOutput: {
             /** Format: int32 */
+            m?: number | null;
+            /** Format: int32 */
             ef_construction?: number | null;
             /** Format: int32 */
             ef_search?: number | null;
-            /** Format: int32 */
-            m?: number | null;
         };
         ImpactAnalysisRequest: {
+            /** @description Start symbol node id. */
+            node_id: string;
             /** @description `"forward"` (default — what X impacts) or `"backward"` (what impacts X). */
             direction?: string | null;
             edge_types?: string[];
-            limit?: number;
             /** Format: int32 */
             max_depth?: number;
-            /** @description Start symbol node id. */
-            node_id: string;
+            limit?: number;
         };
         ImpactAnalysisResponse: {
+            /** @description Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`). */
+            node_ids: string[];
             edge_count: number;
             /** Format: int32 */
             max_depth_reached: number;
-            /** @description Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`). */
-            node_ids: string[];
         };
         /** @description REST input for a single index config (mirrors proto `IndexConfig`). */
         IndexConfigInput: {
-            /** @description Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh". */
-            algorithm: string;
-            hnsw_config?: null | components["schemas"]["HnswConfigInput"];
             /** @description Optional index name (defaults to `index_<n>`). */
             index_name?: string | null;
-            /** @description Mark this index as the collection's primary ANN index (gRPC-v2 parity). */
-            is_primary?: boolean | null;
-            ivf_config?: null | components["schemas"]["IvfConfigInput"];
+            /** @description Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh". */
+            algorithm: string;
             /** @description Free-form algorithm parameters. */
             parameters?: {
                 [key: string]: string;
             };
+            hnsw_config?: null | components["schemas"]["HnswConfigInput"];
+            ivf_config?: null | components["schemas"]["IvfConfigInput"];
+            /** @description Mark this index as the collection's primary ANN index (gRPC-v2 parity). */
+            is_primary?: boolean | null;
         };
         /**
          * @description REST input for the per-collection index routing policy (mirrors proto
@@ -1649,45 +1638,41 @@ export interface components {
          */
         IndexPolicyInput: {
             /**
-             * Format: int64
-             * @description Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
-             *     for the storage class.
-             */
-            byte_budget?: number | null;
-            /**
              * @description Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
              *     "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
              *     The engine modes force the collection onto that engine/route.
              */
             mode?: string | null;
             /**
+             * @description Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+             *     Index/auto modes only — rejected when `mode = "exact"`.
+             */
+            rehydrate?: string | null;
+            /**
+             * Format: int64
+             * @description Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+             *     for the storage class.
+             */
+            byte_budget?: number | null;
+            /**
              * Format: int32
              * @description nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
              *     `mode = "exact"`.
              */
             nprobe?: number | null;
-            /**
-             * @description Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
-             *     Index/auto modes only — rejected when `mode = "exact"`.
-             */
-            rehydrate?: string | null;
         };
         /** @description REST output for a single index config (mirrors gRPC `V2IndexSpec`). */
         IndexSpecOutput: {
             /** @description Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh". */
             algorithm: string;
             hnsw?: null | components["schemas"]["HnswConfigOutput"];
+            ivf?: null | components["schemas"]["IvfConfigOutput"];
             /** @description Whether this is the collection's primary ANN index. */
             is_primary: boolean;
-            ivf?: null | components["schemas"]["IvfConfigOutput"];
         };
         /** @description A single record submitted for native embedding + indexing. */
         IngestDocument: {
             id: string;
-            /** @description Arbitrary metadata fields. Stored as ProximaRecord props. */
-            metadata?: {
-                [key: string]: unknown;
-            };
             /**
              * @description Raw text content. Required when `X-Embed-Source: native` (default);
              *     optional when the client also supplied a vector.
@@ -1699,6 +1684,10 @@ export interface components {
              *     locally (legacy path).
              */
             vector?: number[] | null;
+            /** @description Arbitrary metadata fields. Stored as ProximaRecord props. */
+            metadata?: {
+                [key: string]: unknown;
+            };
         };
         IngestDocumentsRequest: {
             records: components["schemas"]["IngestDocument"][];
@@ -1710,18 +1699,18 @@ export interface components {
             retry_after_ms?: number | null;
         };
         IngestedRecord: {
+            id: string;
             /** Format: int32 */
             dim: number;
-            id: string;
         };
         /** @description Error details for a failed record insertion */
         InsertError: {
-            /** @description Error message */
-            error: string;
-            /** @description Record ID (if provided) */
-            id?: string | null;
             /** @description Index of the record in the request */
             index: number;
+            /** @description Record ID (if provided) */
+            id?: string | null;
+            /** @description Error message */
+            error: string;
         };
         /**
          * @description Request to insert ProximaRecords
@@ -1761,6 +1750,8 @@ export interface components {
         InsertRecordsRequest: {
             /** @description Records to insert */
             records: components["schemas"]["ProximaRecordInput"][];
+            /** @description Whether to validate against collection schema (default: true) */
+            validate_schema?: boolean | null;
             /**
              * @description Whether existing records with the same ID should be replaced.
              *
@@ -1769,17 +1760,15 @@ export interface components {
              *     leaving the OpenAPI contract.
              */
             upsert?: boolean | null;
-            /** @description Whether to validate against collection schema (default: true) */
-            validate_schema?: boolean | null;
         };
         /** @description Response for insert operation */
         InsertRecordsResponse: {
-            /** @description Detailed errors for failed records */
-            errors: components["schemas"]["InsertError"][];
-            /** @description Number of failed records */
-            failed_count: number;
             /** @description Number of successfully inserted records */
             inserted_count: number;
+            /** @description Number of failed records */
+            failed_count: number;
+            /** @description Detailed errors for failed records */
+            errors: components["schemas"]["InsertError"][];
             /** @description IDs of successfully inserted records */
             inserted_ids: string[];
         };
@@ -1801,8 +1790,11 @@ export interface components {
         ListCollectionsV2Response: {
             /** @description List of collections */
             collections: components["schemas"]["CollectionV2Summary"][];
-            /** @description Whether there are more results */
-            has_more: boolean;
+            /**
+             * Format: int64
+             * @description Total count of collections
+             */
+            total: number;
             /**
              * Format: int32
              * @description Limit used in this request
@@ -1813,21 +1805,8 @@ export interface components {
              * @description Offset used in this request
              */
             offset: number;
-            /**
-             * Format: int64
-             * @description Total count of collections
-             */
-            total: number;
-        };
-        /**
-         * @description Server returns a `GraphResponse<Vec<...>>` envelope with `data`
-         *     containing the graph collections.
-         */
-        ListGraphsResponse: {
-            data?: components["schemas"]["GraphCollectionResponse"][];
-            success?: boolean;
-        } & {
-            [key: string]: unknown;
+            /** @description Whether there are more results */
+            has_more: boolean;
         };
         ListModelRegistriesResponse: {
             registries: components["schemas"]["ModelRegistryRecordResponse"][];
@@ -1837,30 +1816,9 @@ export interface components {
          *     not lose precision. gRPC exposes the same value as `uint64`.
          */
         ModelRegistryRecordResponse: {
+            tenant_id: string;
             asset_id: string;
             registry: components["schemas"]["CatalogEmbeddingModelRegistry"];
-            tenant_id: string;
-        };
-        /**
-         * @description Node payload nested inside `CreateNodeRequest.node`. Matches
-         *     `RestNodeInput` in proximadb-api's graph handler.
-         */
-        NodeInput: {
-            embedding?: components["schemas"]["EmbeddingInput"];
-            id: string;
-            labels?: string[];
-            properties?: {
-                [key: string]: unknown;
-            };
-        };
-        NodeResponse: {
-            id: string;
-            labels?: string[] | null;
-            properties?: {
-                [key: string]: unknown;
-            } | null;
-        } & {
-            [key: string]: unknown;
         };
         /**
          * @description TD-064: predicate-aware recall shortfall (REST wire shape).
@@ -1872,16 +1830,6 @@ export interface components {
          */
         PredicateShortfallWire: {
             /**
-             * @description ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
-             *     `pre_filter`).
-             */
-            ann_filtering_mode: string;
-            /**
-             * Format: int32
-             * @description Candidate pool size considered before the predicate (oversample budget).
-             */
-            oversample_pool: number;
-            /**
              * Format: int32
              * @description The `top_k` value the caller asked for.
              */
@@ -1891,9 +1839,16 @@ export interface components {
              * @description Results actually returned after predicate filtering + merge.
              */
             returned_k: number;
-        };
-        ProbeResponse: {
-            status: string;
+            /**
+             * Format: int32
+             * @description Candidate pool size considered before the predicate (oversample budget).
+             */
+            oversample_pool: number;
+            /**
+             * @description ADR-011 mode that produced the shortfall (`post_filter`, `inline`, or
+             *     `pre_filter`).
+             */
+            ann_filtering_mode: string;
         };
         /**
          * @description Input format for ProximaRecord (JSON-friendly)
@@ -1905,14 +1860,14 @@ export interface components {
         ProximaRecordInput: {
             /** @description Record ID (optional, will be auto-generated if not provided) */
             id?: string | null;
+            /** @description Vector embedding (required) */
+            vector: number[];
             /** @description Canonical rich property map. */
             props?: {
                 [key: string]: unknown;
             } | null;
             /** @description Dedicated TEXT fields with storage hints */
             text_fields?: components["schemas"]["TextFieldInput"][] | null;
-            /** @description Vector embedding (required) */
-            vector: number[];
         };
         /**
          * @description REST input for quantization config (mirrors proto `QuantizationConfig`;
@@ -1933,12 +1888,12 @@ export interface components {
         /** @enum {string} */
         QueryLanguage: "uql" | "aql" | "federated";
         QueryRequest: {
-            collection?: string | null;
             language: components["schemas"]["QueryLanguage"];
+            query: string;
+            parameters?: Record<string, never>[] | null;
+            collection?: string | null;
             /** Format: int32 */
             limit?: number | null;
-            parameters?: Record<string, never>[] | null;
-            query: string;
         };
         /**
          * @description Query facade result. Implementations return records, total_count, metrics,
@@ -1950,6 +1905,8 @@ export interface components {
         RecordV2Response: {
             /** @description Record ID */
             id: string;
+            /** @description Vector embedding (if requested) */
+            vector?: number[] | null;
             /** @description Rich properties from the record */
             props: {
                 [key: string]: unknown;
@@ -1958,46 +1915,46 @@ export interface components {
             text_fields?: components["schemas"]["TextFieldOutput"][] | null;
             /**
              * Format: int64
-             * @description Record timestamp
-             */
-            timestamp?: number | null;
-            /** @description Vector embedding (if requested) */
-            vector?: number[] | null;
-            /**
-             * Format: int64
              * @description Record version
              */
             version?: number | null;
+            /**
+             * Format: int64
+             * @description Record timestamp
+             */
+            timestamp?: number | null;
         };
         ResolveModelAliasRequest: {
             alias: string;
             /** Format: int32 */
             dimension: number;
-            /** @description Require the latest append-only decision to approve the selected version. */
-            require_approved?: boolean;
             /** @description Runtime implementation that will execute the immutable contract. */
             runtime?: string | null;
+            /** @description Require the latest append-only decision to approve the selected version. */
+            require_approved?: boolean;
         };
         ResolvedEmbeddingModelResponse: {
             asset_id: string;
-            contract_sha256: string;
-            model: components["schemas"]["CatalogEmbeddingModelVersion"];
             registry_name: string;
             /** Format: int64 */
             registry_revision: number;
+            contract_sha256: string;
+            model: components["schemas"]["CatalogEmbeddingModelVersion"];
         };
         ResolvedModelBindingResponse: {
-            contract_sha256: string;
+            model: string;
             /** Format: int32 */
             dimension: number;
-            model: string;
             model_asset_id: string;
             /** Format: int64 */
             model_version: number;
+            contract_sha256: string;
             snapshot: components["schemas"]["ResolvedEmbeddingModelResponse"];
         };
         /** @description Column definition for schema */
         RestColumnDefinition: {
+            /** @description Column name */
+            name: string;
             /**
              * @description Data type
              *
@@ -2022,12 +1979,11 @@ export interface components {
              */
             data_type: string;
             /**
-             * @description Enable filtering on this column
+             * @description Whether null values are allowed
              *
-             *     When true, the column can be used in WHERE clauses.
-             *     Default: true for indexed columns, false otherwise
+             *     Default: true
              */
-            filterable?: boolean | null;
+            nullable?: boolean | null;
             /**
              * @description Create secondary index for this column
              *
@@ -2036,20 +1992,19 @@ export interface components {
              */
             indexed?: boolean | null;
             /**
+             * @description Enable filtering on this column
+             *
+             *     When true, the column can be used in WHERE clauses.
+             *     Default: true for indexed columns, false otherwise
+             */
+            filterable?: boolean | null;
+            /**
              * Format: int32
              * @description Maximum length for TEXT/BINARY columns
              *
              *     Default: no limit
              */
             max_length?: number | null;
-            /** @description Column name */
-            name: string;
-            /**
-             * @description Whether null values are allowed
-             *
-             *     Default: true
-             */
-            nullable?: boolean | null;
             /**
              * Format: int32
              * @description Precision for DECIMAL type (1-38)
@@ -2077,18 +2032,18 @@ export interface components {
              */
             cursor?: string | null;
             /**
+             * Format: int32
+             * @description Max records to return in this page. Server enforces upper bound.
+             */
+            limit?: number | null;
+            /**
              * @description Metadata filter applied (before the limit) to the scanned page.
              *     Accepts either the typed list form `[{field,op,value}]` (mirrors
              *     `searchRecords.filters`) or a simple equality map `{field: value}`.
              */
             filter?: unknown;
-            include_text?: boolean | null;
             include_vector?: boolean | null;
-            /**
-             * Format: int32
-             * @description Max records to return in this page. Server enforces upper bound.
-             */
-            limit?: number | null;
+            include_text?: boolean | null;
         };
         /**
          * @description Response shape for `scanRecords`. Empty `records` + null
@@ -2096,11 +2051,11 @@ export interface components {
          *     `RecordResponse` schema (same shape used by `getRecord`).
          */
         ScanRecordsResponse: {
+            records: components["schemas"]["RecordV2Response"][];
             /** Format: int64 */
             content_revision: number;
             content_revision_token: string;
             next_cursor?: string | null;
-            records: components["schemas"]["RecordV2Response"][];
             /** Format: int64 */
             scanned_count?: number | null;
         };
@@ -2119,13 +2074,6 @@ export interface components {
          *     Defines the typed columns and enforcement rules for ProximaRecord support.
          */
         SchemaDefinition: {
-            /**
-             * @description Allow additional fields not defined in schema
-             *
-             *     Only applies in "hybrid" mode.
-             *     Default: true
-             */
-            allow_additional_fields?: boolean | null;
             /** @description Column definitions */
             columns: components["schemas"]["RestColumnDefinition"][];
             /**
@@ -2136,31 +2084,38 @@ export interface components {
              *     - "hybrid": Core columns enforced, additional fields allowed (default)
              */
             enforcement?: string | null;
+            /**
+             * @description Allow additional fields not defined in schema
+             *
+             *     Only applies in "hybrid" mode.
+             *     Default: true
+             */
+            allow_additional_fields?: boolean | null;
         };
         /** @description Schema response with metadata */
         SchemaResponse: {
-            /** @description Collection this schema belongs to */
-            collection_id: string;
-            /** @description Creation timestamp */
-            created_at: string;
-            /** @description Parent schema ID (for evolution tracking) */
-            parent_schema_id?: string | null;
-            /** @description Schema definition */
-            schema: components["schemas"]["SchemaDefinition"];
             /** @description Schema ID (UUID) */
             schema_id: string;
             /** @description Schema version (semantic versioning) */
             schema_version: string;
+            /** @description Collection this schema belongs to */
+            collection_id: string;
+            /** @description Schema definition */
+            schema: components["schemas"]["SchemaDefinition"];
+            /** @description Creation timestamp */
+            created_at: string;
             /** @description Last update timestamp */
             updated_at?: string | null;
+            /** @description Parent schema ID (for evolution tracking) */
+            parent_schema_id?: string | null;
         };
         SearchEntitiesRequest: {
+            /** @description Query embedding for vector similarity search. Omit for metadata-only search. */
+            query_vector?: number[];
             /** @description Equality metadata filters as a `{field: value}` JSON object. */
             filters?: {
                 [key: string]: unknown;
             };
-            /** @description Query embedding for vector similarity search. Omit for metadata-only search. */
-            query_vector?: number[];
             /** Format: int32 */
             top_k?: number;
         };
@@ -2177,9 +2132,9 @@ export interface components {
          *     offered a field that an adapter would silently ignore or interpolate.
          */
         SqlRequest: {
+            query: string;
             /** @description Optional collection context used by vector/graph SQL extensions. */
             collection?: string | null;
-            query: string;
             /**
              * Format: int64
              * @description Per-request deadline. Defaults to 30 seconds and is capped at 5 minutes.
@@ -2193,16 +2148,16 @@ export interface components {
          *     authority reports the affected count in `rows_returned` and `rows` is empty.
          */
         SqlResponse: {
-            column_types: string[];
-            columns: string[];
-            /** Format: int64 */
-            execution_time_ms: number;
-            request_id: string;
             rows: Record<string, never>[];
+            columns: string[];
+            column_types: string[];
             /** Format: int64 */
             rows_returned: number;
             /** Format: int64 */
             rows_scanned: number;
+            /** Format: int64 */
+            execution_time_ms: number;
+            request_id: string;
         };
         /**
          * @description Input format for TEXT fields
@@ -2211,10 +2166,10 @@ export interface components {
          *     for large content. The storage hint helps optimize storage strategy.
          */
         TextFieldInput: {
-            /** @description Text content */
-            content: string;
             /** @description Field name */
             name: string;
+            /** @description Text content */
+            content: string;
             /**
              * @description Storage strategy hint
              *
@@ -2227,38 +2182,17 @@ export interface components {
         };
         /** @description Output format for TEXT fields */
         TextFieldOutput: {
+            /** @description Field name */
+            name: string;
+            /** @description Text content (may be truncated for large content) */
+            content: string;
             /**
              * Format: int32
              * @description Number of chunks (for chunked storage)
              */
             chunk_count?: number | null;
-            /** @description Text content (may be truncated for large content) */
-            content: string;
-            /** @description Field name */
-            name: string;
             /** @description Whether content was truncated */
             truncated: boolean;
-        };
-        /**
-         * @description Flat shape (no wrapper). Matches `RestTraversalRequest` in
-         *     proximadb-api.
-         */
-        TraverseRequest: {
-            /** @description bfs | dfs | shortest_path */
-            algorithm?: string | null;
-            edge_types?: string[];
-            limit?: number | null;
-            /** @default 3 */
-            max_depth: number;
-            node_labels?: string[];
-            start_node_id: string;
-        };
-        TraverseResponse: {
-            edges?: components["schemas"]["EdgeResponse"][];
-            nodes?: components["schemas"]["NodeResponse"][];
-            paths?: string[][];
-        } & {
-            [key: string]: unknown;
         };
         /**
          * @description A typed filter for search operations
@@ -2309,13 +2243,10 @@ export interface components {
          *     ```
          */
         TypedSearchRequest: {
-            /**
-             * @description Return the SearchPlanTrace + a human-readable route explain
-             *     in the response (LLD §1 contract). Defaults to `false` so
-             *     non-debug requests don't pay the JSON serialization cost of
-             *     the ~30-field trace envelope.
-             */
-            debug?: boolean | null;
+            /** @description Query vector */
+            vector: number[];
+            /** @description Number of results to return */
+            top_k: number;
             /** @description Typed filters with operator support */
             filters?: components["schemas"]["TypedFilter"][] | null;
             /**
@@ -2331,30 +2262,31 @@ export interface components {
              *     Vector data can be large, so it is excluded by default.
              */
             include_vector?: boolean | null;
-            /** @description Number of results to return */
-            top_k: number;
-            /** @description Query vector */
-            vector: number[];
+            /**
+             * @description Return the SearchPlanTrace + a human-readable route explain
+             *     in the response (LLD §1 contract). Defaults to `false` so
+             *     non-debug requests don't pay the JSON serialization cost of
+             *     the ~30-field trace envelope.
+             */
+            debug?: boolean | null;
         };
         /** @description Search response with typed results */
         TypedSearchResponse: {
+            /** @description Search results */
+            results: components["schemas"]["TypedSearchResult"][];
             /**
-             * @description Human-readable explain summary derived from the SearchPlanTrace.
-             *     Only emitted when the request sets `debug=true` — gives an on-call
-             *     operator a one-glance view of the plan, cache result, and any
-             *     actionable hints (high scan fraction, repair triggered, ...).
+             * Format: int64
+             * @description Total number of matching documents (before top_k limit)
              */
-            explain?: unknown;
+            total_matches?: number | null;
             /**
              * Format: int64
              * @description Search latency in milliseconds
              */
             latency_ms: number;
-            predicate_shortfall?: null | components["schemas"]["PredicateShortfallWire"];
             /** @description Request ID for tracing */
             request_id: string;
-            /** @description Search results */
-            results: components["schemas"]["TypedSearchResult"][];
+            predicate_shortfall?: null | components["schemas"]["PredicateShortfallWire"];
             /**
              * @description SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
              *     upstream gateways consume for metering and planner-v2 training.
@@ -2364,28 +2296,30 @@ export interface components {
              */
             search_plan_trace?: unknown;
             /**
-             * Format: int64
-             * @description Total number of matching documents (before top_k limit)
+             * @description Human-readable explain summary derived from the SearchPlanTrace.
+             *     Only emitted when the request sets `debug=true` — gives an on-call
+             *     operator a one-glance view of the plan, cache result, and any
+             *     actionable hints (high scan fraction, repair triggered, ...).
              */
-            total_matches?: number | null;
+            explain?: unknown;
         };
         /** @description Search result with typed fields */
         TypedSearchResult: {
             /** @description Record ID */
             id: string;
-            /** @description Rich properties from the record */
-            props: {
-                [key: string]: unknown;
-            };
             /**
              * Format: float
              * @description Similarity score (0.0 - 1.0 for cosine, distance for L2)
              */
             score: number;
-            /** @description TEXT fields (if include_text is true) */
-            text_fields?: components["schemas"]["TextFieldOutput"][] | null;
             /** @description Vector embedding (if requested) */
             vector?: number[] | null;
+            /** @description Rich properties from the record */
+            props: {
+                [key: string]: unknown;
+            };
+            /** @description TEXT fields (if include_text is true) */
+            text_fields?: components["schemas"]["TextFieldOutput"][] | null;
         };
         /**
          * @description Request to update schema
@@ -2421,33 +2355,347 @@ export interface components {
         };
         /** @description Schema update response */
         UpdateSchemaResponse: {
-            /** @description List of applied changes */
-            changes: components["schemas"]["SchemaChange"][];
-            /** @description Previous schema ID (for rollback) */
-            previous_schema_id: string;
             /** @description Updated schema ID */
             schema_id: string;
             /** @description New schema version */
             schema_version: string;
-            /** @description Update timestamp */
-            updated_at: string;
+            /** @description Previous schema ID (for rollback) */
+            previous_schema_id: string;
+            /** @description List of applied changes */
+            changes: components["schemas"]["SchemaChange"][];
             /** @description Warnings about the update */
             warnings: string[];
+            /** @description Update timestamp */
+            updated_at: string;
         };
         UpsertEntityRequest: {
-            embeddings?: components["schemas"]["EntityEmbeddingInput"][];
+            /** @description Empty ⇒ the server generates a UUID. */
+            id?: string;
             flexible_metadata?: {
                 [key: string]: unknown;
             };
-            /** @description Empty ⇒ the server generates a UUID. */
-            id?: string;
+            embeddings?: components["schemas"]["EntityEmbeddingInput"][];
             provenance?: null | components["schemas"]["EntityProvenanceInput"];
             relations?: components["schemas"]["EntityRelationInput"][];
         };
         UpsertEntityResponse: {
+            success: boolean;
             entity_id: string;
             message: string;
+        };
+        HealthResponse: {
+            status?: string;
+            version?: string;
+            uptime_seconds?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        ProbeResponse: {
+            status: string;
+        };
+        CapabilitiesResponse: {
+            api_version?: string;
+            surface?: string;
+            features?: string[];
+            limits?: {
+                [key: string]: unknown;
+            };
+            error_envelope?: {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        CreateGraphRequest: {
+            /** @description Unique identifier for the new graph collection. */
+            graph_id: string;
+            /** @description Optional human-readable name (defaults to graph_id). */
+            name?: string | null;
+            description?: string | null;
+        };
+        /**
+         * @description Server returns a `GraphResponse<T>` envelope around graph
+         *     collection metadata. The fields below are the common subset
+         *     SDKs rely on; extra server-side fields are passed through.
+         */
+        GraphCollectionResponse: {
+            graph_id?: string;
+            name?: string | null;
+            description?: string | null;
+            node_count?: number | null;
+            edge_count?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description Server returns a `GraphResponse<Vec<...>>` envelope with `data`
+         *     containing the graph collections.
+         */
+        ListGraphsResponse: {
+            data?: components["schemas"]["GraphCollectionResponse"][];
+            success?: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description 204 No Content on success with an empty `GraphResponse` envelope;
+         *     404 Not Found with an error envelope when the graph is missing.
+         */
+        DeleteGraphResponse: {
+            success?: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description Node payload nested inside `CreateNodeRequest.node`. Matches
+         *     `RestNodeInput` in proximadb-api's graph handler.
+         */
+        NodeInput: {
+            id: string;
+            labels?: string[];
+            properties?: {
+                [key: string]: unknown;
+            };
+            embedding?: components["schemas"]["EmbeddingInput"];
+        };
+        EmbeddingInput: {
+            vector: number[];
+            model_id?: string | null;
+            modality?: string | null;
+        };
+        /** @description Wrapped envelope: server expects `{"node": NodeInput}`. */
+        CreateNodeRequest: {
+            node: components["schemas"]["NodeInput"];
+        };
+        NodeResponse: {
+            id: string;
+            labels?: string[] | null;
+            properties?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        DeleteNodeResponse: {
+            success?: boolean;
+            id?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description Edge payload nested inside `CreateEdgeRequest.edge`. Matches
+         *     `RestEdgeInput` in proximadb-api's graph handler.
+         */
+        EdgeInput: {
+            id: string;
+            from_node_id: string;
+            to_node_id: string;
+            edge_type: string;
+            properties?: {
+                [key: string]: unknown;
+            };
+            /** Format: double */
+            weight?: number | null;
+        };
+        /** @description Wrapped envelope: server expects `{"edge": EdgeInput}`. */
+        CreateEdgeRequest: {
+            edge: components["schemas"]["EdgeInput"];
+        };
+        EdgeResponse: {
+            id: string;
+            from_node_id?: string;
+            to_node_id?: string;
+            edge_type?: string | null;
+            properties?: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: double */
+            weight?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description Flat shape (no wrapper). Matches `RestTraversalRequest` in
+         *     proximadb-api.
+         */
+        TraverseRequest: {
+            start_node_id: string;
+            /** @default 3 */
+            max_depth: number;
+            edge_types?: string[];
+            node_labels?: string[];
+            /** @description bfs | dfs | shortest_path */
+            algorithm?: string | null;
+            limit?: number | null;
+        };
+        TraverseResponse: {
+            nodes?: components["schemas"]["NodeResponse"][];
+            edges?: components["schemas"]["EdgeResponse"][];
+            paths?: string[][];
+        } & {
+            [key: string]: unknown;
+        };
+        GraphStatsResponse: {
+            node_count?: number;
+            edge_count?: number;
+            /** Format: double */
+            density?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Body for `POST /api/v2/graphs/{id}/nodes/batch`. */
+        BatchCreateNodesRequest: {
+            nodes: components["schemas"]["NodeInput"][];
+        };
+        /** @description Server returns a `GraphResponse<BatchResults<Node>>` envelope. */
+        BatchNodesResponse: {
+            success?: boolean;
+            data?: {
+                results?: components["schemas"]["NodeResponse"][];
+                count?: number;
+            } & {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Body for `POST /api/v2/graphs/{id}/edges/batch`. */
+        BatchCreateEdgesRequest: {
+            edges: components["schemas"]["EdgeInput"][];
+        };
+        /** @description Server returns a `GraphResponse<BatchResults<Edge>>` envelope. */
+        BatchEdgesResponse: {
+            success?: boolean;
+            data?: {
+                results?: components["schemas"]["EdgeResponse"][];
+                count?: number;
+            } & {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @description Body for `POST /api/v2/observability/namespaces`. Retention days
+         *     default to hot=1, warm=7, cold=30.
+         */
+        CreateObservabilityNamespaceRequest: {
+            name: string;
+            /**
+             * Format: uint32
+             * @default 1
+             */
+            hot_retention_days: number;
+            /**
+             * Format: uint32
+             * @default 7
+             */
+            warm_retention_days: number;
+            /**
+             * Format: uint32
+             * @default 30
+             */
+            cold_retention_days: number;
+        };
+        CreateObservabilityNamespaceResponse: {
             success: boolean;
+            namespace: string;
+        };
+        /**
+         * @description A single log entry for ingestion. `severity` defaults to `info`;
+         *     `fields` carries arbitrary structured attributes.
+         */
+        LogEntryInput: {
+            /** Format: int64 */
+            timestamp_ns?: number | null;
+            message: string;
+            /**
+             * @description One of: trace, debug, info, warn, error, fatal (case-insensitive).
+             * @default info
+             */
+            severity: string;
+            source?: string | null;
+            service?: string | null;
+            fields?: {
+                [key: string]: unknown;
+            };
+        };
+        BulkLogIngestRequest: {
+            logs: components["schemas"]["LogEntryInput"][];
+        };
+        MetricSampleInput: {
+            name: string;
+            /** Format: double */
+            value: number;
+            /**
+             * Format: int64
+             * @description Defaults to server receive time.
+             */
+            timestamp_ns?: number | null;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        BulkMetricIngestRequest: {
+            metrics: components["schemas"]["MetricSampleInput"][];
+        };
+        ObservabilityIngestResponse: {
+            /** Format: uint64 */
+            ingested: number;
+            /** Format: uint64 */
+            failed: number;
+            success: boolean;
+        };
+        MetricAggregationInput: {
+            metric_name: string;
+            /** Format: int64 */
+            start_time_ns: number;
+            /** Format: int64 */
+            end_time_ns: number;
+            /**
+             * @description min, max, avg, sum, or count.
+             * @default avg
+             */
+            aggregation: string;
+            /**
+             * Format: uint32
+             * @default 60
+             */
+            step_seconds: number;
+            group_by?: string[];
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        MetricDataPoint: {
+            /** Format: int64 */
+            timestamp_ns: number;
+            /** Format: double */
+            value: number;
+        };
+        MetricTimeSeries: {
+            labels: {
+                [key: string]: string;
+            };
+            points: components["schemas"]["MetricDataPoint"][];
+        };
+        MetricAggregationResult: {
+            series: components["schemas"]["MetricTimeSeries"][];
+            /** Format: uint64 */
+            query_time_ms: number;
+        };
+        /** @description Body for `POST /api/v2/nl/translate`. */
+        NlTranslateRequest: {
+            query: string;
+        };
+        /**
+         * @description Model-generated translation output — the final query string is not
+         *     validated SQL/AQL; validate before executing it.
+         */
+        NlTranslateResult: {
+            normalized_query: string;
+            views: string[];
+            final_query: string;
         };
     };
     responses: {
@@ -2489,29 +2737,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    getCapabilities: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Capability document. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CapabilitiesResponse"];
-                };
-            };
-        };
-    };
     listCollections: {
         parameters: {
             query?: {
@@ -3172,288 +3397,6 @@ export interface operations {
             };
         };
     };
-    listDocumentCollections: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Collections. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    createDocumentCollection: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Created. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    queryDocuments: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                collection: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Documents. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    insertDocument: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                collection: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Inserted. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            404: components["responses"]["NotFound"];
-        };
-    };
-    listGraphs: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Graph collection listing. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListGraphsResponse"];
-                };
-            };
-        };
-    };
-    createGraph: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateGraphRequest"];
-            };
-        };
-        responses: {
-            /** @description Graph collection metadata. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GraphCollectionResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-        };
-    };
-    getGraph: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Graph collection metadata. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GraphCollectionResponse"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-        };
-    };
-    deleteGraph: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deletion acknowledged. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeleteGraphResponse"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-        };
-    };
-    createEdge: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateEdgeRequest"];
-            };
-        };
-        responses: {
-            /** @description Created edge. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EdgeResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
-        };
-    };
-    batchCreateEdges: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BatchCreateEdgesRequest"];
-            };
-        };
-        responses: {
-            /** @description Batch result. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchEdgesResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
-        };
-    };
     fusion_search_v2: {
         parameters: {
             query?: never;
@@ -3548,246 +3491,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-        };
-    };
-    createNode: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateNodeRequest"];
-            };
-        };
-        responses: {
-            /** @description Created node. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NodeResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
-        };
-    };
-    batchCreateNodes: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BatchCreateNodesRequest"];
-            };
-        };
-        responses: {
-            /** @description Batch result. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchNodesResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
-        };
-    };
-    getNode: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-                node_id: components["parameters"]["NodeId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Node payload. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NodeResponse"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-        };
-    };
-    deleteNode: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-                node_id: components["parameters"]["NodeId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deletion acknowledged. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeleteNodeResponse"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-        };
-    };
-    getGraphStats: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Graph statistics. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GraphStatsResponse"];
-                };
-            };
-        };
-    };
-    traverseGraph: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                graph_id: components["parameters"]["GraphId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TraverseRequest"];
-            };
-        };
-        responses: {
-            /** @description Traversal result. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TraverseResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-        };
-    };
-    hybridIndex: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Index result. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    hybridSearch: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    collection: string;
-                    fusion_strategy?: string;
-                    text_query?: string;
-                    top_k?: number;
-                    vector?: number[];
-                } & {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Fused results. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            400: components["responses"]["BadRequest"];
         };
     };
     listModelRegistries: {
@@ -3998,72 +3701,6 @@ export interface operations {
             };
         };
     };
-    ingestLog: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                namespace: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Ingested. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    queryLogs: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
-                "X-Tenant-ID"?: string;
-            };
-            path: {
-                namespace: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Matching logs. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     executeQuery: {
         parameters: {
             query?: never;
@@ -4264,6 +3901,808 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProbeResponse"];
+                };
+            };
+        };
+    };
+    getCapabilities: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Capability document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilitiesResponse"];
+                };
+            };
+        };
+    };
+    listGraphs: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Graph collection listing. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListGraphsResponse"];
+                };
+            };
+        };
+    };
+    createGraph: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGraphRequest"];
+            };
+        };
+        responses: {
+            /** @description Graph collection metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphCollectionResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getGraph: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Graph collection metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphCollectionResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteGraph: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion acknowledged. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteGraphResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createNode: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateNodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Created node. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getNode: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                node_id: components["parameters"]["NodeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Node payload. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteNode: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                node_id: components["parameters"]["NodeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion acknowledged. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteNodeResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createEdge: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateEdgeRequest"];
+            };
+        };
+        responses: {
+            /** @description Created edge. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    batchCreateNodes: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchCreateNodesRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchNodesResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    batchCreateEdges: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchCreateEdgesRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchEdgesResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    traverseGraph: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraverseRequest"];
+            };
+        };
+        responses: {
+            /** @description Traversal result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraverseResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getGraphStats: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Graph statistics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphStatsResponse"];
+                };
+            };
+        };
+    };
+    hybridSearch: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    collection: string;
+                    vector?: number[];
+                    text_query?: string;
+                    top_k?: number;
+                    fusion_strategy?: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Fused results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    hybridIndex: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Index result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listDocumentCollections: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Collections. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    createDocumentCollection: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Created. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    queryDocuments: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Documents. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    insertDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Inserted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    ingestLog: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Ingested. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    queryLogs: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Matching logs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    createObservabilityNamespace: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateObservabilityNamespaceRequest"];
+            };
+        };
+        responses: {
+            /** @description Namespace created. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateObservabilityNamespaceResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    ingestLogs: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkLogIngestRequest"];
+            };
+        };
+        responses: {
+            /** @description Ingestion result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservabilityIngestResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    ingestMetric: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricSampleInput"];
+            };
+        };
+        responses: {
+            /** @description Ingestion result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservabilityIngestResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    ingestMetrics: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkMetricIngestRequest"];
+            };
+        };
+        responses: {
+            /** @description Ingestion result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservabilityIngestResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    aggregateMetrics: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricAggregationInput"];
+            };
+        };
+        responses: {
+            /** @description Aggregated time series. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricAggregationResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    translateNaturalLanguage: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NlTranslateRequest"];
+            };
+        };
+        responses: {
+            /** @description Translation result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NlTranslateResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description LLM unavailable or translation failed. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

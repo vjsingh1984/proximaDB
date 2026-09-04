@@ -22,35 +22,35 @@ class CreateCollectionV2Response:
 
     Attributes:
         collection_id (str): Collection ID (same as name)
-        created_at (str): Creation timestamp
+        name (str): Collection name
         dimension (int): Vector dimension
         engine (str): Selected storage engine
-        name (str): Collection name
         proxima_record_enabled (bool): Whether ProximaRecord is enabled
+        created_at (str): Creation timestamp
         schema_id (None | str | Unset): Schema ID (if schema was defined)
     """
 
     collection_id: str
-    created_at: str
+    name: str
     dimension: int
     engine: str
-    name: str
     proxima_record_enabled: bool
+    created_at: str
     schema_id: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         collection_id = self.collection_id
 
-        created_at = self.created_at
+        name = self.name
 
         dimension = self.dimension
 
         engine = self.engine
 
-        name = self.name
-
         proxima_record_enabled = self.proxima_record_enabled
+
+        created_at = self.created_at
 
         schema_id: None | str | Unset
         if isinstance(self.schema_id, Unset):
@@ -63,11 +63,11 @@ class CreateCollectionV2Response:
         field_dict.update(
             {
                 "collection_id": collection_id,
-                "created_at": created_at,
+                "name": name,
                 "dimension": dimension,
                 "engine": engine,
-                "name": name,
                 "proxima_record_enabled": proxima_record_enabled,
+                "created_at": created_at,
             }
         )
         if schema_id is not UNSET:
@@ -80,15 +80,15 @@ class CreateCollectionV2Response:
         d = dict(src_dict)
         collection_id = d.pop("collection_id")
 
-        created_at = d.pop("created_at")
+        name = d.pop("name")
 
         dimension = d.pop("dimension")
 
         engine = d.pop("engine")
 
-        name = d.pop("name")
-
         proxima_record_enabled = d.pop("proxima_record_enabled")
+
+        created_at = d.pop("created_at")
 
         def _parse_schema_id(data: object) -> None | str | Unset:
             if data is None:
@@ -101,11 +101,11 @@ class CreateCollectionV2Response:
 
         create_collection_v2_response = cls(
             collection_id=collection_id,
-            created_at=created_at,
+            name=name,
             dimension=dimension,
             engine=engine,
-            name=name,
             proxima_record_enabled=proxima_record_enabled,
+            created_at=created_at,
             schema_id=schema_id,
         )
 

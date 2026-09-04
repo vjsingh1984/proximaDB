@@ -29,6 +29,9 @@ use futures::{StreamExt, TryStreamExt};
 use object_store::ObjectStore;
 use object_store::path::Path;
 use parquet::arrow::ProjectionMask;
+// arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+// apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+#[allow(deprecated)]
 use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 use proximadb_execution_contracts::{BatchStream, ExecutionError, ExecutionOperator};
 
@@ -132,6 +135,9 @@ impl ExecutionOperator for ParquetScanOperator {
         if self.count_only {
             let mut total: usize = 0;
             for (path, size) in &self.files {
+                // arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+                // apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+                #[allow(deprecated)]
                 let mut reader = ParquetObjectReader::new(self.store.clone(), path.clone());
                 if let Some(sz) = size {
                     reader = reader.with_file_size(*sz);
@@ -165,6 +171,9 @@ impl ExecutionOperator for ParquetScanOperator {
                 let store = store.clone();
                 let projection = projection.clone();
                 async move {
+                    // arrow-rs 59.2 deprecated ParquetObjectReader (wants direct AsyncFileReader impls,
+                    // apache/arrow-rs#10308). Contained here; the migration is a tracked follow-up.
+                    #[allow(deprecated)]
                     let mut reader = ParquetObjectReader::new(store, path.clone());
                     if let Some(sz) = size {
                         reader = reader.with_file_size(sz);

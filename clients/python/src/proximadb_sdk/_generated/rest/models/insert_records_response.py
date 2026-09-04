@@ -25,29 +25,29 @@ class InsertRecordsResponse:
     """Response for insert operation
 
     Attributes:
-        errors (list[InsertError]): Detailed errors for failed records
-        failed_count (int): Number of failed records
         inserted_count (int): Number of successfully inserted records
+        failed_count (int): Number of failed records
+        errors (list[InsertError]): Detailed errors for failed records
         inserted_ids (list[str]): IDs of successfully inserted records
     """
 
-    errors: list[InsertError]
-    failed_count: int
     inserted_count: int
+    failed_count: int
+    errors: list[InsertError]
     inserted_ids: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.insert_error import InsertError
 
+        inserted_count = self.inserted_count
+
+        failed_count = self.failed_count
+
         errors = []
         for errors_item_data in self.errors:
             errors_item = errors_item_data.to_dict()
             errors.append(errors_item)
-
-        failed_count = self.failed_count
-
-        inserted_count = self.inserted_count
 
         inserted_ids = self.inserted_ids
 
@@ -55,9 +55,9 @@ class InsertRecordsResponse:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "errors": errors,
-                "failed_count": failed_count,
                 "inserted_count": inserted_count,
+                "failed_count": failed_count,
+                "errors": errors,
                 "inserted_ids": inserted_ids,
             }
         )
@@ -69,6 +69,10 @@ class InsertRecordsResponse:
         from ..models.insert_error import InsertError
 
         d = dict(src_dict)
+        inserted_count = d.pop("inserted_count")
+
+        failed_count = d.pop("failed_count")
+
         errors = []
         _errors = d.pop("errors")
         for errors_item_data in _errors:
@@ -76,16 +80,12 @@ class InsertRecordsResponse:
 
             errors.append(errors_item)
 
-        failed_count = d.pop("failed_count")
-
-        inserted_count = d.pop("inserted_count")
-
         inserted_ids = cast(list[str], d.pop("inserted_ids"))
 
         insert_records_response = cls(
-            errors=errors,
-            failed_count=failed_count,
             inserted_count=inserted_count,
+            failed_count=failed_count,
+            errors=errors,
             inserted_ids=inserted_ids,
         )
 

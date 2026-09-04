@@ -27,22 +27,22 @@ class CatalogEvaluationEvidence:
     """Append-only evaluation summary. Large row-level results remain external.
 
     Attributes:
-        created_at_ms (int):
-        dataset_digest (str):
-        dataset_name (str):
-        evaluator (str):
         evidence_id (str):
-        metrics (CatalogEvaluationEvidenceMetrics):
         version (int):
+        dataset_name (str):
+        dataset_digest (str):
+        evaluator (str):
+        metrics (CatalogEvaluationEvidenceMetrics):
+        created_at_ms (int):
     """
 
-    created_at_ms: int
-    dataset_digest: str
-    dataset_name: str
-    evaluator: str
     evidence_id: str
-    metrics: CatalogEvaluationEvidenceMetrics
     version: int
+    dataset_name: str
+    dataset_digest: str
+    evaluator: str
+    metrics: CatalogEvaluationEvidenceMetrics
+    created_at_ms: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,31 +50,31 @@ class CatalogEvaluationEvidence:
             CatalogEvaluationEvidenceMetrics,
         )
 
-        created_at_ms = self.created_at_ms
+        evidence_id = self.evidence_id
 
-        dataset_digest = self.dataset_digest
+        version = self.version
 
         dataset_name = self.dataset_name
 
-        evaluator = self.evaluator
+        dataset_digest = self.dataset_digest
 
-        evidence_id = self.evidence_id
+        evaluator = self.evaluator
 
         metrics = self.metrics.to_dict()
 
-        version = self.version
+        created_at_ms = self.created_at_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "created_at_ms": created_at_ms,
-                "dataset_digest": dataset_digest,
-                "dataset_name": dataset_name,
-                "evaluator": evaluator,
                 "evidence_id": evidence_id,
-                "metrics": metrics,
                 "version": version,
+                "dataset_name": dataset_name,
+                "dataset_digest": dataset_digest,
+                "evaluator": evaluator,
+                "metrics": metrics,
+                "created_at_ms": created_at_ms,
             }
         )
 
@@ -87,28 +87,28 @@ class CatalogEvaluationEvidence:
         )
 
         d = dict(src_dict)
-        created_at_ms = d.pop("created_at_ms")
-
-        dataset_digest = d.pop("dataset_digest")
-
-        dataset_name = d.pop("dataset_name")
-
-        evaluator = d.pop("evaluator")
-
         evidence_id = d.pop("evidence_id")
-
-        metrics = CatalogEvaluationEvidenceMetrics.from_dict(d.pop("metrics"))
 
         version = d.pop("version")
 
+        dataset_name = d.pop("dataset_name")
+
+        dataset_digest = d.pop("dataset_digest")
+
+        evaluator = d.pop("evaluator")
+
+        metrics = CatalogEvaluationEvidenceMetrics.from_dict(d.pop("metrics"))
+
+        created_at_ms = d.pop("created_at_ms")
+
         catalog_evaluation_evidence = cls(
-            created_at_ms=created_at_ms,
-            dataset_digest=dataset_digest,
-            dataset_name=dataset_name,
-            evaluator=evaluator,
             evidence_id=evidence_id,
-            metrics=metrics,
             version=version,
+            dataset_name=dataset_name,
+            dataset_digest=dataset_digest,
+            evaluator=evaluator,
+            metrics=metrics,
+            created_at_ms=created_at_ms,
         )
 
         catalog_evaluation_evidence.additional_properties = d

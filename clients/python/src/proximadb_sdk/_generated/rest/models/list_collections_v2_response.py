@@ -26,17 +26,17 @@ class ListCollectionsV2Response:
 
     Attributes:
         collections (list[CollectionV2Summary]): List of collections
-        has_more (bool): Whether there are more results
+        total (int): Total count of collections
         limit (int): Limit used in this request
         offset (int): Offset used in this request
-        total (int): Total count of collections
+        has_more (bool): Whether there are more results
     """
 
     collections: list[CollectionV2Summary]
-    has_more: bool
+    total: int
     limit: int
     offset: int
-    total: int
+    has_more: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,23 +47,23 @@ class ListCollectionsV2Response:
             collections_item = collections_item_data.to_dict()
             collections.append(collections_item)
 
-        has_more = self.has_more
+        total = self.total
 
         limit = self.limit
 
         offset = self.offset
 
-        total = self.total
+        has_more = self.has_more
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "collections": collections,
-                "has_more": has_more,
+                "total": total,
                 "limit": limit,
                 "offset": offset,
-                "total": total,
+                "has_more": has_more,
             }
         )
 
@@ -81,20 +81,20 @@ class ListCollectionsV2Response:
 
             collections.append(collections_item)
 
-        has_more = d.pop("has_more")
+        total = d.pop("total")
 
         limit = d.pop("limit")
 
         offset = d.pop("offset")
 
-        total = d.pop("total")
+        has_more = d.pop("has_more")
 
         list_collections_v2_response = cls(
             collections=collections,
-            has_more=has_more,
+            total=total,
             limit=limit,
             offset=offset,
-            total=total,
+            has_more=has_more,
         )
 
         list_collections_v2_response.additional_properties = d

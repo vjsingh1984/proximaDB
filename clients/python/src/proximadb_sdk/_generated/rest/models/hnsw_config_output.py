@@ -21,17 +21,23 @@ class HnswConfigOutput:
     """REST output for HNSW params (mirrors gRPC `V2HnswConfig`).
 
     Attributes:
+        m (int | None | Unset):
         ef_construction (int | None | Unset):
         ef_search (int | None | Unset):
-        m (int | None | Unset):
     """
 
+    m: int | None | Unset = UNSET
     ef_construction: int | None | Unset = UNSET
     ef_search: int | None | Unset = UNSET
-    m: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        m: int | None | Unset
+        if isinstance(self.m, Unset):
+            m = UNSET
+        else:
+            m = self.m
+
         ef_construction: int | None | Unset
         if isinstance(self.ef_construction, Unset):
             ef_construction = UNSET
@@ -44,27 +50,30 @@ class HnswConfigOutput:
         else:
             ef_search = self.ef_search
 
-        m: int | None | Unset
-        if isinstance(self.m, Unset):
-            m = UNSET
-        else:
-            m = self.m
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if m is not UNSET:
+            field_dict["m"] = m
         if ef_construction is not UNSET:
             field_dict["ef_construction"] = ef_construction
         if ef_search is not UNSET:
             field_dict["ef_search"] = ef_search
-        if m is not UNSET:
-            field_dict["m"] = m
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+
+        def _parse_m(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        m = _parse_m(d.pop("m", UNSET))
 
         def _parse_ef_construction(data: object) -> int | None | Unset:
             if data is None:
@@ -84,19 +93,10 @@ class HnswConfigOutput:
 
         ef_search = _parse_ef_search(d.pop("ef_search", UNSET))
 
-        def _parse_m(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        m = _parse_m(d.pop("m", UNSET))
-
         hnsw_config_output = cls(
+            m=m,
             ef_construction=ef_construction,
             ef_search=ef_search,
-            m=m,
         )
 
         hnsw_config_output.additional_properties = d

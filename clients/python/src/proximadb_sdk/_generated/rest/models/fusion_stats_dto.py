@@ -20,35 +20,35 @@ T = TypeVar("T", bound="FusionStatsDto")
 class FusionStatsDto:
     """
     Attributes:
-        candidates_in (int):
-        items_out (int):
         sources_fused (int):
         sources_skipped (int):
+        candidates_in (int):
+        items_out (int):
     """
 
-    candidates_in: int
-    items_out: int
     sources_fused: int
     sources_skipped: int
+    candidates_in: int
+    items_out: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        candidates_in = self.candidates_in
-
-        items_out = self.items_out
-
         sources_fused = self.sources_fused
 
         sources_skipped = self.sources_skipped
+
+        candidates_in = self.candidates_in
+
+        items_out = self.items_out
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "candidates_in": candidates_in,
-                "items_out": items_out,
                 "sources_fused": sources_fused,
                 "sources_skipped": sources_skipped,
+                "candidates_in": candidates_in,
+                "items_out": items_out,
             }
         )
 
@@ -57,19 +57,19 @@ class FusionStatsDto:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        candidates_in = d.pop("candidates_in")
-
-        items_out = d.pop("items_out")
-
         sources_fused = d.pop("sources_fused")
 
         sources_skipped = d.pop("sources_skipped")
 
+        candidates_in = d.pop("candidates_in")
+
+        items_out = d.pop("items_out")
+
         fusion_stats_dto = cls(
-            candidates_in=candidates_in,
-            items_out=items_out,
             sources_fused=sources_fused,
             sources_skipped=sources_skipped,
+            candidates_in=candidates_in,
+            items_out=items_out,
         )
 
         fusion_stats_dto.additional_properties = d

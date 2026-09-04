@@ -100,6 +100,7 @@ mod tests {
             0,
             VectorQuant::Auto,
             None,
+            None, // destination_url
         )
         .unwrap();
         write_pax_segment(
@@ -109,6 +110,7 @@ mod tests {
             0,
             VectorQuant::Auto,
             None,
+            None, // destination_url
         )
         .unwrap();
         std::fs::write(tmp.path().join("ignore.txt"), b"x").unwrap();

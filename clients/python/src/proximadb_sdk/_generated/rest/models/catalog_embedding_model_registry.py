@@ -39,27 +39,27 @@ class CatalogEmbeddingModelRegistry:
     append-only lifecycle records.
 
         Attributes:
-            name (str):
             schema_version (int):
-            aliases (CatalogEmbeddingModelRegistryAliases | Unset):
-            decisions (list[CatalogModelDecision] | Unset):
-            deployments (CatalogEmbeddingModelRegistryDeployments | Unset):
-            evidence (list[CatalogEvaluationEvidence] | Unset):
+            name (str):
             revision (int | Unset): Optimistic concurrency token for catalog/API mutations. Old rows default
                 to zero; every successful command increments it.
-            tags (CatalogEmbeddingModelRegistryTags | Unset):
             versions (CatalogEmbeddingModelRegistryVersions | Unset):
+            aliases (CatalogEmbeddingModelRegistryAliases | Unset):
+            evidence (list[CatalogEvaluationEvidence] | Unset):
+            decisions (list[CatalogModelDecision] | Unset):
+            deployments (CatalogEmbeddingModelRegistryDeployments | Unset):
+            tags (CatalogEmbeddingModelRegistryTags | Unset):
     """
 
-    name: str
     schema_version: int
+    name: str
+    revision: int | Unset = UNSET
+    versions: CatalogEmbeddingModelRegistryVersions | Unset = UNSET
     aliases: CatalogEmbeddingModelRegistryAliases | Unset = UNSET
+    evidence: list[CatalogEvaluationEvidence] | Unset = UNSET
     decisions: list[CatalogModelDecision] | Unset = UNSET
     deployments: CatalogEmbeddingModelRegistryDeployments | Unset = UNSET
-    evidence: list[CatalogEvaluationEvidence] | Unset = UNSET
-    revision: int | Unset = UNSET
     tags: CatalogEmbeddingModelRegistryTags | Unset = UNSET
-    versions: CatalogEmbeddingModelRegistryVersions | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,13 +78,26 @@ class CatalogEmbeddingModelRegistry:
         from ..models.catalog_evaluation_evidence import CatalogEvaluationEvidence
         from ..models.catalog_model_decision import CatalogModelDecision
 
+        schema_version = self.schema_version
+
         name = self.name
 
-        schema_version = self.schema_version
+        revision = self.revision
+
+        versions: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.versions, Unset):
+            versions = self.versions.to_dict()
 
         aliases: dict[str, Any] | Unset = UNSET
         if not isinstance(self.aliases, Unset):
             aliases = self.aliases.to_dict()
+
+        evidence: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.evidence, Unset):
+            evidence = []
+            for evidence_item_data in self.evidence:
+                evidence_item = evidence_item_data.to_dict()
+                evidence.append(evidence_item)
 
         decisions: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.decisions, Unset):
@@ -97,45 +110,32 @@ class CatalogEmbeddingModelRegistry:
         if not isinstance(self.deployments, Unset):
             deployments = self.deployments.to_dict()
 
-        evidence: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.evidence, Unset):
-            evidence = []
-            for evidence_item_data in self.evidence:
-                evidence_item = evidence_item_data.to_dict()
-                evidence.append(evidence_item)
-
-        revision = self.revision
-
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
-
-        versions: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.versions, Unset):
-            versions = self.versions.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "name": name,
                 "schema_version": schema_version,
+                "name": name,
             }
         )
+        if revision is not UNSET:
+            field_dict["revision"] = revision
+        if versions is not UNSET:
+            field_dict["versions"] = versions
         if aliases is not UNSET:
             field_dict["aliases"] = aliases
+        if evidence is not UNSET:
+            field_dict["evidence"] = evidence
         if decisions is not UNSET:
             field_dict["decisions"] = decisions
         if deployments is not UNSET:
             field_dict["deployments"] = deployments
-        if evidence is not UNSET:
-            field_dict["evidence"] = evidence
-        if revision is not UNSET:
-            field_dict["revision"] = revision
         if tags is not UNSET:
             field_dict["tags"] = tags
-        if versions is not UNSET:
-            field_dict["versions"] = versions
 
         return field_dict
 
@@ -157,9 +157,18 @@ class CatalogEmbeddingModelRegistry:
         from ..models.catalog_model_decision import CatalogModelDecision
 
         d = dict(src_dict)
+        schema_version = d.pop("schema_version")
+
         name = d.pop("name")
 
-        schema_version = d.pop("schema_version")
+        revision = d.pop("revision", UNSET)
+
+        _versions = d.pop("versions", UNSET)
+        versions: CatalogEmbeddingModelRegistryVersions | Unset
+        if isinstance(_versions, Unset):
+            versions = UNSET
+        else:
+            versions = CatalogEmbeddingModelRegistryVersions.from_dict(_versions)
 
         _aliases = d.pop("aliases", UNSET)
         aliases: CatalogEmbeddingModelRegistryAliases | Unset
@@ -167,6 +176,15 @@ class CatalogEmbeddingModelRegistry:
             aliases = UNSET
         else:
             aliases = CatalogEmbeddingModelRegistryAliases.from_dict(_aliases)
+
+        _evidence = d.pop("evidence", UNSET)
+        evidence: list[CatalogEvaluationEvidence] | Unset = UNSET
+        if _evidence is not UNSET:
+            evidence = []
+            for evidence_item_data in _evidence:
+                evidence_item = CatalogEvaluationEvidence.from_dict(evidence_item_data)
+
+                evidence.append(evidence_item)
 
         _decisions = d.pop("decisions", UNSET)
         decisions: list[CatalogModelDecision] | Unset = UNSET
@@ -186,17 +204,6 @@ class CatalogEmbeddingModelRegistry:
                 _deployments
             )
 
-        _evidence = d.pop("evidence", UNSET)
-        evidence: list[CatalogEvaluationEvidence] | Unset = UNSET
-        if _evidence is not UNSET:
-            evidence = []
-            for evidence_item_data in _evidence:
-                evidence_item = CatalogEvaluationEvidence.from_dict(evidence_item_data)
-
-                evidence.append(evidence_item)
-
-        revision = d.pop("revision", UNSET)
-
         _tags = d.pop("tags", UNSET)
         tags: CatalogEmbeddingModelRegistryTags | Unset
         if isinstance(_tags, Unset):
@@ -204,23 +211,16 @@ class CatalogEmbeddingModelRegistry:
         else:
             tags = CatalogEmbeddingModelRegistryTags.from_dict(_tags)
 
-        _versions = d.pop("versions", UNSET)
-        versions: CatalogEmbeddingModelRegistryVersions | Unset
-        if isinstance(_versions, Unset):
-            versions = UNSET
-        else:
-            versions = CatalogEmbeddingModelRegistryVersions.from_dict(_versions)
-
         catalog_embedding_model_registry = cls(
-            name=name,
             schema_version=schema_version,
+            name=name,
+            revision=revision,
+            versions=versions,
             aliases=aliases,
+            evidence=evidence,
             decisions=decisions,
             deployments=deployments,
-            evidence=evidence,
-            revision=revision,
             tags=tags,
-            versions=versions,
         )
 
         catalog_embedding_model_registry.additional_properties = d

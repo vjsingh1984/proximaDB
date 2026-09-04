@@ -30,28 +30,28 @@ class CatalogEmbeddingInputContract:
     """Exact rendered-input and tokenizer budget consumed by an embedding runtime.
 
     Attributes:
-        declared_context_limit (int):
-        document_template (str):
-        effective_context_limit (int):
         model_revision (str):
-        query_template (str):
-        special_token_count (int):
-        tokenizer_fingerprint (str):
         tokenizer_id (str):
         tokenizer_revision (str):
+        tokenizer_fingerprint (str):
+        declared_context_limit (int):
+        effective_context_limit (int):
+        special_token_count (int):
+        document_template (str):
+        query_template (str):
         document_parameters (CatalogEmbeddingInputContractDocumentParameters | Unset):
         query_parameters (CatalogEmbeddingInputContractQueryParameters | Unset):
     """
 
-    declared_context_limit: int
-    document_template: str
-    effective_context_limit: int
     model_revision: str
-    query_template: str
-    special_token_count: int
-    tokenizer_fingerprint: str
     tokenizer_id: str
     tokenizer_revision: str
+    tokenizer_fingerprint: str
+    declared_context_limit: int
+    effective_context_limit: int
+    special_token_count: int
+    document_template: str
+    query_template: str
     document_parameters: CatalogEmbeddingInputContractDocumentParameters | Unset = UNSET
     query_parameters: CatalogEmbeddingInputContractQueryParameters | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -64,23 +64,23 @@ class CatalogEmbeddingInputContract:
             CatalogEmbeddingInputContractQueryParameters,
         )
 
-        declared_context_limit = self.declared_context_limit
-
-        document_template = self.document_template
-
-        effective_context_limit = self.effective_context_limit
-
         model_revision = self.model_revision
-
-        query_template = self.query_template
-
-        special_token_count = self.special_token_count
-
-        tokenizer_fingerprint = self.tokenizer_fingerprint
 
         tokenizer_id = self.tokenizer_id
 
         tokenizer_revision = self.tokenizer_revision
+
+        tokenizer_fingerprint = self.tokenizer_fingerprint
+
+        declared_context_limit = self.declared_context_limit
+
+        effective_context_limit = self.effective_context_limit
+
+        special_token_count = self.special_token_count
+
+        document_template = self.document_template
+
+        query_template = self.query_template
 
         document_parameters: dict[str, Any] | Unset = UNSET
         if not isinstance(self.document_parameters, Unset):
@@ -94,15 +94,15 @@ class CatalogEmbeddingInputContract:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "declared_context_limit": declared_context_limit,
-                "document_template": document_template,
-                "effective_context_limit": effective_context_limit,
                 "model_revision": model_revision,
-                "query_template": query_template,
-                "special_token_count": special_token_count,
-                "tokenizer_fingerprint": tokenizer_fingerprint,
                 "tokenizer_id": tokenizer_id,
                 "tokenizer_revision": tokenizer_revision,
+                "tokenizer_fingerprint": tokenizer_fingerprint,
+                "declared_context_limit": declared_context_limit,
+                "effective_context_limit": effective_context_limit,
+                "special_token_count": special_token_count,
+                "document_template": document_template,
+                "query_template": query_template,
             }
         )
         if document_parameters is not UNSET:
@@ -122,23 +122,23 @@ class CatalogEmbeddingInputContract:
         )
 
         d = dict(src_dict)
-        declared_context_limit = d.pop("declared_context_limit")
-
-        document_template = d.pop("document_template")
-
-        effective_context_limit = d.pop("effective_context_limit")
-
         model_revision = d.pop("model_revision")
-
-        query_template = d.pop("query_template")
-
-        special_token_count = d.pop("special_token_count")
-
-        tokenizer_fingerprint = d.pop("tokenizer_fingerprint")
 
         tokenizer_id = d.pop("tokenizer_id")
 
         tokenizer_revision = d.pop("tokenizer_revision")
+
+        tokenizer_fingerprint = d.pop("tokenizer_fingerprint")
+
+        declared_context_limit = d.pop("declared_context_limit")
+
+        effective_context_limit = d.pop("effective_context_limit")
+
+        special_token_count = d.pop("special_token_count")
+
+        document_template = d.pop("document_template")
+
+        query_template = d.pop("query_template")
 
         _document_parameters = d.pop("document_parameters", UNSET)
         document_parameters: CatalogEmbeddingInputContractDocumentParameters | Unset
@@ -161,15 +161,15 @@ class CatalogEmbeddingInputContract:
             )
 
         catalog_embedding_input_contract = cls(
-            declared_context_limit=declared_context_limit,
-            document_template=document_template,
-            effective_context_limit=effective_context_limit,
             model_revision=model_revision,
-            query_template=query_template,
-            special_token_count=special_token_count,
-            tokenizer_fingerprint=tokenizer_fingerprint,
             tokenizer_id=tokenizer_id,
             tokenizer_revision=tokenizer_revision,
+            tokenizer_fingerprint=tokenizer_fingerprint,
+            declared_context_limit=declared_context_limit,
+            effective_context_limit=effective_context_limit,
+            special_token_count=special_token_count,
+            document_template=document_template,
+            query_template=query_template,
             document_parameters=document_parameters,
             query_parameters=query_parameters,
         )

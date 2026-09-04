@@ -5884,6 +5884,7 @@ mod index_first_search_tests {
             url: format!("file://{}", temp_dir.path().join("data").display()),
             weight: 1,
             tags: vec![],
+            io_budget: None,
         }];
 
         let filesystem = Arc::new(

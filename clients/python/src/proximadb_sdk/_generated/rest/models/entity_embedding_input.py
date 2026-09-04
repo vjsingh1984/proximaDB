@@ -22,14 +22,14 @@ class EntityEmbeddingInput:
     Attributes:
         model_id (str):
         vector (list[float]):
-        dimension (int | Unset):
         modality (None | str | Unset):
+        dimension (int | Unset):
     """
 
     model_id: str
     vector: list[float]
-    dimension: int | Unset = UNSET
     modality: None | str | Unset = UNSET
+    dimension: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,13 +37,13 @@ class EntityEmbeddingInput:
 
         vector = self.vector
 
-        dimension = self.dimension
-
         modality: None | str | Unset
         if isinstance(self.modality, Unset):
             modality = UNSET
         else:
             modality = self.modality
+
+        dimension = self.dimension
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -53,10 +53,10 @@ class EntityEmbeddingInput:
                 "vector": vector,
             }
         )
-        if dimension is not UNSET:
-            field_dict["dimension"] = dimension
         if modality is not UNSET:
             field_dict["modality"] = modality
+        if dimension is not UNSET:
+            field_dict["dimension"] = dimension
 
         return field_dict
 
@@ -67,8 +67,6 @@ class EntityEmbeddingInput:
 
         vector = cast(list[float], d.pop("vector"))
 
-        dimension = d.pop("dimension", UNSET)
-
         def _parse_modality(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -78,11 +76,13 @@ class EntityEmbeddingInput:
 
         modality = _parse_modality(d.pop("modality", UNSET))
 
+        dimension = d.pop("dimension", UNSET)
+
         entity_embedding_input = cls(
             model_id=model_id,
             vector=vector,
-            dimension=dimension,
             modality=modality,
+            dimension=dimension,
         )
 
         entity_embedding_input.additional_properties = d

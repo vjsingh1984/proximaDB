@@ -24,8 +24,8 @@ class TextFieldInput:
     for large content. The storage hint helps optimize storage strategy.
 
         Attributes:
-            content (str): Text content
             name (str): Field name
+            content (str): Text content
             storage_hint (None | str | Unset): Storage strategy hint
 
                 - "inline": Store inline in main column (<4KB)
@@ -34,15 +34,15 @@ class TextFieldInput:
                 - "adaptive": Auto-select based on content size (default)
     """
 
-    content: str
     name: str
+    content: str
     storage_hint: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        content = self.content
-
         name = self.name
+
+        content = self.content
 
         storage_hint: None | str | Unset
         if isinstance(self.storage_hint, Unset):
@@ -54,8 +54,8 @@ class TextFieldInput:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "content": content,
                 "name": name,
+                "content": content,
             }
         )
         if storage_hint is not UNSET:
@@ -66,9 +66,9 @@ class TextFieldInput:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        content = d.pop("content")
-
         name = d.pop("name")
+
+        content = d.pop("content")
 
         def _parse_storage_hint(data: object) -> None | str | Unset:
             if data is None:
@@ -80,8 +80,8 @@ class TextFieldInput:
         storage_hint = _parse_storage_hint(d.pop("storage_hint", UNSET))
 
         text_field_input = cls(
-            content=content,
             name=name,
+            content=content,
             storage_hint=storage_hint,
         )
 

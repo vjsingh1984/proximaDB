@@ -20,30 +20,30 @@ T = TypeVar("T", bound="ImpactAnalysisResponse")
 class ImpactAnalysisResponse:
     """
     Attributes:
+        node_ids (list[str]): Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`).
         edge_count (int):
         max_depth_reached (int):
-        node_ids (list[str]): Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`).
     """
 
+    node_ids: list[str]
     edge_count: int
     max_depth_reached: int
-    node_ids: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        node_ids = self.node_ids
+
         edge_count = self.edge_count
 
         max_depth_reached = self.max_depth_reached
-
-        node_ids = self.node_ids
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "node_ids": node_ids,
                 "edge_count": edge_count,
                 "max_depth_reached": max_depth_reached,
-                "node_ids": node_ids,
             }
         )
 
@@ -52,16 +52,16 @@ class ImpactAnalysisResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        node_ids = cast(list[str], d.pop("node_ids"))
+
         edge_count = d.pop("edge_count")
 
         max_depth_reached = d.pop("max_depth_reached")
 
-        node_ids = cast(list[str], d.pop("node_ids"))
-
         impact_analysis_response = cls(
+            node_ids=node_ids,
             edge_count=edge_count,
             max_depth_reached=max_depth_reached,
-            node_ids=node_ids,
         )
 
         impact_analysis_response.additional_properties = d

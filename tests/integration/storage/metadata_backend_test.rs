@@ -48,6 +48,7 @@ async fn test_single_metadata_backend_instance() {
         url: format!("file://{}", storage_path.to_string_lossy()),
         weight: 1,
         tags: vec![],
+        io_budget: None,
     }];
 
     // Create storage engine without collection service

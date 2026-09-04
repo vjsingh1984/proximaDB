@@ -35,6 +35,7 @@ async fn create_test_setup() -> (Arc<SwiftEngine>, Arc<CollectionService>, TempD
         url: format!("file://{}", temp_dir.path().display()),
         weight: 1,
         tags: vec!["test".to_string()],
+        io_budget: None,
     }];
     storage_config.metadata_url = format!("file://{}", metadata_path.display());
 

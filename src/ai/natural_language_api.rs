@@ -13,7 +13,7 @@ use tracing::info;
 
 use crate::ai::llm::AIIntelligenceFoundation;
 // QueryComplexityAnalyzer is defined locally in this file
-use crate::auth::sso::EnterpriseUserContext;
+use crate::auth::EnterpriseUserContext;
 use crate::storage::tenant::BusinessContext;
 
 /// Natural Language Business Intelligence API for conversational enterprise analytics

@@ -24,18 +24,16 @@ T = TypeVar("T", bound="BatchNodesResponseData")
 class BatchNodesResponseData:
     """
     Attributes:
-        count (int | Unset):
         results (list[NodeResponse] | Unset):
+        count (int | Unset):
     """
 
-    count: int | Unset = UNSET
     results: list[NodeResponse] | Unset = UNSET
+    count: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.node_response import NodeResponse
-
-        count = self.count
 
         results: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.results, Unset):
@@ -44,13 +42,15 @@ class BatchNodesResponseData:
                 results_item = results_item_data.to_dict()
                 results.append(results_item)
 
+        count = self.count
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if count is not UNSET:
-            field_dict["count"] = count
         if results is not UNSET:
             field_dict["results"] = results
+        if count is not UNSET:
+            field_dict["count"] = count
 
         return field_dict
 
@@ -59,8 +59,6 @@ class BatchNodesResponseData:
         from ..models.node_response import NodeResponse
 
         d = dict(src_dict)
-        count = d.pop("count", UNSET)
-
         _results = d.pop("results", UNSET)
         results: list[NodeResponse] | Unset = UNSET
         if _results is not UNSET:
@@ -70,9 +68,11 @@ class BatchNodesResponseData:
 
                 results.append(results_item)
 
+        count = d.pop("count", UNSET)
+
         batch_nodes_response_data = cls(
-            count=count,
             results=results,
+            count=count,
         )
 
         batch_nodes_response_data.additional_properties = d

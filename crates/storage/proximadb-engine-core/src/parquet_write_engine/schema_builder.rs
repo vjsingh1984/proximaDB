@@ -212,7 +212,7 @@ pub fn create_writer_properties(config: &ParquetWriterConfig) -> Result<WriterPr
     if config.enable_bloom_filters {
         builder = builder.set_bloom_filter_enabled(true);
         builder = builder.set_bloom_filter_fpp(config.bloom_filter_fpp);
-        builder = builder.set_bloom_filter_ndv(config.bloom_filter_ndv);
+        builder = builder.set_bloom_filter_max_ndv(config.bloom_filter_ndv);
     }
 
     Ok(builder.build())

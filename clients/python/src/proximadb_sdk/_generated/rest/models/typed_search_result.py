@@ -27,17 +27,17 @@ class TypedSearchResult:
 
     Attributes:
         id (str): Record ID
-        props (TypedSearchResultProps): Rich properties from the record
         score (float): Similarity score (0.0 - 1.0 for cosine, distance for L2)
-        text_fields (list[TextFieldOutput] | None | Unset): TEXT fields (if include_text is true)
+        props (TypedSearchResultProps): Rich properties from the record
         vector (list[float] | None | Unset): Vector embedding (if requested)
+        text_fields (list[TextFieldOutput] | None | Unset): TEXT fields (if include_text is true)
     """
 
     id: str
-    props: TypedSearchResultProps
     score: float
-    text_fields: list[TextFieldOutput] | None | Unset = UNSET
+    props: TypedSearchResultProps
     vector: list[float] | None | Unset = UNSET
+    text_fields: list[TextFieldOutput] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,9 +46,18 @@ class TypedSearchResult:
 
         id = self.id
 
+        score = self.score
+
         props = self.props.to_dict()
 
-        score = self.score
+        vector: list[float] | None | Unset
+        if isinstance(self.vector, Unset):
+            vector = UNSET
+        elif isinstance(self.vector, list):
+            vector = self.vector
+
+        else:
+            vector = self.vector
 
         text_fields: list[dict[str, Any]] | None | Unset
         if isinstance(self.text_fields, Unset):
@@ -62,28 +71,19 @@ class TypedSearchResult:
         else:
             text_fields = self.text_fields
 
-        vector: list[float] | None | Unset
-        if isinstance(self.vector, Unset):
-            vector = UNSET
-        elif isinstance(self.vector, list):
-            vector = self.vector
-
-        else:
-            vector = self.vector
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "id": id,
-                "props": props,
                 "score": score,
+                "props": props,
             }
         )
-        if text_fields is not UNSET:
-            field_dict["text_fields"] = text_fields
         if vector is not UNSET:
             field_dict["vector"] = vector
+        if text_fields is not UNSET:
+            field_dict["text_fields"] = text_fields
 
         return field_dict
 
@@ -95,9 +95,26 @@ class TypedSearchResult:
         d = dict(src_dict)
         id = d.pop("id")
 
+        score = d.pop("score")
+
         props = TypedSearchResultProps.from_dict(d.pop("props"))
 
-        score = d.pop("score")
+        def _parse_vector(data: object) -> list[float] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                vector_type_0 = cast(list[float], data)
+
+                return vector_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[float] | None | Unset, data)
+
+        vector = _parse_vector(d.pop("vector", UNSET))
 
         def _parse_text_fields(data: object) -> list[TextFieldOutput] | None | Unset:
             if data is None:
@@ -123,29 +140,12 @@ class TypedSearchResult:
 
         text_fields = _parse_text_fields(d.pop("text_fields", UNSET))
 
-        def _parse_vector(data: object) -> list[float] | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, list):
-                    raise TypeError()
-                vector_type_0 = cast(list[float], data)
-
-                return vector_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(list[float] | None | Unset, data)
-
-        vector = _parse_vector(d.pop("vector", UNSET))
-
         typed_search_result = cls(
             id=id,
-            props=props,
             score=score,
-            text_fields=text_fields,
+            props=props,
             vector=vector,
+            text_fields=text_fields,
         )
 
         typed_search_result.additional_properties = d

@@ -22,45 +22,45 @@ class CatalogModelDecision:
     """Append-only policy/audit decision, intentionally separate from evidence.
 
     Attributes:
-        created_at_ms (int):
-        decision (CatalogModelDecisionKind):
         decision_id (str):
+        version (int):
+        decision (CatalogModelDecisionKind):
         evidence_ids (list[str]):
         principal (str):
-        version (int):
+        created_at_ms (int):
     """
 
-    created_at_ms: int
-    decision: CatalogModelDecisionKind
     decision_id: str
+    version: int
+    decision: CatalogModelDecisionKind
     evidence_ids: list[str]
     principal: str
-    version: int
+    created_at_ms: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        created_at_ms = self.created_at_ms
+        decision_id = self.decision_id
+
+        version = self.version
 
         decision = self.decision.value
-
-        decision_id = self.decision_id
 
         evidence_ids = self.evidence_ids
 
         principal = self.principal
 
-        version = self.version
+        created_at_ms = self.created_at_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "created_at_ms": created_at_ms,
-                "decision": decision,
                 "decision_id": decision_id,
+                "version": version,
+                "decision": decision,
                 "evidence_ids": evidence_ids,
                 "principal": principal,
-                "version": version,
+                "created_at_ms": created_at_ms,
             }
         )
 
@@ -69,25 +69,25 @@ class CatalogModelDecision:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        created_at_ms = d.pop("created_at_ms")
+        decision_id = d.pop("decision_id")
+
+        version = d.pop("version")
 
         decision = CatalogModelDecisionKind(d.pop("decision"))
-
-        decision_id = d.pop("decision_id")
 
         evidence_ids = cast(list[str], d.pop("evidence_ids"))
 
         principal = d.pop("principal")
 
-        version = d.pop("version")
+        created_at_ms = d.pop("created_at_ms")
 
         catalog_model_decision = cls(
-            created_at_ms=created_at_ms,
-            decision=decision,
             decision_id=decision_id,
+            version=version,
+            decision=decision,
             evidence_ids=evidence_ids,
             principal=principal,
-            version=version,
+            created_at_ms=created_at_ms,
         )
 
         catalog_model_decision.additional_properties = d

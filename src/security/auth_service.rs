@@ -1,13 +1,11 @@
 //! Unified Authentication Service for ProximaDB
 //!
 //! Consolidates authentication logic from multiple sources:
-//! - EnterpriseAuthManager (src/auth/mod.rs)
 //! - Network Auth Service (src/network/auth/mod.rs)
 //! - Auth Middleware (src/network/middleware/auth.rs)
 
 use super::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
-use crate::auth::{EnterpriseAuthManager, EnterpriseUserContext, SSOToken};
 use crate::network::auth::{JwtService, TokenPair};
 use proximadb_catalog::principal_registry::{
     FileSystemPrincipalRegistry, KEY_PREFIX as REGISTRY_KEY_PREFIX,
@@ -110,25 +108,12 @@ pub struct SSOConfig {
     pub enabled: bool,
     pub providers: Vec<String>,
     pub token_cache_ttl_minutes: u64,
-    pub aws_iam: Option<AWSIAMConfig>,
-    pub azure_ad: Option<AzureADConfig>,
-}
-
-/// AWS IAM configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AWSIAMConfig {
-    pub role_arn: String,
-    pub session_duration_minutes: u64,
-    pub region: String,
-}
-
-/// Azure AD configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AzureADConfig {
-    pub tenant_id: String,
-    pub client_id: String,
-    pub client_secret: String,
-    pub scope: Vec<String>,
+    // NOTE (provider portability): the former `aws_iam`/`azure_ad` fields and
+    // their types were REMOVED — they had zero production readers (every
+    // construction set them `None` inside `#[cfg(test)]`) and the backing
+    // `azure_ad.rs` stub returned `system_admin()` for any unexpired token
+    // with no signature verification (a latent privilege escalation). Generic
+    // OIDC covers AWS/Azure via `[security.authentication.oidc]`.
 }
 
 /// mTLS configuration for client certificate authentication
@@ -173,9 +158,6 @@ pub type SecurityAuthenticationResult = AuthenticationResult;
 
 /// Unified authentication service
 pub struct UnifiedAuthService {
-    /// Enterprise auth manager for SSO
-    enterprise_auth: Option<Arc<EnterpriseAuthManager>>,
-
     /// JWT service for token authentication
     jwt_service: Option<Arc<JwtService>>,
     /// Generic OIDC bearer verifier (TD-SSO-1). Present only when
@@ -206,7 +188,6 @@ pub struct UnifiedAuthService {
 impl std::fmt::Debug for UnifiedAuthService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnifiedAuthService")
-            .field("has_enterprise_auth", &self.enterprise_auth.is_some())
             .field("has_jwt_service", &self.jwt_service.is_some())
             .field("api_key_count", &self.api_keys.len())
             .field("has_principal_registry", &self.principal_registry.is_some())
@@ -230,7 +211,6 @@ impl UnifiedAuthService {
         };
 
         let mut service = Self {
-            enterprise_auth: None,
             jwt_service: None,
             oidc_verifier: None,
             api_keys: Arc::new(DashMap::new()),
@@ -250,7 +230,18 @@ impl UnifiedAuthService {
                 refresh_expiration_secs: config.jwt.refresh_token_expiration_days * 24 * 3600,
                 issuer: config.jwt.issuer.clone(),
                 audience: config.jwt.audience.clone(),
-                algorithm: crate::network::auth::config::JwtAlgorithm::HS256, // Default to HS256
+                algorithm: match config.jwt.algorithm.as_str() {
+                    "HS256" => crate::network::auth::config::JwtAlgorithm::HS256,
+                    "HS384" => crate::network::auth::config::JwtAlgorithm::HS384,
+                    "HS512" => crate::network::auth::config::JwtAlgorithm::HS512,
+                    other => {
+                        return Err(anyhow!(
+                            "invalid [security.authentication.jwt] algorithm {other:?}: \
+                             HS256/HS384/HS512 supported (use [security.authentication.oidc] \
+                             for RS256/ES256)"
+                        ));
+                    }
+                },
             };
             let jwt_service = JwtService::new(network_jwt_config)?;
             service.jwt_service = Some(Arc::new(jwt_service));
@@ -269,7 +260,7 @@ impl UnifiedAuthService {
             // disabled".
             if !config.methods.contains(&AuthenticationMethod::JWT) {
                 warn!(
-                    "[security.authentication.oidc] is enabled but methods lacks                      \"jwt\" — OIDC bearer tokens will be rejected until it is added"
+                    "[security.authentication.oidc] is enabled but methods lacks \"jwt\" — OIDC bearer tokens will be rejected until it is added"
                 );
             }
             info!(
@@ -288,11 +279,6 @@ impl UnifiedAuthService {
         Ok(service)
     }
 
-    /// Set enterprise auth manager for SSO integration
-    pub fn set_enterprise_auth(&mut self, enterprise_auth: Arc<EnterpriseAuthManager>) {
-        self.enterprise_auth = Some(enterprise_auth);
-    }
-
     /// Set audit logger
     pub fn set_audit_logger(&mut self, audit_logger: Arc<AuditLogger>) {
         self.audit_logger = Some(audit_logger);
@@ -306,7 +292,18 @@ impl UnifiedAuthService {
         let start_time = Utc::now();
 
         let result = match &auth_data {
-            AuthenticationData::SSOToken(token) => self.authenticate_sso_token(token).await,
+            AuthenticationData::SSOToken(_) => Ok(AuthenticationResult {
+                user_context: UnifiedUserContext::anonymous(),
+                auth_method: UnifiedAuthMethod::SSO {
+                    provider: "removed".to_string(),
+                },
+                success: false,
+                error_message: Some(
+                    "Legacy SSO removed: use [security.authentication.oidc] for any OIDC IdP"
+                        .to_string(),
+                ),
+                requires_mfa: false,
+            }),
             AuthenticationData::JWTToken(token) => self.authenticate_jwt_token(token).await,
             AuthenticationData::ApiKey(key) => self.authenticate_api_key(key).await,
             AuthenticationData::ClientCertificate(cert_data) => {
@@ -370,55 +367,6 @@ impl UnifiedAuthService {
         }
 
         result
-    }
-
-    /// Authenticate SSO token
-    async fn authenticate_sso_token(&self, token: &SSOToken) -> Result<AuthenticationResult> {
-        if !self.config.methods.contains(&AuthenticationMethod::SSO) {
-            return Ok(AuthenticationResult {
-                user_context: UnifiedUserContext::anonymous(),
-                auth_method: UnifiedAuthMethod::SSO {
-                    provider: "disabled".to_string(),
-                },
-                success: false,
-                error_message: Some("SSO authentication disabled".to_string()),
-                requires_mfa: false,
-            });
-        }
-
-        match &self.enterprise_auth {
-            Some(enterprise_auth) => {
-                match enterprise_auth.validate_and_resolve_token(token).await {
-                    Ok(enterprise_user) => {
-                        let user_context = self.convert_enterprise_user_to_unified(enterprise_user);
-                        Ok(AuthenticationResult {
-                            user_context,
-                            auth_method: UnifiedAuthMethod::SSO {
-                                provider: format!("{:?}", token.provider),
-                            },
-                            success: true,
-                            error_message: None,
-                            requires_mfa: false,
-                        })
-                    }
-                    Err(e) => {
-                        warn!("SSO authentication failed: {}", e);
-                        Ok(AuthenticationResult {
-                            user_context: UnifiedUserContext::anonymous(),
-                            auth_method: UnifiedAuthMethod::SSO {
-                                provider: format!("{:?}", token.provider),
-                            },
-                            success: false,
-                            error_message: Some(e.to_string()),
-                            requires_mfa: false,
-                        })
-                    }
-                }
-            }
-            None => Err(anyhow!(
-                "SSO authentication enabled but enterprise auth manager not configured"
-            )),
-        }
     }
 
     /// Authenticate JWT token
@@ -931,33 +879,6 @@ impl UnifiedAuthService {
     }
 
     /// Convert enterprise user context to unified context
-    fn convert_enterprise_user_to_unified(
-        &self,
-        enterprise_user: EnterpriseUserContext,
-    ) -> UnifiedUserContext {
-        // Determine SSO provider from provider_context
-        let provider_name = match &enterprise_user.provider_context {
-            crate::auth::sso::types::ProviderUserContext::AWS { .. } => "aws_iam",
-            crate::auth::sso::types::ProviderUserContext::Azure { .. } => "azure_ad",
-            crate::auth::sso::types::ProviderUserContext::Generic { .. } => "generic",
-        };
-
-        UnifiedUserContext {
-            user_id: enterprise_user.user_id,
-            tenant_id: Some(enterprise_user.tenant_id),
-            roles: enterprise_user.roles,
-            effective_permissions: HashSet::new(), // Will be populated by RBAC manager
-            auth_method: UnifiedAuthMethod::SSO {
-                provider: provider_name.to_string(),
-            },
-            session_id: enterprise_user.session_id,
-            expires_at: None, // SSO tokens handle their own expiration
-            created_at: enterprise_user.login_timestamp,
-            metadata: HashMap::new(), // No direct metadata on EnterpriseUserContext
-        }
-    }
-
-    /// Convert JWT claims to unified context
     fn convert_jwt_claims_to_unified(
         &self,
         claims: crate::network::auth::Claims,
@@ -1186,7 +1107,9 @@ impl UnifiedAuthService {
 /// Authentication data from request
 #[derive(Debug)]
 pub enum AuthenticationData {
-    SSOToken(SSOToken),
+    /// Legacy SSO — the backing manager was removed (provider portability);
+    /// carries the opaque token for the fail-closed stub.
+    SSOToken(String),
     JWTToken(String),
     ApiKey(String),
     ClientCertificate(ClientCertificateData),
@@ -1442,8 +1365,6 @@ mod tests {
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 1,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: super::MtlsConfig::default(),
             audit_fail_closed: false,
@@ -1664,8 +1585,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
             oidc: None,
@@ -1767,8 +1686,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
             oidc: None,
@@ -1808,8 +1725,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
             oidc: None,
@@ -1859,8 +1774,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig::default(),
             oidc: None,
@@ -2032,8 +1945,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: false,
@@ -2081,8 +1992,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: false,
@@ -2131,8 +2040,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: false,
@@ -2178,8 +2085,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: true,
@@ -2218,8 +2123,6 @@ ip_restrictions = []
                 enabled: false,
                 providers: vec![],
                 token_cache_ttl_minutes: 5,
-                aws_iam: None,
-                azure_ad: None,
             },
             mtls: MtlsConfig {
                 enabled: false,

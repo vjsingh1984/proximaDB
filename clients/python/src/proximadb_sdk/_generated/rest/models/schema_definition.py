@@ -28,20 +28,20 @@ class SchemaDefinition:
 
         Attributes:
             columns (list[RestColumnDefinition]): Column definitions
-            allow_additional_fields (bool | None | Unset): Allow additional fields not defined in schema
-
-                Only applies in "hybrid" mode.
-                Default: true
             enforcement (None | str | Unset): Schema enforcement mode
 
                 - "strict": All columns must match schema exactly
                 - "flexible": Schema on read, no validation at insert
                 - "hybrid": Core columns enforced, additional fields allowed (default)
+            allow_additional_fields (bool | None | Unset): Allow additional fields not defined in schema
+
+                Only applies in "hybrid" mode.
+                Default: true
     """
 
     columns: list[RestColumnDefinition]
-    allow_additional_fields: bool | None | Unset = UNSET
     enforcement: None | str | Unset = UNSET
+    allow_additional_fields: bool | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,17 +52,17 @@ class SchemaDefinition:
             columns_item = columns_item_data.to_dict()
             columns.append(columns_item)
 
-        allow_additional_fields: bool | None | Unset
-        if isinstance(self.allow_additional_fields, Unset):
-            allow_additional_fields = UNSET
-        else:
-            allow_additional_fields = self.allow_additional_fields
-
         enforcement: None | str | Unset
         if isinstance(self.enforcement, Unset):
             enforcement = UNSET
         else:
             enforcement = self.enforcement
+
+        allow_additional_fields: bool | None | Unset
+        if isinstance(self.allow_additional_fields, Unset):
+            allow_additional_fields = UNSET
+        else:
+            allow_additional_fields = self.allow_additional_fields
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -71,10 +71,10 @@ class SchemaDefinition:
                 "columns": columns,
             }
         )
-        if allow_additional_fields is not UNSET:
-            field_dict["allow_additional_fields"] = allow_additional_fields
         if enforcement is not UNSET:
             field_dict["enforcement"] = enforcement
+        if allow_additional_fields is not UNSET:
+            field_dict["allow_additional_fields"] = allow_additional_fields
 
         return field_dict
 
@@ -90,6 +90,15 @@ class SchemaDefinition:
 
             columns.append(columns_item)
 
+        def _parse_enforcement(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        enforcement = _parse_enforcement(d.pop("enforcement", UNSET))
+
         def _parse_allow_additional_fields(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -101,19 +110,10 @@ class SchemaDefinition:
             d.pop("allow_additional_fields", UNSET)
         )
 
-        def _parse_enforcement(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        enforcement = _parse_enforcement(d.pop("enforcement", UNSET))
-
         schema_definition = cls(
             columns=columns,
-            allow_additional_fields=allow_additional_fields,
             enforcement=enforcement,
+            allow_additional_fields=allow_additional_fields,
         )
 
         schema_definition.additional_properties = d

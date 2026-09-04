@@ -24,24 +24,26 @@ T = TypeVar("T", bound="EntityProvenanceInput")
 class EntityProvenanceInput:
     """
     Attributes:
+        source_id (str | Unset):
         chunk_id (str | Unset):
         chunk_position (int | Unset):
         extraction_method (str | Unset):
         metadata (EntityProvenanceInputMetadata | Unset):
-        source_id (str | Unset):
     """
 
+    source_id: str | Unset = UNSET
     chunk_id: str | Unset = UNSET
     chunk_position: int | Unset = UNSET
     extraction_method: str | Unset = UNSET
     metadata: EntityProvenanceInputMetadata | Unset = UNSET
-    source_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.entity_provenance_input_metadata import (
             EntityProvenanceInputMetadata,
         )
+
+        source_id = self.source_id
 
         chunk_id = self.chunk_id
 
@@ -53,11 +55,11 @@ class EntityProvenanceInput:
         if not isinstance(self.metadata, Unset):
             metadata = self.metadata.to_dict()
 
-        source_id = self.source_id
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if source_id is not UNSET:
+            field_dict["source_id"] = source_id
         if chunk_id is not UNSET:
             field_dict["chunk_id"] = chunk_id
         if chunk_position is not UNSET:
@@ -66,8 +68,6 @@ class EntityProvenanceInput:
             field_dict["extraction_method"] = extraction_method
         if metadata is not UNSET:
             field_dict["metadata"] = metadata
-        if source_id is not UNSET:
-            field_dict["source_id"] = source_id
 
         return field_dict
 
@@ -78,6 +78,8 @@ class EntityProvenanceInput:
         )
 
         d = dict(src_dict)
+        source_id = d.pop("source_id", UNSET)
+
         chunk_id = d.pop("chunk_id", UNSET)
 
         chunk_position = d.pop("chunk_position", UNSET)
@@ -91,14 +93,12 @@ class EntityProvenanceInput:
         else:
             metadata = EntityProvenanceInputMetadata.from_dict(_metadata)
 
-        source_id = d.pop("source_id", UNSET)
-
         entity_provenance_input = cls(
+            source_id=source_id,
             chunk_id=chunk_id,
             chunk_position=chunk_position,
             extraction_method=extraction_method,
             metadata=metadata,
-            source_id=source_id,
         )
 
         entity_provenance_input.additional_properties = d

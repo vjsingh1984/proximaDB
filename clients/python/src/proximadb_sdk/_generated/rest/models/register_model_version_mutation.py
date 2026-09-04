@@ -27,12 +27,12 @@ T = TypeVar("T", bound="RegisterModelVersionMutation")
 class RegisterModelVersionMutation:
     """
     Attributes:
-        operation (RegisterModelVersionMutationOperation):
         payload (CatalogEmbeddingModelVersion): Immutable executable contract for one registered model version.
+        operation (RegisterModelVersionMutationOperation):
     """
 
-    operation: RegisterModelVersionMutationOperation
     payload: CatalogEmbeddingModelVersion
+    operation: RegisterModelVersionMutationOperation
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,16 +40,16 @@ class RegisterModelVersionMutation:
             CatalogEmbeddingModelVersion,
         )
 
-        operation = self.operation.value
-
         payload = self.payload.to_dict()
+
+        operation = self.operation.value
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "operation": operation,
                 "payload": payload,
+                "operation": operation,
             }
         )
 
@@ -62,13 +62,13 @@ class RegisterModelVersionMutation:
         )
 
         d = dict(src_dict)
-        operation = RegisterModelVersionMutationOperation(d.pop("operation"))
-
         payload = CatalogEmbeddingModelVersion.from_dict(d.pop("payload"))
 
+        operation = RegisterModelVersionMutationOperation(d.pop("operation"))
+
         register_model_version_mutation = cls(
-            operation=operation,
             payload=payload,
+            operation=operation,
         )
 
         register_model_version_mutation.additional_properties = d

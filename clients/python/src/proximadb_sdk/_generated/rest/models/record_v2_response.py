@@ -28,18 +28,18 @@ class RecordV2Response:
     Attributes:
         id (str): Record ID
         props (RecordV2ResponseProps): Rich properties from the record
-        text_fields (list[TextFieldOutput] | None | Unset): TEXT fields (if include_text is true)
-        timestamp (int | None | Unset): Record timestamp
         vector (list[float] | None | Unset): Vector embedding (if requested)
+        text_fields (list[TextFieldOutput] | None | Unset): TEXT fields (if include_text is true)
         version (int | None | Unset): Record version
+        timestamp (int | None | Unset): Record timestamp
     """
 
     id: str
     props: RecordV2ResponseProps
-    text_fields: list[TextFieldOutput] | None | Unset = UNSET
-    timestamp: int | None | Unset = UNSET
     vector: list[float] | None | Unset = UNSET
+    text_fields: list[TextFieldOutput] | None | Unset = UNSET
     version: int | None | Unset = UNSET
+    timestamp: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +49,15 @@ class RecordV2Response:
         id = self.id
 
         props = self.props.to_dict()
+
+        vector: list[float] | None | Unset
+        if isinstance(self.vector, Unset):
+            vector = UNSET
+        elif isinstance(self.vector, list):
+            vector = self.vector
+
+        else:
+            vector = self.vector
 
         text_fields: list[dict[str, Any]] | None | Unset
         if isinstance(self.text_fields, Unset):
@@ -62,26 +71,17 @@ class RecordV2Response:
         else:
             text_fields = self.text_fields
 
-        timestamp: int | None | Unset
-        if isinstance(self.timestamp, Unset):
-            timestamp = UNSET
-        else:
-            timestamp = self.timestamp
-
-        vector: list[float] | None | Unset
-        if isinstance(self.vector, Unset):
-            vector = UNSET
-        elif isinstance(self.vector, list):
-            vector = self.vector
-
-        else:
-            vector = self.vector
-
         version: int | None | Unset
         if isinstance(self.version, Unset):
             version = UNSET
         else:
             version = self.version
+
+        timestamp: int | None | Unset
+        if isinstance(self.timestamp, Unset):
+            timestamp = UNSET
+        else:
+            timestamp = self.timestamp
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -91,14 +91,14 @@ class RecordV2Response:
                 "props": props,
             }
         )
-        if text_fields is not UNSET:
-            field_dict["text_fields"] = text_fields
-        if timestamp is not UNSET:
-            field_dict["timestamp"] = timestamp
         if vector is not UNSET:
             field_dict["vector"] = vector
+        if text_fields is not UNSET:
+            field_dict["text_fields"] = text_fields
         if version is not UNSET:
             field_dict["version"] = version
+        if timestamp is not UNSET:
+            field_dict["timestamp"] = timestamp
 
         return field_dict
 
@@ -111,6 +111,23 @@ class RecordV2Response:
         id = d.pop("id")
 
         props = RecordV2ResponseProps.from_dict(d.pop("props"))
+
+        def _parse_vector(data: object) -> list[float] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                vector_type_0 = cast(list[float], data)
+
+                return vector_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[float] | None | Unset, data)
+
+        vector = _parse_vector(d.pop("vector", UNSET))
 
         def _parse_text_fields(data: object) -> list[TextFieldOutput] | None | Unset:
             if data is None:
@@ -136,32 +153,6 @@ class RecordV2Response:
 
         text_fields = _parse_text_fields(d.pop("text_fields", UNSET))
 
-        def _parse_timestamp(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        timestamp = _parse_timestamp(d.pop("timestamp", UNSET))
-
-        def _parse_vector(data: object) -> list[float] | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, list):
-                    raise TypeError()
-                vector_type_0 = cast(list[float], data)
-
-                return vector_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(list[float] | None | Unset, data)
-
-        vector = _parse_vector(d.pop("vector", UNSET))
-
         def _parse_version(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -171,13 +162,22 @@ class RecordV2Response:
 
         version = _parse_version(d.pop("version", UNSET))
 
+        def _parse_timestamp(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        timestamp = _parse_timestamp(d.pop("timestamp", UNSET))
+
         record_v2_response = cls(
             id=id,
             props=props,
-            text_fields=text_fields,
-            timestamp=timestamp,
             vector=vector,
+            text_fields=text_fields,
             version=version,
+            timestamp=timestamp,
         )
 
         record_v2_response.additional_properties = d

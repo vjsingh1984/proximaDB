@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
 
-use crate::auth::sso::EnterpriseUserContext;
+use crate::auth::EnterpriseUserContext;
 use crate::storage::tenant::BusinessContext;
 
 /// Automated insight generation engine for enterprise business intelligence

@@ -21,31 +21,31 @@ class HybridSearchBody:
     """
     Attributes:
         collection (str):
-        fusion_strategy (str | Unset):
+        vector (list[float] | Unset):
         text_query (str | Unset):
         top_k (int | Unset):
-        vector (list[float] | Unset):
+        fusion_strategy (str | Unset):
     """
 
     collection: str
-    fusion_strategy: str | Unset = UNSET
+    vector: list[float] | Unset = UNSET
     text_query: str | Unset = UNSET
     top_k: int | Unset = UNSET
-    vector: list[float] | Unset = UNSET
+    fusion_strategy: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         collection = self.collection
 
-        fusion_strategy = self.fusion_strategy
+        vector: list[float] | Unset = UNSET
+        if not isinstance(self.vector, Unset):
+            vector = self.vector
 
         text_query = self.text_query
 
         top_k = self.top_k
 
-        vector: list[float] | Unset = UNSET
-        if not isinstance(self.vector, Unset):
-            vector = self.vector
+        fusion_strategy = self.fusion_strategy
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -54,14 +54,14 @@ class HybridSearchBody:
                 "collection": collection,
             }
         )
-        if fusion_strategy is not UNSET:
-            field_dict["fusion_strategy"] = fusion_strategy
+        if vector is not UNSET:
+            field_dict["vector"] = vector
         if text_query is not UNSET:
             field_dict["text_query"] = text_query
         if top_k is not UNSET:
             field_dict["top_k"] = top_k
-        if vector is not UNSET:
-            field_dict["vector"] = vector
+        if fusion_strategy is not UNSET:
+            field_dict["fusion_strategy"] = fusion_strategy
 
         return field_dict
 
@@ -70,20 +70,20 @@ class HybridSearchBody:
         d = dict(src_dict)
         collection = d.pop("collection")
 
-        fusion_strategy = d.pop("fusion_strategy", UNSET)
+        vector = cast(list[float], d.pop("vector", UNSET))
 
         text_query = d.pop("text_query", UNSET)
 
         top_k = d.pop("top_k", UNSET)
 
-        vector = cast(list[float], d.pop("vector", UNSET))
+        fusion_strategy = d.pop("fusion_strategy", UNSET)
 
         hybrid_search_body = cls(
             collection=collection,
-            fusion_strategy=fusion_strategy,
+            vector=vector,
             text_query=text_query,
             top_k=top_k,
-            vector=vector,
+            fusion_strategy=fusion_strategy,
         )
 
         hybrid_search_body.additional_properties = d

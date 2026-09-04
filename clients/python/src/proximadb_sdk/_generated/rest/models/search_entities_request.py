@@ -24,13 +24,13 @@ T = TypeVar("T", bound="SearchEntitiesRequest")
 class SearchEntitiesRequest:
     """
     Attributes:
-        filters (SearchEntitiesRequestFilters | Unset): Equality metadata filters as a `{field: value}` JSON object.
         query_vector (list[float] | Unset): Query embedding for vector similarity search. Omit for metadata-only search.
+        filters (SearchEntitiesRequestFilters | Unset): Equality metadata filters as a `{field: value}` JSON object.
         top_k (int | Unset):
     """
 
-    filters: SearchEntitiesRequestFilters | Unset = UNSET
     query_vector: list[float] | Unset = UNSET
+    filters: SearchEntitiesRequestFilters | Unset = UNSET
     top_k: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -39,23 +39,23 @@ class SearchEntitiesRequest:
             SearchEntitiesRequestFilters,
         )
 
-        filters: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.filters, Unset):
-            filters = self.filters.to_dict()
-
         query_vector: list[float] | Unset = UNSET
         if not isinstance(self.query_vector, Unset):
             query_vector = self.query_vector
+
+        filters: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.filters, Unset):
+            filters = self.filters.to_dict()
 
         top_k = self.top_k
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if filters is not UNSET:
-            field_dict["filters"] = filters
         if query_vector is not UNSET:
             field_dict["query_vector"] = query_vector
+        if filters is not UNSET:
+            field_dict["filters"] = filters
         if top_k is not UNSET:
             field_dict["top_k"] = top_k
 
@@ -68,6 +68,8 @@ class SearchEntitiesRequest:
         )
 
         d = dict(src_dict)
+        query_vector = cast(list[float], d.pop("query_vector", UNSET))
+
         _filters = d.pop("filters", UNSET)
         filters: SearchEntitiesRequestFilters | Unset
         if isinstance(_filters, Unset):
@@ -75,13 +77,11 @@ class SearchEntitiesRequest:
         else:
             filters = SearchEntitiesRequestFilters.from_dict(_filters)
 
-        query_vector = cast(list[float], d.pop("query_vector", UNSET))
-
         top_k = d.pop("top_k", UNSET)
 
         search_entities_request = cls(
-            filters=filters,
             query_vector=query_vector,
+            filters=filters,
             top_k=top_k,
         )
 

@@ -257,6 +257,16 @@ type BatchNodesResponse_Data struct {
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
+// BulkLogIngestRequest defines model for BulkLogIngestRequest.
+type BulkLogIngestRequest struct {
+	Logs []LogEntryInput `json:"logs"`
+}
+
+// BulkMetricIngestRequest defines model for BulkMetricIngestRequest.
+type BulkMetricIngestRequest struct {
+	Metrics []MetricSampleInput `json:"metrics"`
+}
+
 // CapabilitiesResponse defines model for CapabilitiesResponse.
 type CapabilitiesResponse struct {
 	ApiVersion           *string                 `json:"api_version,omitempty"`
@@ -728,6 +738,21 @@ type CreateNodeRequest struct {
 	// Node Node payload nested inside `CreateNodeRequest.node`. Matches
 	// `RestNodeInput` in proximadb-api's graph handler.
 	Node NodeInput `json:"node"`
+}
+
+// CreateObservabilityNamespaceRequest Body for `POST /api/v2/observability/namespaces`. Retention days
+// default to hot=1, warm=7, cold=30.
+type CreateObservabilityNamespaceRequest struct {
+	ColdRetentionDays *uint32 `json:"cold_retention_days,omitempty"`
+	HotRetentionDays  *uint32 `json:"hot_retention_days,omitempty"`
+	Name              string  `json:"name"`
+	WarmRetentionDays *uint32 `json:"warm_retention_days,omitempty"`
+}
+
+// CreateObservabilityNamespaceResponse defines model for CreateObservabilityNamespaceResponse.
+type CreateObservabilityNamespaceResponse struct {
+	Namespace string `json:"namespace"`
+	Success   bool   `json:"success"`
 }
 
 // DeleteCollectionV2Response Response for deleting a collection through the v2 API.
@@ -1214,6 +1239,59 @@ type ListModelRegistriesResponse struct {
 	Registries []ModelRegistryRecordResponse `json:"registries"`
 }
 
+// LogEntryInput A single log entry for ingestion. `severity` defaults to `info`;
+// `fields` carries arbitrary structured attributes.
+type LogEntryInput struct {
+	Fields  *map[string]interface{} `json:"fields,omitempty"`
+	Message string                  `json:"message"`
+	Service *string                 `json:"service,omitempty"`
+
+	// Severity One of: trace, debug, info, warn, error, fatal (case-insensitive).
+	Severity    *string `json:"severity,omitempty"`
+	Source      *string `json:"source,omitempty"`
+	TimestampNs *int64  `json:"timestamp_ns,omitempty"`
+}
+
+// MetricAggregationInput defines model for MetricAggregationInput.
+type MetricAggregationInput struct {
+	// Aggregation min, max, avg, sum, or count.
+	Aggregation *string            `json:"aggregation,omitempty"`
+	EndTimeNs   int64              `json:"end_time_ns"`
+	GroupBy     *[]string          `json:"group_by,omitempty"`
+	Labels      *map[string]string `json:"labels,omitempty"`
+	MetricName  string             `json:"metric_name"`
+	StartTimeNs int64              `json:"start_time_ns"`
+	StepSeconds *uint32            `json:"step_seconds,omitempty"`
+}
+
+// MetricAggregationResult defines model for MetricAggregationResult.
+type MetricAggregationResult struct {
+	QueryTimeMs uint64             `json:"query_time_ms"`
+	Series      []MetricTimeSeries `json:"series"`
+}
+
+// MetricDataPoint defines model for MetricDataPoint.
+type MetricDataPoint struct {
+	TimestampNs int64   `json:"timestamp_ns"`
+	Value       float64 `json:"value"`
+}
+
+// MetricSampleInput defines model for MetricSampleInput.
+type MetricSampleInput struct {
+	Labels *map[string]string `json:"labels,omitempty"`
+	Name   string             `json:"name"`
+
+	// TimestampNs Defaults to server receive time.
+	TimestampNs *int64  `json:"timestamp_ns,omitempty"`
+	Value       float64 `json:"value"`
+}
+
+// MetricTimeSeries defines model for MetricTimeSeries.
+type MetricTimeSeries struct {
+	Labels map[string]string `json:"labels"`
+	Points []MetricDataPoint `json:"points"`
+}
+
 // ModelRegistryRecordResponse REST uses a decimal string for stable catalog IDs so JavaScript clients do
 // not lose precision. gRPC exposes the same value as `uint64`.
 type ModelRegistryRecordResponse struct {
@@ -1223,6 +1301,19 @@ type ModelRegistryRecordResponse struct {
 	// append-only lifecycle records.
 	Registry CatalogEmbeddingModelRegistry `json:"registry"`
 	TenantId string                        `json:"tenant_id"`
+}
+
+// NlTranslateRequest Body for `POST /api/v2/nl/translate`.
+type NlTranslateRequest struct {
+	Query string `json:"query"`
+}
+
+// NlTranslateResult Model-generated translation output — the final query string is not
+// validated SQL/AQL; validate before executing it.
+type NlTranslateResult struct {
+	FinalQuery      string   `json:"final_query"`
+	NormalizedQuery string   `json:"normalized_query"`
+	Views           []string `json:"views"`
 }
 
 // NodeInput Node payload nested inside `CreateNodeRequest.node`. Matches
@@ -1240,6 +1331,13 @@ type NodeResponse struct {
 	Labels               *[]string               `json:"labels,omitempty"`
 	Properties           *map[string]interface{} `json:"properties,omitempty"`
 	AdditionalProperties map[string]interface{}  `json:"-"`
+}
+
+// ObservabilityIngestResponse defines model for ObservabilityIngestResponse.
+type ObservabilityIngestResponse struct {
+	Failed   uint64 `json:"failed"`
+	Ingested uint64 `json:"ingested"`
+	Success  bool   `json:"success"`
 }
 
 // PredicateShortfallWire TD-064: predicate-aware recall shortfall (REST wire shape).
@@ -2151,6 +2249,18 @@ type ResolveModelAliasParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// TranslateNaturalLanguageParams defines parameters for TranslateNaturalLanguage.
+type TranslateNaturalLanguageParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CreateObservabilityNamespaceParams defines parameters for CreateObservabilityNamespace.
+type CreateObservabilityNamespaceParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // IngestLogJSONBody defines parameters for IngestLog.
 type IngestLogJSONBody map[string]interface{}
 
@@ -2160,11 +2270,35 @@ type IngestLogParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// IngestLogsParams defines parameters for IngestLogs.
+type IngestLogsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // QueryLogsJSONBody defines parameters for QueryLogs.
 type QueryLogsJSONBody map[string]interface{}
 
 // QueryLogsParams defines parameters for QueryLogs.
 type QueryLogsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// IngestMetricParams defines parameters for IngestMetric.
+type IngestMetricParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// AggregateMetricsParams defines parameters for AggregateMetrics.
+type AggregateMetricsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// IngestMetricsParams defines parameters for IngestMetrics.
+type IngestMetricsParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
@@ -2274,11 +2408,29 @@ type ApplyModelRegistryMutationJSONRequestBody = ApplyModelRegistryMutationReque
 // ResolveModelAliasJSONRequestBody defines body for ResolveModelAlias for application/json ContentType.
 type ResolveModelAliasJSONRequestBody = ResolveModelAliasRequest
 
+// TranslateNaturalLanguageJSONRequestBody defines body for TranslateNaturalLanguage for application/json ContentType.
+type TranslateNaturalLanguageJSONRequestBody = NlTranslateRequest
+
+// CreateObservabilityNamespaceJSONRequestBody defines body for CreateObservabilityNamespace for application/json ContentType.
+type CreateObservabilityNamespaceJSONRequestBody = CreateObservabilityNamespaceRequest
+
 // IngestLogJSONRequestBody defines body for IngestLog for application/json ContentType.
 type IngestLogJSONRequestBody IngestLogJSONBody
 
+// IngestLogsJSONRequestBody defines body for IngestLogs for application/json ContentType.
+type IngestLogsJSONRequestBody = BulkLogIngestRequest
+
 // QueryLogsJSONRequestBody defines body for QueryLogs for application/json ContentType.
 type QueryLogsJSONRequestBody QueryLogsJSONBody
+
+// IngestMetricJSONRequestBody defines body for IngestMetric for application/json ContentType.
+type IngestMetricJSONRequestBody = MetricSampleInput
+
+// AggregateMetricsJSONRequestBody defines body for AggregateMetrics for application/json ContentType.
+type AggregateMetricsJSONRequestBody = MetricAggregationInput
+
+// IngestMetricsJSONRequestBody defines body for IngestMetrics for application/json ContentType.
+type IngestMetricsJSONRequestBody = BulkMetricIngestRequest
 
 // ExecuteQueryJSONRequestBody defines body for ExecuteQuery for application/json ContentType.
 type ExecuteQueryJSONRequestBody = QueryRequest
@@ -4702,6 +4854,54 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	ResolveModelAlias(ctx context.Context, name string, params *ResolveModelAliasParams, body ResolveModelAliasJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// TranslateNaturalLanguageWithBody Translate natural language to a query (AV-SQL).
+	//
+	// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+	// over the configured LLM (`config.llm`) and returns the normalized
+	// query, the agent-selected views, and the final composed query string.
+	// Requires the LLM integration to be configured; the result is
+	// model-generated — validate before execution.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/nl/translate (the `TranslateNaturalLanguage` operationId).
+	TranslateNaturalLanguageWithBody(ctx context.Context, params *TranslateNaturalLanguageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TranslateNaturalLanguage Translate natural language to a query (AV-SQL).
+	//
+	// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+	// over the configured LLM (`config.llm`) and returns the normalized
+	// query, the agent-selected views, and the final composed query string.
+	// Requires the LLM integration to be configured; the result is
+	// model-generated — validate before execution.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/nl/translate (the `TranslateNaturalLanguage` operationId).
+	TranslateNaturalLanguage(ctx context.Context, params *TranslateNaturalLanguageParams, body TranslateNaturalLanguageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateObservabilityNamespaceWithBody Create an observability namespace.
+	//
+	// Creates a namespace for log/metric/trace data with tiered retention.
+	// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+	// 365 days server-side.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
+	CreateObservabilityNamespaceWithBody(ctx context.Context, params *CreateObservabilityNamespaceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateObservabilityNamespace Create an observability namespace.
+	//
+	// Creates a namespace for log/metric/trace data with tiered retention.
+	// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+	// 365 days server-side.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
+	CreateObservabilityNamespace(ctx context.Context, params *CreateObservabilityNamespaceParams, body CreateObservabilityNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// IngestLogWithBody Ingest a log entry.
 	//
 	// Takes any type of body and a specified content type.
@@ -4716,6 +4916,20 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs (the `IngestLog` operationId).
 	IngestLog(ctx context.Context, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IngestLogsWithBody Ingest a batch of log entries.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
+	IngestLogsWithBody(ctx context.Context, namespace string, params *IngestLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestLogs Ingest a batch of log entries.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
+	IngestLogs(ctx context.Context, namespace string, params *IngestLogsParams, body IngestLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// QueryLogsWithBody Query logs.
 	//
 	// Takes any type of body and a specified content type.
@@ -4729,6 +4943,54 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/search (the `QueryLogs` operationId).
 	QueryLogs(ctx context.Context, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestMetricWithBody Ingest a single metric sample.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
+	IngestMetricWithBody(ctx context.Context, namespace string, params *IngestMetricParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestMetric Ingest a single metric sample.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
+	IngestMetric(ctx context.Context, namespace string, params *IngestMetricParams, body IngestMetricJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AggregateMetricsWithBody Aggregate a metric over a time range.
+	//
+	// Aggregation defaults to `avg` with a 60-second step. Results are
+	// grouped by `group_by` label names and filtered by exact `labels` match.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
+	AggregateMetricsWithBody(ctx context.Context, namespace string, params *AggregateMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AggregateMetrics Aggregate a metric over a time range.
+	//
+	// Aggregation defaults to `avg` with a 60-second step. Results are
+	// grouped by `group_by` label names and filtered by exact `labels` match.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
+	AggregateMetrics(ctx context.Context, namespace string, params *AggregateMetricsParams, body AggregateMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestMetricsWithBody Ingest a batch of metric samples.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
+	IngestMetricsWithBody(ctx context.Context, namespace string, params *IngestMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestMetrics Ingest a batch of metric samples.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
+	IngestMetrics(ctx context.Context, namespace string, params *IngestMetricsParams, body IngestMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecuteQueryWithBody Execute AQL or UQL through the shared query facade.
 	//
@@ -6092,6 +6354,94 @@ func (c *Client) ResolveModelAlias(ctx context.Context, name string, params *Res
 	return c.Client.Do(req)
 }
 
+// TranslateNaturalLanguageWithBody Translate natural language to a query (AV-SQL).
+//
+// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+// over the configured LLM (`config.llm`) and returns the normalized
+// query, the agent-selected views, and the final composed query string.
+// Requires the LLM integration to be configured; the result is
+// model-generated — validate before execution.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/nl/translate (the `TranslateNaturalLanguage` operationId).
+func (c *Client) TranslateNaturalLanguageWithBody(ctx context.Context, params *TranslateNaturalLanguageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTranslateNaturalLanguageRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TranslateNaturalLanguage Translate natural language to a query (AV-SQL).
+//
+// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+// over the configured LLM (`config.llm`) and returns the normalized
+// query, the agent-selected views, and the final composed query string.
+// Requires the LLM integration to be configured; the result is
+// model-generated — validate before execution.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/nl/translate (the `TranslateNaturalLanguage` operationId).
+func (c *Client) TranslateNaturalLanguage(ctx context.Context, params *TranslateNaturalLanguageParams, body TranslateNaturalLanguageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTranslateNaturalLanguageRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateObservabilityNamespaceWithBody Create an observability namespace.
+//
+// Creates a namespace for log/metric/trace data with tiered retention.
+// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+// 365 days server-side.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
+func (c *Client) CreateObservabilityNamespaceWithBody(ctx context.Context, params *CreateObservabilityNamespaceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateObservabilityNamespaceRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateObservabilityNamespace Create an observability namespace.
+//
+// Creates a namespace for log/metric/trace data with tiered retention.
+// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+// 365 days server-side.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
+func (c *Client) CreateObservabilityNamespace(ctx context.Context, params *CreateObservabilityNamespaceParams, body CreateObservabilityNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateObservabilityNamespaceRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // IngestLogWithBody Ingest a log entry.
 //
 // Takes any type of body and a specified content type.
@@ -6126,6 +6476,40 @@ func (c *Client) IngestLog(ctx context.Context, namespace string, params *Ingest
 	return c.Client.Do(req)
 }
 
+// IngestLogsWithBody Ingest a batch of log entries.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
+func (c *Client) IngestLogsWithBody(ctx context.Context, namespace string, params *IngestLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestLogsRequestWithBody(c.Server, namespace, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestLogs Ingest a batch of log entries.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
+func (c *Client) IngestLogs(ctx context.Context, namespace string, params *IngestLogsParams, body IngestLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestLogsRequest(c.Server, namespace, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // QueryLogsWithBody Query logs.
 //
 // Takes any type of body and a specified content type.
@@ -6150,6 +6534,114 @@ func (c *Client) QueryLogsWithBody(ctx context.Context, namespace string, params
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/search (the `QueryLogs` operationId).
 func (c *Client) QueryLogs(ctx context.Context, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewQueryLogsRequest(c.Server, namespace, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestMetricWithBody Ingest a single metric sample.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
+func (c *Client) IngestMetricWithBody(ctx context.Context, namespace string, params *IngestMetricParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestMetricRequestWithBody(c.Server, namespace, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestMetric Ingest a single metric sample.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
+func (c *Client) IngestMetric(ctx context.Context, namespace string, params *IngestMetricParams, body IngestMetricJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestMetricRequest(c.Server, namespace, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AggregateMetricsWithBody Aggregate a metric over a time range.
+//
+// Aggregation defaults to `avg` with a 60-second step. Results are
+// grouped by `group_by` label names and filtered by exact `labels` match.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
+func (c *Client) AggregateMetricsWithBody(ctx context.Context, namespace string, params *AggregateMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAggregateMetricsRequestWithBody(c.Server, namespace, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AggregateMetrics Aggregate a metric over a time range.
+//
+// Aggregation defaults to `avg` with a 60-second step. Results are
+// grouped by `group_by` label names and filtered by exact `labels` match.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
+func (c *Client) AggregateMetrics(ctx context.Context, namespace string, params *AggregateMetricsParams, body AggregateMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAggregateMetricsRequest(c.Server, namespace, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestMetricsWithBody Ingest a batch of metric samples.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
+func (c *Client) IngestMetricsWithBody(ctx context.Context, namespace string, params *IngestMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestMetricsRequestWithBody(c.Server, namespace, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestMetrics Ingest a batch of metric samples.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
+func (c *Client) IngestMetrics(ctx context.Context, namespace string, params *IngestMetricsParams, body IngestMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestMetricsRequest(c.Server, namespace, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8741,6 +9233,116 @@ func NewResolveModelAliasRequestWithBody(server string, name string, params *Res
 	return req, nil
 }
 
+// NewTranslateNaturalLanguageRequest calls the generic TranslateNaturalLanguage builder with application/json body
+func NewTranslateNaturalLanguageRequest(server string, params *TranslateNaturalLanguageParams, body TranslateNaturalLanguageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewTranslateNaturalLanguageRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewTranslateNaturalLanguageRequestWithBody constructs an http.Request for the TranslateNaturalLanguage method, with any body, and a specified content type
+func NewTranslateNaturalLanguageRequestWithBody(server string, params *TranslateNaturalLanguageParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/nl/translate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewCreateObservabilityNamespaceRequest calls the generic CreateObservabilityNamespace builder with application/json body
+func NewCreateObservabilityNamespaceRequest(server string, params *CreateObservabilityNamespaceParams, body CreateObservabilityNamespaceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateObservabilityNamespaceRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateObservabilityNamespaceRequestWithBody constructs an http.Request for the CreateObservabilityNamespace method, with any body, and a specified content type
+func NewCreateObservabilityNamespaceRequestWithBody(server string, params *CreateObservabilityNamespaceParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/observability/namespaces")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewIngestLogRequest calls the generic IngestLog builder with application/json body
 func NewIngestLogRequest(server string, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8803,6 +9405,68 @@ func NewIngestLogRequestWithBody(server string, namespace string, params *Ingest
 	return req, nil
 }
 
+// NewIngestLogsRequest calls the generic IngestLogs builder with application/json body
+func NewIngestLogsRequest(server string, namespace string, params *IngestLogsParams, body IngestLogsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIngestLogsRequestWithBody(server, namespace, params, "application/json", bodyReader)
+}
+
+// NewIngestLogsRequestWithBody constructs an http.Request for the IngestLogs method, with any body, and a specified content type
+func NewIngestLogsRequestWithBody(server string, namespace string, params *IngestLogsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "namespace", namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/observability/namespaces/%s/logs/bulk", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewQueryLogsRequest calls the generic QueryLogs builder with application/json body
 func NewQueryLogsRequest(server string, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8831,6 +9495,192 @@ func NewQueryLogsRequestWithBody(server string, namespace string, params *QueryL
 	}
 
 	operationPath := fmt.Sprintf("/api/v2/observability/namespaces/%s/logs/search", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewIngestMetricRequest calls the generic IngestMetric builder with application/json body
+func NewIngestMetricRequest(server string, namespace string, params *IngestMetricParams, body IngestMetricJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIngestMetricRequestWithBody(server, namespace, params, "application/json", bodyReader)
+}
+
+// NewIngestMetricRequestWithBody constructs an http.Request for the IngestMetric method, with any body, and a specified content type
+func NewIngestMetricRequestWithBody(server string, namespace string, params *IngestMetricParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "namespace", namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/observability/namespaces/%s/metrics", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewAggregateMetricsRequest calls the generic AggregateMetrics builder with application/json body
+func NewAggregateMetricsRequest(server string, namespace string, params *AggregateMetricsParams, body AggregateMetricsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAggregateMetricsRequestWithBody(server, namespace, params, "application/json", bodyReader)
+}
+
+// NewAggregateMetricsRequestWithBody constructs an http.Request for the AggregateMetrics method, with any body, and a specified content type
+func NewAggregateMetricsRequestWithBody(server string, namespace string, params *AggregateMetricsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "namespace", namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/observability/namespaces/%s/metrics/aggregate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewIngestMetricsRequest calls the generic IngestMetrics builder with application/json body
+func NewIngestMetricsRequest(server string, namespace string, params *IngestMetricsParams, body IngestMetricsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIngestMetricsRequestWithBody(server, namespace, params, "application/json", bodyReader)
+}
+
+// NewIngestMetricsRequestWithBody constructs an http.Request for the IngestMetrics method, with any body, and a specified content type
+func NewIngestMetricsRequestWithBody(server string, namespace string, params *IngestMetricsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "namespace", namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/observability/namespaces/%s/metrics/bulk", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9880,6 +10730,54 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	ResolveModelAliasWithResponse(ctx context.Context, name string, params *ResolveModelAliasParams, body ResolveModelAliasJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveModelAliasHTTPResp, error)
 
+	// TranslateNaturalLanguageWithBodyWithResponse Translate natural language to a query (AV-SQL).
+	//
+	// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+	// over the configured LLM (`config.llm`) and returns the normalized
+	// query, the agent-selected views, and the final composed query string.
+	// Requires the LLM integration to be configured; the result is
+	// model-generated — validate before execution.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/nl/translate (the `TranslateNaturalLanguage` operationId).
+	TranslateNaturalLanguageWithBodyWithResponse(ctx context.Context, params *TranslateNaturalLanguageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TranslateNaturalLanguageHTTPResp, error)
+
+	// TranslateNaturalLanguageWithResponse Translate natural language to a query (AV-SQL).
+	//
+	// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+	// over the configured LLM (`config.llm`) and returns the normalized
+	// query, the agent-selected views, and the final composed query string.
+	// Requires the LLM integration to be configured; the result is
+	// model-generated — validate before execution.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/nl/translate (the `TranslateNaturalLanguage` operationId).
+	TranslateNaturalLanguageWithResponse(ctx context.Context, params *TranslateNaturalLanguageParams, body TranslateNaturalLanguageJSONRequestBody, reqEditors ...RequestEditorFn) (*TranslateNaturalLanguageHTTPResp, error)
+
+	// CreateObservabilityNamespaceWithBodyWithResponse Create an observability namespace.
+	//
+	// Creates a namespace for log/metric/trace data with tiered retention.
+	// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+	// 365 days server-side.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
+	CreateObservabilityNamespaceWithBodyWithResponse(ctx context.Context, params *CreateObservabilityNamespaceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateObservabilityNamespaceHTTPResp, error)
+
+	// CreateObservabilityNamespaceWithResponse Create an observability namespace.
+	//
+	// Creates a namespace for log/metric/trace data with tiered retention.
+	// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+	// 365 days server-side.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
+	CreateObservabilityNamespaceWithResponse(ctx context.Context, params *CreateObservabilityNamespaceParams, body CreateObservabilityNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateObservabilityNamespaceHTTPResp, error)
+
 	// IngestLogWithBodyWithResponse Ingest a log entry.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -9894,6 +10792,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs (the `IngestLog` operationId).
 	IngestLogWithResponse(ctx context.Context, namespace string, params *IngestLogParams, body IngestLogJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error)
 
+	// IngestLogsWithBodyWithResponse Ingest a batch of log entries.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
+	IngestLogsWithBodyWithResponse(ctx context.Context, namespace string, params *IngestLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestLogsHTTPResp, error)
+
+	// IngestLogsWithResponse Ingest a batch of log entries.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
+	IngestLogsWithResponse(ctx context.Context, namespace string, params *IngestLogsParams, body IngestLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestLogsHTTPResp, error)
+
 	// QueryLogsWithBodyWithResponse Query logs.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -9907,6 +10819,54 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/search (the `QueryLogs` operationId).
 	QueryLogsWithResponse(ctx context.Context, namespace string, params *QueryLogsParams, body QueryLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error)
+
+	// IngestMetricWithBodyWithResponse Ingest a single metric sample.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
+	IngestMetricWithBodyWithResponse(ctx context.Context, namespace string, params *IngestMetricParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestMetricHTTPResp, error)
+
+	// IngestMetricWithResponse Ingest a single metric sample.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
+	IngestMetricWithResponse(ctx context.Context, namespace string, params *IngestMetricParams, body IngestMetricJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestMetricHTTPResp, error)
+
+	// AggregateMetricsWithBodyWithResponse Aggregate a metric over a time range.
+	//
+	// Aggregation defaults to `avg` with a 60-second step. Results are
+	// grouped by `group_by` label names and filtered by exact `labels` match.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
+	AggregateMetricsWithBodyWithResponse(ctx context.Context, namespace string, params *AggregateMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AggregateMetricsHTTPResp, error)
+
+	// AggregateMetricsWithResponse Aggregate a metric over a time range.
+	//
+	// Aggregation defaults to `avg` with a 60-second step. Results are
+	// grouped by `group_by` label names and filtered by exact `labels` match.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
+	AggregateMetricsWithResponse(ctx context.Context, namespace string, params *AggregateMetricsParams, body AggregateMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*AggregateMetricsHTTPResp, error)
+
+	// IngestMetricsWithBodyWithResponse Ingest a batch of metric samples.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
+	IngestMetricsWithBodyWithResponse(ctx context.Context, namespace string, params *IngestMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestMetricsHTTPResp, error)
+
+	// IngestMetricsWithResponse Ingest a batch of metric samples.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
+	IngestMetricsWithResponse(ctx context.Context, namespace string, params *IngestMetricsParams, body IngestMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestMetricsHTTPResp, error)
 
 	// ExecuteQueryWithBodyWithResponse Execute AQL or UQL through the shared query facade.
 	//
@@ -12066,6 +13026,123 @@ func (r ResolveModelAliasHTTPResp) ContentType() string {
 	return ""
 }
 
+type TranslateNaturalLanguageHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *NlTranslateResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r TranslateNaturalLanguageHTTPResp) GetJSON200() *NlTranslateResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r TranslateNaturalLanguageHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r TranslateNaturalLanguageHTTPResp) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r TranslateNaturalLanguageHTTPResp) GetJSON500() *ErrorResponse {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r TranslateNaturalLanguageHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r TranslateNaturalLanguageHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TranslateNaturalLanguageHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r TranslateNaturalLanguageHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateObservabilityNamespaceHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CreateObservabilityNamespaceResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateObservabilityNamespaceHTTPResp) GetJSON200() *CreateObservabilityNamespaceResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateObservabilityNamespaceHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateObservabilityNamespaceHTTPResp) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateObservabilityNamespaceHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateObservabilityNamespaceHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateObservabilityNamespaceHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateObservabilityNamespaceHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type IngestLogHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12107,6 +13184,61 @@ func (r IngestLogHTTPResp) ContentType() string {
 	return ""
 }
 
+type IngestLogsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ObservabilityIngestResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IngestLogsHTTPResp) GetJSON200() *ObservabilityIngestResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r IngestLogsHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r IngestLogsHTTPResp) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r IngestLogsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IngestLogsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IngestLogsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IngestLogsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type QueryLogsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12142,6 +13274,171 @@ func (r QueryLogsHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r QueryLogsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IngestMetricHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ObservabilityIngestResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IngestMetricHTTPResp) GetJSON200() *ObservabilityIngestResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r IngestMetricHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r IngestMetricHTTPResp) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r IngestMetricHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IngestMetricHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IngestMetricHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IngestMetricHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AggregateMetricsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MetricAggregationResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AggregateMetricsHTTPResp) GetJSON200() *MetricAggregationResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AggregateMetricsHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AggregateMetricsHTTPResp) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r AggregateMetricsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AggregateMetricsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AggregateMetricsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AggregateMetricsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IngestMetricsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ObservabilityIngestResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IngestMetricsHTTPResp) GetJSON200() *ObservabilityIngestResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r IngestMetricsHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r IngestMetricsHTTPResp) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r IngestMetricsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IngestMetricsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IngestMetricsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IngestMetricsHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -13506,6 +14803,78 @@ func (c *ClientWithResponses) ResolveModelAliasWithResponse(ctx context.Context,
 	return ParseResolveModelAliasHTTPResp(rsp)
 }
 
+// TranslateNaturalLanguageWithBodyWithResponse Translate natural language to a query (AV-SQL).
+//
+// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+// over the configured LLM (`config.llm`) and returns the normalized
+// query, the agent-selected views, and the final composed query string.
+// Requires the LLM integration to be configured; the result is
+// model-generated — validate before execution.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/nl/translate (the `TranslateNaturalLanguage` operationId).
+func (c *ClientWithResponses) TranslateNaturalLanguageWithBodyWithResponse(ctx context.Context, params *TranslateNaturalLanguageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TranslateNaturalLanguageHTTPResp, error) {
+	rsp, err := c.TranslateNaturalLanguageWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTranslateNaturalLanguageHTTPResp(rsp)
+}
+
+// TranslateNaturalLanguageWithResponse Translate natural language to a query (AV-SQL).
+//
+// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+// over the configured LLM (`config.llm`) and returns the normalized
+// query, the agent-selected views, and the final composed query string.
+// Requires the LLM integration to be configured; the result is
+// model-generated — validate before execution.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/nl/translate (the `TranslateNaturalLanguage` operationId).
+func (c *ClientWithResponses) TranslateNaturalLanguageWithResponse(ctx context.Context, params *TranslateNaturalLanguageParams, body TranslateNaturalLanguageJSONRequestBody, reqEditors ...RequestEditorFn) (*TranslateNaturalLanguageHTTPResp, error) {
+	rsp, err := c.TranslateNaturalLanguage(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTranslateNaturalLanguageHTTPResp(rsp)
+}
+
+// CreateObservabilityNamespaceWithBodyWithResponse Create an observability namespace.
+//
+// Creates a namespace for log/metric/trace data with tiered retention.
+// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+// 365 days server-side.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
+func (c *ClientWithResponses) CreateObservabilityNamespaceWithBodyWithResponse(ctx context.Context, params *CreateObservabilityNamespaceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateObservabilityNamespaceHTTPResp, error) {
+	rsp, err := c.CreateObservabilityNamespaceWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateObservabilityNamespaceHTTPResp(rsp)
+}
+
+// CreateObservabilityNamespaceWithResponse Create an observability namespace.
+//
+// Creates a namespace for log/metric/trace data with tiered retention.
+// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+// 365 days server-side.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
+func (c *ClientWithResponses) CreateObservabilityNamespaceWithResponse(ctx context.Context, params *CreateObservabilityNamespaceParams, body CreateObservabilityNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateObservabilityNamespaceHTTPResp, error) {
+	rsp, err := c.CreateObservabilityNamespace(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateObservabilityNamespaceHTTPResp(rsp)
+}
+
 // IngestLogWithBodyWithResponse Ingest a log entry.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -13532,6 +14901,32 @@ func (c *ClientWithResponses) IngestLogWithResponse(ctx context.Context, namespa
 	return ParseIngestLogHTTPResp(rsp)
 }
 
+// IngestLogsWithBodyWithResponse Ingest a batch of log entries.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
+func (c *ClientWithResponses) IngestLogsWithBodyWithResponse(ctx context.Context, namespace string, params *IngestLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestLogsHTTPResp, error) {
+	rsp, err := c.IngestLogsWithBody(ctx, namespace, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestLogsHTTPResp(rsp)
+}
+
+// IngestLogsWithResponse Ingest a batch of log entries.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
+func (c *ClientWithResponses) IngestLogsWithResponse(ctx context.Context, namespace string, params *IngestLogsParams, body IngestLogsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestLogsHTTPResp, error) {
+	rsp, err := c.IngestLogs(ctx, namespace, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestLogsHTTPResp(rsp)
+}
+
 // QueryLogsWithBodyWithResponse Query logs.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -13556,6 +14951,90 @@ func (c *ClientWithResponses) QueryLogsWithResponse(ctx context.Context, namespa
 		return nil, err
 	}
 	return ParseQueryLogsHTTPResp(rsp)
+}
+
+// IngestMetricWithBodyWithResponse Ingest a single metric sample.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
+func (c *ClientWithResponses) IngestMetricWithBodyWithResponse(ctx context.Context, namespace string, params *IngestMetricParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestMetricHTTPResp, error) {
+	rsp, err := c.IngestMetricWithBody(ctx, namespace, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestMetricHTTPResp(rsp)
+}
+
+// IngestMetricWithResponse Ingest a single metric sample.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
+func (c *ClientWithResponses) IngestMetricWithResponse(ctx context.Context, namespace string, params *IngestMetricParams, body IngestMetricJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestMetricHTTPResp, error) {
+	rsp, err := c.IngestMetric(ctx, namespace, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestMetricHTTPResp(rsp)
+}
+
+// AggregateMetricsWithBodyWithResponse Aggregate a metric over a time range.
+//
+// Aggregation defaults to `avg` with a 60-second step. Results are
+// grouped by `group_by` label names and filtered by exact `labels` match.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
+func (c *ClientWithResponses) AggregateMetricsWithBodyWithResponse(ctx context.Context, namespace string, params *AggregateMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AggregateMetricsHTTPResp, error) {
+	rsp, err := c.AggregateMetricsWithBody(ctx, namespace, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAggregateMetricsHTTPResp(rsp)
+}
+
+// AggregateMetricsWithResponse Aggregate a metric over a time range.
+//
+// Aggregation defaults to `avg` with a 60-second step. Results are
+// grouped by `group_by` label names and filtered by exact `labels` match.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
+func (c *ClientWithResponses) AggregateMetricsWithResponse(ctx context.Context, namespace string, params *AggregateMetricsParams, body AggregateMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*AggregateMetricsHTTPResp, error) {
+	rsp, err := c.AggregateMetrics(ctx, namespace, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAggregateMetricsHTTPResp(rsp)
+}
+
+// IngestMetricsWithBodyWithResponse Ingest a batch of metric samples.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
+func (c *ClientWithResponses) IngestMetricsWithBodyWithResponse(ctx context.Context, namespace string, params *IngestMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestMetricsHTTPResp, error) {
+	rsp, err := c.IngestMetricsWithBody(ctx, namespace, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestMetricsHTTPResp(rsp)
+}
+
+// IngestMetricsWithResponse Ingest a batch of metric samples.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
+func (c *ClientWithResponses) IngestMetricsWithResponse(ctx context.Context, namespace string, params *IngestMetricsParams, body IngestMetricsJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestMetricsHTTPResp, error) {
+	rsp, err := c.IngestMetrics(ctx, namespace, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestMetricsHTTPResp(rsp)
 }
 
 // ExecuteQueryWithBodyWithResponse Execute AQL or UQL through the shared query facade.
@@ -15139,6 +16618,93 @@ func ParseResolveModelAliasHTTPResp(rsp *http.Response) (*ResolveModelAliasHTTPR
 	return response, nil
 }
 
+// ParseTranslateNaturalLanguageHTTPResp parses an HTTP response from a TranslateNaturalLanguageWithResponse call
+func ParseTranslateNaturalLanguageHTTPResp(rsp *http.Response) (*TranslateNaturalLanguageHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TranslateNaturalLanguageHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NlTranslateResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateObservabilityNamespaceHTTPResp parses an HTTP response from a CreateObservabilityNamespaceWithResponse call
+func ParseCreateObservabilityNamespaceHTTPResp(rsp *http.Response) (*CreateObservabilityNamespaceHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateObservabilityNamespaceHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CreateObservabilityNamespaceResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseIngestLogHTTPResp parses an HTTP response from a IngestLogWithResponse call
 func ParseIngestLogHTTPResp(rsp *http.Response) (*IngestLogHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15165,6 +16731,46 @@ func ParseIngestLogHTTPResp(rsp *http.Response) (*IngestLogHTTPResp, error) {
 	return response, nil
 }
 
+// ParseIngestLogsHTTPResp parses an HTTP response from a IngestLogsWithResponse call
+func ParseIngestLogsHTTPResp(rsp *http.Response) (*IngestLogsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IngestLogsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ObservabilityIngestResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseQueryLogsHTTPResp parses an HTTP response from a QueryLogsWithResponse call
 func ParseQueryLogsHTTPResp(rsp *http.Response) (*QueryLogsHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15185,6 +16791,126 @@ func ParseQueryLogsHTTPResp(rsp *http.Response) (*QueryLogsHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIngestMetricHTTPResp parses an HTTP response from a IngestMetricWithResponse call
+func ParseIngestMetricHTTPResp(rsp *http.Response) (*IngestMetricHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IngestMetricHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ObservabilityIngestResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAggregateMetricsHTTPResp parses an HTTP response from a AggregateMetricsWithResponse call
+func ParseAggregateMetricsHTTPResp(rsp *http.Response) (*AggregateMetricsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AggregateMetricsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MetricAggregationResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIngestMetricsHTTPResp parses an HTTP response from a IngestMetricsWithResponse call
+func ParseIngestMetricsHTTPResp(rsp *http.Response) (*IngestMetricsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IngestMetricsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ObservabilityIngestResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	}
 

@@ -26,19 +26,19 @@ T = TypeVar("T", bound="ResolvedModelBindingResponse")
 class ResolvedModelBindingResponse:
     """
     Attributes:
-        contract_sha256 (str):
-        dimension (int):
         model (str):
+        dimension (int):
         model_asset_id (str):
         model_version (int):
+        contract_sha256 (str):
         snapshot (ResolvedEmbeddingModelResponse):
     """
 
-    contract_sha256: str
-    dimension: int
     model: str
+    dimension: int
     model_asset_id: str
     model_version: int
+    contract_sha256: str
     snapshot: ResolvedEmbeddingModelResponse
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -47,15 +47,15 @@ class ResolvedModelBindingResponse:
             ResolvedEmbeddingModelResponse,
         )
 
-        contract_sha256 = self.contract_sha256
+        model = self.model
 
         dimension = self.dimension
-
-        model = self.model
 
         model_asset_id = self.model_asset_id
 
         model_version = self.model_version
+
+        contract_sha256 = self.contract_sha256
 
         snapshot = self.snapshot.to_dict()
 
@@ -63,11 +63,11 @@ class ResolvedModelBindingResponse:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "contract_sha256": contract_sha256,
-                "dimension": dimension,
                 "model": model,
+                "dimension": dimension,
                 "model_asset_id": model_asset_id,
                 "model_version": model_version,
+                "contract_sha256": contract_sha256,
                 "snapshot": snapshot,
             }
         )
@@ -81,24 +81,24 @@ class ResolvedModelBindingResponse:
         )
 
         d = dict(src_dict)
-        contract_sha256 = d.pop("contract_sha256")
+        model = d.pop("model")
 
         dimension = d.pop("dimension")
-
-        model = d.pop("model")
 
         model_asset_id = d.pop("model_asset_id")
 
         model_version = d.pop("model_version")
 
+        contract_sha256 = d.pop("contract_sha256")
+
         snapshot = ResolvedEmbeddingModelResponse.from_dict(d.pop("snapshot"))
 
         resolved_model_binding_response = cls(
-            contract_sha256=contract_sha256,
-            dimension=dimension,
             model=model,
+            dimension=dimension,
             model_asset_id=model_asset_id,
             model_version=model_version,
+            contract_sha256=contract_sha256,
             snapshot=snapshot,
         )
 

@@ -21,35 +21,35 @@ class CatalogArtifactDescriptor:
     """Content-addressed reference to bytes held outside xCatalog.
 
     Attributes:
-        digest (str):
-        media_type (str):
-        size_bytes (int):
         uri (str):
+        digest (str):
+        size_bytes (int):
+        media_type (str):
     """
 
-    digest: str
-    media_type: str
-    size_bytes: int
     uri: str
+    digest: str
+    size_bytes: int
+    media_type: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        digest = self.digest
+        uri = self.uri
 
-        media_type = self.media_type
+        digest = self.digest
 
         size_bytes = self.size_bytes
 
-        uri = self.uri
+        media_type = self.media_type
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "digest": digest,
-                "media_type": media_type,
-                "size_bytes": size_bytes,
                 "uri": uri,
+                "digest": digest,
+                "size_bytes": size_bytes,
+                "media_type": media_type,
             }
         )
 
@@ -58,19 +58,19 @@ class CatalogArtifactDescriptor:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        digest = d.pop("digest")
+        uri = d.pop("uri")
 
-        media_type = d.pop("media_type")
+        digest = d.pop("digest")
 
         size_bytes = d.pop("size_bytes")
 
-        uri = d.pop("uri")
+        media_type = d.pop("media_type")
 
         catalog_artifact_descriptor = cls(
-            digest=digest,
-            media_type=media_type,
-            size_bytes=size_bytes,
             uri=uri,
+            digest=digest,
+            size_bytes=size_bytes,
+            media_type=media_type,
         )
 
         catalog_artifact_descriptor.additional_properties = d

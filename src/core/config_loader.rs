@@ -158,6 +158,36 @@ impl ConfigLoader {
             })?;
         }
 
+        // TD-IOBUDGET-1: fail closed on invalid per-location I/O budgets — an
+        // operator error (unknown disk class already dies at TOML parse; bad
+        // bounds here) must abort startup, not silently change GET geometry.
+        for location in &config.storage.storage_locations {
+            if let Some(budget_cfg) = &location.io_budget {
+                crate::core::config::StorageConfig::resolve_location_io_budget(
+                    &location.url,
+                    budget_cfg,
+                )
+                .map_err(|err| {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Invalid io_budget for storage location {}: {err}",
+                            location.url
+                        ),
+                    )) as Box<dyn std::error::Error + Send + Sync>
+                })?;
+            }
+        }
+        // TD-IOBUDGET-1 (review finding): duplicate location URLs with
+        // CONFLICTING resolved budgets would silently let the last entry win
+        // (the leaf registry is URL-keyed with insert-overwrite).
+        crate::core::config::StorageConfig::validate_io_budget_conflicts(&config.storage).map_err(
+            |err| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
+                    as Box<dyn std::error::Error + Send + Sync>
+            },
+        )?;
+
         Ok(())
     }
 

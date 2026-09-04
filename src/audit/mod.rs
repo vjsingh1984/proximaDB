@@ -60,7 +60,7 @@ impl ComplianceReportingEngine {
         &self,
         _audit_data: &AuditData,
         frameworks: &[String],
-        _executive_context: &crate::auth::sso::EnterpriseUserContext,
+        _executive_context: &crate::auth::EnterpriseUserContext,
     ) -> Result<Vec<ComplianceReport>> {
         let mut reports = Vec::new();
 
@@ -119,7 +119,7 @@ impl EnterpriseAuditCoordinator {
         tenant_id: &str,
         reporting_period: AuditReportingPeriod,
         compliance_frameworks: &[String],
-        executive_context: &crate::auth::sso::EnterpriseUserContext,
+        executive_context: &crate::auth::EnterpriseUserContext,
     ) -> Result<EnterpriseAuditReport> {
         // Collect comprehensive audit data
         let audit_data = self

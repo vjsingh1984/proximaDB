@@ -25,13 +25,13 @@ T = TypeVar("T", bound="TraverseResponse")
 class TraverseResponse:
     """
     Attributes:
-        edges (list[EdgeResponse] | Unset):
         nodes (list[NodeResponse] | Unset):
+        edges (list[EdgeResponse] | Unset):
         paths (list[list[str]] | Unset):
     """
 
-    edges: list[EdgeResponse] | Unset = UNSET
     nodes: list[NodeResponse] | Unset = UNSET
+    edges: list[EdgeResponse] | Unset = UNSET
     paths: list[list[str]] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -39,19 +39,19 @@ class TraverseResponse:
         from ..models.edge_response import EdgeResponse
         from ..models.node_response import NodeResponse
 
-        edges: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.edges, Unset):
-            edges = []
-            for edges_item_data in self.edges:
-                edges_item = edges_item_data.to_dict()
-                edges.append(edges_item)
-
         nodes: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.nodes, Unset):
             nodes = []
             for nodes_item_data in self.nodes:
                 nodes_item = nodes_item_data.to_dict()
                 nodes.append(nodes_item)
+
+        edges: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.edges, Unset):
+            edges = []
+            for edges_item_data in self.edges:
+                edges_item = edges_item_data.to_dict()
+                edges.append(edges_item)
 
         paths: list[list[str]] | Unset = UNSET
         if not isinstance(self.paths, Unset):
@@ -64,10 +64,10 @@ class TraverseResponse:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if edges is not UNSET:
-            field_dict["edges"] = edges
         if nodes is not UNSET:
             field_dict["nodes"] = nodes
+        if edges is not UNSET:
+            field_dict["edges"] = edges
         if paths is not UNSET:
             field_dict["paths"] = paths
 
@@ -79,15 +79,6 @@ class TraverseResponse:
         from ..models.node_response import NodeResponse
 
         d = dict(src_dict)
-        _edges = d.pop("edges", UNSET)
-        edges: list[EdgeResponse] | Unset = UNSET
-        if _edges is not UNSET:
-            edges = []
-            for edges_item_data in _edges:
-                edges_item = EdgeResponse.from_dict(edges_item_data)
-
-                edges.append(edges_item)
-
         _nodes = d.pop("nodes", UNSET)
         nodes: list[NodeResponse] | Unset = UNSET
         if _nodes is not UNSET:
@@ -96,6 +87,15 @@ class TraverseResponse:
                 nodes_item = NodeResponse.from_dict(nodes_item_data)
 
                 nodes.append(nodes_item)
+
+        _edges = d.pop("edges", UNSET)
+        edges: list[EdgeResponse] | Unset = UNSET
+        if _edges is not UNSET:
+            edges = []
+            for edges_item_data in _edges:
+                edges_item = EdgeResponse.from_dict(edges_item_data)
+
+                edges.append(edges_item)
 
         _paths = d.pop("paths", UNSET)
         paths: list[list[str]] | Unset = UNSET
@@ -107,8 +107,8 @@ class TraverseResponse:
                 paths.append(paths_item)
 
         traverse_response = cls(
-            edges=edges,
             nodes=nodes,
+            edges=edges,
             paths=paths,
         )
 

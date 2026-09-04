@@ -22,7 +22,6 @@
 //! write path lives in [`record_ops_service::RecordOpsService`]. This module
 //! keeps the surviving handler-support crates/modules.
 
-pub mod enterprise;
 pub mod record_ops_service;
 
 pub use crate::services::operations::vectors::{
