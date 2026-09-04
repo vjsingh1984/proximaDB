@@ -2568,6 +2568,9 @@ paths:
       - ABAC
       operationId: listPredicateObjects
       summary: List every registered ABAC predicate object.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler (predicate objects are global, not tenant-scoped).
       responses:
         '200':
           description: Every predicate object.

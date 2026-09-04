@@ -22686,6 +22686,10 @@ impl Client {
     }
     /// List every registered ABAC predicate object
     ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (predicate objects are global, not tenant-scoped).
+    ///
+    ///
     /// Sends a `GET` request to `/api/v2/abac/predicate-objects`
     ///
     /// Arguments:

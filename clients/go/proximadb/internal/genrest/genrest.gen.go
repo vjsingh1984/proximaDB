@@ -5221,6 +5221,9 @@ type ClientInterface interface {
 
 	// ListPredicateObjects List every registered ABAC predicate object.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
 	// Corresponds with GET /api/v2/abac/predicate-objects (the `ListPredicateObjects` operationId).
 	ListPredicateObjects(ctx context.Context, params *ListPredicateObjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -6508,6 +6511,9 @@ func (c *Client) PutPolicyBinding(ctx context.Context, tenant string, objectId u
 }
 
 // ListPredicateObjects List every registered ABAC predicate object.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Corresponds with GET /api/v2/abac/predicate-objects (the `ListPredicateObjects` operationId).
 func (c *Client) ListPredicateObjects(ctx context.Context, params *ListPredicateObjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12631,6 +12637,9 @@ type ClientWithResponsesInterface interface {
 
 	// ListPredicateObjectsWithResponse List every registered ABAC predicate object.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/v2/abac/predicate-objects (the `ListPredicateObjects` operationId).
@@ -17694,6 +17703,9 @@ func (c *ClientWithResponses) PutPolicyBindingWithResponse(ctx context.Context, 
 }
 
 // ListPredicateObjectsWithResponse List every registered ABAC predicate object.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Returns a wrapper object for the known response body format(s).
 //

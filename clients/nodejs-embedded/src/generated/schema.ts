@@ -1275,7 +1275,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List every registered ABAC predicate object. */
+        /**
+         * List every registered ABAC predicate object.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
+         */
         get: operations["listPredicateObjects"];
         put?: never;
         post?: never;

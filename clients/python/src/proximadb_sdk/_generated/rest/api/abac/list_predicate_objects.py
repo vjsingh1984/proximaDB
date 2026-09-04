@@ -80,6 +80,9 @@ def sync_detailed(
 ) -> Response[AbacOperatorErrorResponse | AbacPredicateObjectsResponse]:
     """List every registered ABAC predicate object.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
+
     Args:
         x_tenant_id (str | Unset):
 
@@ -109,6 +112,9 @@ def sync(
 ) -> AbacOperatorErrorResponse | AbacPredicateObjectsResponse | None:
     """List every registered ABAC predicate object.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
+
     Args:
         x_tenant_id (str | Unset):
 
@@ -132,6 +138,9 @@ async def asyncio_detailed(
     x_tenant_id: str | Unset = UNSET,
 ) -> Response[AbacOperatorErrorResponse | AbacPredicateObjectsResponse]:
     """List every registered ABAC predicate object.
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         x_tenant_id (str | Unset):
@@ -159,6 +168,9 @@ async def asyncio(
     x_tenant_id: str | Unset = UNSET,
 ) -> AbacOperatorErrorResponse | AbacPredicateObjectsResponse | None:
     """List every registered ABAC predicate object.
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         x_tenant_id (str | Unset):
