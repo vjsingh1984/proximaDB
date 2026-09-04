@@ -54,9 +54,11 @@ _Yaml12CoreBoolLoader.yaml_implicit_resolvers = {
     first_char: [
         (
             tag,
-            re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
-            if tag == "tag:yaml.org,2002:bool"
-            else regexp,
+            (
+                re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
+                if tag == "tag:yaml.org,2002:bool"
+                else regexp
+            ),
         )
         for tag, regexp in resolvers
     ]
