@@ -239,7 +239,7 @@ the real S3 path. Deployment note: the suite requires the registry-documented
 `PROXIMADB_S3_ENDPOINT`/`PROXIMADB_S3_FORCE_PATH_STYLE` gates for the engine AND
 `AWS_ALLOW_HTTP=true` for the system-catalog's object_store client (plain HTTP).
 
-== Chooser A/B (Mac → dataserver2 MinIO @ 5.5 ms RTT, same binary, one env flip)
+== Chooser A/B (Mac → dataserver2 MinIO @ 5.5 ms RTT, same binary, one env flip) — [SUPERSEDED 2026-09-03 by TD-IOBUDGET-2 / #1827: this A/B ran its ON arm un-engaged (the harness popped the gate and no CLI wire existed); do not cite as flip evidence — the corrected campaign is `read_strategy_chooser_sift1m_minio`]
 
 |===
 |Arm |p50 |GETs/q |bytes/q |region-B |region-D |rehydrate |cascade

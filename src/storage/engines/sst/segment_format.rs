@@ -4491,9 +4491,14 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         for (desc_i, (_bi, _locals)) in block_rows.iter().enumerate() {
             let desc = &chunk_descs[desc_i];
             match survivor_cache {
+                // TD-IOBUDGET-2 review: L2-aware classification — a chunk
+                // resident in the persistent exact-key L2 would be served by
+                // the consume call's `get_or_fetch` with ZERO object-store
+                // GETs; classifying it Cold (DRAM-only peek) turned that free
+                // serve into a billed wave GET whose bytes were then dropped.
                 Some(sc)
                     if sc
-                        .peek_memory_exact(CacheKind::Other, path, desc.start, desc.range_len)
+                        .peek_exact_residency(CacheKind::Other, path, desc.start, desc.range_len)
                         .await
                         .is_some() =>
                 {
@@ -4504,7 +4509,6 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                     chunk_cold_ranges.push(desc.start..desc.start + desc.range_len);
                 }
             }
-            let _ = desc_i;
         }
         let mut chunk_cold_bytes: Vec<Option<Vec<u8>>> = vec![None; chunk_cold_ranges.len()];
         if !chunk_cold_ranges.is_empty() {
