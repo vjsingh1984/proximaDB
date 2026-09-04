@@ -120,6 +120,9 @@ struct MirrorModel {
     messages: BTreeMap<String, MirrorMessage>,
     oneofs: BTreeMap<String, MirrorOneof>,
     enums: BTreeMap<String, MirrorEnum>,
+    /// tonic service stubs: full service name → method names (from the
+    /// client mod; the server mod repeats the same SERVICE_NAME).
+    services: BTreeMap<String, BTreeSet<String>>,
     anomalies: Vec<String>,
 }
 
@@ -433,6 +436,8 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
     let mut open_impl: Option<(String, usize)> = None;
     let mut in_from_str_name = false;
     let mut in_as_str_name = false;
+    // tonic service method buffering: module path → `pub async fn` names.
+    let mut mod_async_fns: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for raw in source.lines() {
         let line = raw.trim();
@@ -466,6 +471,42 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
 
         // ---- comment-only lines ----
         if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+
+        // ---- tonic service stubs: SERVICE_NAME consts + client methods ----
+        // tonic emits the methods FIRST and the SERVICE_NAME const at the
+        // BOTTOM of the client mod, so buffer pub async fns per module and
+        // merge them when the const identifies the service.
+        if let Some(rest) = line.strip_prefix("pub async fn ")
+            && let Some((name, _)) = rest.split_once('(')
+        {
+            let name = name.trim();
+            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                mod_async_fns
+                    .entry(module_key(&modules))
+                    .or_default()
+                    .insert(name.to_string());
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("pub const SERVICE_NAME")
+            && let Some(full) = rest.split('"').nth(1)
+        {
+            // tonic layout: the rpc methods are `pub async fn`s in the
+            // `<service>_client` module while the SERVICE_NAME const sits at
+            // the bottom of `<service>_server` — merge from either home.
+            let mk = module_key(&modules);
+            let client_mk = mk.strip_suffix("_server").map(|s| format!("{s}_client"));
+            let methods = mod_async_fns
+                .remove(&mk)
+                .or_else(|| client_mk.and_then(|c| mod_async_fns.remove(&c)))
+                .unwrap_or_default();
+            model
+                .services
+                .entry(full.to_string())
+                .or_default()
+                .extend(methods);
             continue;
         }
 
@@ -719,6 +760,8 @@ struct DescIndex {
     messages: BTreeMap<String, DescMessage>,
     /// (wire value name, number) per enum.
     enums: BTreeMap<String, Vec<(String, i32)>>,
+    /// Declared services: full name → method names.
+    services: BTreeMap<String, Vec<String>>,
 }
 
 fn kind_of(ty: &Type) -> Option<&'static str> {
@@ -894,6 +937,12 @@ fn build_desc_index(files: &[FileDescriptorProto]) -> DescIndex {
         }
     }
     for file in files {
+        let package = file.package.clone().unwrap_or_default();
+        for svc in &file.service {
+            let name = format!("{package}.{}", svc.name.clone().unwrap_or_default());
+            let methods = svc.method.iter().filter_map(|m| m.name.clone()).collect();
+            index.services.insert(name, methods);
+        }
         for en in &file.enum_type {
             index.enums.insert(
                 snake(en.name.as_deref().unwrap_or_default()),
@@ -1003,6 +1052,50 @@ impl Comparer {
             }
         }
         self.compare_enums(desc, mirror);
+        self.compare_services(desc, mirror);
+    }
+
+    /// gRPC service stubs are consumer-facing surface: a deleted or
+    /// never-written stub (or a proto rpc with no mirror method) must fail
+    /// the gate, not surface as a downstream compile break.
+    fn compare_services(&mut self, desc: &DescIndex, mirror: &MirrorModel) {
+        for (name, dmethods) in &desc.services {
+            // tonic renders rpc `AppendEntries` as fn `append_entries`.
+            let dset: BTreeSet<String> = dmethods.iter().map(|m| snake(m)).collect();
+            match mirror.services.get(name) {
+                None => self.record(
+                    "(services)",
+                    format!(
+                        "proto service {name:?} (methods {dmethods:?}) has no tonic stub in the mirror"
+                    ),
+                ),
+                Some(mmethods) => {
+                    let mset: BTreeSet<&String> = mmethods.iter().collect();
+                    let mset_owned: BTreeSet<String> =
+                        mset.iter().map(|s| (*s).clone()).collect();
+                    for missing in dset.difference(&mset_owned) {
+                        self.record(
+                            "(services)",
+                            format!("service {name:?}: rpc {missing:?} missing from mirror stub"),
+                        );
+                    }
+                    for invented in mset_owned.difference(&dset) {
+                        self.record(
+                            "(services)",
+                            format!("service {name:?}: mirror method {invented:?} not declared in proto"),
+                        );
+                    }
+                }
+            }
+        }
+        for name in mirror.services.keys() {
+            if !desc.services.contains_key(name) {
+                self.record(
+                    "(services)",
+                    format!("mirror service stub {name:?} not declared in any proto"),
+                );
+            }
+        }
     }
 
     fn compare_message_sets(&mut self, desc: &DescIndex, mirror: &MirrorModel) {
@@ -1299,20 +1392,30 @@ impl Comparer {
                 continue;
             }
             for (wire, number) in dvalues {
-                let lookup = |table: &BTreeMap<&str, i32>| table.get(wire.as_str()).copied();
-                let found = lookup(&from_table).or_else(|| lookup(&as_table));
-                match found {
-                    None => self.record(
-                        key,
-                        format!("enum value {wire:?} = {number} missing from mirror"),
-                    ),
-                    Some(d) if d == *number => {}
-                    Some(d) => self.record(
-                        key,
-                        format!(
-                            "enum value {wire:?}: discriminant mismatch mirror {d} vs proto {number}"
+                // Each PRESENT table must cover the value independently —
+                // accepting either table would let a missing from_str_name
+                // arm hide behind a complete as_str_name (one-sided drift).
+                let checks: [(&BTreeMap<&str, i32>, &str); 2] =
+                    [(&from_table, "from_str_name"), (&as_table, "as_str_name")];
+                for (table, table_name) in checks {
+                    if table.is_empty() {
+                        continue;
+                    }
+                    match table.get(wire.as_str()) {
+                        None => self.record(
+                            key,
+                            format!(
+                                "enum value {wire:?} = {number} missing from mirror {table_name}"
+                            ),
                         ),
-                    ),
+                        Some(&d) if d == *number => {}
+                        Some(&d) => self.record(
+                            key,
+                            format!(
+                                "enum value {wire:?}: {table_name} discriminant {d} != proto {number}"
+                            ),
+                        ),
+                    }
                 }
             }
             for wire in as_table.keys().chain(from_table.keys()) {

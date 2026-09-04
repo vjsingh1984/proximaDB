@@ -121,6 +121,51 @@ alongside the mirrors it guards.
 A fresh-context adversarial review (2026-09-02) hardened the change; its
 findings and dispositions:
 
+**Round 2 (high effort, 2026-09-03) — 10 findings, all dispositioned:**
+
+* **Writer emitted tag 8, not the declared tag 9** (MAJOR):
+  `proxima_to_sql_value` encoded `ProximaValue::Jsonb` as `BytesValue`, so no
+  write path ever produced the `JsonbValue` the canonical decode expects —
+  the filter fix was unreachable. The writer now emits `JsonbValue`
+  (mixed-read safe within the lineage: pre-PR segments carry tag-8 bytes that
+  still decode via the legacy arm; the tag-9 variant did not exist before
+  this PR). Pinned by `jsonb_writes_the_declared_tag9_variant`.
+* **Six live wildcard fan-out misses** fixed (search-executor result metadata
+  collapsed JSONB to `""`; nova string column, SST text-column support,
+  document aggregation equality, document-block sort keys, timeseries tags
+  dropped it) — each now decodes via the canonical representation.
+* **Observability attribute filters**: the `JsonbValue` arm fed raw
+  MessagePack through `from_utf8_lossy` (mojibake) into `key:value`
+  matching, silently dropping matching logs — now decodes to compact JSON.
+* **serde `jsonb_value` tagged form** now commits only for a SINGLE-KEY
+  object whose value decodes — sibling keys can no longer vanish.
+* **Guard: services were unguarded** — the exact drift class that motivated
+  the TD (the deleted `ContextService` was found by luck, not by the gate).
+  The guard now compares declared services (name + rpc set, snake-cased)
+  against the tonic stubs, both directions. First run caught 7 real GraphService
+  rpc gaps (the PULSAR/QUASAR messages were mirrored but their service
+  methods were not) and the never-written `RankService` stub — all fixed by
+  splicing in fresh `tonic-prost-build` output.
+* **Guard: enum tables validated per-table** — a value must appear in every
+  PRESENT name table; previously either table sufficed, letting a missing
+  `from_str_name` arm hide behind a complete `as_str_name`.
+* **One decode-or-binary helper** (`ProximaValue::from_jsonb_or_binary`)
+  replaces the four copy-pasted match arms; the Arrow Flight codec renders
+  compact JSON instead of a Debug byte dump; `MetadataValue` (which feeds
+  equality) and its streaming.rs duplicate decode instead of emitting a
+  `[jsonb]` placeholder.
+* **Documented, not code** (mirror fidelity ≠ feature implementation):
+  ** `CollectionConfig.embedding_config` (tag 25) and
+     `DocumentCollectionConfig.use_jsonb` (tag 8) are contract-declared but
+     feature-unimplemented — the proto fields pre-date this PR; the mirror
+     now carries them faithfully. Wiring them is separate feature work.
+  ** `permitted_principals`'s attr fix (`message` → `string`) changes the
+     binary encoding of non-empty values — the OLD bytes were
+     proto-nonconformant (prost wrapped each string in a StringValue
+     submessage); JSON (the live REST authority) is unaffected, pre-GA
+     no-back-compat applies.
+
+
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,
   the guard would have panicked on every fresh checkout — CI included.

@@ -287,14 +287,17 @@ impl<'de> Deserialize<'de> for SqlValue {
                         value: Some(SqlValueVariant::BytesValue(bytes)),
                     });
                 }
-                if let Some(v) = obj.get("jsonb_value")
+                if obj.len() == 1
+                    && let Some(v) = obj.get("jsonb_value")
                     && let Some(s) = v.as_str()
                     && let Ok(bytes) = base64_decode(s)
                 {
-                    // Only commit when the base64 payload decodes: an object
-                    // whose literal key happens to be "jsonb_value" (with a
-                    // non-base64 value or sibling keys) falls through to the
-                    // generic-object handling below instead of 422-ing.
+                    // The tagged form commits only for a SINGLE-KEY object
+                    // whose value decodes: sibling keys must never be
+                    // silently dropped, and a generic object that merely
+                    // contains a "jsonb_value" key (with a non-base64 value)
+                    // falls through to the generic-object handling below
+                    // instead of 422-ing.
                     return Ok(SqlValue {
                         value: Some(SqlValueVariant::JsonbValue(bytes)),
                     });

@@ -708,6 +708,17 @@ impl ProximaValue {
             serde_json::Value::String(slice.iter().map(|b| format!("{b:02x}")).collect::<String>())
         })
     }
+
+    /// Canonical MessagePack JSONB → `ProximaValue::Jsonb`, falling back to
+    /// `ProximaValue::Binary` for malformed bytes. The single decode-or-binary
+    /// conversion — every `SqlValue::JsonbValue` → `ProximaValue` site uses
+    /// this instead of a local copy.
+    pub fn from_jsonb_or_binary(slice: &[u8]) -> Self {
+        match Self::from_jsonb_slice(slice) {
+            Ok(json) => Self::Jsonb(json),
+            Err(_) => Self::Binary(slice.to_vec()),
+        }
+    }
 }
 
 #[cfg(test)]

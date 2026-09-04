@@ -51,13 +51,9 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
             Ok(v) => ProximaValue::Jsonb(v),
             Err(_) => ProximaValue::Binary(b.clone()),
         },
-        // types.proto tag 9: PostgreSQL JSONB binary — by construction valid
-        // JSONB, but fall back to Binary like BytesValue if a producer sent
-        // malformed bytes.
-        Some(sql_value::Value::JsonbValue(b)) => match ProximaValue::from_jsonb_slice(b) {
-            Ok(v) => ProximaValue::Jsonb(v),
-            Err(_) => ProximaValue::Binary(b.clone()),
-        },
+        // types.proto tag 9: JSONB by declaration — canonical decode-or-binary
+        // via the shared helper.
+        Some(sql_value::Value::JsonbValue(b)) => ProximaValue::from_jsonb_or_binary(b),
         Some(sql_value::Value::NullValue(_)) => ProximaValue::Null,
         Some(sql_value::Value::ArrayValue(arr)) => {
             let items: Vec<ProximaValue> = arr.values.iter().map(sql_value_to_proxima).collect();
@@ -217,7 +213,13 @@ pub fn proxima_to_sql_value(value: &ProximaValue) -> SqlValue {
         }
         ProximaValue::Uuid(v) | ProximaValue::ULID(v) => sql_value::Value::BytesValue(v.to_vec()),
         ProximaValue::Json(v) => sql_value::Value::StringValue(v.to_string()),
-        ProximaValue::Jsonb(v) => sql_value::Value::BytesValue(
+        // TD-PROTO-2: emit the declared tag-9 variant so JSONB is typed on the
+        // wire and the canonical decode path (jsonb_to_json_lossy / filter
+        // lowering) is reachable. Segments written before this change carry
+        // the same MessagePack bytes under tag 8 (BytesValue) and keep
+        // decoding via the legacy bytes arm — mixed-read safe within the
+        // develop lineage; the tag-9 variant did not exist before this PR.
+        ProximaValue::Jsonb(v) => sql_value::Value::JsonbValue(
             ProximaValue::to_jsonb_vec(v).unwrap_or_else(|_| v.to_string().into_bytes()),
         ),
         ProximaValue::Array(values) => sql_value::Value::ArrayValue(SqlArray {
@@ -721,6 +723,26 @@ mod tests {
                 "k".to_string(),
                 ProximaValue::Float64(1.5),
             )]))
+        );
+    }
+
+    #[test]
+    fn jsonb_writes_the_declared_tag9_variant() {
+        // TD-PROTO-2 review round 2: the writer must emit the declared
+        // JsonbValue variant (tag 9) — encoding JSONB under BytesValue made
+        // the canonical filter decode unreachable for production data.
+        let doc = serde_json::json!({"memory": {"type": "fact"}});
+        let sql = proxima_to_sql_value(&ProximaValue::Jsonb(doc.clone()));
+        let Some(sql_value::Value::JsonbValue(bytes)) = &sql.value else {
+            panic!(
+                "Jsonb must serialize to the tag-9 variant, got {:?}",
+                sql.value
+            );
+        };
+        // Round-trips through the canonical decode-or-binary helper.
+        assert_eq!(
+            ProximaValue::from_jsonb_or_binary(bytes),
+            ProximaValue::Jsonb(doc)
         );
     }
 

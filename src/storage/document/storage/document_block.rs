@@ -272,6 +272,13 @@ impl DocumentBlock {
                 af.partial_cmp(bf).map_or(0, |o| o as i32)
             }
             (Some(SqlVal::StringValue(sa)), Some(SqlVal::StringValue(sb))) => sa.cmp(sb) as i32,
+            // TD-PROTO-2: JSONB sorts by canonical JSON rendering — the
+            // wildcard collapsed every JSONB key to "equal" (0).
+            (Some(SqlVal::JsonbValue(ja)), Some(SqlVal::JsonbValue(jb))) => {
+                let ra = proximadb_data_model::ProximaValue::jsonb_to_json_lossy(ja).to_string();
+                let rb = proximadb_data_model::ProximaValue::jsonb_to_json_lossy(jb).to_string();
+                ra.cmp(&rb) as i32
+            }
             (Some(SqlVal::BoolValue(ba)), Some(SqlVal::BoolValue(bb))) => ba.cmp(bb) as i32,
             // Cross-type: int vs float
             (Some(SqlVal::Int64Value(ai)), Some(SqlVal::NumberValue(bf))) => {

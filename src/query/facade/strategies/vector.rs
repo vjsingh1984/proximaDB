@@ -183,12 +183,9 @@ fn sql_value_to_proxima_value(
         Value::BoolValue(b) => ProximaValue::Boolean(b),
         Value::NullValue(_) => ProximaValue::Null,
         Value::BytesValue(bytes) => ProximaValue::Binary(bytes),
-        // Canonical MessagePack JSONB decode (matches the records/search-types
-        // paths) so a tag-9 value compares equal across read paths.
-        Value::JsonbValue(bytes) => match ProximaValue::from_jsonb_slice(&bytes) {
-            Ok(json) => ProximaValue::Jsonb(json),
-            Err(_) => ProximaValue::Binary(bytes),
-        },
+        // Canonical MessagePack JSONB decode (the shared helper) so a tag-9
+        // value compares equal across read paths.
+        Value::JsonbValue(bytes) => ProximaValue::from_jsonb_or_binary(&bytes),
         Value::ArrayValue(list) => {
             let items: Vec<ProximaValue> = list
                 .values

@@ -4074,10 +4074,10 @@ pub mod graph_service_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
-    use tonic::codegen::http::Uri;
     use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
     /// Service definition for graph operations
     #[derive(Debug, Clone)]
     pub struct GraphServiceClient<T> {
@@ -4117,13 +4117,14 @@ pub mod graph_service_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                    http::Request<tonic::body::Body>,
-                    Response = http::Response<
-                        <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
-                    >,
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
                 >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
-                Into<StdError> + std::marker::Send + std::marker::Sync,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             GraphServiceClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -4163,12 +4164,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::CreateNodeRequest>,
         ) -> std::result::Result<tonic::Response<super::Node>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/CreateNode");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/CreateNode",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "CreateNode"));
@@ -4178,11 +4185,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::GetNodeRequest>,
         ) -> std::result::Result<tonic::Response<super::Node>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/GetNode");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/GetNode",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "GetNode"));
@@ -4192,12 +4206,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::UpdateNodeRequest>,
         ) -> std::result::Result<tonic::Response<super::Node>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/UpdateNode");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/UpdateNode",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "UpdateNode"));
@@ -4207,12 +4227,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::DeleteNodeRequest>,
         ) -> std::result::Result<tonic::Response<super::Node>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/DeleteNode");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/DeleteNode",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "DeleteNode"));
@@ -4223,12 +4249,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::CreateEdgeRequest>,
         ) -> std::result::Result<tonic::Response<super::Edge>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/CreateEdge");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/CreateEdge",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "CreateEdge"));
@@ -4238,11 +4270,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::GetEdgeRequest>,
         ) -> std::result::Result<tonic::Response<super::Edge>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/GetEdge");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/GetEdge",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "GetEdge"));
@@ -4252,12 +4291,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::UpdateEdgeRequest>,
         ) -> std::result::Result<tonic::Response<super::Edge>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/UpdateEdge");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/UpdateEdge",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "UpdateEdge"));
@@ -4267,12 +4312,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::DeleteEdgeRequest>,
         ) -> std::result::Result<tonic::Response<super::Edge>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/DeleteEdge");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/DeleteEdge",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "DeleteEdge"));
@@ -4283,12 +4334,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::NodeQuery>,
         ) -> std::result::Result<tonic::Response<super::BatchResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/QueryNodes");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/QueryNodes",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "QueryNodes"));
@@ -4298,12 +4355,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::EdgeQuery>,
         ) -> std::result::Result<tonic::Response<super::BatchResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/QueryEdges");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/QueryEdges",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "QueryEdges"));
@@ -4313,14 +4376,22 @@ pub mod graph_service_client {
         pub async fn execute_query(
             &mut self,
             request: impl tonic::IntoRequest<super::GraphQueryRequest>,
-        ) -> std::result::Result<tonic::Response<super::GraphQueryResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::GraphQueryResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/ExecuteQuery");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/ExecuteQuery",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "ExecuteQuery"));
@@ -4331,12 +4402,18 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::GetNeighborsRequest>,
         ) -> std::result::Result<tonic::Response<super::BatchResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/GetNeighbors");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/GetNeighbors",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "GetNeighbors"));
@@ -4345,18 +4422,25 @@ pub mod graph_service_client {
         pub async fn traverse_graph(
             &mut self,
             request: impl tonic::IntoRequest<super::TraversalRequest>,
-        ) -> std::result::Result<tonic::Response<super::TraversalResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::TraversalResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/TraverseGraph");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/TraverseGraph",
+            );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "TraverseGraph",
-            ));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "TraverseGraph"));
             self.inner.unary(req, path, codec).await
         }
         /// Server streaming traversal
@@ -4367,48 +4451,64 @@ pub mod graph_service_client {
             tonic::Response<tonic::codec::Streaming<super::TraversalChunk>>,
             tonic::Status,
         > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/StreamTraverse");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/StreamTraverse",
+            );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "StreamTraverse",
-            ));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "StreamTraverse"));
             self.inner.server_streaming(req, path, codec).await
         }
         pub async fn get_graph_stats(
             &mut self,
             request: impl tonic::IntoRequest<super::GetStatsRequest>,
         ) -> std::result::Result<tonic::Response<super::GraphStats>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/GetGraphStats");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/GetGraphStats",
+            );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "GetGraphStats",
-            ));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "GetGraphStats"));
             self.inner.unary(req, path, codec).await
         }
         /// Shortest path between nodes
         pub async fn shortest_path(
             &mut self,
             request: impl tonic::IntoRequest<super::ShortestPathRequest>,
-        ) -> std::result::Result<tonic::Response<super::ShortestPathResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::ShortestPathResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/ShortestPath");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/ShortestPath",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "ShortestPath"));
@@ -4418,32 +4518,51 @@ pub mod graph_service_client {
         pub async fn get_connected_components(
             &mut self,
             request: impl tonic::IntoRequest<super::GetStatsRequest>,
-        ) -> std::result::Result<tonic::Response<super::ConnectedComponentsResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::ConnectedComponentsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/GetConnectedComponents",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "GetConnectedComponents",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.GraphService",
+                        "GetConnectedComponents",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn has_cycle(
             &mut self,
             request: impl tonic::IntoRequest<super::GetStatsRequest>,
-        ) -> std::result::Result<tonic::Response<super::CycleCheckResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::CycleCheckResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/HasCycle");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/HasCycle",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "HasCycle"));
@@ -4453,39 +4572,56 @@ pub mod graph_service_client {
         pub async fn add_unique_constraint(
             &mut self,
             request: impl tonic::IntoRequest<super::UniqueConstraintRequest>,
-        ) -> std::result::Result<tonic::Response<super::UniqueConstraintResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::UniqueConstraintResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/AddUniqueConstraint",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "AddUniqueConstraint",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.GraphService", "AddUniqueConstraint"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn remove_unique_constraint(
             &mut self,
             request: impl tonic::IntoRequest<super::UniqueConstraintRequest>,
-        ) -> std::result::Result<tonic::Response<super::UniqueConstraintResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::UniqueConstraintResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/RemoveUniqueConstraint",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "RemoveUniqueConstraint",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.GraphService",
+                        "RemoveUniqueConstraint",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Batch operations
@@ -4493,54 +4629,252 @@ pub mod graph_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::BatchNodeRequest>,
         ) -> std::result::Result<tonic::Response<super::BatchResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/BatchCreateNodes");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/BatchCreateNodes",
+            );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "BatchCreateNodes",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.GraphService", "BatchCreateNodes"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn batch_create_edges(
             &mut self,
             request: impl tonic::IntoRequest<super::BatchEdgeRequest>,
         ) -> std::result::Result<tonic::Response<super::BatchResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.v1.GraphService/BatchCreateEdges");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/BatchCreateEdges",
+            );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "BatchCreateEdges",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.GraphService", "BatchCreateEdges"),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Hybrid operations
         pub async fn execute_hybrid_query(
             &mut self,
             request: impl tonic::IntoRequest<super::HybridSearchRequest>,
-        ) -> std::result::Result<tonic::Response<super::HybridSearchResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::HybridSearchResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/ExecuteHybridQuery",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.v1.GraphService",
-                "ExecuteHybridQuery",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.GraphService", "ExecuteHybridQuery"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Create graph with specific engine type
+        pub async fn create_graph_with_engine(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateGraphWithEngineRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateGraphWithEngineResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/CreateGraphWithEngine",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.GraphService", "CreateGraphWithEngine"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Get PULSAR distributed statistics
+        pub async fn get_pulsar_stats(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::PulsarGraphStats>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/GetPulsarStats",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "GetPulsarStats"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Execute cross-shard query (PULSAR only)
+        pub async fn cross_shard_query(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CrossShardQueryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CrossShardQueryResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/CrossShardQuery",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "CrossShardQuery"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Rebalance shards (PULSAR only)
+        pub async fn rebalance_shards(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RebalanceShardsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RebalanceShardsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/RebalanceShards",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "RebalanceShards"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Get QUASAR tiering statistics
+        pub async fn get_quasar_stats(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QuasarGraphStats>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/GetQuasarStats",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "GetQuasarStats"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Get detailed tier statistics (QUASAR only)
+        pub async fn get_tier_stats(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetTierStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTierStatsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/GetTierStats",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "GetTierStats"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Trigger manual tier migration (QUASAR only)
+        pub async fn trigger_migration(
+            &mut self,
+            request: impl tonic::IntoRequest<super::TriggerMigrationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::TriggerMigrationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/TriggerMigration",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.GraphService", "TriggerMigration"),
+                );
             self.inner.unary(req, path, codec).await
         }
     }
@@ -4552,7 +4886,7 @@ pub mod graph_service_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with GraphServiceServer.
@@ -4605,7 +4939,10 @@ pub mod graph_service_server {
         async fn execute_query(
             &self,
             request: tonic::Request<super::GraphQueryRequest>,
-        ) -> std::result::Result<tonic::Response<super::GraphQueryResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::GraphQueryResponse>,
+            tonic::Status,
+        >;
         /// Graph operations
         async fn get_neighbors(
             &self,
@@ -4614,17 +4951,24 @@ pub mod graph_service_server {
         async fn traverse_graph(
             &self,
             request: tonic::Request<super::TraversalRequest>,
-        ) -> std::result::Result<tonic::Response<super::TraversalResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::TraversalResponse>,
+            tonic::Status,
+        >;
         /// Server streaming response type for the StreamTraverse method.
         type StreamTraverseStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::TraversalChunk, tonic::Status>,
-            > + std::marker::Send
+            >
+            + std::marker::Send
             + 'static;
         /// Server streaming traversal
         async fn stream_traverse(
             &self,
             request: tonic::Request<super::TraversalRequest>,
-        ) -> std::result::Result<tonic::Response<Self::StreamTraverseStream>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<Self::StreamTraverseStream>,
+            tonic::Status,
+        >;
         async fn get_graph_stats(
             &self,
             request: tonic::Request<super::GetStatsRequest>,
@@ -4633,25 +4977,40 @@ pub mod graph_service_server {
         async fn shortest_path(
             &self,
             request: tonic::Request<super::ShortestPathRequest>,
-        ) -> std::result::Result<tonic::Response<super::ShortestPathResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::ShortestPathResponse>,
+            tonic::Status,
+        >;
         /// Graph analysis
         async fn get_connected_components(
             &self,
             request: tonic::Request<super::GetStatsRequest>,
-        ) -> std::result::Result<tonic::Response<super::ConnectedComponentsResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::ConnectedComponentsResponse>,
+            tonic::Status,
+        >;
         async fn has_cycle(
             &self,
             request: tonic::Request<super::GetStatsRequest>,
-        ) -> std::result::Result<tonic::Response<super::CycleCheckResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::CycleCheckResponse>,
+            tonic::Status,
+        >;
         /// Unique constraint DDL
         async fn add_unique_constraint(
             &self,
             request: tonic::Request<super::UniqueConstraintRequest>,
-        ) -> std::result::Result<tonic::Response<super::UniqueConstraintResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::UniqueConstraintResponse>,
+            tonic::Status,
+        >;
         async fn remove_unique_constraint(
             &self,
             request: tonic::Request<super::UniqueConstraintRequest>,
-        ) -> std::result::Result<tonic::Response<super::UniqueConstraintResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::UniqueConstraintResponse>,
+            tonic::Status,
+        >;
         /// Batch operations
         async fn batch_create_nodes(
             &self,
@@ -4665,7 +5024,66 @@ pub mod graph_service_server {
         async fn execute_hybrid_query(
             &self,
             request: tonic::Request<super::HybridSearchRequest>,
-        ) -> std::result::Result<tonic::Response<super::HybridSearchResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::HybridSearchResponse>,
+            tonic::Status,
+        >;
+        /// Create graph with specific engine type
+        async fn create_graph_with_engine(
+            &self,
+            request: tonic::Request<super::CreateGraphWithEngineRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateGraphWithEngineResponse>,
+            tonic::Status,
+        >;
+        /// Get PULSAR distributed statistics
+        async fn get_pulsar_stats(
+            &self,
+            request: tonic::Request<super::GetStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::PulsarGraphStats>,
+            tonic::Status,
+        >;
+        /// Execute cross-shard query (PULSAR only)
+        async fn cross_shard_query(
+            &self,
+            request: tonic::Request<super::CrossShardQueryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CrossShardQueryResponse>,
+            tonic::Status,
+        >;
+        /// Rebalance shards (PULSAR only)
+        async fn rebalance_shards(
+            &self,
+            request: tonic::Request<super::RebalanceShardsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RebalanceShardsResponse>,
+            tonic::Status,
+        >;
+        /// Get QUASAR tiering statistics
+        async fn get_quasar_stats(
+            &self,
+            request: tonic::Request<super::GetStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QuasarGraphStats>,
+            tonic::Status,
+        >;
+        /// Get detailed tier statistics (QUASAR only)
+        async fn get_tier_stats(
+            &self,
+            request: tonic::Request<super::GetTierStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTierStatsResponse>,
+            tonic::Status,
+        >;
+        /// Trigger manual tier migration (QUASAR only)
+        async fn trigger_migration(
+            &self,
+            request: tonic::Request<super::TriggerMigrationRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::TriggerMigrationResponse>,
+            tonic::Status,
+        >;
     }
     /// Service definition for graph operations
     #[derive(Debug)]
@@ -4689,7 +5107,10 @@ pub mod graph_service_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -4744,9 +5165,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/CreateNode" => {
                     #[allow(non_camel_case_types)]
                     struct CreateNodeSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::CreateNodeRequest> for CreateNodeSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::CreateNodeRequest>
+                    for CreateNodeSvc<T> {
                         type Response = super::Node;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::CreateNodeRequest>,
@@ -4783,16 +5210,23 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/GetNode" => {
                     #[allow(non_camel_case_types)]
                     struct GetNodeSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::GetNodeRequest> for GetNodeSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetNodeRequest>
+                    for GetNodeSvc<T> {
                         type Response = super::Node;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GetNodeRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut =
-                                async move { <T as GraphService>::get_node(&inner, request).await };
+                            let fut = async move {
+                                <T as GraphService>::get_node(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -4821,9 +5255,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/UpdateNode" => {
                     #[allow(non_camel_case_types)]
                     struct UpdateNodeSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::UpdateNodeRequest> for UpdateNodeSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::UpdateNodeRequest>
+                    for UpdateNodeSvc<T> {
                         type Response = super::Node;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::UpdateNodeRequest>,
@@ -4860,9 +5300,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/DeleteNode" => {
                     #[allow(non_camel_case_types)]
                     struct DeleteNodeSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::DeleteNodeRequest> for DeleteNodeSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::DeleteNodeRequest>
+                    for DeleteNodeSvc<T> {
                         type Response = super::Node;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::DeleteNodeRequest>,
@@ -4899,9 +5345,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/CreateEdge" => {
                     #[allow(non_camel_case_types)]
                     struct CreateEdgeSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::CreateEdgeRequest> for CreateEdgeSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::CreateEdgeRequest>
+                    for CreateEdgeSvc<T> {
                         type Response = super::Edge;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::CreateEdgeRequest>,
@@ -4938,16 +5390,23 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/GetEdge" => {
                     #[allow(non_camel_case_types)]
                     struct GetEdgeSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::GetEdgeRequest> for GetEdgeSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetEdgeRequest>
+                    for GetEdgeSvc<T> {
                         type Response = super::Edge;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GetEdgeRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut =
-                                async move { <T as GraphService>::get_edge(&inner, request).await };
+                            let fut = async move {
+                                <T as GraphService>::get_edge(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -4976,9 +5435,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/UpdateEdge" => {
                     #[allow(non_camel_case_types)]
                     struct UpdateEdgeSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::UpdateEdgeRequest> for UpdateEdgeSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::UpdateEdgeRequest>
+                    for UpdateEdgeSvc<T> {
                         type Response = super::Edge;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::UpdateEdgeRequest>,
@@ -5015,9 +5480,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/DeleteEdge" => {
                     #[allow(non_camel_case_types)]
                     struct DeleteEdgeSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::DeleteEdgeRequest> for DeleteEdgeSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::DeleteEdgeRequest>
+                    for DeleteEdgeSvc<T> {
                         type Response = super::Edge;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::DeleteEdgeRequest>,
@@ -5054,9 +5525,13 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/QueryNodes" => {
                     #[allow(non_camel_case_types)]
                     struct QueryNodesSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::NodeQuery> for QueryNodesSvc<T> {
+                    impl<T: GraphService> tonic::server::UnaryService<super::NodeQuery>
+                    for QueryNodesSvc<T> {
                         type Response = super::BatchResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::NodeQuery>,
@@ -5093,9 +5568,13 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/QueryEdges" => {
                     #[allow(non_camel_case_types)]
                     struct QueryEdgesSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::EdgeQuery> for QueryEdgesSvc<T> {
+                    impl<T: GraphService> tonic::server::UnaryService<super::EdgeQuery>
+                    for QueryEdgesSvc<T> {
                         type Response = super::BatchResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::EdgeQuery>,
@@ -5132,9 +5611,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/ExecuteQuery" => {
                     #[allow(non_camel_case_types)]
                     struct ExecuteQuerySvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::GraphQueryRequest> for ExecuteQuerySvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GraphQueryRequest>
+                    for ExecuteQuerySvc<T> {
                         type Response = super::GraphQueryResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GraphQueryRequest>,
@@ -5171,11 +5656,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/GetNeighbors" => {
                     #[allow(non_camel_case_types)]
                     struct GetNeighborsSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::GetNeighborsRequest>
-                        for GetNeighborsSvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetNeighborsRequest>
+                    for GetNeighborsSvc<T> {
                         type Response = super::BatchResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GetNeighborsRequest>,
@@ -5212,9 +5701,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/TraverseGraph" => {
                     #[allow(non_camel_case_types)]
                     struct TraverseGraphSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::TraversalRequest> for TraverseGraphSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::TraversalRequest>
+                    for TraverseGraphSvc<T> {
                         type Response = super::TraversalResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::TraversalRequest>,
@@ -5251,14 +5746,16 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/StreamTraverse" => {
                     #[allow(non_camel_case_types)]
                     struct StreamTraverseSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService>
-                        tonic::server::ServerStreamingService<super::TraversalRequest>
-                        for StreamTraverseSvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::ServerStreamingService<super::TraversalRequest>
+                    for StreamTraverseSvc<T> {
                         type Response = super::TraversalChunk;
                         type ResponseStream = T::StreamTraverseStream;
-                        type Future =
-                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::TraversalRequest>,
@@ -5295,9 +5792,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/GetGraphStats" => {
                     #[allow(non_camel_case_types)]
                     struct GetGraphStatsSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::GetStatsRequest> for GetGraphStatsSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetStatsRequest>
+                    for GetGraphStatsSvc<T> {
                         type Response = super::GraphStats;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GetStatsRequest>,
@@ -5334,11 +5837,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/ShortestPath" => {
                     #[allow(non_camel_case_types)]
                     struct ShortestPathSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::ShortestPathRequest>
-                        for ShortestPathSvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::ShortestPathRequest>
+                    for ShortestPathSvc<T> {
                         type Response = super::ShortestPathResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ShortestPathRequest>,
@@ -5375,18 +5882,26 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/GetConnectedComponents" => {
                     #[allow(non_camel_case_types)]
                     struct GetConnectedComponentsSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::GetStatsRequest>
-                        for GetConnectedComponentsSvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetStatsRequest>
+                    for GetConnectedComponentsSvc<T> {
                         type Response = super::ConnectedComponentsResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GetStatsRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as GraphService>::get_connected_components(&inner, request).await
+                                <T as GraphService>::get_connected_components(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -5416,9 +5931,15 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/HasCycle" => {
                     #[allow(non_camel_case_types)]
                     struct HasCycleSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::GetStatsRequest> for HasCycleSvc<T> {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetStatsRequest>
+                    for HasCycleSvc<T> {
                         type Response = super::CycleCheckResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GetStatsRequest>,
@@ -5455,19 +5976,23 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/AddUniqueConstraint" => {
                     #[allow(non_camel_case_types)]
                     struct AddUniqueConstraintSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService>
-                        tonic::server::UnaryService<super::UniqueConstraintRequest>
-                        for AddUniqueConstraintSvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::UniqueConstraintRequest>
+                    for AddUniqueConstraintSvc<T> {
                         type Response = super::UniqueConstraintResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::UniqueConstraintRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as GraphService>::add_unique_constraint(&inner, request).await
+                                <T as GraphService>::add_unique_constraint(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -5497,19 +6022,26 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/RemoveUniqueConstraint" => {
                     #[allow(non_camel_case_types)]
                     struct RemoveUniqueConstraintSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService>
-                        tonic::server::UnaryService<super::UniqueConstraintRequest>
-                        for RemoveUniqueConstraintSvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::UniqueConstraintRequest>
+                    for RemoveUniqueConstraintSvc<T> {
                         type Response = super::UniqueConstraintResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::UniqueConstraintRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as GraphService>::remove_unique_constraint(&inner, request).await
+                                <T as GraphService>::remove_unique_constraint(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -5539,18 +6071,23 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/BatchCreateNodes" => {
                     #[allow(non_camel_case_types)]
                     struct BatchCreateNodesSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::BatchNodeRequest>
-                        for BatchCreateNodesSvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::BatchNodeRequest>
+                    for BatchCreateNodesSvc<T> {
                         type Response = super::BatchResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::BatchNodeRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as GraphService>::batch_create_nodes(&inner, request).await
+                                <T as GraphService>::batch_create_nodes(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -5580,18 +6117,23 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/BatchCreateEdges" => {
                     #[allow(non_camel_case_types)]
                     struct BatchCreateEdgesSvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::BatchEdgeRequest>
-                        for BatchCreateEdgesSvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::BatchEdgeRequest>
+                    for BatchCreateEdgesSvc<T> {
                         type Response = super::BatchResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::BatchEdgeRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as GraphService>::batch_create_edges(&inner, request).await
+                                <T as GraphService>::batch_create_edges(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -5621,18 +6163,23 @@ pub mod graph_service_server {
                 "/proximadb.v1.GraphService/ExecuteHybridQuery" => {
                     #[allow(non_camel_case_types)]
                     struct ExecuteHybridQuerySvc<T: GraphService>(pub Arc<T>);
-                    impl<T: GraphService> tonic::server::UnaryService<super::HybridSearchRequest>
-                        for ExecuteHybridQuerySvc<T>
-                    {
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::HybridSearchRequest>
+                    for ExecuteHybridQuerySvc<T> {
                         type Response = super::HybridSearchResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::HybridSearchRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as GraphService>::execute_hybrid_query(&inner, request).await
+                                <T as GraphService>::execute_hybrid_query(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -5659,19 +6206,346 @@ pub mod graph_service_server {
                     };
                     Box::pin(fut)
                 }
-                _ => Box::pin(async move {
-                    let mut response = http::Response::new(tonic::body::Body::default());
-                    let headers = response.headers_mut();
-                    headers.insert(
-                        tonic::Status::GRPC_STATUS,
-                        (tonic::Code::Unimplemented as i32).into(),
-                    );
-                    headers.insert(
-                        http::header::CONTENT_TYPE,
-                        tonic::metadata::GRPC_CONTENT_TYPE,
-                    );
-                    Ok(response)
-                }),
+                "/proximadb.v1.GraphService/CreateGraphWithEngine" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateGraphWithEngineSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::CreateGraphWithEngineRequest>
+                    for CreateGraphWithEngineSvc<T> {
+                        type Response = super::CreateGraphWithEngineResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateGraphWithEngineRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::create_graph_with_engine(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateGraphWithEngineSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/GetPulsarStats" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetPulsarStatsSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetStatsRequest>
+                    for GetPulsarStatsSvc<T> {
+                        type Response = super::PulsarGraphStats;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetStatsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::get_pulsar_stats(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetPulsarStatsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/CrossShardQuery" => {
+                    #[allow(non_camel_case_types)]
+                    struct CrossShardQuerySvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::CrossShardQueryRequest>
+                    for CrossShardQuerySvc<T> {
+                        type Response = super::CrossShardQueryResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CrossShardQueryRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::cross_shard_query(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CrossShardQuerySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/RebalanceShards" => {
+                    #[allow(non_camel_case_types)]
+                    struct RebalanceShardsSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::RebalanceShardsRequest>
+                    for RebalanceShardsSvc<T> {
+                        type Response = super::RebalanceShardsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RebalanceShardsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::rebalance_shards(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RebalanceShardsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/GetQuasarStats" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetQuasarStatsSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetStatsRequest>
+                    for GetQuasarStatsSvc<T> {
+                        type Response = super::QuasarGraphStats;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetStatsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::get_quasar_stats(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetQuasarStatsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/GetTierStats" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTierStatsSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetTierStatsRequest>
+                    for GetTierStatsSvc<T> {
+                        type Response = super::GetTierStatsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetTierStatsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::get_tier_stats(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetTierStatsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/TriggerMigration" => {
+                    #[allow(non_camel_case_types)]
+                    struct TriggerMigrationSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::TriggerMigrationRequest>
+                    for TriggerMigrationSvc<T> {
+                        type Response = super::TriggerMigrationResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::TriggerMigrationRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::trigger_migration(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = TriggerMigrationSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
             }
         }
     }

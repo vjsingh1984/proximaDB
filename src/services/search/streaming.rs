@@ -44,9 +44,11 @@ fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
         crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
             MetadataValue::String(Arc::from("[binary]"))
         }
-        crate::proto::proximadb_v1::sql_value::Value::JsonbValue(_) => {
-            MetadataValue::String(Arc::from("[jsonb]"))
-        }
+        // TD-PROTO-2: canonical JSON text, matching the data-model impl this
+        // function duplicates (MetadataValue feeds comparison).
+        crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b) => MetadataValue::String(
+            Arc::from(proximadb_data_model::ProximaValue::jsonb_to_json_lossy(&b).to_string()),
+        ),
         crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => MetadataValue::Null,
         crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
             MetadataValue::String(Arc::from("[array]"))
