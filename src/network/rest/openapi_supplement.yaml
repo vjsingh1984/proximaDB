@@ -991,8 +991,6 @@ paths:
         resolves fail-closed (safe) regardless of this endpoint.
         The optional `X-Tenant-ID` header is not consulted by this
         handler (predicate objects are global, not tenant-scoped).
-        The optional `X-Tenant-ID` header is not consulted by this
-        handler (predicate objects are global, not tenant-scoped).
       responses:
         "200":
           description: The predicate object.
@@ -1958,7 +1956,7 @@ components:
         grant_enforcement: { $ref: "#/components/schemas/AbacGrantEnforcement" }
     AbacTenantSecurityPosture:
       type: object
-      required: [tenant_stable_id, updated_at_ms]
+      required: [tenant_stable_id, grant_enforcement, updated_at_ms]
       properties:
         tenant_stable_id: { type: integer, format: uint64 }
         grant_enforcement: { $ref: "#/components/schemas/AbacGrantEnforcement" }

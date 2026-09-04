@@ -93,8 +93,6 @@ def sync_detailed(
     resolves fail-closed (safe) regardless of this endpoint.
     The optional `X-Tenant-ID` header is not consulted by this
     handler (predicate objects are global, not tenant-scoped).
-    The optional `X-Tenant-ID` header is not consulted by this
-    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):
@@ -132,8 +130,6 @@ def sync(
     resolves fail-closed (safe) regardless of this endpoint.
     The optional `X-Tenant-ID` header is not consulted by this
     handler (predicate objects are global, not tenant-scoped).
-    The optional `X-Tenant-ID` header is not consulted by this
-    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):
@@ -164,8 +160,6 @@ async def asyncio_detailed(
 
      404 if unknown. Note a dangling `predicate_ref` on a policy binding
     resolves fail-closed (safe) regardless of this endpoint.
-    The optional `X-Tenant-ID` header is not consulted by this
-    handler (predicate objects are global, not tenant-scoped).
     The optional `X-Tenant-ID` header is not consulted by this
     handler (predicate objects are global, not tenant-scoped).
 
@@ -201,8 +195,6 @@ async def asyncio(
 
      404 if unknown. Note a dangling `predicate_ref` on a policy binding
     resolves fail-closed (safe) regardless of this endpoint.
-    The optional `X-Tenant-ID` header is not consulted by this
-    handler (predicate objects are global, not tenant-scoped).
     The optional `X-Tenant-ID` header is not consulted by this
     handler (predicate objects are global, not tenant-scoped).
 

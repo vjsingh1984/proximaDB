@@ -129,6 +129,54 @@ def _validate(schema: dict[str, Any], instance: Any, resolver: RefResolver) -> N
     Draft202012Validator(schema, resolver=resolver).validate(instance)
 
 
+def test_abac_tenant_posture_response_requires_enforcement_mode(openapi_spec):
+    """The handler always serializes this non-optional Rust field."""
+    schema = openapi_spec["components"]["schemas"]["AbacTenantSecurityPosture"]
+    assert "grant_enforcement" in schema["required"]
+
+
+def test_yaml_12_loader_preserves_abac_enforcement_enum_scalars():
+    """YAML 1.1's bool aliases must not corrupt the published enum values."""
+    parsed = yaml.load(
+        "values: [Off, On, Yes, No, y, n, true, false]",
+        Loader=_Yaml12CoreBoolLoader,
+    )
+    assert parsed == {"values": ["Off", "On", "Yes", "No", "y", "n", True, False]}
+
+
+def test_abac_surface_has_the_complete_operation_set(openapi_spec):
+    expected_operations = {
+        "putPolicyBinding",
+        "deletePolicyBinding",
+        "listPolicyBindings",
+        "getTenantPosture",
+        "putTenantPosture",
+        "postGrant",
+        "listGrants",
+        "deleteGrant",
+        "listAttributeBindings",
+        "postAttributeBinding",
+        "listPredicateObjects",
+        "getPredicateObject",
+        "putPredicateObject",
+        "deletePredicateObject",
+    }
+    abac_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/abac/")
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in abac_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(abac_paths) == 9
+    assert actual_operations == expected_operations
+
+
 # ---------------------------------------------------------------------------
 # Capturing transport
 # ---------------------------------------------------------------------------

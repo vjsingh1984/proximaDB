@@ -1300,8 +1300,6 @@ export interface paths {
          *     resolves fail-closed (safe) regardless of this endpoint.
          *     The optional `X-Tenant-ID` header is not consulted by this
          *     handler (predicate objects are global, not tenant-scoped).
-         *     The optional `X-Tenant-ID` header is not consulted by this
-         *     handler (predicate objects are global, not tenant-scoped).
          */
         get: operations["getPredicateObject"];
         /**
@@ -3248,7 +3246,7 @@ export interface components {
         AbacTenantSecurityPosture: {
             /** Format: uint64 */
             tenant_stable_id: number;
-            grant_enforcement?: components["schemas"]["AbacGrantEnforcement"];
+            grant_enforcement: components["schemas"]["AbacGrantEnforcement"];
             /** Format: int64 */
             updated_at_ms: number;
         };

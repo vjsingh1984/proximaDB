@@ -652,9 +652,9 @@ type AbacScope2 struct {
 type AbacTenantSecurityPosture struct {
 	// GrantEnforcement Rollout is intended `Off` -> `Audit` (would-be-denials logged, read
 	// still admitted) -> `Enforce` (no applicable grant denies).
-	GrantEnforcement *AbacGrantEnforcement `json:"grant_enforcement,omitempty"`
-	TenantStableId   uint64                `json:"tenant_stable_id"`
-	UpdatedAtMs      int64                 `json:"updated_at_ms"`
+	GrantEnforcement AbacGrantEnforcement `json:"grant_enforcement"`
+	TenantStableId   uint64               `json:"tenant_stable_id"`
+	UpdatedAtMs      int64                `json:"updated_at_ms"`
 }
 
 // ApplyModelRegistryMutationRequest defines model for ApplyModelRegistryMutationRequest.
@@ -5240,8 +5240,6 @@ type ClientInterface interface {
 	// resolves fail-closed (safe) regardless of this endpoint.
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler (predicate objects are global, not tenant-scoped).
-	// The optional `X-Tenant-ID` header is not consulted by this
-	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Corresponds with GET /api/v2/abac/predicate-objects/{object_id} (the `GetPredicateObject` operationId).
 	GetPredicateObject(ctx context.Context, objectId uint64, params *GetPredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6548,8 +6546,6 @@ func (c *Client) DeletePredicateObject(ctx context.Context, objectId uint64, par
 //
 // 404 if unknown. Note a dangling `predicate_ref` on a policy binding
 // resolves fail-closed (safe) regardless of this endpoint.
-// The optional `X-Tenant-ID` header is not consulted by this
-// handler (predicate objects are global, not tenant-scoped).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler (predicate objects are global, not tenant-scoped).
 //
@@ -12658,8 +12654,6 @@ type ClientWithResponsesInterface interface {
 	// resolves fail-closed (safe) regardless of this endpoint.
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler (predicate objects are global, not tenant-scoped).
-	// The optional `X-Tenant-ID` header is not consulted by this
-	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17734,8 +17728,6 @@ func (c *ClientWithResponses) DeletePredicateObjectWithResponse(ctx context.Cont
 //
 // 404 if unknown. Note a dangling `predicate_ref` on a policy binding
 // resolves fail-closed (safe) regardless of this endpoint.
-// The optional `X-Tenant-ID` header is not consulted by this
-// handler (predicate objects are global, not tenant-scoped).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler (predicate objects are global, not tenant-scoped).
 //

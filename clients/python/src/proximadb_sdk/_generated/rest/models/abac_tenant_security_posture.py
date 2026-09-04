@@ -22,36 +22,32 @@ class AbacTenantSecurityPosture:
     """
     Attributes:
         tenant_stable_id (int):
-        updated_at_ms (int):
-        grant_enforcement (AbacGrantEnforcement | Unset): Rollout is intended `Off` -> `Audit` (would-be-denials logged,
-            read
+        grant_enforcement (AbacGrantEnforcement): Rollout is intended `Off` -> `Audit` (would-be-denials logged, read
             still admitted) -> `Enforce` (no applicable grant denies).
+        updated_at_ms (int):
     """
 
     tenant_stable_id: int
+    grant_enforcement: AbacGrantEnforcement
     updated_at_ms: int
-    grant_enforcement: AbacGrantEnforcement | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         tenant_stable_id = self.tenant_stable_id
 
-        updated_at_ms = self.updated_at_ms
+        grant_enforcement = self.grant_enforcement.value
 
-        grant_enforcement: str | Unset = UNSET
-        if not isinstance(self.grant_enforcement, Unset):
-            grant_enforcement = self.grant_enforcement.value
+        updated_at_ms = self.updated_at_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "tenant_stable_id": tenant_stable_id,
+                "grant_enforcement": grant_enforcement,
                 "updated_at_ms": updated_at_ms,
             }
         )
-        if grant_enforcement is not UNSET:
-            field_dict["grant_enforcement"] = grant_enforcement
 
         return field_dict
 
@@ -60,19 +56,14 @@ class AbacTenantSecurityPosture:
         d = dict(src_dict)
         tenant_stable_id = d.pop("tenant_stable_id")
 
-        updated_at_ms = d.pop("updated_at_ms")
+        grant_enforcement = AbacGrantEnforcement(d.pop("grant_enforcement"))
 
-        _grant_enforcement = d.pop("grant_enforcement", UNSET)
-        grant_enforcement: AbacGrantEnforcement | Unset
-        if isinstance(_grant_enforcement, Unset):
-            grant_enforcement = UNSET
-        else:
-            grant_enforcement = AbacGrantEnforcement(_grant_enforcement)
+        updated_at_ms = d.pop("updated_at_ms")
 
         abac_tenant_security_posture = cls(
             tenant_stable_id=tenant_stable_id,
-            updated_at_ms=updated_at_ms,
             grant_enforcement=grant_enforcement,
+            updated_at_ms=updated_at_ms,
         )
 
         abac_tenant_security_posture.additional_properties = d

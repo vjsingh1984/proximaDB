@@ -1508,6 +1508,7 @@ pub mod types {
     ///{
     ///  "type": "object",
     ///  "required": [
+    ///    "grant_enforcement",
     ///    "tenant_stable_id",
     ///    "updated_at_ms"
     ///  ],
@@ -1529,8 +1530,7 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct AbacTenantSecurityPosture {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub grant_enforcement: ::std::option::Option<AbacGrantEnforcement>,
+        pub grant_enforcement: AbacGrantEnforcement,
         pub tenant_stable_id: u64,
         pub updated_at_ms: i64,
     }
@@ -11756,17 +11756,15 @@ pub mod types {
         }
         #[derive(Clone, Debug)]
         pub struct AbacTenantSecurityPosture {
-            grant_enforcement: ::std::result::Result<
-                ::std::option::Option<super::AbacGrantEnforcement>,
-                ::std::string::String,
-            >,
+            grant_enforcement:
+                ::std::result::Result<super::AbacGrantEnforcement, ::std::string::String>,
             tenant_stable_id: ::std::result::Result<u64, ::std::string::String>,
             updated_at_ms: ::std::result::Result<i64, ::std::string::String>,
         }
         impl ::std::default::Default for AbacTenantSecurityPosture {
             fn default() -> Self {
                 Self {
-                    grant_enforcement: Ok(Default::default()),
+                    grant_enforcement: Err("no value supplied for grant_enforcement".to_string()),
                     tenant_stable_id: Err("no value supplied for tenant_stable_id".to_string()),
                     updated_at_ms: Err("no value supplied for updated_at_ms".to_string()),
                 }
@@ -11775,7 +11773,7 @@ pub mod types {
         impl AbacTenantSecurityPosture {
             pub fn grant_enforcement<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<super::AbacGrantEnforcement>>,
+                T: ::std::convert::TryInto<super::AbacGrantEnforcement>,
                 T::Error: ::std::fmt::Display,
             {
                 self.grant_enforcement = value.try_into().map_err(|e| {
@@ -22705,8 +22703,6 @@ impl Client {
     ///
     /// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
     /// resolves fail-closed (safe) regardless of this endpoint.
-    /// The optional `X-Tenant-ID` header is not consulted by this
-    /// handler (predicate objects are global, not tenant-scoped).
     /// The optional `X-Tenant-ID` header is not consulted by this
     /// handler (predicate objects are global, not tenant-scoped).
     ///

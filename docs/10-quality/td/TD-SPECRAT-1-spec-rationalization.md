@@ -118,6 +118,13 @@ full-spec scan confirmed only the two new ABAC enums (`Off`,
 `Null` — `Null` is quoted by serde_yaml itself) were ever exposed to the
 hazard, so no previously-committed generated code changes.
 
+**Adversarial-review ratchets:** the contract gate now asserts the exact
+9-path / 14-operation ABAC surface, verifies YAML 1.2 boolean handling, and
+requires `grant_enforcement` in `AbacTenantSecurityPosture`. The latter caught
+and corrected a response-schema mismatch: the Rust handler's non-optional
+field is always serialized, while the initial supplement allowed generated
+SDKs to treat it as absent.
+
 **Waves 4+ (candidate order, product-priority pending):** collections
 admin (affinity/pinning/primary-pod/branch-merge), catalog routing/explain,
 graph analytics (fusion-search, impact-analysis), timeseries, streaming
