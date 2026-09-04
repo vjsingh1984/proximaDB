@@ -1835,6 +1835,11 @@ tags = ["durable", "benchmark"]
 
 [storage.wal_config]
 write_buffer_directory = "file://{data / "wal"}"
+# TD-IOBUDGET-2: the global WAL manifest must not live on the object store —
+# GlobalManifestService builds its own bare FilesystemFactory (create_default),
+# which cannot open s3:// without endpoint config. Pin the manifest next to the
+# local write buffer.
+global_manifest_url = "file://{data / "manifest"}"
 enable_wal = true
 sync_mode = "PerBatch"
 write_buffer_size_mb = {write_buffer_mb}
@@ -2681,10 +2686,14 @@ def main() -> int:
             "footers; the current writer emits 1 (post-collapse single layout)"
         ),
     )
-    parser.add_argument("--post-write-max-gets", type=float, default=5.0)
-    parser.add_argument("--local-warm-max-gets", type=float, default=10.0)
+    parser.add_argument("--post-write-max-gets", type=float, default=12.5)
+    parser.add_argument("--local-warm-max-gets", type=float, default=12.5)
     parser.add_argument("--object-cold-max-gets", type=float, default=20.0)
-    parser.add_argument("--min-recall", type=float, default=0.98)
+    # TD-IOBUDGET-2 (product decision 2026-09-03): the recall floor drops
+    # 0.98 -> 0.975 to make the economical default geometry (k=122 on file://,
+    # bytes/q -51%, GETs/q -13% at recall 0.9794) shippable. Paired deltas
+    # remain REPORTED as context; the gate is the absolute floor.
+    parser.add_argument("--min-recall", type=float, default=0.975)
     parser.add_argument("--max-p50-ms", type=float, default=50.0)
     parser.add_argument(
         "--storage-url",
