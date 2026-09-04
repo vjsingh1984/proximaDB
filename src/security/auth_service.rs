@@ -78,8 +78,10 @@ pub struct ApiKeyInfo {
     /// TD-TENANT-1 follow-up (a): optional role claims for this key. The
     /// `gateway`/`operator` roles make the credential a gateway principal
     /// (`is_gateway_principal`), enabling `GatewayOnly` tenant delegation for
-    /// API-key gateways — previously structurally impossible (roles were
-    /// hardcoded to `api_user`). Delegation-ONLY: a role here grants NO
+    /// config-backed API-key gateways — previously structurally impossible
+    /// (roles were hardcoded to `api_user`). ADR-090 `pxk_` registry keys have
+    /// a separate, registry-authoritative identity path and do not inherit
+    /// these config claims. Delegation-ONLY: a role here grants NO
     /// `UnifiedPermission` (authz stays permission-driven), and only the
     /// exact strings `gateway`/`operator` match — a typo grants nothing.
     #[serde(default)]
@@ -1563,6 +1565,45 @@ ip_restrictions = []
         assert_eq!(info.roles, vec!["gateway".to_string()]);
     }
 
+    /// Exercise the public authentication path, including the configured-key
+    /// lookup, instead of proving only the private conversion helper. A role
+    /// stamped by config must survive authentication and reach the shared
+    /// tenant-delegation primitive.
+    #[tokio::test]
+    async fn configured_apikey_gateway_role_survives_authentication() {
+        use proximadb_tenant::{
+            AuthenticatedTenantBinding, HeaderTrustPolicy, ResolvedTenantAssertion,
+            resolve_tenant_assertion,
+        };
+
+        let mut api_keys = HashMap::new();
+        api_keys.insert("gateway-key".to_string(), key("gw", vec!["gateway"]));
+        let svc = UnifiedAuthService::new(api_key_test_config(api_keys)).expect("service");
+        let authenticated = svc
+            .authenticate_api_key("gateway-key")
+            .await
+            .expect("authentication result");
+        assert!(authenticated.success);
+        assert!(authenticated.user_context.is_gateway_principal());
+
+        let binding = AuthenticatedTenantBinding {
+            tenant_id: authenticated
+                .user_context
+                .tenant_id
+                .clone()
+                .expect("configured key tenant"),
+            is_gateway_principal: authenticated.user_context.is_gateway_principal(),
+        };
+        assert!(matches!(
+            resolve_tenant_assertion(
+                Some("tenant-b"),
+                Some(&binding),
+                HeaderTrustPolicy::GatewayOnly,
+            ),
+            Ok(ResolvedTenantAssertion::Asserted(ref tenant)) if tenant == "tenant-b"
+        ));
+    }
+
     use super::*;
 
     fn api_key_test_config(api_keys: HashMap<String, ApiKeyInfo>) -> AuthenticationConfig {
@@ -1615,6 +1656,11 @@ ip_restrictions = []
         assert!(
             out.user_context.effective_permissions.is_empty(),
             "registry keys must not carry config-style permission strings"
+        );
+        assert_eq!(out.user_context.roles, vec!["api_user".to_string()]);
+        assert!(
+            !out.user_context.is_gateway_principal(),
+            "registry keys must stay non-gateway until the registry has an explicit role authority"
         );
 
         // Revocation is honored through the service, not just the registry.
