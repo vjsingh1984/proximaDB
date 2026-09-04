@@ -320,7 +320,7 @@ pub mod protocol_conversions {
                         serde_json::Value::String(format!("BYTES({} bytes)", bytes.len()))
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(bytes)) => {
-                        serde_json::Value::String(format!("JSONB({} bytes)", bytes.len()))
+                        proximadb_data_model::ProximaValue::jsonb_to_json_lossy(bytes)
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         serde_json::Value::Null

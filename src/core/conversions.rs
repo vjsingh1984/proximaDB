@@ -342,8 +342,8 @@ pub fn sql_values_to_json_map(
             Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_bytes)) => {
                 serde_json::Value::String("[Binary Data]".to_string())
             }
-            Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(_bytes)) => {
-                serde_json::Value::String("[Jsonb Data]".to_string())
+            Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(bytes)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(&bytes)
             }
             Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                 serde_json::Value::Null

@@ -102,12 +102,10 @@ fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
                 .map(|byte| serde_json::Value::Number((*byte).into()))
                 .collect(),
         ),
-        SqlVal::JsonbValue(bytes) => serde_json::Value::Array(
-            bytes
-                .iter()
-                .map(|byte| serde_json::Value::Number((*byte).into()))
-                .collect(),
-        ),
+        // JSONB decodes to the JSON document itself so structured filters
+        // (`$.field op literal`) can actually match — a byte-array rendering
+        // would make every comparison against a JSONB column miss.
+        SqlVal::JsonbValue(bytes) => ProximaValue::jsonb_to_json_lossy(bytes),
         SqlVal::NullValue(_) => serde_json::Value::Null,
         SqlVal::ArrayValue(array) => serde_json::Value::Array(
             array
@@ -690,6 +688,39 @@ mod tests {
 
     fn make_sql_value(value: SqlVal) -> SqlValue {
         SqlValue { value: Some(value) }
+    }
+
+    #[test]
+    fn jsonb_metadata_decodes_to_json_for_filtering() {
+        // Canonical MessagePack JSONB (types.proto tag 9) must lower to the
+        // JSON document itself, not a byte rendering — the per-byte-array and
+        // hex renderings made every structured filter against a JSONB column
+        // silently miss (TD-PROTO-2 review finding).
+        let doc = json!({"memory": {"type": "fact"}});
+        let bytes = ProximaValue::to_jsonb_vec(&doc).unwrap();
+        assert_eq!(sql_val_to_json(&SqlVal::JsonbValue(bytes)), doc);
+
+        // End-to-end: a scalar JSONB document is filterable via the metadata path.
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "score".to_string(),
+            make_sql_value(SqlVal::JsonbValue(
+                ProximaValue::to_jsonb_vec(&json!(42)).unwrap(),
+            )),
+        );
+        let filter = FilterExpression::Comparison {
+            field: "score".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(42),
+        };
+        assert!(evaluate_filter(&filter, &metadata));
+
+        // Malformed JSONB falls back to an observable hex string, never a
+        // drop. (0xc1 is msgpack's never-used marker — guaranteed invalid.)
+        assert_eq!(
+            sql_val_to_json(&SqlVal::JsonbValue(vec![0xc1])),
+            serde_json::Value::String("c1".to_string())
+        );
     }
 
     fn proxima_array_props(field: &str, values: &[&str]) -> ProximaTree {

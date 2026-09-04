@@ -696,6 +696,18 @@ impl ProximaValue {
         let val: serde_json::Value = rmp_serde::from_slice(slice)?;
         Ok(val)
     }
+
+    /// Lossy decode for JSON-producing surfaces (REST rows, filter
+    /// comparison, query IR): canonical MessagePack JSONB → the JSON document
+    /// itself; a malformed payload falls back to a hex string so the value is
+    /// still observable rather than dropped. This is the ONE sanctioned
+    /// JSONB→JSON representation — don't hand-roll per-byte arrays or
+    /// placeholders on API-facing paths.
+    pub fn jsonb_to_json_lossy(slice: &[u8]) -> serde_json::Value {
+        Self::from_jsonb_slice(slice).unwrap_or_else(|_| {
+            serde_json::Value::String(slice.iter().map(|b| format!("{b:02x}")).collect::<String>())
+        })
+    }
 }
 
 #[cfg(test)]

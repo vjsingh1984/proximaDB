@@ -329,7 +329,9 @@ pub fn sql_value_to_json(value: &SqlValue) -> JsonValue {
             }
             ProtoSqlValueInner::StringValue(s) => JsonValue::String(s.clone()),
             ProtoSqlValueInner::BytesValue(b) => JsonValue::String(base64_helper::encode(b)),
-            ProtoSqlValueInner::JsonbValue(b) => JsonValue::String(base64_helper::encode(b)),
+            ProtoSqlValueInner::JsonbValue(b) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b)
+            }
             ProtoSqlValueInner::ArrayValue(arr) => {
                 JsonValue::Array(arr.values.iter().map(sql_value_to_json).collect())
             }
