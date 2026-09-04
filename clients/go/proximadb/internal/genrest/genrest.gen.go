@@ -16,6 +16,147 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AbacComparisonOperator.
+const (
+	Between            AbacComparisonOperator = "Between"
+	Contains           AbacComparisonOperator = "Contains"
+	EndsWith           AbacComparisonOperator = "EndsWith"
+	Equals             AbacComparisonOperator = "Equals"
+	GreaterThan        AbacComparisonOperator = "GreaterThan"
+	GreaterThanOrEqual AbacComparisonOperator = "GreaterThanOrEqual"
+	In                 AbacComparisonOperator = "In"
+	IsNotNull          AbacComparisonOperator = "IsNotNull"
+	IsNull             AbacComparisonOperator = "IsNull"
+	LessThan           AbacComparisonOperator = "LessThan"
+	LessThanOrEqual    AbacComparisonOperator = "LessThanOrEqual"
+	Like               AbacComparisonOperator = "Like"
+	NotEquals          AbacComparisonOperator = "NotEquals"
+	NotIn              AbacComparisonOperator = "NotIn"
+	StartsWith         AbacComparisonOperator = "StartsWith"
+)
+
+// Valid indicates whether the value is a known member of the AbacComparisonOperator enum.
+func (e AbacComparisonOperator) Valid() bool {
+	switch e {
+	case Between:
+		return true
+	case Contains:
+		return true
+	case EndsWith:
+		return true
+	case Equals:
+		return true
+	case GreaterThan:
+		return true
+	case GreaterThanOrEqual:
+		return true
+	case In:
+		return true
+	case IsNotNull:
+		return true
+	case IsNull:
+		return true
+	case LessThan:
+		return true
+	case LessThanOrEqual:
+		return true
+	case Like:
+		return true
+	case NotEquals:
+		return true
+	case NotIn:
+		return true
+	case StartsWith:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AbacEffect.
+const (
+	Deny   AbacEffect = "Deny"
+	Permit AbacEffect = "Permit"
+)
+
+// Valid indicates whether the value is a known member of the AbacEffect enum.
+func (e AbacEffect) Valid() bool {
+	switch e {
+	case Deny:
+		return true
+	case Permit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AbacFieldMask.
+const (
+	Forbid AbacFieldMask = "Forbid"
+	Null   AbacFieldMask = "Null"
+	Redact AbacFieldMask = "Redact"
+)
+
+// Valid indicates whether the value is a known member of the AbacFieldMask enum.
+func (e AbacFieldMask) Valid() bool {
+	switch e {
+	case Forbid:
+		return true
+	case Null:
+		return true
+	case Redact:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AbacGrantAction.
+const (
+	Ddl   AbacGrantAction = "Ddl"
+	Grant AbacGrantAction = "Grant"
+	Read  AbacGrantAction = "Read"
+	Write AbacGrantAction = "Write"
+)
+
+// Valid indicates whether the value is a known member of the AbacGrantAction enum.
+func (e AbacGrantAction) Valid() bool {
+	switch e {
+	case Ddl:
+		return true
+	case Grant:
+		return true
+	case Read:
+		return true
+	case Write:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AbacGrantEnforcement.
+const (
+	Audit   AbacGrantEnforcement = "Audit"
+	Enforce AbacGrantEnforcement = "Enforce"
+	Off     AbacGrantEnforcement = "Off"
+)
+
+// Valid indicates whether the value is a known member of the AbacGrantEnforcement enum.
+func (e AbacGrantEnforcement) Valid() bool {
+	switch e {
+	case Audit:
+		return true
+	case Enforce:
+		return true
+	case Off:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CatalogDimensionPolicy0.
 const (
 	Fixed CatalogDimensionPolicy0 = "fixed"
@@ -206,6 +347,314 @@ func (e QueryLanguage) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// AbacAttrValue An ABAC subject attribute value — an externally-tagged Rust enum;
+// exactly one of `Str`, `Int`, `Bool`, or `List` is present.
+type AbacAttrValue struct {
+	union json.RawMessage
+}
+
+// AbacAttrValue0 defines model for AbacAttrValue.0.
+type AbacAttrValue0 struct {
+	Str string `json:"Str"`
+}
+
+// AbacAttrValue1 defines model for AbacAttrValue.1.
+type AbacAttrValue1 struct {
+	Int int64 `json:"Int"`
+}
+
+// AbacAttrValue2 defines model for AbacAttrValue.2.
+type AbacAttrValue2 struct {
+	Bool bool `json:"Bool"`
+}
+
+// AbacAttrValue3 defines model for AbacAttrValue.3.
+type AbacAttrValue3 struct {
+	List []string `json:"List"`
+}
+
+// AbacAttributeBinding defines model for AbacAttributeBinding.
+type AbacAttributeBinding struct {
+	Attrs          map[string]AbacAttrValue `json:"attrs"`
+	SubjectId      string                   `json:"subject_id"`
+	TenantStableId uint64                   `json:"tenant_stable_id"`
+}
+
+// AbacAttributeBindingsResponse defines model for AbacAttributeBindingsResponse.
+type AbacAttributeBindingsResponse struct {
+	Bindings []AbacAttributeBinding `json:"bindings"`
+	Count    uint64                 `json:"count"`
+}
+
+// AbacColumnScope The `Column` variant payload of [AbacScope](#/components/schemas/AbacScope).
+type AbacColumnScope struct {
+	Column uint32 `json:"column"`
+	Table  uint32 `json:"table"`
+}
+
+// AbacComparisonOperator defines model for AbacComparisonOperator.
+type AbacComparisonOperator string
+
+// AbacEffect Permit or deny; deny wins during policy resolution.
+type AbacEffect string
+
+// AbacFieldMask Column-level masking. `Forbid` rejects the read (existence must
+// not leak); `Null`/`Redact` are projection rewrites.
+type AbacFieldMask string
+
+// AbacFilterExpression A predicate-object row filter — a RECURSIVE, externally-tagged Rust
+// enum (`proximadb_filter_expression::FilterExpression`). Modeled
+// here as free-form JSON (rather than a typed `oneOf`) because the
+// self-referential union is not representable in a form the SDK
+// codegen tooling can process (openapi-python-client cannot resolve
+// a `oneOf` branch whose `items` `$ref`s the union being defined);
+// this is the one schema in the ABAC surface where the generated
+// client falls back to an untyped object. Construct exactly one of:
+//
+//   - `{"Comparison": {"field": <string>, "operator": <one of
+//     "Equals","NotEquals","GreaterThan","GreaterThanOrEqual",
+//     "LessThan","LessThanOrEqual","In","NotIn","Contains",
+//     "StartsWith","EndsWith","Between","IsNull","IsNotNull","Like">,
+//     "value": <any JSON value>}}`
+//   - `{"And": [<AbacFilterExpression>, ...]}`
+//   - `{"Or": [<AbacFilterExpression>, ...]}`
+//   - `{"Not": <AbacFilterExpression>}`
+//
+// See [AbacComparisonOperator](#/components/schemas/AbacComparisonOperator)
+// for the authoritative operator enum (referenced here for docs only;
+// not structurally, for the same recursion reason).
+type AbacFilterExpression map[string]interface{}
+
+// AbacGrantAction `Grant` is delegation authority (further re-grant); it is not
+// consulted for data access, only by the admin surface.
+type AbacGrantAction string
+
+// AbacGrantEnforcement Rollout is intended `Off` -> `Audit` (would-be-denials logged, read
+// still admitted) -> `Enforce` (no applicable grant denies).
+type AbacGrantEnforcement string
+
+// AbacGrantGranteeRequest Grantee as provisioned over the wire: a tenant-wide share when
+// `subject` is omitted/empty, else one user of (possibly foreign)
+// `tenant`. Clients supply tenant/subject strings; stable ids are
+// resolved server-side.
+type AbacGrantGranteeRequest struct {
+	Subject *string `json:"subject,omitempty"`
+	Tenant  string  `json:"tenant"`
+}
+
+// AbacGrantRecord defines model for AbacGrantRecord.
+type AbacGrantRecord struct {
+	Actions     []AbacGrantAction `json:"actions"`
+	CreatedAtMs int64             `json:"created_at_ms"`
+	ExpiresAtMs *int64            `json:"expires_at_ms,omitempty"`
+	FieldMask   *AbacFieldMask    `json:"field_mask,omitempty"`
+	GrantId     string            `json:"grant_id"`
+
+	// Grantee Who a grant admits — an externally-tagged Rust enum. Exactly one
+	// of `Tenant` (every subject of that tenant) or `User` (one specific
+	// subject, possibly of a foreign tenant) is present.
+	Grantee             AbacGrantee `json:"grantee"`
+	OwnerTenantStableId uint64      `json:"owner_tenant_stable_id"`
+	PredicateRef        *uint64     `json:"predicate_ref,omitempty"`
+
+	// Resource The catalog container a policy/grant governs — a stable-id-keyed,
+	// externally-tagged Rust enum. Exactly one of `Namespace`, `Table`,
+	// or `Column` is present.
+	Resource AbacScope `json:"resource"`
+
+	// RevokedAtMs Set once revoked; the record stays listed (audit trail).
+	RevokedAtMs *int64 `json:"revoked_at_ms,omitempty"`
+}
+
+// AbacGrantee Who a grant admits — an externally-tagged Rust enum. Exactly one
+// of `Tenant` (every subject of that tenant) or `User` (one specific
+// subject, possibly of a foreign tenant) is present.
+type AbacGrantee struct {
+	union json.RawMessage
+}
+
+// AbacGrantee0 defines model for AbacGrantee.0.
+type AbacGrantee0 struct {
+	Tenant uint64 `json:"Tenant"`
+}
+
+// AbacGrantee1 defines model for AbacGrantee.1.
+type AbacGrantee1 struct {
+	// User The `User` variant payload of [AbacGrantee](#/components/schemas/AbacGrantee).
+	User AbacGranteeUser `json:"User"`
+}
+
+// AbacGranteeUser The `User` variant payload of [AbacGrantee](#/components/schemas/AbacGrantee).
+type AbacGranteeUser struct {
+	Subject        string `json:"subject"`
+	TenantStableId uint64 `json:"tenant_stable_id"`
+}
+
+// AbacOperatorErrorResponse The FLAT error shape every ABAC operator endpoint returns —
+// `{error, message, code}` where `error` is a short machine-readable
+// slug (e.g. `"tenant_unresolved"`). This is deliberately DISTINCT
+// from the canonical nested `ErrorResponse` (`{error: {type,
+// message, code}}`) used elsewhere in this spec; it is the actual
+// wire format of `abac_admin::OperatorErrorResponse`, carried
+// verbatim rather than normalized.
+type AbacOperatorErrorResponse struct {
+	// Code The HTTP status code, repeated in the body.
+	Code int `json:"code"`
+
+	// Error Machine-readable error slug.
+	Error   string `json:"error"`
+	Message string `json:"message"`
+}
+
+// AbacPolicyBinding defines model for AbacPolicyBinding.
+type AbacPolicyBinding struct {
+	// Effect Permit or deny; deny wins during policy resolution.
+	Effect       AbacEffect     `json:"effect"`
+	FieldMask    *AbacFieldMask `json:"field_mask,omitempty"`
+	ObjectId     uint64         `json:"object_id"`
+	PredicateRef *uint64        `json:"predicate_ref,omitempty"`
+
+	// Scope The catalog container a policy/grant governs — a stable-id-keyed,
+	// externally-tagged Rust enum. Exactly one of `Namespace`, `Table`,
+	// or `Column` is present.
+	Scope          AbacScope `json:"scope"`
+	TenantStableId uint64    `json:"tenant_stable_id"`
+}
+
+// AbacPolicyBindingsResponse defines model for AbacPolicyBindingsResponse.
+type AbacPolicyBindingsResponse struct {
+	Bindings       []AbacPolicyBinding `json:"bindings"`
+	Count          uint64              `json:"count"`
+	Tenant         string              `json:"tenant"`
+	TenantStableId uint64              `json:"tenant_stable_id"`
+}
+
+// AbacPostAttributeBindingRequest Body for `POST /api/v2/abac/attribute-bindings`.
+type AbacPostAttributeBindingRequest struct {
+	Attrs     map[string]AbacAttrValue `json:"attrs"`
+	SubjectId string                   `json:"subject_id"`
+
+	// Tenant Tenant display name; resolved to the stable u64 server-side.
+	Tenant string `json:"tenant"`
+}
+
+// AbacPostGrantRequest Body for `POST /api/v2/abac/grants`.
+type AbacPostGrantRequest struct {
+	Actions     []AbacGrantAction `json:"actions"`
+	ExpiresAtMs *int64            `json:"expires_at_ms,omitempty"`
+	FieldMask   *AbacFieldMask    `json:"field_mask,omitempty"`
+
+	// Grantee Grantee as provisioned over the wire: a tenant-wide share when
+	// `subject` is omitted/empty, else one user of (possibly foreign)
+	// `tenant`. Clients supply tenant/subject strings; stable ids are
+	// resolved server-side.
+	Grantee AbacGrantGranteeRequest `json:"grantee"`
+
+	// OwnerTenant The resource-owner tenant (string; resolved and must be minted).
+	OwnerTenant  string  `json:"owner_tenant"`
+	PredicateRef *uint64 `json:"predicate_ref,omitempty"`
+
+	// Resource The catalog container a policy/grant governs — a stable-id-keyed,
+	// externally-tagged Rust enum. Exactly one of `Namespace`, `Table`,
+	// or `Column` is present.
+	Resource AbacScope `json:"resource"`
+}
+
+// AbacPostGrantResponse defines model for AbacPostGrantResponse.
+type AbacPostGrantResponse struct {
+	GrantId             string `json:"grant_id"`
+	OwnerTenantStableId uint64 `json:"owner_tenant_stable_id"`
+}
+
+// AbacPredicateObjectResponse defines model for AbacPredicateObjectResponse.
+type AbacPredicateObjectResponse struct {
+	// Expression A predicate-object row filter — a RECURSIVE, externally-tagged Rust
+	// enum (`proximadb_filter_expression::FilterExpression`). Modeled
+	// here as free-form JSON (rather than a typed `oneOf`) because the
+	// self-referential union is not representable in a form the SDK
+	// codegen tooling can process (openapi-python-client cannot resolve
+	// a `oneOf` branch whose `items` `$ref`s the union being defined);
+	// this is the one schema in the ABAC surface where the generated
+	// client falls back to an untyped object. Construct exactly one of:
+	//
+	// * `{"Comparison": {"field": <string>, "operator": <one of
+	//   "Equals","NotEquals","GreaterThan","GreaterThanOrEqual",
+	//   "LessThan","LessThanOrEqual","In","NotIn","Contains",
+	//   "StartsWith","EndsWith","Between","IsNull","IsNotNull","Like">,
+	//   "value": <any JSON value>}}`
+	// * `{"And": [<AbacFilterExpression>, ...]}`
+	// * `{"Or": [<AbacFilterExpression>, ...]}`
+	// * `{"Not": <AbacFilterExpression>}`
+	//
+	// See [AbacComparisonOperator](#/components/schemas/AbacComparisonOperator)
+	// for the authoritative operator enum (referenced here for docs only;
+	// not structurally, for the same recursion reason).
+	Expression AbacFilterExpression `json:"expression"`
+	ObjectId   uint64               `json:"object_id"`
+}
+
+// AbacPredicateObjectsResponse defines model for AbacPredicateObjectsResponse.
+type AbacPredicateObjectsResponse struct {
+	Count   uint64                        `json:"count"`
+	Objects []AbacPredicateObjectResponse `json:"objects"`
+}
+
+// AbacPutPolicyBindingRequest Body for `PUT /api/v2/abac/policy-bindings/{tenant}/{object_id}`.
+type AbacPutPolicyBindingRequest struct {
+	// Effect Permit or deny; deny wins during policy resolution.
+	Effect    AbacEffect     `json:"effect"`
+	FieldMask *AbacFieldMask `json:"field_mask,omitempty"`
+
+	// PredicateRef The predicate object this binding carries (a row-level rule).
+	// Omit for a predicate-free table-level grant. A dangling ref
+	// resolves fail-closed at read time.
+	PredicateRef *uint64 `json:"predicate_ref,omitempty"`
+
+	// Scope The catalog container a policy/grant governs — a stable-id-keyed,
+	// externally-tagged Rust enum. Exactly one of `Namespace`, `Table`,
+	// or `Column` is present.
+	Scope AbacScope `json:"scope"`
+}
+
+// AbacPutTenantPostureRequest defines model for AbacPutTenantPostureRequest.
+type AbacPutTenantPostureRequest struct {
+	// GrantEnforcement Rollout is intended `Off` -> `Audit` (would-be-denials logged, read
+	// still admitted) -> `Enforce` (no applicable grant denies).
+	GrantEnforcement AbacGrantEnforcement `json:"grant_enforcement"`
+}
+
+// AbacScope The catalog container a policy/grant governs — a stable-id-keyed,
+// externally-tagged Rust enum. Exactly one of `Namespace`, `Table`,
+// or `Column` is present.
+type AbacScope struct {
+	union json.RawMessage
+}
+
+// AbacScope0 defines model for AbacScope.0.
+type AbacScope0 struct {
+	Namespace int `json:"Namespace"`
+}
+
+// AbacScope1 defines model for AbacScope.1.
+type AbacScope1 struct {
+	Table uint32 `json:"Table"`
+}
+
+// AbacScope2 defines model for AbacScope.2.
+type AbacScope2 struct {
+	// Column The `Column` variant payload of [AbacScope](#/components/schemas/AbacScope).
+	Column AbacColumnScope `json:"Column"`
+}
+
+// AbacTenantSecurityPosture defines model for AbacTenantSecurityPosture.
+type AbacTenantSecurityPosture struct {
+	// GrantEnforcement Rollout is intended `Off` -> `Audit` (would-be-denials logged, read
+	// still admitted) -> `Enforce` (no applicable grant denies).
+	GrantEnforcement AbacGrantEnforcement `json:"grant_enforcement"`
+	TenantStableId   uint64               `json:"tenant_stable_id"`
+	UpdatedAtMs      int64                `json:"updated_at_ms"`
 }
 
 // ApplyModelRegistryMutationRequest defines model for ApplyModelRegistryMutationRequest.
@@ -1942,6 +2391,42 @@ type GraphId = string
 // NodeId defines model for NodeId.
 type NodeId = string
 
+// AbacForbidden The FLAT error shape every ABAC operator endpoint returns —
+// `{error, message, code}` where `error` is a short machine-readable
+// slug (e.g. `"tenant_unresolved"`). This is deliberately DISTINCT
+// from the canonical nested `ErrorResponse` (`{error: {type,
+// message, code}}`) used elsewhere in this spec; it is the actual
+// wire format of `abac_admin::OperatorErrorResponse`, carried
+// verbatim rather than normalized.
+type AbacForbidden = AbacOperatorErrorResponse
+
+// AbacTenantUnresolved The FLAT error shape every ABAC operator endpoint returns —
+// `{error, message, code}` where `error` is a short machine-readable
+// slug (e.g. `"tenant_unresolved"`). This is deliberately DISTINCT
+// from the canonical nested `ErrorResponse` (`{error: {type,
+// message, code}}`) used elsewhere in this spec; it is the actual
+// wire format of `abac_admin::OperatorErrorResponse`, carried
+// verbatim rather than normalized.
+type AbacTenantUnresolved = AbacOperatorErrorResponse
+
+// AbacUnauthorized The FLAT error shape every ABAC operator endpoint returns —
+// `{error, message, code}` where `error` is a short machine-readable
+// slug (e.g. `"tenant_unresolved"`). This is deliberately DISTINCT
+// from the canonical nested `ErrorResponse` (`{error: {type,
+// message, code}}`) used elsewhere in this spec; it is the actual
+// wire format of `abac_admin::OperatorErrorResponse`, carried
+// verbatim rather than normalized.
+type AbacUnauthorized = AbacOperatorErrorResponse
+
+// AbacUnavailable The FLAT error shape every ABAC operator endpoint returns —
+// `{error, message, code}` where `error` is a short machine-readable
+// slug (e.g. `"tenant_unresolved"`). This is deliberately DISTINCT
+// from the canonical nested `ErrorResponse` (`{error: {type,
+// message, code}}`) used elsewhere in this spec; it is the actual
+// wire format of `abac_admin::OperatorErrorResponse`, carried
+// verbatim rather than normalized.
+type AbacUnavailable = AbacOperatorErrorResponse
+
 // BadRequest Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 //
 // `request_id` (also returned in the `X-Request-ID` response header) is present
@@ -1965,6 +2450,90 @@ type Unauthorized = ErrorResponse
 
 // GetCapabilitiesParams defines parameters for GetCapabilities.
 type GetCapabilitiesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ListAttributeBindingsParams defines parameters for ListAttributeBindings.
+type ListAttributeBindingsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// PostAttributeBindingParams defines parameters for PostAttributeBinding.
+type PostAttributeBindingParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// PostGrantParams defines parameters for PostGrant.
+type PostGrantParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ListGrantsParams defines parameters for ListGrants.
+type ListGrantsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteGrantParams defines parameters for DeleteGrant.
+type DeleteGrantParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ListPolicyBindingsParams defines parameters for ListPolicyBindings.
+type ListPolicyBindingsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeletePolicyBindingParams defines parameters for DeletePolicyBinding.
+type DeletePolicyBindingParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// PutPolicyBindingParams defines parameters for PutPolicyBinding.
+type PutPolicyBindingParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ListPredicateObjectsParams defines parameters for ListPredicateObjects.
+type ListPredicateObjectsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeletePredicateObjectParams defines parameters for DeletePredicateObject.
+type DeletePredicateObjectParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetPredicateObjectParams defines parameters for GetPredicateObject.
+type GetPredicateObjectParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// PutPredicateObjectParams defines parameters for PutPredicateObject.
+type PutPredicateObjectParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetTenantPostureParams defines parameters for GetTenantPosture.
+type GetTenantPostureParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// PutTenantPostureParams defines parameters for PutTenantPosture.
+type PutTenantPostureParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
@@ -2338,6 +2907,21 @@ type GetReadinessParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
+
+// PostAttributeBindingJSONRequestBody defines body for PostAttributeBinding for application/json ContentType.
+type PostAttributeBindingJSONRequestBody = AbacPostAttributeBindingRequest
+
+// PostGrantJSONRequestBody defines body for PostGrant for application/json ContentType.
+type PostGrantJSONRequestBody = AbacPostGrantRequest
+
+// PutPolicyBindingJSONRequestBody defines body for PutPolicyBinding for application/json ContentType.
+type PutPolicyBindingJSONRequestBody = AbacPutPolicyBindingRequest
+
+// PutPredicateObjectJSONRequestBody defines body for PutPredicateObject for application/json ContentType.
+type PutPredicateObjectJSONRequestBody = AbacFilterExpression
+
+// PutTenantPostureJSONRequestBody defines body for PutTenantPosture for application/json ContentType.
+type PutTenantPostureJSONRequestBody = AbacPutTenantPostureRequest
 
 // CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
 type CreateCollectionJSONRequestBody = CreateCollectionV2Request
@@ -3920,6 +4504,270 @@ func (a HybridSearchJSONBody) MarshalJSON() ([]byte, error) {
 	return json.Marshal(object)
 }
 
+// AsAbacAttrValue0 returns the union data inside the AbacAttrValue as a AbacAttrValue0
+func (t AbacAttrValue) AsAbacAttrValue0() (AbacAttrValue0, error) {
+	var body AbacAttrValue0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacAttrValue0 overwrites any union data inside the AbacAttrValue as the provided AbacAttrValue0
+func (t *AbacAttrValue) FromAbacAttrValue0(v AbacAttrValue0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacAttrValue0 performs a merge with any union data inside the AbacAttrValue, using the provided AbacAttrValue0
+func (t *AbacAttrValue) MergeAbacAttrValue0(v AbacAttrValue0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAbacAttrValue1 returns the union data inside the AbacAttrValue as a AbacAttrValue1
+func (t AbacAttrValue) AsAbacAttrValue1() (AbacAttrValue1, error) {
+	var body AbacAttrValue1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacAttrValue1 overwrites any union data inside the AbacAttrValue as the provided AbacAttrValue1
+func (t *AbacAttrValue) FromAbacAttrValue1(v AbacAttrValue1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacAttrValue1 performs a merge with any union data inside the AbacAttrValue, using the provided AbacAttrValue1
+func (t *AbacAttrValue) MergeAbacAttrValue1(v AbacAttrValue1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAbacAttrValue2 returns the union data inside the AbacAttrValue as a AbacAttrValue2
+func (t AbacAttrValue) AsAbacAttrValue2() (AbacAttrValue2, error) {
+	var body AbacAttrValue2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacAttrValue2 overwrites any union data inside the AbacAttrValue as the provided AbacAttrValue2
+func (t *AbacAttrValue) FromAbacAttrValue2(v AbacAttrValue2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacAttrValue2 performs a merge with any union data inside the AbacAttrValue, using the provided AbacAttrValue2
+func (t *AbacAttrValue) MergeAbacAttrValue2(v AbacAttrValue2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAbacAttrValue3 returns the union data inside the AbacAttrValue as a AbacAttrValue3
+func (t AbacAttrValue) AsAbacAttrValue3() (AbacAttrValue3, error) {
+	var body AbacAttrValue3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacAttrValue3 overwrites any union data inside the AbacAttrValue as the provided AbacAttrValue3
+func (t *AbacAttrValue) FromAbacAttrValue3(v AbacAttrValue3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacAttrValue3 performs a merge with any union data inside the AbacAttrValue, using the provided AbacAttrValue3
+func (t *AbacAttrValue) MergeAbacAttrValue3(v AbacAttrValue3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t AbacAttrValue) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *AbacAttrValue) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsAbacGrantee0 returns the union data inside the AbacGrantee as a AbacGrantee0
+func (t AbacGrantee) AsAbacGrantee0() (AbacGrantee0, error) {
+	var body AbacGrantee0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacGrantee0 overwrites any union data inside the AbacGrantee as the provided AbacGrantee0
+func (t *AbacGrantee) FromAbacGrantee0(v AbacGrantee0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacGrantee0 performs a merge with any union data inside the AbacGrantee, using the provided AbacGrantee0
+func (t *AbacGrantee) MergeAbacGrantee0(v AbacGrantee0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAbacGrantee1 returns the union data inside the AbacGrantee as a AbacGrantee1
+func (t AbacGrantee) AsAbacGrantee1() (AbacGrantee1, error) {
+	var body AbacGrantee1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacGrantee1 overwrites any union data inside the AbacGrantee as the provided AbacGrantee1
+func (t *AbacGrantee) FromAbacGrantee1(v AbacGrantee1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacGrantee1 performs a merge with any union data inside the AbacGrantee, using the provided AbacGrantee1
+func (t *AbacGrantee) MergeAbacGrantee1(v AbacGrantee1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t AbacGrantee) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *AbacGrantee) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsAbacScope0 returns the union data inside the AbacScope as a AbacScope0
+func (t AbacScope) AsAbacScope0() (AbacScope0, error) {
+	var body AbacScope0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacScope0 overwrites any union data inside the AbacScope as the provided AbacScope0
+func (t *AbacScope) FromAbacScope0(v AbacScope0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacScope0 performs a merge with any union data inside the AbacScope, using the provided AbacScope0
+func (t *AbacScope) MergeAbacScope0(v AbacScope0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAbacScope1 returns the union data inside the AbacScope as a AbacScope1
+func (t AbacScope) AsAbacScope1() (AbacScope1, error) {
+	var body AbacScope1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacScope1 overwrites any union data inside the AbacScope as the provided AbacScope1
+func (t *AbacScope) FromAbacScope1(v AbacScope1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacScope1 performs a merge with any union data inside the AbacScope, using the provided AbacScope1
+func (t *AbacScope) MergeAbacScope1(v AbacScope1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAbacScope2 returns the union data inside the AbacScope as a AbacScope2
+func (t AbacScope) AsAbacScope2() (AbacScope2, error) {
+	var body AbacScope2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAbacScope2 overwrites any union data inside the AbacScope as the provided AbacScope2
+func (t *AbacScope) FromAbacScope2(v AbacScope2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAbacScope2 performs a merge with any union data inside the AbacScope, using the provided AbacScope2
+func (t *AbacScope) MergeAbacScope2(v AbacScope2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t AbacScope) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *AbacScope) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsCatalogDimensionPolicy0 returns the union data inside the CatalogDimensionPolicy as a CatalogDimensionPolicy0
 func (t CatalogDimensionPolicy) AsCatalogDimensionPolicy0() (CatalogDimensionPolicy0, error) {
 	var body CatalogDimensionPolicy0
@@ -4228,6 +5076,239 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/_meta/capabilities (the `GetCapabilities` operationId).
 	GetCapabilities(ctx context.Context, params *GetCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAttributeBindings List every ABAC attribute binding.
+	//
+	// Cluster-operator scope — every `(subject, tenant)` attribute
+	// binding across every tenant, by design (cross-tenant visibility is
+	// the point of an operator inspection endpoint).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — this is a cross-tenant operator view.
+	//
+	// Corresponds with GET /api/v2/abac/attribute-bindings (the `ListAttributeBindings` operationId).
+	ListAttributeBindings(ctx context.Context, params *ListAttributeBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostAttributeBindingWithBody Upsert a subject's ABAC attribute binding.
+	//
+	// The authority half of ABAC — a `(subject, tenant)`-keyed,
+	// multi-valued attribute set a policy's `predicate_ref` resolves
+	// against. Writes through the same store the live enforcer reads.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/abac/attribute-bindings (the `PostAttributeBinding` operationId).
+	PostAttributeBindingWithBody(ctx context.Context, params *PostAttributeBindingParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostAttributeBinding Upsert a subject's ABAC attribute binding.
+	//
+	// The authority half of ABAC — a `(subject, tenant)`-keyed,
+	// multi-valued attribute set a policy's `predicate_ref` resolves
+	// against. Writes through the same store the live enforcer reads.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/abac/attribute-bindings (the `PostAttributeBinding` operationId).
+	PostAttributeBinding(ctx context.Context, params *PostAttributeBindingParams, body PostAttributeBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostGrantWithBody Provision an ADR-090 grant (cross-tenant entitlement).
+	//
+	// Grants are the entitlement layer: "this grantee may perform these
+	// actions on this resource", where the grantee MAY be a foreign
+	// tenant or a foreign tenant's user — the one place cross-tenant
+	// sharing is expressible. Both the owner and the grantee tenant must
+	// resolve (fail-closed on unminted tenants); the grantee subject is
+	// deliberately NOT validated against the principal registry, so a
+	// share may be provisioned before its recipient's first login.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/abac/grants (the `PostGrant` operationId).
+	PostGrantWithBody(ctx context.Context, params *PostGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostGrant Provision an ADR-090 grant (cross-tenant entitlement).
+	//
+	// Grants are the entitlement layer: "this grantee may perform these
+	// actions on this resource", where the grantee MAY be a foreign
+	// tenant or a foreign tenant's user — the one place cross-tenant
+	// sharing is expressible. Both the owner and the grantee tenant must
+	// resolve (fail-closed on unminted tenants); the grantee subject is
+	// deliberately NOT validated against the principal registry, so a
+	// share may be provisioned before its recipient's first login.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/abac/grants (the `PostGrant` operationId).
+	PostGrant(ctx context.Context, params *PostGrantParams, body PostGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListGrants List an owner tenant's grants.
+	//
+	// Revoked grants stay listed with `revoked_at_ms` set — the audit
+	// trail is the point, not a live-only view.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Corresponds with GET /api/v2/abac/grants/{owner_tenant} (the `ListGrants` operationId).
+	ListGrants(ctx context.Context, ownerTenant string, params *ListGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteGrant Revoke a grant.
+	//
+	// Idempotent — 204 whether the grant existed (and was revoked) or was
+	// already unknown/revoked. Revocation under the wrong owner cannot
+	// even name the grant (the store is owner-partitioned).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Corresponds with DELETE /api/v2/abac/grants/{owner_tenant}/{grant_id} (the `DeleteGrant` operationId).
+	DeleteGrant(ctx context.Context, ownerTenant string, grantId string, params *DeleteGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPolicyBindings List a tenant's live ABAC policy bindings.
+	//
+	// The exact binding set the enforcer composes for reads under
+	// `tenant` — an operator inspection endpoint, not a per-tenant
+	// self-service one.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Corresponds with GET /api/v2/abac/policy-bindings/{tenant} (the `ListPolicyBindings` operationId).
+	ListPolicyBindings(ctx context.Context, tenant string, params *ListPolicyBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePolicyBinding Remove an ABAC policy binding.
+	//
+	// Idempotent — 204 whether or not a binding existed at `object_id`.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Corresponds with DELETE /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `DeletePolicyBinding` operationId).
+	DeletePolicyBinding(ctx context.Context, tenant string, objectId uint64, params *DeletePolicyBindingParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutPolicyBindingWithBody Upsert an ABAC policy binding.
+	//
+	// Provisions (or replaces) the policy binding at `object_id` for
+	// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+	// `predicate_ref` row filter and a `field_mask`). Writes through the
+	// same store the live enforcer reads: visible on the next request, no
+	// restart. `Deny` wins during resolution; the default is deny.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `PutPolicyBinding` operationId).
+	PutPolicyBindingWithBody(ctx context.Context, tenant string, objectId uint64, params *PutPolicyBindingParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutPolicyBinding Upsert an ABAC policy binding.
+	//
+	// Provisions (or replaces) the policy binding at `object_id` for
+	// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+	// `predicate_ref` row filter and a `field_mask`). Writes through the
+	// same store the live enforcer reads: visible on the next request, no
+	// restart. `Deny` wins during resolution; the default is deny.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `PutPolicyBinding` operationId).
+	PutPolicyBinding(ctx context.Context, tenant string, objectId uint64, params *PutPolicyBindingParams, body PutPolicyBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPredicateObjects List every registered ABAC predicate object.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Corresponds with GET /api/v2/abac/predicate-objects (the `ListPredicateObjects` operationId).
+	ListPredicateObjects(ctx context.Context, params *ListPredicateObjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePredicateObject Revoke an ABAC predicate object.
+	//
+	// Idempotent (204). Subsequent resolves of `object_id` by any policy
+	// binding fail-closed.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Corresponds with DELETE /api/v2/abac/predicate-objects/{object_id} (the `DeletePredicateObject` operationId).
+	DeletePredicateObject(ctx context.Context, objectId uint64, params *DeletePredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPredicateObject Get one ABAC predicate object.
+	//
+	// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
+	// resolves fail-closed (safe) regardless of this endpoint.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Corresponds with GET /api/v2/abac/predicate-objects/{object_id} (the `GetPredicateObject` operationId).
+	GetPredicateObject(ctx context.Context, objectId uint64, params *GetPredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutPredicateObjectWithBody Register (or replace) an ABAC predicate object.
+	//
+	// The request body IS the `FilterExpression` directly (no wrapper) —
+	// a stored row-filter predicate that a policy binding's
+	// `predicate_ref` can reference.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/abac/predicate-objects/{object_id} (the `PutPredicateObject` operationId).
+	PutPredicateObjectWithBody(ctx context.Context, objectId uint64, params *PutPredicateObjectParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutPredicateObject Register (or replace) an ABAC predicate object.
+	//
+	// The request body IS the `FilterExpression` directly (no wrapper) —
+	// a stored row-filter predicate that a policy binding's
+	// `predicate_ref` can reference.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/abac/predicate-objects/{object_id} (the `PutPredicateObject` operationId).
+	PutPredicateObject(ctx context.Context, objectId uint64, params *PutPredicateObjectParams, body PutPredicateObjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTenantPosture Get a tenant's explicit ABAC grant-enforcement posture.
+	//
+	// 404 means the tenant has NO explicit record — meaningfully
+	// different from `Off`, since an absent record means the tenant
+	// inherits the process default, which may itself be `Enforce`.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Corresponds with GET /api/v2/abac/tenant-posture/{tenant} (the `GetTenantPosture` operationId).
+	GetTenantPosture(ctx context.Context, tenant string, params *GetTenantPostureParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutTenantPostureWithBody Set a tenant's ABAC grant-enforcement posture.
+	//
+	// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+	// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+	// is how an operator breaks a customer's traffic.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
+	PutTenantPostureWithBody(ctx context.Context, tenant string, params *PutTenantPostureParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutTenantPosture Set a tenant's ABAC grant-enforcement posture.
+	//
+	// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+	// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+	// is how an operator breaks a customer's traffic.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
+	PutTenantPosture(ctx context.Context, tenant string, params *PutTenantPostureParams, body PutTenantPostureJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListCollections List collections.
 	//
@@ -5167,6 +6248,429 @@ type ClientInterface interface {
 // Corresponds with GET /api/v2/_meta/capabilities (the `GetCapabilities` operationId).
 func (c *Client) GetCapabilities(ctx context.Context, params *GetCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCapabilitiesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAttributeBindings List every ABAC attribute binding.
+//
+// Cluster-operator scope — every `(subject, tenant)` attribute
+// binding across every tenant, by design (cross-tenant visibility is
+// the point of an operator inspection endpoint).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — this is a cross-tenant operator view.
+//
+// Corresponds with GET /api/v2/abac/attribute-bindings (the `ListAttributeBindings` operationId).
+func (c *Client) ListAttributeBindings(ctx context.Context, params *ListAttributeBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAttributeBindingsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostAttributeBindingWithBody Upsert a subject's ABAC attribute binding.
+//
+// The authority half of ABAC — a `(subject, tenant)`-keyed,
+// multi-valued attribute set a policy's `predicate_ref` resolves
+// against. Writes through the same store the live enforcer reads.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/abac/attribute-bindings (the `PostAttributeBinding` operationId).
+func (c *Client) PostAttributeBindingWithBody(ctx context.Context, params *PostAttributeBindingParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAttributeBindingRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostAttributeBinding Upsert a subject's ABAC attribute binding.
+//
+// The authority half of ABAC — a `(subject, tenant)`-keyed,
+// multi-valued attribute set a policy's `predicate_ref` resolves
+// against. Writes through the same store the live enforcer reads.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/abac/attribute-bindings (the `PostAttributeBinding` operationId).
+func (c *Client) PostAttributeBinding(ctx context.Context, params *PostAttributeBindingParams, body PostAttributeBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAttributeBindingRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostGrantWithBody Provision an ADR-090 grant (cross-tenant entitlement).
+//
+// Grants are the entitlement layer: "this grantee may perform these
+// actions on this resource", where the grantee MAY be a foreign
+// tenant or a foreign tenant's user — the one place cross-tenant
+// sharing is expressible. Both the owner and the grantee tenant must
+// resolve (fail-closed on unminted tenants); the grantee subject is
+// deliberately NOT validated against the principal registry, so a
+// share may be provisioned before its recipient's first login.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/abac/grants (the `PostGrant` operationId).
+func (c *Client) PostGrantWithBody(ctx context.Context, params *PostGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostGrantRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostGrant Provision an ADR-090 grant (cross-tenant entitlement).
+//
+// Grants are the entitlement layer: "this grantee may perform these
+// actions on this resource", where the grantee MAY be a foreign
+// tenant or a foreign tenant's user — the one place cross-tenant
+// sharing is expressible. Both the owner and the grantee tenant must
+// resolve (fail-closed on unminted tenants); the grantee subject is
+// deliberately NOT validated against the principal registry, so a
+// share may be provisioned before its recipient's first login.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/abac/grants (the `PostGrant` operationId).
+func (c *Client) PostGrant(ctx context.Context, params *PostGrantParams, body PostGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostGrantRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListGrants List an owner tenant's grants.
+//
+// Revoked grants stay listed with `revoked_at_ms` set — the audit
+// trail is the point, not a live-only view.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Corresponds with GET /api/v2/abac/grants/{owner_tenant} (the `ListGrants` operationId).
+func (c *Client) ListGrants(ctx context.Context, ownerTenant string, params *ListGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListGrantsRequest(c.Server, ownerTenant, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteGrant Revoke a grant.
+//
+// Idempotent — 204 whether the grant existed (and was revoked) or was
+// already unknown/revoked. Revocation under the wrong owner cannot
+// even name the grant (the store is owner-partitioned).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Corresponds with DELETE /api/v2/abac/grants/{owner_tenant}/{grant_id} (the `DeleteGrant` operationId).
+func (c *Client) DeleteGrant(ctx context.Context, ownerTenant string, grantId string, params *DeleteGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteGrantRequest(c.Server, ownerTenant, grantId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPolicyBindings List a tenant's live ABAC policy bindings.
+//
+// The exact binding set the enforcer composes for reads under
+// `tenant` — an operator inspection endpoint, not a per-tenant
+// self-service one.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Corresponds with GET /api/v2/abac/policy-bindings/{tenant} (the `ListPolicyBindings` operationId).
+func (c *Client) ListPolicyBindings(ctx context.Context, tenant string, params *ListPolicyBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPolicyBindingsRequest(c.Server, tenant, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePolicyBinding Remove an ABAC policy binding.
+//
+// Idempotent — 204 whether or not a binding existed at `object_id`.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Corresponds with DELETE /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `DeletePolicyBinding` operationId).
+func (c *Client) DeletePolicyBinding(ctx context.Context, tenant string, objectId uint64, params *DeletePolicyBindingParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePolicyBindingRequest(c.Server, tenant, objectId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutPolicyBindingWithBody Upsert an ABAC policy binding.
+//
+// Provisions (or replaces) the policy binding at `object_id` for
+// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+// `predicate_ref` row filter and a `field_mask`). Writes through the
+// same store the live enforcer reads: visible on the next request, no
+// restart. `Deny` wins during resolution; the default is deny.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `PutPolicyBinding` operationId).
+func (c *Client) PutPolicyBindingWithBody(ctx context.Context, tenant string, objectId uint64, params *PutPolicyBindingParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPolicyBindingRequestWithBody(c.Server, tenant, objectId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutPolicyBinding Upsert an ABAC policy binding.
+//
+// Provisions (or replaces) the policy binding at `object_id` for
+// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+// `predicate_ref` row filter and a `field_mask`). Writes through the
+// same store the live enforcer reads: visible on the next request, no
+// restart. `Deny` wins during resolution; the default is deny.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `PutPolicyBinding` operationId).
+func (c *Client) PutPolicyBinding(ctx context.Context, tenant string, objectId uint64, params *PutPolicyBindingParams, body PutPolicyBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPolicyBindingRequest(c.Server, tenant, objectId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPredicateObjects List every registered ABAC predicate object.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Corresponds with GET /api/v2/abac/predicate-objects (the `ListPredicateObjects` operationId).
+func (c *Client) ListPredicateObjects(ctx context.Context, params *ListPredicateObjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPredicateObjectsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePredicateObject Revoke an ABAC predicate object.
+//
+// Idempotent (204). Subsequent resolves of `object_id` by any policy
+// binding fail-closed.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Corresponds with DELETE /api/v2/abac/predicate-objects/{object_id} (the `DeletePredicateObject` operationId).
+func (c *Client) DeletePredicateObject(ctx context.Context, objectId uint64, params *DeletePredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePredicateObjectRequest(c.Server, objectId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPredicateObject Get one ABAC predicate object.
+//
+// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
+// resolves fail-closed (safe) regardless of this endpoint.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Corresponds with GET /api/v2/abac/predicate-objects/{object_id} (the `GetPredicateObject` operationId).
+func (c *Client) GetPredicateObject(ctx context.Context, objectId uint64, params *GetPredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPredicateObjectRequest(c.Server, objectId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutPredicateObjectWithBody Register (or replace) an ABAC predicate object.
+//
+// The request body IS the `FilterExpression` directly (no wrapper) —
+// a stored row-filter predicate that a policy binding's
+// `predicate_ref` can reference.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/abac/predicate-objects/{object_id} (the `PutPredicateObject` operationId).
+func (c *Client) PutPredicateObjectWithBody(ctx context.Context, objectId uint64, params *PutPredicateObjectParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPredicateObjectRequestWithBody(c.Server, objectId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutPredicateObject Register (or replace) an ABAC predicate object.
+//
+// The request body IS the `FilterExpression` directly (no wrapper) —
+// a stored row-filter predicate that a policy binding's
+// `predicate_ref` can reference.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/abac/predicate-objects/{object_id} (the `PutPredicateObject` operationId).
+func (c *Client) PutPredicateObject(ctx context.Context, objectId uint64, params *PutPredicateObjectParams, body PutPredicateObjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPredicateObjectRequest(c.Server, objectId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTenantPosture Get a tenant's explicit ABAC grant-enforcement posture.
+//
+// 404 means the tenant has NO explicit record — meaningfully
+// different from `Off`, since an absent record means the tenant
+// inherits the process default, which may itself be `Enforce`.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Corresponds with GET /api/v2/abac/tenant-posture/{tenant} (the `GetTenantPosture` operationId).
+func (c *Client) GetTenantPosture(ctx context.Context, tenant string, params *GetTenantPostureParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTenantPostureRequest(c.Server, tenant, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutTenantPostureWithBody Set a tenant's ABAC grant-enforcement posture.
+//
+// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+// is how an operator breaks a customer's traffic.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
+func (c *Client) PutTenantPostureWithBody(ctx context.Context, tenant string, params *PutTenantPostureParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutTenantPostureRequestWithBody(c.Server, tenant, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutTenantPosture Set a tenant's ABAC grant-enforcement posture.
+//
+// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+// is how an operator breaks a customer's traffic.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
+func (c *Client) PutTenantPosture(ctx context.Context, tenant string, params *PutTenantPostureParams, body PutTenantPostureJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutTenantPostureRequest(c.Server, tenant, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7020,6 +8524,750 @@ func NewGetCapabilitiesRequest(server string, params *GetCapabilitiesParams) (*h
 	if err != nil {
 		return nil, err
 	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListAttributeBindingsRequest constructs an http.Request for the ListAttributeBindings method
+func NewListAttributeBindingsRequest(server string, params *ListAttributeBindingsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/attribute-bindings")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPostAttributeBindingRequest calls the generic PostAttributeBinding builder with application/json body
+func NewPostAttributeBindingRequest(server string, params *PostAttributeBindingParams, body PostAttributeBindingJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostAttributeBindingRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewPostAttributeBindingRequestWithBody constructs an http.Request for the PostAttributeBinding method, with any body, and a specified content type
+func NewPostAttributeBindingRequestWithBody(server string, params *PostAttributeBindingParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/attribute-bindings")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPostGrantRequest calls the generic PostGrant builder with application/json body
+func NewPostGrantRequest(server string, params *PostGrantParams, body PostGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostGrantRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewPostGrantRequestWithBody constructs an http.Request for the PostGrant method, with any body, and a specified content type
+func NewPostGrantRequestWithBody(server string, params *PostGrantParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/grants")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListGrantsRequest constructs an http.Request for the ListGrants method
+func NewListGrantsRequest(server string, ownerTenant string, params *ListGrantsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner_tenant", ownerTenant, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/grants/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteGrantRequest constructs an http.Request for the DeleteGrant method
+func NewDeleteGrantRequest(server string, ownerTenant string, grantId string, params *DeleteGrantParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner_tenant", ownerTenant, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/grants/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListPolicyBindingsRequest constructs an http.Request for the ListPolicyBindings method
+func NewListPolicyBindingsRequest(server string, tenant string, params *ListPolicyBindingsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "tenant", tenant, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/policy-bindings/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeletePolicyBindingRequest constructs an http.Request for the DeletePolicyBinding method
+func NewDeletePolicyBindingRequest(server string, tenant string, objectId uint64, params *DeletePolicyBindingParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "tenant", tenant, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "object_id", objectId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "uint64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/policy-bindings/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPutPolicyBindingRequest calls the generic PutPolicyBinding builder with application/json body
+func NewPutPolicyBindingRequest(server string, tenant string, objectId uint64, params *PutPolicyBindingParams, body PutPolicyBindingJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutPolicyBindingRequestWithBody(server, tenant, objectId, params, "application/json", bodyReader)
+}
+
+// NewPutPolicyBindingRequestWithBody constructs an http.Request for the PutPolicyBinding method, with any body, and a specified content type
+func NewPutPolicyBindingRequestWithBody(server string, tenant string, objectId uint64, params *PutPolicyBindingParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "tenant", tenant, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "object_id", objectId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "uint64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/policy-bindings/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListPredicateObjectsRequest constructs an http.Request for the ListPredicateObjects method
+func NewListPredicateObjectsRequest(server string, params *ListPredicateObjectsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/predicate-objects")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeletePredicateObjectRequest constructs an http.Request for the DeletePredicateObject method
+func NewDeletePredicateObjectRequest(server string, objectId uint64, params *DeletePredicateObjectParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "object_id", objectId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "uint64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/predicate-objects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetPredicateObjectRequest constructs an http.Request for the GetPredicateObject method
+func NewGetPredicateObjectRequest(server string, objectId uint64, params *GetPredicateObjectParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "object_id", objectId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "uint64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/predicate-objects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPutPredicateObjectRequest calls the generic PutPredicateObject builder with application/json body
+func NewPutPredicateObjectRequest(server string, objectId uint64, params *PutPredicateObjectParams, body PutPredicateObjectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutPredicateObjectRequestWithBody(server, objectId, params, "application/json", bodyReader)
+}
+
+// NewPutPredicateObjectRequestWithBody constructs an http.Request for the PutPredicateObject method, with any body, and a specified content type
+func NewPutPredicateObjectRequestWithBody(server string, objectId uint64, params *PutPredicateObjectParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "object_id", objectId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "uint64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/predicate-objects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetTenantPostureRequest constructs an http.Request for the GetTenantPosture method
+func NewGetTenantPostureRequest(server string, tenant string, params *GetTenantPostureParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "tenant", tenant, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/tenant-posture/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPutTenantPostureRequest calls the generic PutTenantPosture builder with application/json body
+func NewPutTenantPostureRequest(server string, tenant string, params *PutTenantPostureParams, body PutTenantPostureJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutTenantPostureRequestWithBody(server, tenant, params, "application/json", bodyReader)
+}
+
+// NewPutTenantPostureRequestWithBody constructs an http.Request for the PutTenantPosture method, with any body, and a specified content type
+func NewPutTenantPostureRequestWithBody(server string, tenant string, params *PutTenantPostureParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "tenant", tenant, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/abac/tenant-posture/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	if params != nil {
 
@@ -10235,6 +12483,257 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v2/_meta/capabilities (the `GetCapabilities` operationId).
 	GetCapabilitiesWithResponse(ctx context.Context, params *GetCapabilitiesParams, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error)
 
+	// ListAttributeBindingsWithResponse List every ABAC attribute binding.
+	//
+	// Cluster-operator scope — every `(subject, tenant)` attribute
+	// binding across every tenant, by design (cross-tenant visibility is
+	// the point of an operator inspection endpoint).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — this is a cross-tenant operator view.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/abac/attribute-bindings (the `ListAttributeBindings` operationId).
+	ListAttributeBindingsWithResponse(ctx context.Context, params *ListAttributeBindingsParams, reqEditors ...RequestEditorFn) (*ListAttributeBindingsHTTPResp, error)
+
+	// PostAttributeBindingWithBodyWithResponse Upsert a subject's ABAC attribute binding.
+	//
+	// The authority half of ABAC — a `(subject, tenant)`-keyed,
+	// multi-valued attribute set a policy's `predicate_ref` resolves
+	// against. Writes through the same store the live enforcer reads.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/abac/attribute-bindings (the `PostAttributeBinding` operationId).
+	PostAttributeBindingWithBodyWithResponse(ctx context.Context, params *PostAttributeBindingParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAttributeBindingHTTPResp, error)
+
+	// PostAttributeBindingWithResponse Upsert a subject's ABAC attribute binding.
+	//
+	// The authority half of ABAC — a `(subject, tenant)`-keyed,
+	// multi-valued attribute set a policy's `predicate_ref` resolves
+	// against. Writes through the same store the live enforcer reads.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/abac/attribute-bindings (the `PostAttributeBinding` operationId).
+	PostAttributeBindingWithResponse(ctx context.Context, params *PostAttributeBindingParams, body PostAttributeBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAttributeBindingHTTPResp, error)
+
+	// PostGrantWithBodyWithResponse Provision an ADR-090 grant (cross-tenant entitlement).
+	//
+	// Grants are the entitlement layer: "this grantee may perform these
+	// actions on this resource", where the grantee MAY be a foreign
+	// tenant or a foreign tenant's user — the one place cross-tenant
+	// sharing is expressible. Both the owner and the grantee tenant must
+	// resolve (fail-closed on unminted tenants); the grantee subject is
+	// deliberately NOT validated against the principal registry, so a
+	// share may be provisioned before its recipient's first login.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/abac/grants (the `PostGrant` operationId).
+	PostGrantWithBodyWithResponse(ctx context.Context, params *PostGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostGrantHTTPResp, error)
+
+	// PostGrantWithResponse Provision an ADR-090 grant (cross-tenant entitlement).
+	//
+	// Grants are the entitlement layer: "this grantee may perform these
+	// actions on this resource", where the grantee MAY be a foreign
+	// tenant or a foreign tenant's user — the one place cross-tenant
+	// sharing is expressible. Both the owner and the grantee tenant must
+	// resolve (fail-closed on unminted tenants); the grantee subject is
+	// deliberately NOT validated against the principal registry, so a
+	// share may be provisioned before its recipient's first login.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/abac/grants (the `PostGrant` operationId).
+	PostGrantWithResponse(ctx context.Context, params *PostGrantParams, body PostGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*PostGrantHTTPResp, error)
+
+	// ListGrantsWithResponse List an owner tenant's grants.
+	//
+	// Revoked grants stay listed with `revoked_at_ms` set — the audit
+	// trail is the point, not a live-only view.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/abac/grants/{owner_tenant} (the `ListGrants` operationId).
+	ListGrantsWithResponse(ctx context.Context, ownerTenant string, params *ListGrantsParams, reqEditors ...RequestEditorFn) (*ListGrantsHTTPResp, error)
+
+	// DeleteGrantWithResponse Revoke a grant.
+	//
+	// Idempotent — 204 whether the grant existed (and was revoked) or was
+	// already unknown/revoked. Revocation under the wrong owner cannot
+	// even name the grant (the store is owner-partitioned).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/abac/grants/{owner_tenant}/{grant_id} (the `DeleteGrant` operationId).
+	DeleteGrantWithResponse(ctx context.Context, ownerTenant string, grantId string, params *DeleteGrantParams, reqEditors ...RequestEditorFn) (*DeleteGrantHTTPResp, error)
+
+	// ListPolicyBindingsWithResponse List a tenant's live ABAC policy bindings.
+	//
+	// The exact binding set the enforcer composes for reads under
+	// `tenant` — an operator inspection endpoint, not a per-tenant
+	// self-service one.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/abac/policy-bindings/{tenant} (the `ListPolicyBindings` operationId).
+	ListPolicyBindingsWithResponse(ctx context.Context, tenant string, params *ListPolicyBindingsParams, reqEditors ...RequestEditorFn) (*ListPolicyBindingsHTTPResp, error)
+
+	// DeletePolicyBindingWithResponse Remove an ABAC policy binding.
+	//
+	// Idempotent — 204 whether or not a binding existed at `object_id`.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `DeletePolicyBinding` operationId).
+	DeletePolicyBindingWithResponse(ctx context.Context, tenant string, objectId uint64, params *DeletePolicyBindingParams, reqEditors ...RequestEditorFn) (*DeletePolicyBindingHTTPResp, error)
+
+	// PutPolicyBindingWithBodyWithResponse Upsert an ABAC policy binding.
+	//
+	// Provisions (or replaces) the policy binding at `object_id` for
+	// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+	// `predicate_ref` row filter and a `field_mask`). Writes through the
+	// same store the live enforcer reads: visible on the next request, no
+	// restart. `Deny` wins during resolution; the default is deny.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `PutPolicyBinding` operationId).
+	PutPolicyBindingWithBodyWithResponse(ctx context.Context, tenant string, objectId uint64, params *PutPolicyBindingParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPolicyBindingHTTPResp, error)
+
+	// PutPolicyBindingWithResponse Upsert an ABAC policy binding.
+	//
+	// Provisions (or replaces) the policy binding at `object_id` for
+	// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+	// `predicate_ref` row filter and a `field_mask`). Writes through the
+	// same store the live enforcer reads: visible on the next request, no
+	// restart. `Deny` wins during resolution; the default is deny.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `PutPolicyBinding` operationId).
+	PutPolicyBindingWithResponse(ctx context.Context, tenant string, objectId uint64, params *PutPolicyBindingParams, body PutPolicyBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPolicyBindingHTTPResp, error)
+
+	// ListPredicateObjectsWithResponse List every registered ABAC predicate object.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/abac/predicate-objects (the `ListPredicateObjects` operationId).
+	ListPredicateObjectsWithResponse(ctx context.Context, params *ListPredicateObjectsParams, reqEditors ...RequestEditorFn) (*ListPredicateObjectsHTTPResp, error)
+
+	// DeletePredicateObjectWithResponse Revoke an ABAC predicate object.
+	//
+	// Idempotent (204). Subsequent resolves of `object_id` by any policy
+	// binding fail-closed.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/abac/predicate-objects/{object_id} (the `DeletePredicateObject` operationId).
+	DeletePredicateObjectWithResponse(ctx context.Context, objectId uint64, params *DeletePredicateObjectParams, reqEditors ...RequestEditorFn) (*DeletePredicateObjectHTTPResp, error)
+
+	// GetPredicateObjectWithResponse Get one ABAC predicate object.
+	//
+	// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
+	// resolves fail-closed (safe) regardless of this endpoint.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/abac/predicate-objects/{object_id} (the `GetPredicateObject` operationId).
+	GetPredicateObjectWithResponse(ctx context.Context, objectId uint64, params *GetPredicateObjectParams, reqEditors ...RequestEditorFn) (*GetPredicateObjectHTTPResp, error)
+
+	// PutPredicateObjectWithBodyWithResponse Register (or replace) an ABAC predicate object.
+	//
+	// The request body IS the `FilterExpression` directly (no wrapper) —
+	// a stored row-filter predicate that a policy binding's
+	// `predicate_ref` can reference.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/abac/predicate-objects/{object_id} (the `PutPredicateObject` operationId).
+	PutPredicateObjectWithBodyWithResponse(ctx context.Context, objectId uint64, params *PutPredicateObjectParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPredicateObjectHTTPResp, error)
+
+	// PutPredicateObjectWithResponse Register (or replace) an ABAC predicate object.
+	//
+	// The request body IS the `FilterExpression` directly (no wrapper) —
+	// a stored row-filter predicate that a policy binding's
+	// `predicate_ref` can reference.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/abac/predicate-objects/{object_id} (the `PutPredicateObject` operationId).
+	PutPredicateObjectWithResponse(ctx context.Context, objectId uint64, params *PutPredicateObjectParams, body PutPredicateObjectJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPredicateObjectHTTPResp, error)
+
+	// GetTenantPostureWithResponse Get a tenant's explicit ABAC grant-enforcement posture.
+	//
+	// 404 means the tenant has NO explicit record — meaningfully
+	// different from `Off`, since an absent record means the tenant
+	// inherits the process default, which may itself be `Enforce`.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/abac/tenant-posture/{tenant} (the `GetTenantPosture` operationId).
+	GetTenantPostureWithResponse(ctx context.Context, tenant string, params *GetTenantPostureParams, reqEditors ...RequestEditorFn) (*GetTenantPostureHTTPResp, error)
+
+	// PutTenantPostureWithBodyWithResponse Set a tenant's ABAC grant-enforcement posture.
+	//
+	// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+	// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+	// is how an operator breaks a customer's traffic.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
+	PutTenantPostureWithBodyWithResponse(ctx context.Context, tenant string, params *PutTenantPostureParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutTenantPostureHTTPResp, error)
+
+	// PutTenantPostureWithResponse Set a tenant's ABAC grant-enforcement posture.
+	//
+	// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+	// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+	// is how an operator breaks a customer's traffic.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
+	PutTenantPostureWithResponse(ctx context.Context, tenant string, params *PutTenantPostureParams, body PutTenantPostureJSONRequestBody, reqEditors ...RequestEditorFn) (*PutTenantPostureHTTPResp, error)
+
 	// ListCollectionsWithResponse List collections.
 	//
 	// List all collections with pagination.
@@ -11253,6 +13752,930 @@ func (r GetCapabilitiesHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetCapabilitiesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListAttributeBindingsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacAttributeBindingsResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAttributeBindingsHTTPResp) GetJSON200() *AbacAttributeBindingsResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListAttributeBindingsHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListAttributeBindingsHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListAttributeBindingsHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAttributeBindingsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAttributeBindingsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAttributeBindingsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAttributeBindingsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PostAttributeBindingHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacAttributeBinding
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PostAttributeBindingHTTPResp) GetJSON200() *AbacAttributeBinding {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PostAttributeBindingHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PostAttributeBindingHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostAttributeBindingHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostAttributeBindingHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PostAttributeBindingHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostAttributeBindingHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostAttributeBindingHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostAttributeBindingHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PostGrantHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacPostGrantResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PostGrantHTTPResp) GetJSON200() *AbacPostGrantResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PostGrantHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PostGrantHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostGrantHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostGrantHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PostGrantHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostGrantHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostGrantHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostGrantHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListGrantsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]AbacGrantRecord
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListGrantsHTTPResp) GetJSON200() *[]AbacGrantRecord {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListGrantsHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListGrantsHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ListGrantsHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListGrantsHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListGrantsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListGrantsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListGrantsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListGrantsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteGrantHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteGrantHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteGrantHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r DeleteGrantHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteGrantHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteGrantHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteGrantHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteGrantHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteGrantHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPolicyBindingsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacPolicyBindingsResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPolicyBindingsHTTPResp) GetJSON200() *AbacPolicyBindingsResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListPolicyBindingsHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListPolicyBindingsHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ListPolicyBindingsHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListPolicyBindingsHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPolicyBindingsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPolicyBindingsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPolicyBindingsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPolicyBindingsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePolicyBindingHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeletePolicyBindingHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeletePolicyBindingHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r DeletePolicyBindingHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeletePolicyBindingHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePolicyBindingHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePolicyBindingHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePolicyBindingHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePolicyBindingHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PutPolicyBindingHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacPolicyBinding
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PutPolicyBindingHTTPResp) GetJSON200() *AbacPolicyBinding {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutPolicyBindingHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutPolicyBindingHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PutPolicyBindingHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PutPolicyBindingHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PutPolicyBindingHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutPolicyBindingHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutPolicyBindingHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutPolicyBindingHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPredicateObjectsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacPredicateObjectsResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPredicateObjectsHTTPResp) GetJSON200() *AbacPredicateObjectsResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListPredicateObjectsHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListPredicateObjectsHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListPredicateObjectsHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPredicateObjectsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPredicateObjectsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPredicateObjectsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPredicateObjectsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePredicateObjectHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeletePredicateObjectHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeletePredicateObjectHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeletePredicateObjectHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePredicateObjectHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePredicateObjectHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePredicateObjectHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePredicateObjectHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPredicateObjectHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacPredicateObjectResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *AbacOperatorErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPredicateObjectHTTPResp) GetJSON200() *AbacPredicateObjectResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetPredicateObjectHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetPredicateObjectHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetPredicateObjectHTTPResp) GetJSON404() *AbacOperatorErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetPredicateObjectHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPredicateObjectHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPredicateObjectHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPredicateObjectHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPredicateObjectHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PutPredicateObjectHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacPredicateObjectResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PutPredicateObjectHTTPResp) GetJSON200() *AbacPredicateObjectResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutPredicateObjectHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutPredicateObjectHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PutPredicateObjectHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PutPredicateObjectHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutPredicateObjectHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutPredicateObjectHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutPredicateObjectHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetTenantPostureHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacTenantSecurityPosture
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *AbacOperatorErrorResponse
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTenantPostureHTTPResp) GetJSON200() *AbacTenantSecurityPosture {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetTenantPostureHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetTenantPostureHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetTenantPostureHTTPResp) GetJSON404() *AbacOperatorErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r GetTenantPostureHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetTenantPostureHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTenantPostureHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTenantPostureHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTenantPostureHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTenantPostureHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PutTenantPostureHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AbacTenantSecurityPosture
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *AbacUnauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *AbacForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PutTenantPostureHTTPResp) GetJSON200() *AbacTenantSecurityPosture {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutTenantPostureHTTPResp) GetJSON401() *AbacUnauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutTenantPostureHTTPResp) GetJSON403() *AbacForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PutTenantPostureHTTPResp) GetJSON422() *AbacTenantUnresolved {
+	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PutTenantPostureHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PutTenantPostureHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutTenantPostureHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutTenantPostureHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutTenantPostureHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -14061,6 +17484,371 @@ func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, p
 	return ParseGetCapabilitiesHTTPResp(rsp)
 }
 
+// ListAttributeBindingsWithResponse List every ABAC attribute binding.
+//
+// Cluster-operator scope — every `(subject, tenant)` attribute
+// binding across every tenant, by design (cross-tenant visibility is
+// the point of an operator inspection endpoint).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — this is a cross-tenant operator view.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/abac/attribute-bindings (the `ListAttributeBindings` operationId).
+func (c *ClientWithResponses) ListAttributeBindingsWithResponse(ctx context.Context, params *ListAttributeBindingsParams, reqEditors ...RequestEditorFn) (*ListAttributeBindingsHTTPResp, error) {
+	rsp, err := c.ListAttributeBindings(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAttributeBindingsHTTPResp(rsp)
+}
+
+// PostAttributeBindingWithBodyWithResponse Upsert a subject's ABAC attribute binding.
+//
+// The authority half of ABAC — a `(subject, tenant)`-keyed,
+// multi-valued attribute set a policy's `predicate_ref` resolves
+// against. Writes through the same store the live enforcer reads.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/abac/attribute-bindings (the `PostAttributeBinding` operationId).
+func (c *ClientWithResponses) PostAttributeBindingWithBodyWithResponse(ctx context.Context, params *PostAttributeBindingParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAttributeBindingHTTPResp, error) {
+	rsp, err := c.PostAttributeBindingWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAttributeBindingHTTPResp(rsp)
+}
+
+// PostAttributeBindingWithResponse Upsert a subject's ABAC attribute binding.
+//
+// The authority half of ABAC — a `(subject, tenant)`-keyed,
+// multi-valued attribute set a policy's `predicate_ref` resolves
+// against. Writes through the same store the live enforcer reads.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/abac/attribute-bindings (the `PostAttributeBinding` operationId).
+func (c *ClientWithResponses) PostAttributeBindingWithResponse(ctx context.Context, params *PostAttributeBindingParams, body PostAttributeBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAttributeBindingHTTPResp, error) {
+	rsp, err := c.PostAttributeBinding(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAttributeBindingHTTPResp(rsp)
+}
+
+// PostGrantWithBodyWithResponse Provision an ADR-090 grant (cross-tenant entitlement).
+//
+// Grants are the entitlement layer: "this grantee may perform these
+// actions on this resource", where the grantee MAY be a foreign
+// tenant or a foreign tenant's user — the one place cross-tenant
+// sharing is expressible. Both the owner and the grantee tenant must
+// resolve (fail-closed on unminted tenants); the grantee subject is
+// deliberately NOT validated against the principal registry, so a
+// share may be provisioned before its recipient's first login.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/abac/grants (the `PostGrant` operationId).
+func (c *ClientWithResponses) PostGrantWithBodyWithResponse(ctx context.Context, params *PostGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostGrantHTTPResp, error) {
+	rsp, err := c.PostGrantWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostGrantHTTPResp(rsp)
+}
+
+// PostGrantWithResponse Provision an ADR-090 grant (cross-tenant entitlement).
+//
+// Grants are the entitlement layer: "this grantee may perform these
+// actions on this resource", where the grantee MAY be a foreign
+// tenant or a foreign tenant's user — the one place cross-tenant
+// sharing is expressible. Both the owner and the grantee tenant must
+// resolve (fail-closed on unminted tenants); the grantee subject is
+// deliberately NOT validated against the principal registry, so a
+// share may be provisioned before its recipient's first login.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/abac/grants (the `PostGrant` operationId).
+func (c *ClientWithResponses) PostGrantWithResponse(ctx context.Context, params *PostGrantParams, body PostGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*PostGrantHTTPResp, error) {
+	rsp, err := c.PostGrant(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostGrantHTTPResp(rsp)
+}
+
+// ListGrantsWithResponse List an owner tenant's grants.
+//
+// Revoked grants stay listed with `revoked_at_ms` set — the audit
+// trail is the point, not a live-only view.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/abac/grants/{owner_tenant} (the `ListGrants` operationId).
+func (c *ClientWithResponses) ListGrantsWithResponse(ctx context.Context, ownerTenant string, params *ListGrantsParams, reqEditors ...RequestEditorFn) (*ListGrantsHTTPResp, error) {
+	rsp, err := c.ListGrants(ctx, ownerTenant, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListGrantsHTTPResp(rsp)
+}
+
+// DeleteGrantWithResponse Revoke a grant.
+//
+// Idempotent — 204 whether the grant existed (and was revoked) or was
+// already unknown/revoked. Revocation under the wrong owner cannot
+// even name the grant (the store is owner-partitioned).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/abac/grants/{owner_tenant}/{grant_id} (the `DeleteGrant` operationId).
+func (c *ClientWithResponses) DeleteGrantWithResponse(ctx context.Context, ownerTenant string, grantId string, params *DeleteGrantParams, reqEditors ...RequestEditorFn) (*DeleteGrantHTTPResp, error) {
+	rsp, err := c.DeleteGrant(ctx, ownerTenant, grantId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteGrantHTTPResp(rsp)
+}
+
+// ListPolicyBindingsWithResponse List a tenant's live ABAC policy bindings.
+//
+// The exact binding set the enforcer composes for reads under
+// `tenant` — an operator inspection endpoint, not a per-tenant
+// self-service one.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/abac/policy-bindings/{tenant} (the `ListPolicyBindings` operationId).
+func (c *ClientWithResponses) ListPolicyBindingsWithResponse(ctx context.Context, tenant string, params *ListPolicyBindingsParams, reqEditors ...RequestEditorFn) (*ListPolicyBindingsHTTPResp, error) {
+	rsp, err := c.ListPolicyBindings(ctx, tenant, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPolicyBindingsHTTPResp(rsp)
+}
+
+// DeletePolicyBindingWithResponse Remove an ABAC policy binding.
+//
+// Idempotent — 204 whether or not a binding existed at `object_id`.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `DeletePolicyBinding` operationId).
+func (c *ClientWithResponses) DeletePolicyBindingWithResponse(ctx context.Context, tenant string, objectId uint64, params *DeletePolicyBindingParams, reqEditors ...RequestEditorFn) (*DeletePolicyBindingHTTPResp, error) {
+	rsp, err := c.DeletePolicyBinding(ctx, tenant, objectId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePolicyBindingHTTPResp(rsp)
+}
+
+// PutPolicyBindingWithBodyWithResponse Upsert an ABAC policy binding.
+//
+// Provisions (or replaces) the policy binding at `object_id` for
+// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+// `predicate_ref` row filter and a `field_mask`). Writes through the
+// same store the live enforcer reads: visible on the next request, no
+// restart. `Deny` wins during resolution; the default is deny.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `PutPolicyBinding` operationId).
+func (c *ClientWithResponses) PutPolicyBindingWithBodyWithResponse(ctx context.Context, tenant string, objectId uint64, params *PutPolicyBindingParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPolicyBindingHTTPResp, error) {
+	rsp, err := c.PutPolicyBindingWithBody(ctx, tenant, objectId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPolicyBindingHTTPResp(rsp)
+}
+
+// PutPolicyBindingWithResponse Upsert an ABAC policy binding.
+//
+// Provisions (or replaces) the policy binding at `object_id` for
+// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+// `predicate_ref` row filter and a `field_mask`). Writes through the
+// same store the live enforcer reads: visible on the next request, no
+// restart. `Deny` wins during resolution; the default is deny.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `PutPolicyBinding` operationId).
+func (c *ClientWithResponses) PutPolicyBindingWithResponse(ctx context.Context, tenant string, objectId uint64, params *PutPolicyBindingParams, body PutPolicyBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPolicyBindingHTTPResp, error) {
+	rsp, err := c.PutPolicyBinding(ctx, tenant, objectId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPolicyBindingHTTPResp(rsp)
+}
+
+// ListPredicateObjectsWithResponse List every registered ABAC predicate object.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/abac/predicate-objects (the `ListPredicateObjects` operationId).
+func (c *ClientWithResponses) ListPredicateObjectsWithResponse(ctx context.Context, params *ListPredicateObjectsParams, reqEditors ...RequestEditorFn) (*ListPredicateObjectsHTTPResp, error) {
+	rsp, err := c.ListPredicateObjects(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPredicateObjectsHTTPResp(rsp)
+}
+
+// DeletePredicateObjectWithResponse Revoke an ABAC predicate object.
+//
+// Idempotent (204). Subsequent resolves of `object_id` by any policy
+// binding fail-closed.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/abac/predicate-objects/{object_id} (the `DeletePredicateObject` operationId).
+func (c *ClientWithResponses) DeletePredicateObjectWithResponse(ctx context.Context, objectId uint64, params *DeletePredicateObjectParams, reqEditors ...RequestEditorFn) (*DeletePredicateObjectHTTPResp, error) {
+	rsp, err := c.DeletePredicateObject(ctx, objectId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePredicateObjectHTTPResp(rsp)
+}
+
+// GetPredicateObjectWithResponse Get one ABAC predicate object.
+//
+// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
+// resolves fail-closed (safe) regardless of this endpoint.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/abac/predicate-objects/{object_id} (the `GetPredicateObject` operationId).
+func (c *ClientWithResponses) GetPredicateObjectWithResponse(ctx context.Context, objectId uint64, params *GetPredicateObjectParams, reqEditors ...RequestEditorFn) (*GetPredicateObjectHTTPResp, error) {
+	rsp, err := c.GetPredicateObject(ctx, objectId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPredicateObjectHTTPResp(rsp)
+}
+
+// PutPredicateObjectWithBodyWithResponse Register (or replace) an ABAC predicate object.
+//
+// The request body IS the `FilterExpression` directly (no wrapper) —
+// a stored row-filter predicate that a policy binding's
+// `predicate_ref` can reference.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/abac/predicate-objects/{object_id} (the `PutPredicateObject` operationId).
+func (c *ClientWithResponses) PutPredicateObjectWithBodyWithResponse(ctx context.Context, objectId uint64, params *PutPredicateObjectParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPredicateObjectHTTPResp, error) {
+	rsp, err := c.PutPredicateObjectWithBody(ctx, objectId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPredicateObjectHTTPResp(rsp)
+}
+
+// PutPredicateObjectWithResponse Register (or replace) an ABAC predicate object.
+//
+// The request body IS the `FilterExpression` directly (no wrapper) —
+// a stored row-filter predicate that a policy binding's
+// `predicate_ref` can reference.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/abac/predicate-objects/{object_id} (the `PutPredicateObject` operationId).
+func (c *ClientWithResponses) PutPredicateObjectWithResponse(ctx context.Context, objectId uint64, params *PutPredicateObjectParams, body PutPredicateObjectJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPredicateObjectHTTPResp, error) {
+	rsp, err := c.PutPredicateObject(ctx, objectId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPredicateObjectHTTPResp(rsp)
+}
+
+// GetTenantPostureWithResponse Get a tenant's explicit ABAC grant-enforcement posture.
+//
+// 404 means the tenant has NO explicit record — meaningfully
+// different from `Off`, since an absent record means the tenant
+// inherits the process default, which may itself be `Enforce`.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/abac/tenant-posture/{tenant} (the `GetTenantPosture` operationId).
+func (c *ClientWithResponses) GetTenantPostureWithResponse(ctx context.Context, tenant string, params *GetTenantPostureParams, reqEditors ...RequestEditorFn) (*GetTenantPostureHTTPResp, error) {
+	rsp, err := c.GetTenantPosture(ctx, tenant, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTenantPostureHTTPResp(rsp)
+}
+
+// PutTenantPostureWithBodyWithResponse Set a tenant's ABAC grant-enforcement posture.
+//
+// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+// is how an operator breaks a customer's traffic.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
+func (c *ClientWithResponses) PutTenantPostureWithBodyWithResponse(ctx context.Context, tenant string, params *PutTenantPostureParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutTenantPostureHTTPResp, error) {
+	rsp, err := c.PutTenantPostureWithBody(ctx, tenant, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutTenantPostureHTTPResp(rsp)
+}
+
+// PutTenantPostureWithResponse Set a tenant's ABAC grant-enforcement posture.
+//
+// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+// is how an operator breaks a customer's traffic.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
+func (c *ClientWithResponses) PutTenantPostureWithResponse(ctx context.Context, tenant string, params *PutTenantPostureParams, body PutTenantPostureJSONRequestBody, reqEditors ...RequestEditorFn) (*PutTenantPostureHTTPResp, error) {
+	rsp, err := c.PutTenantPosture(ctx, tenant, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutTenantPostureHTTPResp(rsp)
+}
+
 // ListCollectionsWithResponse List collections.
 //
 // List all collections with pagination.
@@ -15597,6 +19385,729 @@ func ParseGetCapabilitiesHTTPResp(rsp *http.Response) (*GetCapabilitiesHTTPResp,
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListAttributeBindingsHTTPResp parses an HTTP response from a ListAttributeBindingsWithResponse call
+func ParseListAttributeBindingsHTTPResp(rsp *http.Response) (*ListAttributeBindingsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAttributeBindingsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacAttributeBindingsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostAttributeBindingHTTPResp parses an HTTP response from a PostAttributeBindingWithResponse call
+func ParsePostAttributeBindingHTTPResp(rsp *http.Response) (*PostAttributeBindingHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostAttributeBindingHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacAttributeBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostGrantHTTPResp parses an HTTP response from a PostGrantWithResponse call
+func ParsePostGrantHTTPResp(rsp *http.Response) (*PostGrantHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostGrantHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacPostGrantResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListGrantsHTTPResp parses an HTTP response from a ListGrantsWithResponse call
+func ParseListGrantsHTTPResp(rsp *http.Response) (*ListGrantsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListGrantsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []AbacGrantRecord
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteGrantHTTPResp parses an HTTP response from a DeleteGrantWithResponse call
+func ParseDeleteGrantHTTPResp(rsp *http.Response) (*DeleteGrantHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteGrantHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPolicyBindingsHTTPResp parses an HTTP response from a ListPolicyBindingsWithResponse call
+func ParseListPolicyBindingsHTTPResp(rsp *http.Response) (*ListPolicyBindingsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPolicyBindingsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacPolicyBindingsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePolicyBindingHTTPResp parses an HTTP response from a DeletePolicyBindingWithResponse call
+func ParseDeletePolicyBindingHTTPResp(rsp *http.Response) (*DeletePolicyBindingHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePolicyBindingHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutPolicyBindingHTTPResp parses an HTTP response from a PutPolicyBindingWithResponse call
+func ParsePutPolicyBindingHTTPResp(rsp *http.Response) (*PutPolicyBindingHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutPolicyBindingHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacPolicyBinding
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPredicateObjectsHTTPResp parses an HTTP response from a ListPredicateObjectsWithResponse call
+func ParseListPredicateObjectsHTTPResp(rsp *http.Response) (*ListPredicateObjectsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPredicateObjectsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacPredicateObjectsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePredicateObjectHTTPResp parses an HTTP response from a DeletePredicateObjectWithResponse call
+func ParseDeletePredicateObjectHTTPResp(rsp *http.Response) (*DeletePredicateObjectHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePredicateObjectHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPredicateObjectHTTPResp parses an HTTP response from a GetPredicateObjectWithResponse call
+func ParseGetPredicateObjectHTTPResp(rsp *http.Response) (*GetPredicateObjectHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPredicateObjectHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacPredicateObjectResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest AbacOperatorErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutPredicateObjectHTTPResp parses an HTTP response from a PutPredicateObjectWithResponse call
+func ParsePutPredicateObjectHTTPResp(rsp *http.Response) (*PutPredicateObjectHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutPredicateObjectHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacPredicateObjectResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetTenantPostureHTTPResp parses an HTTP response from a GetTenantPostureWithResponse call
+func ParseGetTenantPostureHTTPResp(rsp *http.Response) (*GetTenantPostureHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTenantPostureHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacTenantSecurityPosture
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest AbacOperatorErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutTenantPostureHTTPResp parses an HTTP response from a PutTenantPostureWithResponse call
+func ParsePutTenantPostureHTTPResp(rsp *http.Response) (*PutTenantPostureHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutTenantPostureHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AbacTenantSecurityPosture
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest AbacUnauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest AbacForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest AbacTenantUnresolved
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

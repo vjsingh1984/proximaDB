@@ -15,6 +15,7 @@ the OpenAPI contract therefore fails this test deterministically.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -34,11 +35,42 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 SPEC_PATH = REPO_ROOT / "docs" / "openapi" / "proximadb-openapi.yaml"
 
 
+class _Yaml12CoreBoolLoader(yaml.SafeLoader):
+    """SafeLoader restricted to YAML 1.2 core-schema booleans.
+
+    The published spec is emitted by serde_yaml (YAML 1.2), where bare
+    ``Off``/``On``/``Yes``/``No`` are plain strings. PyYAML resolves them per
+    YAML 1.1 as *booleans*, silently corrupting enum values (``Off`` -> False)
+    in whatever this gate validates. Same narrowing as the Go/Rust
+    down-converters (clients/{go,rust}/codegen/openapi_31_to_30.py).
+
+    Mirrors the loader patch from TD-SPECRAT-1 wave 3; keep the copies in sync.
+    """
+
+    pass
+
+
+_Yaml12CoreBoolLoader.yaml_implicit_resolvers = {
+    first_char: [
+        (
+            tag,
+            (
+                re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
+                if tag == "tag:yaml.org,2002:bool"
+                else regexp
+            ),
+        )
+        for tag, regexp in resolvers
+    ]
+    for first_char, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
+
 @pytest.fixture(scope="module")
 def openapi_spec() -> dict[str, Any]:
     assert SPEC_PATH.exists(), f"OpenAPI spec missing at {SPEC_PATH}"
     with SPEC_PATH.open() as f:
-        return yaml.safe_load(f)
+        return yaml.load(f, Loader=_Yaml12CoreBoolLoader)
 
 
 @pytest.fixture(scope="module")
@@ -95,6 +127,54 @@ def _request_body_schema(
 
 def _validate(schema: dict[str, Any], instance: Any, resolver: RefResolver) -> None:
     Draft202012Validator(schema, resolver=resolver).validate(instance)
+
+
+def test_abac_tenant_posture_response_requires_enforcement_mode(openapi_spec):
+    """The handler always serializes this non-optional Rust field."""
+    schema = openapi_spec["components"]["schemas"]["AbacTenantSecurityPosture"]
+    assert "grant_enforcement" in schema["required"]
+
+
+def test_yaml_12_loader_preserves_abac_enforcement_enum_scalars():
+    """YAML 1.1's bool aliases must not corrupt the published enum values."""
+    parsed = yaml.load(
+        "values: [Off, On, Yes, No, y, n, true, false]",
+        Loader=_Yaml12CoreBoolLoader,
+    )
+    assert parsed == {"values": ["Off", "On", "Yes", "No", "y", "n", True, False]}
+
+
+def test_abac_surface_has_the_complete_operation_set(openapi_spec):
+    expected_operations = {
+        "putPolicyBinding",
+        "deletePolicyBinding",
+        "listPolicyBindings",
+        "getTenantPosture",
+        "putTenantPosture",
+        "postGrant",
+        "listGrants",
+        "deleteGrant",
+        "listAttributeBindings",
+        "postAttributeBinding",
+        "listPredicateObjects",
+        "getPredicateObject",
+        "putPredicateObject",
+        "deletePredicateObject",
+    }
+    abac_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/abac/")
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in abac_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(abac_paths) == 9
+    assert actual_operations == expected_operations
 
 
 # ---------------------------------------------------------------------------

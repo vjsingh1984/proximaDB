@@ -1061,6 +1061,274 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/abac/policy-bindings/{tenant}/{object_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant: string;
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upsert an ABAC policy binding.
+         * @description Provisions (or replaces) the policy binding at `object_id` for
+         *     `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+         *     `predicate_ref` row filter and a `field_mask`). Writes through the
+         *     same store the live enforcer reads: visible on the next request, no
+         *     restart. `Deny` wins during resolution; the default is deny.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
+         */
+        put: operations["putPolicyBinding"];
+        post?: never;
+        /**
+         * Remove an ABAC policy binding.
+         * @description Idempotent — 204 whether or not a binding existed at `object_id`.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
+         */
+        delete: operations["deletePolicyBinding"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/abac/policy-bindings/{tenant}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List a tenant's live ABAC policy bindings.
+         * @description The exact binding set the enforcer composes for reads under
+         *     `tenant` — an operator inspection endpoint, not a per-tenant
+         *     self-service one.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
+         */
+        get: operations["listPolicyBindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/abac/tenant-posture/{tenant}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a tenant's explicit ABAC grant-enforcement posture.
+         * @description 404 means the tenant has NO explicit record — meaningfully
+         *     different from `Off`, since an absent record means the tenant
+         *     inherits the process default, which may itself be `Enforce`.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
+         */
+        get: operations["getTenantPosture"];
+        /**
+         * Set a tenant's ABAC grant-enforcement posture.
+         * @description Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+         *     zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+         *     is how an operator breaks a customer's traffic.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
+         */
+        put: operations["putTenantPosture"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/abac/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Provision an ADR-090 grant (cross-tenant entitlement).
+         * @description Grants are the entitlement layer: "this grantee may perform these
+         *     actions on this resource", where the grantee MAY be a foreign
+         *     tenant or a foreign tenant's user — the one place cross-tenant
+         *     sharing is expressible. Both the owner and the grantee tenant must
+         *     resolve (fail-closed on unminted tenants); the grantee subject is
+         *     deliberately NOT validated against the principal registry, so a
+         *     share may be provisioned before its recipient's first login.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the body `tenant` field governs.
+         */
+        post: operations["postGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/abac/grants/{owner_tenant}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner_tenant: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List an owner tenant's grants.
+         * @description Revoked grants stay listed with `revoked_at_ms` set — the audit
+         *     trail is the point, not a live-only view.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
+         */
+        get: operations["listGrants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/abac/grants/{owner_tenant}/{grant_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner_tenant: string;
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a grant.
+         * @description Idempotent — 204 whether the grant existed (and was revoked) or was
+         *     already unknown/revoked. Revocation under the wrong owner cannot
+         *     even name the grant (the store is owner-partitioned).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
+         */
+        delete: operations["deleteGrant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/abac/attribute-bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every ABAC attribute binding.
+         * @description Cluster-operator scope — every `(subject, tenant)` attribute
+         *     binding across every tenant, by design (cross-tenant visibility is
+         *     the point of an operator inspection endpoint).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — this is a cross-tenant operator view.
+         */
+        get: operations["listAttributeBindings"];
+        put?: never;
+        /**
+         * Upsert a subject's ABAC attribute binding.
+         * @description The authority half of ABAC — a `(subject, tenant)`-keyed,
+         *     multi-valued attribute set a policy's `predicate_ref` resolves
+         *     against. Writes through the same store the live enforcer reads.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the body `tenant` field governs.
+         */
+        post: operations["postAttributeBinding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/abac/predicate-objects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every registered ABAC predicate object.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
+         */
+        get: operations["listPredicateObjects"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/abac/predicate-objects/{object_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get one ABAC predicate object.
+         * @description 404 if unknown. Note a dangling `predicate_ref` on a policy binding
+         *     resolves fail-closed (safe) regardless of this endpoint.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
+         */
+        get: operations["getPredicateObject"];
+        /**
+         * Register (or replace) an ABAC predicate object.
+         * @description The request body IS the `FilterExpression` directly (no wrapper) —
+         *     a stored row-filter predicate that a policy binding's
+         *     `predicate_ref` can reference.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
+         */
+        put: operations["putPredicateObject"];
+        post?: never;
+        /**
+         * Revoke an ABAC predicate object.
+         * @description Idempotent (204). Subsequent resolves of `object_id` by any policy
+         *     binding fail-closed.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
+         */
+        delete: operations["deletePredicateObject"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2746,6 +3014,246 @@ export interface components {
             views: string[];
             final_query: string;
         };
+        /**
+         * @description The FLAT error shape every ABAC operator endpoint returns —
+         *     `{error, message, code}` where `error` is a short machine-readable
+         *     slug (e.g. `"tenant_unresolved"`). This is deliberately DISTINCT
+         *     from the canonical nested `ErrorResponse` (`{error: {type,
+         *     message, code}}`) used elsewhere in this spec; it is the actual
+         *     wire format of `abac_admin::OperatorErrorResponse`, carried
+         *     verbatim rather than normalized.
+         */
+        AbacOperatorErrorResponse: {
+            /** @description Machine-readable error slug. */
+            error: string;
+            message: string;
+            /** @description The HTTP status code, repeated in the body. */
+            code: number;
+        };
+        /**
+         * @description The catalog container a policy/grant governs — a stable-id-keyed,
+         *     externally-tagged Rust enum. Exactly one of `Namespace`, `Table`,
+         *     or `Column` is present.
+         */
+        AbacScope: {
+            Namespace: number;
+        } | {
+            /** Format: uint32 */
+            Table: number;
+        } | {
+            Column: components["schemas"]["AbacColumnScope"];
+        };
+        /** @description The `Column` variant payload of [AbacScope](#/components/schemas/AbacScope). */
+        AbacColumnScope: {
+            /** Format: uint32 */
+            table: number;
+            /** Format: uint32 */
+            column: number;
+        };
+        /**
+         * @description Permit or deny; deny wins during policy resolution.
+         * @enum {string}
+         */
+        AbacEffect: "Permit" | "Deny";
+        /**
+         * @description Column-level masking. `Forbid` rejects the read (existence must
+         *     not leak); `Null`/`Redact` are projection rewrites.
+         * @enum {string}
+         */
+        AbacFieldMask: "Null" | "Redact" | "Forbid";
+        /**
+         * @description An ABAC subject attribute value — an externally-tagged Rust enum;
+         *     exactly one of `Str`, `Int`, `Bool`, or `List` is present.
+         */
+        AbacAttrValue: {
+            Str: string;
+        } | {
+            /** Format: int64 */
+            Int: number;
+        } | {
+            Bool: boolean;
+        } | {
+            List: string[];
+        };
+        /** @enum {string} */
+        AbacComparisonOperator: "Equals" | "NotEquals" | "GreaterThan" | "GreaterThanOrEqual" | "LessThan" | "LessThanOrEqual" | "In" | "NotIn" | "Contains" | "StartsWith" | "EndsWith" | "Between" | "IsNull" | "IsNotNull" | "Like";
+        /**
+         * @description A predicate-object row filter — a RECURSIVE, externally-tagged Rust
+         *     enum (`proximadb_filter_expression::FilterExpression`). Modeled
+         *     here as free-form JSON (rather than a typed `oneOf`) because the
+         *     self-referential union is not representable in a form the SDK
+         *     codegen tooling can process (openapi-python-client cannot resolve
+         *     a `oneOf` branch whose `items` `$ref`s the union being defined);
+         *     this is the one schema in the ABAC surface where the generated
+         *     client falls back to an untyped object. Construct exactly one of:
+         *
+         *     * `{"Comparison": {"field": <string>, "operator": <one of
+         *       "Equals","NotEquals","GreaterThan","GreaterThanOrEqual",
+         *       "LessThan","LessThanOrEqual","In","NotIn","Contains",
+         *       "StartsWith","EndsWith","Between","IsNull","IsNotNull","Like">,
+         *       "value": <any JSON value>}}`
+         *     * `{"And": [<AbacFilterExpression>, ...]}`
+         *     * `{"Or": [<AbacFilterExpression>, ...]}`
+         *     * `{"Not": <AbacFilterExpression>}`
+         *
+         *     See [AbacComparisonOperator](#/components/schemas/AbacComparisonOperator)
+         *     for the authoritative operator enum (referenced here for docs only;
+         *     not structurally, for the same recursion reason).
+         */
+        AbacFilterExpression: {
+            [key: string]: unknown;
+        };
+        /** @description Body for `PUT /api/v2/abac/policy-bindings/{tenant}/{object_id}`. */
+        AbacPutPolicyBindingRequest: {
+            scope: components["schemas"]["AbacScope"];
+            effect: components["schemas"]["AbacEffect"];
+            /**
+             * Format: uint64
+             * @description The predicate object this binding carries (a row-level rule).
+             *     Omit for a predicate-free table-level grant. A dangling ref
+             *     resolves fail-closed at read time.
+             */
+            predicate_ref?: number | null;
+            field_mask?: components["schemas"]["AbacFieldMask"] | null;
+        };
+        AbacPolicyBinding: {
+            /** Format: uint64 */
+            object_id: number;
+            /** Format: uint64 */
+            tenant_stable_id: number;
+            scope: components["schemas"]["AbacScope"];
+            effect: components["schemas"]["AbacEffect"];
+            /** Format: uint64 */
+            predicate_ref?: number | null;
+            field_mask?: components["schemas"]["AbacFieldMask"] | null;
+        };
+        AbacPolicyBindingsResponse: {
+            tenant: string;
+            /** Format: uint64 */
+            tenant_stable_id: number;
+            /** Format: uint64 */
+            count: number;
+            bindings: components["schemas"]["AbacPolicyBinding"][];
+        };
+        /** @description Body for `POST /api/v2/abac/attribute-bindings`. */
+        AbacPostAttributeBindingRequest: {
+            subject_id: string;
+            /** @description Tenant display name; resolved to the stable u64 server-side. */
+            tenant: string;
+            attrs: {
+                [key: string]: components["schemas"]["AbacAttrValue"];
+            };
+        };
+        AbacAttributeBinding: {
+            subject_id: string;
+            /** Format: uint64 */
+            tenant_stable_id: number;
+            attrs: {
+                [key: string]: components["schemas"]["AbacAttrValue"];
+            };
+        };
+        AbacAttributeBindingsResponse: {
+            /** Format: uint64 */
+            count: number;
+            bindings: components["schemas"]["AbacAttributeBinding"][];
+        };
+        AbacPredicateObjectResponse: {
+            /** Format: uint64 */
+            object_id: number;
+            expression: components["schemas"]["AbacFilterExpression"];
+        };
+        AbacPredicateObjectsResponse: {
+            /** Format: uint64 */
+            count: number;
+            objects: components["schemas"]["AbacPredicateObjectResponse"][];
+        };
+        /**
+         * @description Who a grant admits — an externally-tagged Rust enum. Exactly one
+         *     of `Tenant` (every subject of that tenant) or `User` (one specific
+         *     subject, possibly of a foreign tenant) is present.
+         */
+        AbacGrantee: {
+            /** Format: uint64 */
+            Tenant: number;
+        } | {
+            User: components["schemas"]["AbacGranteeUser"];
+        };
+        /** @description The `User` variant payload of [AbacGrantee](#/components/schemas/AbacGrantee). */
+        AbacGranteeUser: {
+            /** Format: uint64 */
+            tenant_stable_id: number;
+            subject: string;
+        };
+        /**
+         * @description `Grant` is delegation authority (further re-grant); it is not
+         *     consulted for data access, only by the admin surface.
+         * @enum {string}
+         */
+        AbacGrantAction: "Read" | "Write" | "Ddl" | "Grant";
+        /**
+         * @description Grantee as provisioned over the wire: a tenant-wide share when
+         *     `subject` is omitted/empty, else one user of (possibly foreign)
+         *     `tenant`. Clients supply tenant/subject strings; stable ids are
+         *     resolved server-side.
+         */
+        AbacGrantGranteeRequest: {
+            tenant: string;
+            subject?: string | null;
+        };
+        /** @description Body for `POST /api/v2/abac/grants`. */
+        AbacPostGrantRequest: {
+            /** @description The resource-owner tenant (string; resolved and must be minted). */
+            owner_tenant: string;
+            resource: components["schemas"]["AbacScope"];
+            grantee: components["schemas"]["AbacGrantGranteeRequest"];
+            actions: components["schemas"]["AbacGrantAction"][];
+            /** Format: uint64 */
+            predicate_ref?: number | null;
+            field_mask?: components["schemas"]["AbacFieldMask"] | null;
+            /** Format: int64 */
+            expires_at_ms?: number | null;
+        };
+        AbacPostGrantResponse: {
+            grant_id: string;
+            /** Format: uint64 */
+            owner_tenant_stable_id: number;
+        };
+        AbacGrantRecord: {
+            grant_id: string;
+            /** Format: uint64 */
+            owner_tenant_stable_id: number;
+            resource: components["schemas"]["AbacScope"];
+            grantee: components["schemas"]["AbacGrantee"];
+            actions: components["schemas"]["AbacGrantAction"][];
+            /** Format: uint64 */
+            predicate_ref?: number | null;
+            field_mask?: components["schemas"]["AbacFieldMask"] | null;
+            /** Format: int64 */
+            created_at_ms: number;
+            /** Format: int64 */
+            expires_at_ms?: number | null;
+            /**
+             * Format: int64
+             * @description Set once revoked; the record stays listed (audit trail).
+             */
+            revoked_at_ms?: number | null;
+        };
+        /**
+         * @description Rollout is intended `Off` -> `Audit` (would-be-denials logged, read
+         *     still admitted) -> `Enforce` (no applicable grant denies).
+         * @enum {string}
+         */
+        AbacGrantEnforcement: "Off" | "Audit" | "Enforce";
+        AbacPutTenantPostureRequest: {
+            grant_enforcement: components["schemas"]["AbacGrantEnforcement"];
+        };
+        AbacTenantSecurityPosture: {
+            /** Format: uint64 */
+            tenant_stable_id: number;
+            grant_enforcement: components["schemas"]["AbacGrantEnforcement"];
+            /** Format: int64 */
+            updated_at_ms: number;
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -2773,6 +3281,60 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description Missing auth context (401) — the request reached the handler with
+         *     no resolved principal, indicating the auth middleware itself is
+         *     misconfigured for this deployment (`error: "missing_auth_context"`).
+         */
+        AbacUnauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AbacOperatorErrorResponse"];
+            };
+        };
+        /**
+         * @description Authenticated but lacks `SystemAdmin` or `ConfigureSystem`
+         *     (`error: "operator_permission_required"`) — this is a
+         *     cluster-scope operator surface; a tenant's own admin permissions
+         *     do not satisfy it.
+         */
+        AbacForbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AbacOperatorErrorResponse"];
+            };
+        };
+        /**
+         * @description The tenant path/body segment has no durable stable id and the
+         *     configured catalog could not mint one (`error:
+         *     "tenant_unresolved"`).
+         */
+        AbacTenantUnresolved: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AbacOperatorErrorResponse"];
+            };
+        };
+        /**
+         * @description ABAC is compiled in (`abac-policy`) but no durable store is open
+         *     for this process (no `data_dir`), or the underlying store returned
+         *     an error (`error: "abac_unavailable"` / `"grant_store_error"` /
+         *     `"posture_store_error"` / `"tenant_mint_failed"`).
+         */
+        AbacUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AbacOperatorErrorResponse"];
             };
         };
     };
@@ -4817,6 +5379,434 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+        };
+    };
+    putPolicyBinding: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                tenant: string;
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbacPutPolicyBindingRequest"];
+            };
+        };
+        responses: {
+            /** @description The stored binding (tenant string resolved to its stable id). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacPolicyBinding"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    deletePolicyBinding: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                tenant: string;
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Binding removed (or already absent). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    listPolicyBindings: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tenant's policy bindings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacPolicyBindingsResponse"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    getTenantPosture: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tenant's explicit posture. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacTenantSecurityPosture"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            /** @description No explicit posture record (tenant inherits the process default). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacOperatorErrorResponse"];
+                };
+            };
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    putTenantPosture: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbacPutTenantPostureRequest"];
+            };
+        };
+        responses: {
+            /** @description The tenant's updated posture. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacTenantSecurityPosture"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    postGrant: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbacPostGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description The provisioned grant id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacPostGrantResponse"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    listGrants: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                owner_tenant: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The owner's grants (including revoked/expired ones). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacGrantRecord"][];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    deleteGrant: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                owner_tenant: string;
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grant revoked (or already unknown/revoked). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    listAttributeBindings: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every attribute binding. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacAttributeBindingsResponse"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    postAttributeBinding: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbacPostAttributeBindingRequest"];
+            };
+        };
+        responses: {
+            /** @description The stored attribute binding. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacAttributeBinding"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    listPredicateObjects: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every predicate object. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacPredicateObjectsResponse"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    getPredicateObject: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The predicate object. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacPredicateObjectResponse"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            /** @description No predicate object registered under this object_id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacOperatorErrorResponse"];
+                };
+            };
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    putPredicateObject: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbacFilterExpression"];
+            };
+        };
+        responses: {
+            /** @description The registered predicate object. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbacPredicateObjectResponse"];
+                };
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            503: components["responses"]["AbacUnavailable"];
+        };
+    };
+    deletePredicateObject: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Predicate object revoked (or already absent). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AbacUnauthorized"];
+            403: components["responses"]["AbacForbidden"];
+            503: components["responses"]["AbacUnavailable"];
         };
     };
 }

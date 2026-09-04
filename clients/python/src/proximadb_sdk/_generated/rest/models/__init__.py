@@ -5,6 +5,42 @@
 # fails if this directory drifts from a fresh regeneration.
 """Contains all the data models used in inputs/outputs"""
 
+from .abac_attr_value_type_0 import AbacAttrValueType0
+from .abac_attr_value_type_1 import AbacAttrValueType1
+from .abac_attr_value_type_2 import AbacAttrValueType2
+from .abac_attr_value_type_3 import AbacAttrValueType3
+from .abac_attribute_binding import AbacAttributeBinding
+from .abac_attribute_binding_attrs import AbacAttributeBindingAttrs
+from .abac_attribute_bindings_response import AbacAttributeBindingsResponse
+from .abac_column_scope import AbacColumnScope
+from .abac_comparison_operator import AbacComparisonOperator
+from .abac_effect import AbacEffect
+from .abac_field_mask import AbacFieldMask
+from .abac_filter_expression import AbacFilterExpression
+from .abac_grant_action import AbacGrantAction
+from .abac_grant_enforcement import AbacGrantEnforcement
+from .abac_grant_grantee_request import AbacGrantGranteeRequest
+from .abac_grant_record import AbacGrantRecord
+from .abac_grantee_type_0 import AbacGranteeType0
+from .abac_grantee_type_1 import AbacGranteeType1
+from .abac_grantee_user import AbacGranteeUser
+from .abac_operator_error_response import AbacOperatorErrorResponse
+from .abac_policy_binding import AbacPolicyBinding
+from .abac_policy_bindings_response import AbacPolicyBindingsResponse
+from .abac_post_attribute_binding_request import AbacPostAttributeBindingRequest
+from .abac_post_attribute_binding_request_attrs import (
+    AbacPostAttributeBindingRequestAttrs,
+)
+from .abac_post_grant_request import AbacPostGrantRequest
+from .abac_post_grant_response import AbacPostGrantResponse
+from .abac_predicate_object_response import AbacPredicateObjectResponse
+from .abac_predicate_objects_response import AbacPredicateObjectsResponse
+from .abac_put_policy_binding_request import AbacPutPolicyBindingRequest
+from .abac_put_tenant_posture_request import AbacPutTenantPostureRequest
+from .abac_scope_type_0 import AbacScopeType0
+from .abac_scope_type_1 import AbacScopeType1
+from .abac_scope_type_2 import AbacScopeType2
+from .abac_tenant_security_posture import AbacTenantSecurityPosture
 from .append_model_evidence_mutation import AppendModelEvidenceMutation
 from .append_model_evidence_mutation_operation import (
     AppendModelEvidenceMutationOperation,
@@ -210,6 +246,40 @@ from .upsert_model_deployment_mutation_operation import (
 )
 
 __all__ = (
+    "AbacAttributeBinding",
+    "AbacAttributeBindingAttrs",
+    "AbacAttributeBindingsResponse",
+    "AbacAttrValueType0",
+    "AbacAttrValueType1",
+    "AbacAttrValueType2",
+    "AbacAttrValueType3",
+    "AbacColumnScope",
+    "AbacComparisonOperator",
+    "AbacEffect",
+    "AbacFieldMask",
+    "AbacFilterExpression",
+    "AbacGrantAction",
+    "AbacGranteeType0",
+    "AbacGranteeType1",
+    "AbacGranteeUser",
+    "AbacGrantEnforcement",
+    "AbacGrantGranteeRequest",
+    "AbacGrantRecord",
+    "AbacOperatorErrorResponse",
+    "AbacPolicyBinding",
+    "AbacPolicyBindingsResponse",
+    "AbacPostAttributeBindingRequest",
+    "AbacPostAttributeBindingRequestAttrs",
+    "AbacPostGrantRequest",
+    "AbacPostGrantResponse",
+    "AbacPredicateObjectResponse",
+    "AbacPredicateObjectsResponse",
+    "AbacPutPolicyBindingRequest",
+    "AbacPutTenantPostureRequest",
+    "AbacScopeType0",
+    "AbacScopeType1",
+    "AbacScopeType2",
+    "AbacTenantSecurityPosture",
     "AppendModelEvidenceMutation",
     "AppendModelEvidenceMutationOperation",
     "ApplyModelRegistryMutationRequest",

@@ -672,6 +672,384 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  # TD-SPECRAT-1 wave 3 (TD-ABAC control-plane / ADR-090 grants / TD-SEC-2
+  # posture — src/network/rest/canonical/abac_admin.rs). Every operation
+  # below:
+  #   * is an OPERATOR (cluster-scope SystemAdmin/ConfigureSystem) surface,
+  #     never the calling tenant's own data-plane scope;
+  #   * is registered ONLY in builds compiled with `--features abac-policy`
+  #     (default OFF, TD-FOUNDATION-3). A default build does not mount these
+  #     routes at all — an unmatched path returns a generic axum 404, not
+  #     the typed AbacOperatorErrorResponse documented below;
+  #   * returns AbacOperatorErrorResponse (a FLAT {error, message, code}
+  #     shape distinct from the canonical nested ErrorResponse envelope —
+  #     this is the handler's real wire format, carried verbatim, not
+  #     normalized into the canonical shape);
+  #   * resolves tenant path segments from a STRING to the durable stable
+  #     u64 server-side at write/read time (never accepts a raw stable id).
+  /api/v2/abac/policy-bindings/{tenant}/{object_id}:
+    parameters:
+      - name: tenant
+        in: path
+        required: true
+        schema: { type: string }
+      - name: object_id
+        in: path
+        required: true
+        schema: { type: integer, format: uint64 }
+    put:
+      tags: [ABAC]
+      operationId: putPolicyBinding
+      summary: Upsert an ABAC policy binding.
+      description: |
+        Provisions (or replaces) the policy binding at `object_id` for
+        `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+        `predicate_ref` row filter and a `field_mask`). Writes through the
+        same store the live enforcer reads: visible on the next request, no
+        restart. `Deny` wins during resolution; the default is deny.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the tenant path segment governs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbacPutPolicyBindingRequest"
+      responses:
+        "200":
+          description: The stored binding (tenant string resolved to its stable id).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacPolicyBinding"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+    delete:
+      tags: [ABAC]
+      operationId: deletePolicyBinding
+      summary: Remove an ABAC policy binding.
+      description: |
+        Idempotent — 204 whether or not a binding existed at `object_id`.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the tenant path segment governs.
+      responses:
+        "204": { description: Binding removed (or already absent). }
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+  /api/v2/abac/policy-bindings/{tenant}:
+    parameters:
+      - name: tenant
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [ABAC]
+      operationId: listPolicyBindings
+      summary: List a tenant's live ABAC policy bindings.
+      description: |
+        The exact binding set the enforcer composes for reads under
+        `tenant` — an operator inspection endpoint, not a per-tenant
+        self-service one.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the tenant path segment governs.
+      responses:
+        "200":
+          description: The tenant's policy bindings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacPolicyBindingsResponse"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+  /api/v2/abac/tenant-posture/{tenant}:
+    parameters:
+      - name: tenant
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [ABAC]
+      operationId: getTenantPosture
+      summary: Get a tenant's explicit ABAC grant-enforcement posture.
+      description: |
+        404 means the tenant has NO explicit record — meaningfully
+        different from `Off`, since an absent record means the tenant
+        inherits the process default, which may itself be `Enforce`.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the tenant path segment governs.
+      responses:
+        "200":
+          description: The tenant's explicit posture.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacTenantSecurityPosture"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "404":
+          description: No explicit posture record (tenant inherits the process default).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacOperatorErrorResponse"
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+    put:
+      tags: [ABAC]
+      operationId: putTenantPosture
+      summary: Set a tenant's ABAC grant-enforcement posture.
+      description: |
+        Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+        zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+        is how an operator breaks a customer's traffic.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the tenant path segment governs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbacPutTenantPostureRequest"
+      responses:
+        "200":
+          description: The tenant's updated posture.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacTenantSecurityPosture"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+  /api/v2/abac/grants:
+    post:
+      tags: [ABAC]
+      operationId: postGrant
+      summary: Provision an ADR-090 grant (cross-tenant entitlement).
+      description: |
+        Grants are the entitlement layer: "this grantee may perform these
+        actions on this resource", where the grantee MAY be a foreign
+        tenant or a foreign tenant's user — the one place cross-tenant
+        sharing is expressible. Both the owner and the grantee tenant must
+        resolve (fail-closed on unminted tenants); the grantee subject is
+        deliberately NOT validated against the principal registry, so a
+        share may be provisioned before its recipient's first login.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the body `tenant` field governs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbacPostGrantRequest"
+      responses:
+        "200":
+          description: The provisioned grant id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacPostGrantResponse"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+  /api/v2/abac/grants/{owner_tenant}:
+    parameters:
+      - name: owner_tenant
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [ABAC]
+      operationId: listGrants
+      summary: List an owner tenant's grants.
+      description: |
+        Revoked grants stay listed with `revoked_at_ms` set — the audit
+        trail is the point, not a live-only view.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the tenant path segment governs.
+      responses:
+        "200":
+          description: The owner's grants (including revoked/expired ones).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AbacGrantRecord"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+  /api/v2/abac/grants/{owner_tenant}/{grant_id}:
+    parameters:
+      - name: owner_tenant
+        in: path
+        required: true
+        schema: { type: string }
+      - name: grant_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [ABAC]
+      operationId: deleteGrant
+      summary: Revoke a grant.
+      description: |
+        Idempotent — 204 whether the grant existed (and was revoked) or was
+        already unknown/revoked. Revocation under the wrong owner cannot
+        even name the grant (the store is owner-partitioned).
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the tenant path segment governs.
+      responses:
+        "204": { description: Grant revoked (or already unknown/revoked). }
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+  /api/v2/abac/attribute-bindings:
+    get:
+      tags: [ABAC]
+      operationId: listAttributeBindings
+      summary: List every ABAC attribute binding.
+      description: |
+        Cluster-operator scope — every `(subject, tenant)` attribute
+        binding across every tenant, by design (cross-tenant visibility is
+        the point of an operator inspection endpoint).
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — this is a cross-tenant operator view.
+      responses:
+        "200":
+          description: Every attribute binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacAttributeBindingsResponse"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+    post:
+      tags: [ABAC]
+      operationId: postAttributeBinding
+      summary: Upsert a subject's ABAC attribute binding.
+      description: |
+        The authority half of ABAC — a `(subject, tenant)`-keyed,
+        multi-valued attribute set a policy's `predicate_ref` resolves
+        against. Writes through the same store the live enforcer reads.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — the body `tenant` field governs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbacPostAttributeBindingRequest"
+      responses:
+        "200":
+          description: The stored attribute binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacAttributeBinding"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "422": { $ref: "#/components/responses/AbacTenantUnresolved" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+  /api/v2/abac/predicate-objects:
+    get:
+      tags: [ABAC]
+      operationId: listPredicateObjects
+      summary: List every registered ABAC predicate object.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler (predicate objects are global, not tenant-scoped).
+      responses:
+        "200":
+          description: Every predicate object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacPredicateObjectsResponse"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+  /api/v2/abac/predicate-objects/{object_id}:
+    parameters:
+      - name: object_id
+        in: path
+        required: true
+        schema: { type: integer, format: uint64 }
+    get:
+      tags: [ABAC]
+      operationId: getPredicateObject
+      summary: Get one ABAC predicate object.
+      description: |
+        404 if unknown. Note a dangling `predicate_ref` on a policy binding
+        resolves fail-closed (safe) regardless of this endpoint.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler (predicate objects are global, not tenant-scoped).
+      responses:
+        "200":
+          description: The predicate object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacPredicateObjectResponse"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "404":
+          description: No predicate object registered under this object_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacOperatorErrorResponse"
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+    put:
+      tags: [ABAC]
+      operationId: putPredicateObject
+      summary: Register (or replace) an ABAC predicate object.
+      description: |
+        The request body IS the `FilterExpression` directly (no wrapper) —
+        a stored row-filter predicate that a policy binding's
+        `predicate_ref` can reference.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler (predicate objects are global, not tenant-scoped).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbacFilterExpression"
+      responses:
+        "200":
+          description: The registered predicate object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AbacPredicateObjectResponse"
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
+    delete:
+      tags: [ABAC]
+      operationId: deletePredicateObject
+      summary: Revoke an ABAC predicate object.
+      description: |
+        Idempotent (204). Subsequent resolves of `object_id` by any policy
+        binding fail-closed.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler (predicate objects are global, not tenant-scoped).
+      responses:
+        "204": { description: Predicate object revoked (or already absent). }
+        "401": { $ref: "#/components/responses/AbacUnauthorized" }
+        "403": { $ref: "#/components/responses/AbacForbidden" }
+        "503": { $ref: "#/components/responses/AbacUnavailable" }
 components:
   parameters:
     GraphId:
@@ -707,6 +1085,44 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    AbacUnauthorized:
+      description: |
+        Missing auth context (401) — the request reached the handler with
+        no resolved principal, indicating the auth middleware itself is
+        misconfigured for this deployment (`error: "missing_auth_context"`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AbacOperatorErrorResponse"
+    AbacForbidden:
+      description: |
+        Authenticated but lacks `SystemAdmin` or `ConfigureSystem`
+        (`error: "operator_permission_required"`) — this is a
+        cluster-scope operator surface; a tenant's own admin permissions
+        do not satisfy it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AbacOperatorErrorResponse"
+    AbacTenantUnresolved:
+      description: |
+        The tenant path/body segment has no durable stable id and the
+        configured catalog could not mint one (`error:
+        "tenant_unresolved"`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AbacOperatorErrorResponse"
+    AbacUnavailable:
+      description: |
+        ABAC is compiled in (`abac-policy`) but no durable store is open
+        for this process (no `data_dir`), or the underlying store returned
+        an error (`error: "abac_unavailable"` / `"grant_store_error"` /
+        `"posture_store_error"` / `"tenant_mint_failed"`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AbacOperatorErrorResponse"
   schemas:
     HealthResponse:
       type: object
@@ -1227,3 +1643,324 @@ components:
           items: { type: string }
         final_query:
           type: string
+    AbacOperatorErrorResponse:
+      type: object
+      required: [error, message, code]
+      description: |
+        The FLAT error shape every ABAC operator endpoint returns —
+        `{error, message, code}` where `error` is a short machine-readable
+        slug (e.g. `"tenant_unresolved"`). This is deliberately DISTINCT
+        from the canonical nested `ErrorResponse` (`{error: {type,
+        message, code}}`) used elsewhere in this spec; it is the actual
+        wire format of `abac_admin::OperatorErrorResponse`, carried
+        verbatim rather than normalized.
+      properties:
+        error:
+          type: string
+          description: Machine-readable error slug.
+        message:
+          type: string
+        code:
+          type: integer
+          description: The HTTP status code, repeated in the body.
+    AbacScope:
+      description: |
+        The catalog container a policy/grant governs — a stable-id-keyed,
+        externally-tagged Rust enum. Exactly one of `Namespace`, `Table`,
+        or `Column` is present.
+      oneOf:
+        - type: object
+          required: [Namespace]
+          properties:
+            Namespace: { type: integer, minimum: 0, maximum: 65535 }
+        - type: object
+          required: [Table]
+          properties:
+            Table: { type: integer, format: uint32 }
+        - type: object
+          required: [Column]
+          properties:
+            Column: { $ref: "#/components/schemas/AbacColumnScope" }
+    AbacColumnScope:
+      type: object
+      required: [table, column]
+      description: The `Column` variant payload of [AbacScope](#/components/schemas/AbacScope).
+      properties:
+        table: { type: integer, format: uint32 }
+        column: { type: integer, format: uint32 }
+    AbacEffect:
+      type: string
+      enum: [Permit, Deny]
+      description: Permit or deny; deny wins during policy resolution.
+    AbacFieldMask:
+      type: string
+      enum: ["Null", Redact, Forbid]
+      description: |
+        Column-level masking. `Forbid` rejects the read (existence must
+        not leak); `Null`/`Redact` are projection rewrites.
+    AbacAttrValue:
+      description: |
+        An ABAC subject attribute value — an externally-tagged Rust enum;
+        exactly one of `Str`, `Int`, `Bool`, or `List` is present.
+      oneOf:
+        - type: object
+          required: [Str]
+          properties: { Str: { type: string } }
+        - type: object
+          required: [Int]
+          properties: { Int: { type: integer, format: int64 } }
+        - type: object
+          required: [Bool]
+          properties: { Bool: { type: boolean } }
+        - type: object
+          required: [List]
+          properties:
+            List: { type: array, items: { type: string } }
+    AbacComparisonOperator:
+      type: string
+      enum:
+        - Equals
+        - NotEquals
+        - GreaterThan
+        - GreaterThanOrEqual
+        - LessThan
+        - LessThanOrEqual
+        - In
+        - NotIn
+        - Contains
+        - StartsWith
+        - EndsWith
+        - Between
+        - IsNull
+        - IsNotNull
+        - Like
+    AbacFilterExpression:
+      type: object
+      additionalProperties: true
+      description: |
+        A predicate-object row filter — a RECURSIVE, externally-tagged Rust
+        enum (`proximadb_filter_expression::FilterExpression`). Modeled
+        here as free-form JSON (rather than a typed `oneOf`) because the
+        self-referential union is not representable in a form the SDK
+        codegen tooling can process (openapi-python-client cannot resolve
+        a `oneOf` branch whose `items` `$ref`s the union being defined);
+        this is the one schema in the ABAC surface where the generated
+        client falls back to an untyped object. Construct exactly one of:
+
+        * `{"Comparison": {"field": <string>, "operator": <one of
+          "Equals","NotEquals","GreaterThan","GreaterThanOrEqual",
+          "LessThan","LessThanOrEqual","In","NotIn","Contains",
+          "StartsWith","EndsWith","Between","IsNull","IsNotNull","Like">,
+          "value": <any JSON value>}}`
+        * `{"And": [<AbacFilterExpression>, ...]}`
+        * `{"Or": [<AbacFilterExpression>, ...]}`
+        * `{"Not": <AbacFilterExpression>}`
+
+        See [AbacComparisonOperator](#/components/schemas/AbacComparisonOperator)
+        for the authoritative operator enum (referenced here for docs only;
+        not structurally, for the same recursion reason).
+    AbacPutPolicyBindingRequest:
+      type: object
+      required: [scope, effect]
+      description: Body for `PUT /api/v2/abac/policy-bindings/{tenant}/{object_id}`.
+      properties:
+        scope: { $ref: "#/components/schemas/AbacScope" }
+        effect: { $ref: "#/components/schemas/AbacEffect" }
+        predicate_ref:
+          type: [integer, "null"]
+          format: uint64
+          description: |
+            The predicate object this binding carries (a row-level rule).
+            Omit for a predicate-free table-level grant. A dangling ref
+            resolves fail-closed at read time.
+        field_mask:
+          oneOf:
+            - $ref: "#/components/schemas/AbacFieldMask"
+            - type: "null"
+    AbacPolicyBinding:
+      type: object
+      required: [object_id, tenant_stable_id, scope, effect]
+      properties:
+        object_id: { type: integer, format: uint64 }
+        tenant_stable_id: { type: integer, format: uint64 }
+        scope: { $ref: "#/components/schemas/AbacScope" }
+        effect: { $ref: "#/components/schemas/AbacEffect" }
+        predicate_ref:
+          type: [integer, "null"]
+          format: uint64
+        field_mask:
+          oneOf:
+            - $ref: "#/components/schemas/AbacFieldMask"
+            - type: "null"
+    AbacPolicyBindingsResponse:
+      type: object
+      required: [tenant, tenant_stable_id, count, bindings]
+      properties:
+        tenant: { type: string }
+        tenant_stable_id: { type: integer, format: uint64 }
+        count: { type: integer, format: uint64 }
+        bindings:
+          type: array
+          items: { $ref: "#/components/schemas/AbacPolicyBinding" }
+    AbacPostAttributeBindingRequest:
+      type: object
+      required: [subject_id, tenant, attrs]
+      description: Body for `POST /api/v2/abac/attribute-bindings`.
+      properties:
+        subject_id: { type: string }
+        tenant:
+          type: string
+          description: Tenant display name; resolved to the stable u64 server-side.
+        attrs:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/AbacAttrValue" }
+    AbacAttributeBinding:
+      type: object
+      required: [subject_id, tenant_stable_id, attrs]
+      properties:
+        subject_id: { type: string }
+        tenant_stable_id: { type: integer, format: uint64 }
+        attrs:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/AbacAttrValue" }
+    AbacAttributeBindingsResponse:
+      type: object
+      required: [count, bindings]
+      properties:
+        count: { type: integer, format: uint64 }
+        bindings:
+          type: array
+          items: { $ref: "#/components/schemas/AbacAttributeBinding" }
+    AbacPredicateObjectResponse:
+      type: object
+      required: [object_id, expression]
+      properties:
+        object_id: { type: integer, format: uint64 }
+        expression: { $ref: "#/components/schemas/AbacFilterExpression" }
+    AbacPredicateObjectsResponse:
+      type: object
+      required: [count, objects]
+      properties:
+        count: { type: integer, format: uint64 }
+        objects:
+          type: array
+          items: { $ref: "#/components/schemas/AbacPredicateObjectResponse" }
+    AbacGrantee:
+      description: |
+        Who a grant admits — an externally-tagged Rust enum. Exactly one
+        of `Tenant` (every subject of that tenant) or `User` (one specific
+        subject, possibly of a foreign tenant) is present.
+      oneOf:
+        - type: object
+          required: [Tenant]
+          properties:
+            Tenant: { type: integer, format: uint64 }
+        - type: object
+          required: [User]
+          properties:
+            User: { $ref: "#/components/schemas/AbacGranteeUser" }
+    AbacGranteeUser:
+      type: object
+      required: [tenant_stable_id, subject]
+      description: The `User` variant payload of [AbacGrantee](#/components/schemas/AbacGrantee).
+      properties:
+        tenant_stable_id: { type: integer, format: uint64 }
+        subject: { type: string }
+    AbacGrantAction:
+      type: string
+      enum: [Read, Write, Ddl, Grant]
+      description: |
+        `Grant` is delegation authority (further re-grant); it is not
+        consulted for data access, only by the admin surface.
+    AbacGrantGranteeRequest:
+      type: object
+      required: [tenant]
+      description: |
+        Grantee as provisioned over the wire: a tenant-wide share when
+        `subject` is omitted/empty, else one user of (possibly foreign)
+        `tenant`. Clients supply tenant/subject strings; stable ids are
+        resolved server-side.
+      properties:
+        tenant: { type: string }
+        subject:
+          type: [string, "null"]
+    AbacPostGrantRequest:
+      type: object
+      required: [owner_tenant, resource, grantee, actions]
+      description: Body for `POST /api/v2/abac/grants`.
+      properties:
+        owner_tenant:
+          type: string
+          description: The resource-owner tenant (string; resolved and must be minted).
+        resource: { $ref: "#/components/schemas/AbacScope" }
+        grantee: { $ref: "#/components/schemas/AbacGrantGranteeRequest" }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/AbacGrantAction" }
+          uniqueItems: true
+        predicate_ref:
+          type: [integer, "null"]
+          format: uint64
+        field_mask:
+          oneOf:
+            - $ref: "#/components/schemas/AbacFieldMask"
+            - type: "null"
+        expires_at_ms:
+          type: [integer, "null"]
+          format: int64
+    AbacPostGrantResponse:
+      type: object
+      required: [grant_id, owner_tenant_stable_id]
+      properties:
+        grant_id: { type: string }
+        owner_tenant_stable_id: { type: integer, format: uint64 }
+    AbacGrantRecord:
+      type: object
+      required:
+        - grant_id
+        - owner_tenant_stable_id
+        - resource
+        - grantee
+        - actions
+        - created_at_ms
+      properties:
+        grant_id: { type: string }
+        owner_tenant_stable_id: { type: integer, format: uint64 }
+        resource: { $ref: "#/components/schemas/AbacScope" }
+        grantee: { $ref: "#/components/schemas/AbacGrantee" }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/AbacGrantAction" }
+        predicate_ref:
+          type: [integer, "null"]
+          format: uint64
+        field_mask:
+          oneOf:
+            - $ref: "#/components/schemas/AbacFieldMask"
+            - type: "null"
+        created_at_ms: { type: integer, format: int64 }
+        expires_at_ms:
+          type: [integer, "null"]
+          format: int64
+        revoked_at_ms:
+          type: [integer, "null"]
+          format: int64
+          description: Set once revoked; the record stays listed (audit trail).
+    AbacGrantEnforcement:
+      type: string
+      enum: ["Off", Audit, Enforce]
+      description: |
+        Rollout is intended `Off` -> `Audit` (would-be-denials logged, read
+        still admitted) -> `Enforce` (no applicable grant denies).
+    AbacPutTenantPostureRequest:
+      type: object
+      required: [grant_enforcement]
+      properties:
+        grant_enforcement: { $ref: "#/components/schemas/AbacGrantEnforcement" }
+    AbacTenantSecurityPosture:
+      type: object
+      required: [tenant_stable_id, grant_enforcement, updated_at_ms]
+      properties:
+        tenant_stable_id: { type: integer, format: uint64 }
+        grant_enforcement: { $ref: "#/components/schemas/AbacGrantEnforcement" }
+        updated_at_ms: { type: integer, format: int64 }

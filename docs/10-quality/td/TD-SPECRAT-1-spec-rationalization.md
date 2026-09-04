@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Wave 1 landing
+| Status | Waves 1 (observability+nl) & 2 (stub-rule fixes, TD-SPECRAT-2) landed; wave 3 (ABAC) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -74,3 +74,61 @@ fabricated success):**
 * Trace ingest/query: wire the port or return 501 — then expose.
 * Waves 2+: area order per product priority (observability diagnostics,
   ABAC, collections admin, ...).
+
+== Wave 3: ABAC control-plane (this PR)
+
+**Exposed (9 paths / 14 operations; spec 45 → 54):** the complete
+`/api/v2/abac/*` operator surface from
+`src/network/rest/canonical/abac_admin.rs` — policy-bindings
+(PUT/DELETE/GET), attribute-bindings (POST/GET), predicate-objects
+(PUT/GET/DELETE/list), grants (POST/list/DELETE, ADR-090 entitlement
+layer), and tenant-posture (GET/PUT, TD-SEC-2).
+
+Rationalization notes specific to this surface:
+
+* **Real, not stubs:** every handler writes through the same durable
+  `FileSystem*` stores the live enforcer reads (hot-reload, no restart);
+  the handlers carry their own operator-gate + fail-closed test suite.
+* **Deployment gating documented, not hidden:** these routes are
+  registered only under `--features abac-policy` (default OFF); the spec
+  notes that a default build 404s the path rather than returning the
+  documented error shapes.
+* **Error envelope carried verbatim:** the surface's flat
+  `{error, message, code}` `OperatorErrorResponse` is documented as its own
+  schema (`AbacOperatorErrorResponse`) rather than being normalized into
+  the canonical nested `ErrorResponse` — what the handler emits is what
+  the spec says.
+* **`FilterExpression` modeled as free-form JSON** (`AbacFilterExpression`,
+  additionalProperties): the recursive externally-tagged union cannot be
+  expressed as a self-referential `oneOf` that openapi-python-client
+  processes (it drops the schema and every referencing endpoint); the
+  description documents the exact construction shape. This is the one
+  untyped model on the surface — recorded as a deliberate trade.
+
+**Tooling defect found and fixed (root cause, both generators):**
+`clients/{go,rust}/codegen/openapi_31_to_30.py` down-converts the
+serde_yaml-emitted (YAML 1.2) spec with PyYAML, which resolves scalars per
+YAML 1.1 — bare `Off` (and `On`/`Yes`/`No`/`y`/`n`) parsed as *booleans*.
+Effect: progenitor hard-failed ("type error unexpected value type") while
+oapi-codegen **silently emitted `False AbacGrantEnforcement = "false"`**
+into the committed Go SDK shape. Fix: a `SafeLoader` subclass restricted
+to the YAML 1.2 core-schema boolean set (`true|false` + case variants), so
+`Off` stays the string `"Off"` while real booleans parse unchanged. A
+full-spec scan confirmed only the two new ABAC enums (`Off`,
+`Null` — `Null` is quoted by serde_yaml itself) were ever exposed to the
+hazard, so no previously-committed generated code changes.
+
+**Adversarial-review ratchets:** the contract gate now asserts the exact
+9-path / 14-operation ABAC surface, verifies YAML 1.2 boolean handling, and
+requires `grant_enforcement` in `AbacTenantSecurityPosture`. The latter caught
+and corrected a response-schema mismatch: the Rust handler's non-optional
+field is always serialized, while the initial supplement allowed generated
+SDKs to treat it as absent.
+
+**Waves 4+ (candidate order, product-priority pending):** collections
+admin (affinity/pinning/primary-pod/branch-merge), catalog routing/explain,
+graph analytics (fusion-search, impact-analysis), timeseries, streaming
+ingest, prepared-SQL, external-collections, model-registries, events,
+progressive/rank search. Legacy `/api/v1` is excluded (retiring per
+SUPPORTED_SURFACE); Iceberg-REST is excluded (an external standard
+protocol consumed directly by Spark/Trino — not our OpenAPI→SDK loop).
