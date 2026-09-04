@@ -177,6 +177,59 @@ def test_abac_surface_has_the_complete_operation_set(openapi_spec):
     assert actual_operations == expected_operations
 
 
+def test_collections_admin_surface_has_the_complete_operation_set(openapi_spec):
+    """TD-SPECRAT-1 wave 4: pinning + affinity + primary-pod (6 paths / 10 ops)."""
+    expected_operations = {
+        "patchCollectionPin",
+        "getCollectionPin",
+        "listCollectionPins",
+        "getCollectionAffinity",
+        "deleteCollectionAffinity",
+        "listCollectionAffinities",
+        "getPrimaryPod",
+        "putPrimaryPod",
+        "deletePrimaryPod",
+        "listPrimaryPods",
+    }
+    admin_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/primary-pod")
+        or (
+            path.startswith("/api/v2/collections/")
+            and ("/pin" in path or "affinity" in path)
+        )
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in admin_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(admin_paths) == 6
+    assert actual_operations == expected_operations
+
+    # The enum vocabularies must match the Rust serde wire format exactly.
+    schemas = openapi_spec["components"]["schemas"]
+    assert schemas["PinTarget"]["enum"] == ["memory", "nvme_ssd", "cloud"]
+    assert schemas["AssignmentReason"]["enum"] == [
+        "create",
+        "operator",
+        "failover",
+        "rebalance",
+        "catalog_replay",
+    ]
+    assert schemas["PinResponse"]["properties"]["status"]["enum"] == [
+        "pinned",
+        "unpinned",
+    ]
+    assert schemas["PrimaryPodLookupResponse"]["properties"]["status"]["enum"] == [
+        "bound",
+        "unbound",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Capturing transport
 # ---------------------------------------------------------------------------

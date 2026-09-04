@@ -41,11 +41,18 @@ from .abac_scope_type_0 import AbacScopeType0
 from .abac_scope_type_1 import AbacScopeType1
 from .abac_scope_type_2 import AbacScopeType2
 from .abac_tenant_security_posture import AbacTenantSecurityPosture
+from .affinity_delete_response import AffinityDeleteResponse
+from .affinity_delete_response_status import AffinityDeleteResponseStatus
+from .affinity_list_item import AffinityListItem
+from .affinity_list_response import AffinityListResponse
+from .affinity_response import AffinityResponse
+from .affinity_response_status import AffinityResponseStatus
 from .append_model_evidence_mutation import AppendModelEvidenceMutation
 from .append_model_evidence_mutation_operation import (
     AppendModelEvidenceMutationOperation,
 )
 from .apply_model_registry_mutation_request import ApplyModelRegistryMutationRequest
+from .assignment_reason import AssignmentReason
 from .batch_create_edges_request import BatchCreateEdgesRequest
 from .batch_create_nodes_request import BatchCreateNodesRequest
 from .batch_edges_response import BatchEdgesResponse
@@ -188,7 +195,22 @@ from .node_input_properties import NodeInputProperties
 from .node_response import NodeResponse
 from .node_response_properties_type_0 import NodeResponsePropertiesType0
 from .observability_ingest_response import ObservabilityIngestResponse
+from .pin_list_item import PinListItem
+from .pin_list_response import PinListResponse
+from .pin_request import PinRequest
+from .pin_response import PinResponse
+from .pin_response_status import PinResponseStatus
+from .pin_target import PinTarget
 from .predicate_shortfall_wire import PredicateShortfallWire
+from .primary_pod import PrimaryPod
+from .primary_pod_assign_request import PrimaryPodAssignRequest
+from .primary_pod_assign_response import PrimaryPodAssignResponse
+from .primary_pod_list_item import PrimaryPodListItem
+from .primary_pod_list_response import PrimaryPodListResponse
+from .primary_pod_lookup_response import PrimaryPodLookupResponse
+from .primary_pod_lookup_response_status import PrimaryPodLookupResponseStatus
+from .primary_pod_operator_error_response import PrimaryPodOperatorErrorResponse
+from .primary_pod_unassign_response import PrimaryPodUnassignResponse
 from .probe_response import ProbeResponse
 from .proxima_record_input import ProximaRecordInput
 from .proxima_record_input_props_type_0 import ProximaRecordInputPropsType0
@@ -280,9 +302,16 @@ __all__ = (
     "AbacScopeType1",
     "AbacScopeType2",
     "AbacTenantSecurityPosture",
+    "AffinityDeleteResponse",
+    "AffinityDeleteResponseStatus",
+    "AffinityListItem",
+    "AffinityListResponse",
+    "AffinityResponse",
+    "AffinityResponseStatus",
     "AppendModelEvidenceMutation",
     "AppendModelEvidenceMutationOperation",
     "ApplyModelRegistryMutationRequest",
+    "AssignmentReason",
     "BatchCreateEdgesRequest",
     "BatchCreateNodesRequest",
     "BatchEdgesResponse",
@@ -411,7 +440,22 @@ __all__ = (
     "NodeResponse",
     "NodeResponsePropertiesType0",
     "ObservabilityIngestResponse",
+    "PinListItem",
+    "PinListResponse",
+    "PinRequest",
+    "PinResponse",
+    "PinResponseStatus",
+    "PinTarget",
     "PredicateShortfallWire",
+    "PrimaryPod",
+    "PrimaryPodAssignRequest",
+    "PrimaryPodAssignResponse",
+    "PrimaryPodListItem",
+    "PrimaryPodListResponse",
+    "PrimaryPodLookupResponse",
+    "PrimaryPodLookupResponseStatus",
+    "PrimaryPodOperatorErrorResponse",
+    "PrimaryPodUnassignResponse",
     "ProbeResponse",
     "ProximaRecordInput",
     "ProximaRecordInputPropsType0",

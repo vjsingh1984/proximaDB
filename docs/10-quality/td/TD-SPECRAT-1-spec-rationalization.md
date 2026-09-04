@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1 (observability+nl) & 2 (stub-rule fixes, TD-SPECRAT-2) landed; wave 3 (ABAC) landing
+| Status | Waves 1 (observability+nl), 2 (stub-rule fixes, TD-SPECRAT-2), 3 (ABAC) landed; wave 4 (collections admin) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -132,3 +132,73 @@ ingest, prepared-SQL, external-collections, model-registries, events,
 progressive/rank search. Legacy `/api/v1` is excluded (retiring per
 SUPPORTED_SURFACE); Iceberg-REST is excluded (an external standard
 protocol consumed directly by Spark/Trino — not our OpenAPI→SDK loop).
+
+== Wave 4: collections-admin operator surfaces (this PR)
+
+**Exposed (6 paths / 10 operations; spec 54 → 60):**
+
+* `/api/v2/collections/{collection_id}/pin` — PATCH set/clear + GET read
+  (`pinning.rs`; the pin registry, hot for the access-pattern engine).
+* `/api/v2/collections/pinning` — GET list.
+* `/api/v2/collections/{collection_id}/affinity` — GET inspect + DELETE
+  invalidate (`affinity.rs`; per-node cache-affinity registry).
+* `/api/v2/collections/affinity` — GET list.
+* `/api/v2/primary-pod/{tenant_id}/{collection_id}` — GET lookup + PUT
+  assign + DELETE unassign (`primary_pod.rs`; WAL write routing).
+* `/api/v2/primary-pod` — GET list.
+
+Rationalization notes specific to this surface:
+
+* **Real, not stubs:** every handler reads/writes the live registry the
+  router/policy engine consults; pinning matches the operator UX contract
+  (immediate ack, movement out of band); primary-pod PUT mirrors to the
+  catalog with mirror-failure-is-not-fatal semantics (documented in the
+  spec).
+* **Permission asymmetry documented, not hidden:** pinning + affinity
+  carry NO per-route permission gate — and the auth MIDDLEWARE itself
+  only attaches when REST auth is enabled + a security coordinator
+  exists (`src/network/rest/server.rs`; the shipped default config
+  disables it). In an auth-disabled deployment the six pinning/affinity
+  operations (cluster-wide, cross-tenant, state-mutating) are reachable
+  UNAUTHENTICATED, and every primary-pod call 401s (`missing_auth_context`)
+  because the operator gate has no context to read. Primary-pod is
+  operator-gated (`SystemAdmin` ∪ `ConfigureSystem`) inside each
+  handler. The spec says which is which per operation, and every
+  primary-pod op carries the "requires REST auth enabled" availability
+  note.
+* **Tenant scoping documented:** pinning/affinity registries are
+  collection-keyed and cross-tenant by construction; primary-pod is
+  `(tenant_id, collection_id)`-scoped via the path. Every op carries the
+  "X-Tenant-ID header not consulted" note (wave-3 convention).
+* **Internally-tagged responses** (`{"status": "pinned", ...}`) modeled
+  as a single object with a `status` enum + variant fields optional —
+  wire-exact and codegen-robust (unlike a `oneOf`, which openapi-python-
+  client cannot discriminate on an internal tag).
+* **Plain-text error body on the pin 400** (the axum `(StatusCode,
+  String)` path) documented as `text/plain` — not silently dressed up as
+  a JSON envelope.
+* **Stale doc comments corrected in-wave:** the handler doc comments in
+  `pinning.rs` / `affinity.rs` / `primary_pod.rs` said `/api/v1/...`
+  while the mount is `/api/v2/...` — corrected here (comment-only .rs
+  edits) since this PR's purpose is discoverability of exactly these
+  files.
+
+**Deliberately NOT exposed — deferred out of this wave:**
+
+* `POST /api/v2/collections/{collection_id}/branches/{branch}/merge`
+  (`merge_graph_branch`) — the original census lumped it into
+  "collections admin", but it is the GRAPH branch-merge (reads/filters
+  the canonical WAL, `merge_branches`, write-back) with a free-form
+  `serde_json::Value` response; it belongs to the graph-analytics wave
+  and needs its response schema rationalized first. It stays
+  unexposed until then — NOT silently done with this wave.
+
+**No behavioral code changes** — all handlers are live and mounted
+unconditionally (no feature gate, unlike ABAC wave 3); the only .rs
+diff is the doc-comment v1→v2 correction above.
+
+**Adversarial-review ratchets:** the contract gate now also asserts the
+exact 6-path / 10-operation collections-admin surface plus its enum
+vocabularies (`PinTarget`, `AssignmentReason`, the internally-tagged
+`status` enums) — `test_collections_admin_surface_has_the_complete_operation_set`,
+matching the wave-3 precedent.
