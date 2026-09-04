@@ -23,41 +23,9 @@ use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::metadata_types::MetadataValue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::sql_value;
 use crate::services::operations::vectors::VectorOperationsService;
 use std::collections::HashMap;
-
-/// Helper function to convert proto metadata Value to TypedMetadata value
-#[allow(dead_code)]
-fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
-    match value {
-        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-            MetadataValue::String(Arc::from(s.as_str()))
-        }
-        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => MetadataValue::Number(f),
-        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => MetadataValue::Bool(b),
-        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-            MetadataValue::Number(i as f64)
-        }
-        crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
-            MetadataValue::String(Arc::from("[binary]"))
-        }
-        // TD-PROTO-2: canonical JSON text, matching the data-model impl this
-        // function duplicates (MetadataValue feeds comparison).
-        crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b) => MetadataValue::String(
-            Arc::from(proximadb_data_model::ProximaValue::jsonb_to_json_lossy(&b).to_string()),
-        ),
-        crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => MetadataValue::Null,
-        crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
-            MetadataValue::String(Arc::from("[array]"))
-        }
-        crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
-            MetadataValue::String(Arc::from("[object]"))
-        }
-    }
-}
 
 /// Backwards-compat alias for [`ServicesStreamingSearchConfig`].
 pub type StreamingSearchConfig = ServicesStreamingSearchConfig;

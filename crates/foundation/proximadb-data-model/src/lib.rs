@@ -705,7 +705,14 @@ impl ProximaValue {
     /// placeholders on API-facing paths.
     pub fn jsonb_to_json_lossy(slice: &[u8]) -> serde_json::Value {
         Self::from_jsonb_slice(slice).unwrap_or_else(|_| {
-            serde_json::Value::String(slice.iter().map(|b| format!("{b:02x}")).collect::<String>())
+            // Single-allocation hex render (one String per byte via format!
+            // costs len() allocations for a malformed blob).
+            use std::fmt::Write as _;
+            let mut hex = String::with_capacity(slice.len() * 2);
+            for b in slice {
+                let _ = write!(hex, "{b:02x}");
+            }
+            serde_json::Value::String(hex)
         })
     }
 

@@ -273,7 +273,11 @@ impl DocumentBlock {
             }
             (Some(SqlVal::StringValue(sa)), Some(SqlVal::StringValue(sb))) => sa.cmp(sb) as i32,
             // TD-PROTO-2: JSONB sorts by canonical JSON rendering — the
-            // wildcard collapsed every JSONB key to "equal" (0).
+            // wildcard collapsed every JSONB key to "equal" (0). Byte
+            // equality is a free fast path (the writer's MessagePack
+            // encoding is deterministic); unequal bytes fall through to the
+            // canonical rendering.
+            (Some(SqlVal::JsonbValue(ja)), Some(SqlVal::JsonbValue(jb))) if ja == jb => 0,
             (Some(SqlVal::JsonbValue(ja)), Some(SqlVal::JsonbValue(jb))) => {
                 let ra = proximadb_data_model::ProximaValue::jsonb_to_json_lossy(ja).to_string();
                 let rb = proximadb_data_model::ProximaValue::jsonb_to_json_lossy(jb).to_string();

@@ -165,6 +165,26 @@ findings and dispositions:
      submessage); JSON (the live REST authority) is unaffected, pre-GA
      no-back-compat applies.
 
+**Round 3 (efficiency pass) — 6 findings, 4 fixed, 2 deferred with rationale:**
+
+* Fixed: `full_precision_rank` no longer round-trips metadata through
+  `serde_json` (the JSON detour decoded JSONB per candidate only to drop
+  object/array payloads on the floor at the back-conversion) — the typed map
+  is built directly from the proto items and the declared tag-9 variant
+  passes through untouched; the document-block comparator gained a
+  byte-equality fast path before the canonical JSON render; the malformed
+  fallback in `jsonb_to_json_lossy` renders hex in ONE allocation; the dead
+  `#[allow(dead_code)]` duplicate of the `MetadataValue` conversion in
+  `streaming.rs` was deleted instead of extended.
+* Deferred (accepted, tracked here): (a) `evaluate_filter_resolved` resolves
+  each `Comparison` node independently, so a two-predicate range filter on
+  one JSONB field decodes the same bytes twice per record — fixing it means
+  per-record field-resolution caching across the resolver API (SST/HELIX/
+  SWIFT callers); (b) the `SqlValue` → JSON arm still exists as ~7 local
+  `sql_value_to_json` copies that should collapse into one shared converter
+  beside `jsonb_to_json_lossy`. Both are behavior-neutral refactors — follow
+  the repo's measure-first rule before touching the filter hot path.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,
