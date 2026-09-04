@@ -52,14 +52,14 @@ Release and deployment assets should stay under `deploy/`. Avoid adding new root
 # Pull and run
 docker run -d \
   -p 5678:5678 \
-  -p 5679:5679 \
+  -p 5433:5433 \
   -v proximadb-data:/data \
   vjsingh1984/proximadb:latest
 
 # Or build locally
 cd deploy/docker
 docker build -t proximadb:local .
-docker run -d -p 5678:5678 -p 5679:5679 proximadb:local
+docker run -d -p 5678:5678 -p 5433:5433 proximadb:local
 ```
 
 ### Docker Compose (Development)
@@ -72,8 +72,8 @@ docker-compose up -d
 docker-compose --profile monitoring up -d
 
 # Access:
-# - REST API: http://localhost:5678
-# - gRPC: localhost:5679
+# - Unified REST + gRPC + Arrow Flight: localhost:5678
+# - PostgreSQL wire protocol: localhost:5433
 # - Prometheus: http://localhost:9090
 # - Grafana: http://localhost:3000
 ```
