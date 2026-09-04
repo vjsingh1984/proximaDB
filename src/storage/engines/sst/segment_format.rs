@@ -109,6 +109,7 @@ pub fn write_pax_segment(
     embedding_count: usize,
     quant: VectorQuant,
     target_block: Option<usize>,
+    destination_url: Option<&str>,
 ) -> Result<SegmentMeta> {
     write_pax_segment_with_f32_tier(
         path,
@@ -118,6 +119,7 @@ pub fn write_pax_segment(
         quant,
         false,
         target_block,
+        destination_url,
     )
 }
 
@@ -134,6 +136,7 @@ pub fn write_pax_segment_with_f32_tier(
     quant: VectorQuant,
     f32_tier: bool,
     target_block: Option<usize>,
+    destination_url: Option<&str>,
 ) -> Result<SegmentMeta> {
     write_pax_segment_full(
         path,
@@ -144,6 +147,7 @@ pub fn write_pax_segment_with_f32_tier(
         VectorQuant::Sq8,
         f32_tier,
         target_block,
+        destination_url,
     )
 }
 
@@ -160,6 +164,7 @@ pub fn write_pax_segment_full(
     rerank_quant: VectorQuant,
     f32_tier: bool,
     target_block: Option<usize>,
+    destination_url: Option<&str>,
 ) -> Result<SegmentMeta> {
     write_pax_segment_full_with_layout(
         path,
@@ -172,6 +177,7 @@ pub fn write_pax_segment_full(
         target_block,
         rg_layout_enabled(),
         &[],
+        destination_url,
     )
 }
 
@@ -190,6 +196,7 @@ pub fn write_pax_segment_full_with_layout(
     target_block: Option<usize>,
     rg_layout: bool,
     shred_spec: &[(String, i32)],
+    destination_url: Option<&str>,
 ) -> Result<SegmentMeta> {
     Ok(write_pax_segment_full_internal(
         path,
@@ -203,6 +210,7 @@ pub fn write_pax_segment_full_with_layout(
         rg_layout,
         None,
         shred_spec,
+        destination_url,
     )?
     .meta)
 }
@@ -222,6 +230,7 @@ pub fn write_pax_segment_full_with_cache_seed_and_layout(
     rg_layout: bool,
     include_sq8: bool,
     shred_spec: &[(String, i32)],
+    destination_url: Option<&str>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     write_pax_segment_full_internal(
         path,
@@ -235,6 +244,7 @@ pub fn write_pax_segment_full_with_cache_seed_and_layout(
         rg_layout,
         Some(include_sq8),
         shred_spec,
+        destination_url,
     )
 }
 
@@ -249,6 +259,7 @@ pub fn write_pax_segment_full_with_cache_seed(
     f32_tier: bool,
     target_block: Option<usize>,
     include_sq8: bool,
+    destination_url: Option<&str>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     write_pax_segment_full_with_cache_seed_and_layout(
         path,
@@ -262,6 +273,7 @@ pub fn write_pax_segment_full_with_cache_seed(
         rg_layout_enabled(),
         include_sq8,
         &[],
+        destination_url,
     )
 }
 
@@ -278,6 +290,7 @@ fn write_pax_segment_full_internal(
     rg_layout: bool,
     capture_sq8: Option<bool>,
     shred_spec: &[(String, i32)],
+    destination_url: Option<&str>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     // TD-RDSTRAT-5 S1 / TD-WLP-4 (default ON, kill-switch
     // `PROXIMADB_PAX_BLOCK_CLUSTER=0`): reorder records by the model-free
@@ -300,7 +313,11 @@ fn write_pax_segment_full_internal(
         // bootstrap, so clustering quality is measurable without the (unwired)
         // flush→compaction scheduler. Default OFF ⇒ bootstrap.
         if crate::storage::engines::sst::block_cluster::flush_cluster_ivf() {
-            crate::storage::engines::sst::block_cluster::cluster_plan_pca_ivf(records, 0)
+            crate::storage::engines::sst::block_cluster::cluster_plan_pca_ivf(
+                records,
+                0,
+                destination_url,
+            )
         } else if coalesced {
             crate::storage::engines::sst::block_cluster::cluster_order_sq8_morton(records, 0).map(
                 |order| crate::storage::engines::sst::block_cluster::ClusterPlan {
@@ -352,6 +369,7 @@ pub fn write_pax_segment_compacted(
     rerank_quant: VectorQuant,
     f32_tier: bool,
     target_block: Option<usize>,
+    destination_url: Option<&str>,
 ) -> Result<SegmentMeta> {
     // TD-PAXRG-1: compaction-side per-collection plumbing is a recorded
     // follow-up; the env gate governs compacted output for now.
@@ -367,6 +385,7 @@ pub fn write_pax_segment_compacted(
         rg_layout_enabled(),
         None,
         &[],
+        destination_url,
     )
     .map(|write| write.meta)
 }
@@ -382,6 +401,7 @@ pub fn write_pax_segment_compacted_with_cache_seed(
     f32_tier: bool,
     target_block: Option<usize>,
     include_sq8: bool,
+    destination_url: Option<&str>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     write_pax_segment_compacted_internal(
         path,
@@ -395,6 +415,7 @@ pub fn write_pax_segment_compacted_with_cache_seed(
         rg_layout_enabled(),
         Some(include_sq8),
         &[],
+        destination_url,
     )
 }
 
@@ -412,6 +433,7 @@ pub fn write_pax_segment_compacted_shredded(
     f32_tier: bool,
     target_block: Option<usize>,
     shred_spec: &[(String, i32)],
+    destination_url: Option<&str>,
 ) -> Result<SegmentMeta> {
     Ok(write_pax_segment_compacted_internal(
         path,
@@ -425,6 +447,7 @@ pub fn write_pax_segment_compacted_shredded(
         rg_layout_enabled(),
         None,
         shred_spec,
+        destination_url,
     )?
     .meta)
 }
@@ -448,6 +471,7 @@ pub fn write_pax_segment_compacted_with_cache_seed_shredded(
     target_block: Option<usize>,
     include_sq8: bool,
     shred_spec: &[(String, i32)],
+    destination_url: Option<&str>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     write_pax_segment_compacted_internal(
         path,
@@ -461,6 +485,7 @@ pub fn write_pax_segment_compacted_with_cache_seed_shredded(
         rg_layout_enabled(),
         Some(include_sq8),
         shred_spec,
+        destination_url,
     )
 }
 
@@ -477,6 +502,7 @@ fn write_pax_segment_compacted_internal(
     rg_layout: bool,
     capture_sq8: Option<bool>,
     shred_spec: &[(String, i32)],
+    destination_url: Option<&str>,
 ) -> Result<proximadb_storage_common::pax_block::PaxSegmentWrite> {
     use crate::storage::engines::sst::block_cluster;
     let cluster = crate::storage::engines::sst::block_cluster::block_cluster_enabled();
@@ -502,18 +528,23 @@ fn write_pax_segment_compacted_internal(
                 .then(|| shred_spec.first())
                 .flatten()
                 .and_then(|(tag, _)| {
-                    block_cluster::cluster_plan_ivf_probe_partitioned(records, 0, tag)
+                    block_cluster::cluster_plan_ivf_probe_partitioned(
+                        records,
+                        0,
+                        tag,
+                        destination_url,
+                    )
                 })
-                .or_else(|| block_cluster::cluster_plan_ivf_probe(records, 0));
+                .or_else(|| block_cluster::cluster_plan_ivf_probe(records, 0, destination_url));
             match two_level {
                 Some(tl) => {
                     probe_model = Some(tl.model);
                     Some(tl.plan)
                 }
-                None => block_cluster::cluster_plan_pca_ivf(records, 0),
+                None => block_cluster::cluster_plan_pca_ivf(records, 0, destination_url),
             }
         } else {
-            block_cluster::cluster_plan_pca_ivf(records, 0)
+            block_cluster::cluster_plan_pca_ivf(records, 0, destination_url)
         }
     } else {
         None
@@ -5870,7 +5901,8 @@ mod tests {
             rec("w1", 1_700_000_000_000_000_000, vec![1.0, 2.0, 3.0]),
             rec("w2", 1_700_000_000_000_000_001, vec![4.0, 5.0, 6.0]),
         ];
-        let meta = write_pax_segment(&path, &records, "col", 1, VectorQuant::Auto, None).unwrap();
+        let meta =
+            write_pax_segment(&path, &records, "col", 1, VectorQuant::Auto, None, None).unwrap();
         assert!(
             meta.block_count >= 1,
             "segment should have at least one block"
@@ -5902,7 +5934,7 @@ mod tests {
                 )
             })
             .collect();
-        write_pax_segment(&path, &records, "col", 1, VectorQuant::RawF32, None).unwrap();
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RawF32, None, None).unwrap();
 
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(SegmentFormat::detect(&bytes), SegmentFormat::Pax);
@@ -5965,7 +5997,16 @@ mod tests {
                 vec![13.0, 14.0, 15.0, 16.0],
             ),
         ];
-        write_pax_segment(&pax_path, &pax_records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        write_pax_segment(
+            &pax_path,
+            &pax_records,
+            "col",
+            1,
+            VectorQuant::RaBitQ,
+            None,
+            None,
+        )
+        .unwrap();
         let pax_bytes = std::fs::read(&pax_path).unwrap();
 
         // The two segments are detected as DIFFERENT formats (never mis-routed).
@@ -6015,7 +6056,7 @@ mod tests {
         let blocks_for = |target: Option<usize>| -> usize {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("geo.pax");
-            write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, target)
+            write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, target, None)
                 .unwrap()
                 .block_count as usize
         };
@@ -6075,6 +6116,7 @@ mod tests {
             VectorQuant::RaBitQ,
             true,
             Some(1024),
+            None,
         )
         .unwrap();
 
@@ -6140,6 +6182,7 @@ mod tests {
             VectorQuant::RaBitQ,
             true,
             None,
+            None,
         )
         .unwrap();
         write_pax_segment_with_f32_tier(
@@ -6149,6 +6192,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             false,
+            None,
             None,
         )
         .unwrap();
@@ -6187,6 +6231,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             false,
+            None,
             None,
         )
         .unwrap();
@@ -6290,7 +6335,8 @@ mod tests {
                 )
             })
             .collect();
-        let meta = write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        let meta =
+            write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None, None).unwrap();
         // Coalesced layout: a non-empty RaBitQ region pinned right after the
         // 40 B header-prefix.
         assert!(
@@ -6344,7 +6390,8 @@ mod tests {
                 })
                 .collect();
             let meta =
-                write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+                write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None, None)
+                    .unwrap();
             (std::fs::read(&path).unwrap(), meta.rabitq_len)
         };
 
@@ -6390,6 +6437,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             Some(8 * 1024),
+            None,
         )
         .unwrap();
         assert!(meta.block_count >= 1);
@@ -6483,6 +6531,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
         let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
@@ -6580,6 +6629,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
         let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
@@ -6696,6 +6746,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             Some(4 * 1024),
+            None,
         )
         .unwrap();
         let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
@@ -6902,6 +6953,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
         let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
@@ -7028,7 +7080,7 @@ mod tests {
             .collect();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("seg.pax");
-        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None).unwrap();
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ, None, None).unwrap();
         let seg_bytes = std::fs::metadata(&path).unwrap().len();
         let fs = LocalFileSystem::new_with_encryption(LocalConfig::default(), None)
             .await
@@ -7153,6 +7205,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
 
@@ -7258,6 +7311,7 @@ mod tests {
             1,
             VectorQuant::RaBitQ,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
 
@@ -7368,6 +7422,7 @@ mod tests {
             VectorQuant::Sq8,
             false,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
 
@@ -7488,6 +7543,7 @@ mod tests {
             VectorQuant::Sq8,
             false,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
 
@@ -7601,6 +7657,7 @@ mod tests {
             VectorQuant::Sq8,
             false,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
 
@@ -7755,6 +7812,7 @@ mod tests {
             VectorQuant::Sq8,
             false,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
 
@@ -7857,6 +7915,7 @@ mod tests {
             VectorQuant::Sq8,
             false,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
         let v3_bytes = std::fs::read(&v3_path).unwrap();
@@ -7888,6 +7947,7 @@ mod tests {
             VectorQuant::Sq8,
             false,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
         let h1 = SegmentHeaderPrefix::parse(&std::fs::read(&v1_path).unwrap()).unwrap();
@@ -8004,6 +8064,7 @@ mod tests {
             VectorQuant::Sq8,
             false,
             Some(16 * 1024),
+            None,
         )
         .unwrap();
         unsafe {
@@ -8405,6 +8466,7 @@ mod tests {
             false,
             Some(16 * 1024),
             &[("partition".to_string(), 100)],
+            None,
         )
         .unwrap();
         unsafe {
@@ -8646,6 +8708,7 @@ mod tests {
                 false,
                 Some(16 * 1024),
                 &[("partition".to_string(), 100)],
+                None,
             )
             .unwrap();
             unsafe {
@@ -8840,6 +8903,7 @@ mod tests {
                 false,
                 Some(8 * 1024),
                 &[("partition".to_string(), 100)],
+                None,
             )
             .unwrap();
             unsafe {
@@ -9086,6 +9150,7 @@ mod tests {
                 false,
                 Some(16 * 1024),
                 &[("partition".to_string(), 100)],
+                None,
             )
             .unwrap();
             unsafe {

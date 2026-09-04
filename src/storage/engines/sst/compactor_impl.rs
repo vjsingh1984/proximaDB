@@ -1008,6 +1008,7 @@ impl SstCompactor {
                     embedding_count,
                     proximadb_block_format::VectorQuant::RaBitQ,
                     None,
+                    None,
                 )?;
                 stats.records_written += records.len() as u64;
                 info!(

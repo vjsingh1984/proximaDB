@@ -450,8 +450,16 @@ mod tests {
         ];
         let tmp = tempfile::tempdir().expect("tempdir");
         let seg_path = tmp.path().join("seg.pax");
-        write_pax_segment(&seg_path, &records, "agg_col", 0, VectorQuant::Auto, None)
-            .expect("write_pax_segment");
+        write_pax_segment(
+            &seg_path,
+            &records,
+            "agg_col",
+            0,
+            VectorQuant::Auto,
+            None,
+            None,
+        )
+        .expect("write_pax_segment");
 
         // When: the segment directory is registered as a DataFusion table via
         // the real provider entry point, then queried with GROUP BY.
@@ -576,6 +584,7 @@ mod tests {
             0,
             VectorQuant::Auto,
             Some(400),
+            None,
         )
         .expect("write_pax_segment");
 
@@ -765,6 +774,7 @@ mod tests {
             0,
             VectorQuant::Auto,
             Some(64_000),
+            None,
         )
         .expect("write_pax_segment");
 
@@ -1358,8 +1368,16 @@ mod tests {
                     }
                 })
                 .collect();
-            write_pax_segment(path, &records, "amp_col", 0, VectorQuant::RaBitQ, Some(400))
-                .expect("write segment (rg flag via env for v4)");
+            write_pax_segment(
+                path,
+                &records,
+                "amp_col",
+                0,
+                VectorQuant::RaBitQ,
+                Some(400),
+                None,
+            )
+            .expect("write segment (rg flag via env for v4)");
             let _ = rg;
         };
 

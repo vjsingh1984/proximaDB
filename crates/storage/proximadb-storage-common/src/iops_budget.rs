@@ -293,9 +293,11 @@ fn prefix_matches(path: &str, prefix: &str) -> bool {
 /// by both is the fix), and so the unknown-destination case is explicit in the
 /// signature instead of hidden inside a hard-coded constant.
 ///
-/// `None` yields the `CLOUD` target, which is what the write path used
-/// implicitly before. Closing TD-IVF-4 fully means plumbing the destination URL
-/// from the flush/compaction caller — which does know it — down to clustering.
+/// TD-IVF-4 is closed (TD-IOBUDGET-2 batch): the compaction/flush callers pass
+/// their real destination (`task.output_file` / the collection storage URL), so
+/// writer geometry resolves the same per-location budget the reader uses.
+/// `None` remains the explicit fallback for callers that genuinely lack a
+/// destination (the compactor_impl silent local variant, unit tests).
 pub fn write_target_block_bytes(destination_url: Option<&str>) -> u64 {
     match destination_url {
         Some(url) => IopsBudget::for_path(url).target_block_bytes(),

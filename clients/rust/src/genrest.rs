@@ -468,6 +468,68 @@ pub mod types {
             Default::default()
         }
     }
+    ///`BulkLogIngestRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "logs"
+    ///  ],
+    ///  "properties": {
+    ///    "logs": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/LogEntryInput"
+    ///      },
+    ///      "minItems": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct BulkLogIngestRequest {
+        pub logs: ::std::vec::Vec<LogEntryInput>,
+    }
+    impl BulkLogIngestRequest {
+        pub fn builder() -> builder::BulkLogIngestRequest {
+            Default::default()
+        }
+    }
+    ///`BulkMetricIngestRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "metrics"
+    ///  ],
+    ///  "properties": {
+    ///    "metrics": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/MetricSampleInput"
+    ///      },
+    ///      "minItems": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct BulkMetricIngestRequest {
+        pub metrics: ::std::vec::Vec<MetricSampleInput>,
+    }
+    impl BulkMetricIngestRequest {
+        pub fn builder() -> builder::BulkMetricIngestRequest {
+            Default::default()
+        }
+    }
     ///`CapabilitiesResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -2677,6 +2739,157 @@ pub mod types {
     }
     impl CreateNodeRequest {
         pub fn builder() -> builder::CreateNodeRequest {
+            Default::default()
+        }
+    }
+    /// Body for `POST /api/v2/observability/namespaces`. Retention days
+    /// default to hot=1, warm=7, cold=30.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Body for `POST /api/v2/observability/namespaces`. Retention days\ndefault to hot=1, warm=7, cold=30.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name"
+    ///  ],
+    ///  "properties": {
+    ///    "cold_retention_days": {
+    ///      "default": 30,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "hot_retention_days": {
+    ///      "default": 1,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "name": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "warm_retention_days": {
+    ///      "default": 7,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CreateObservabilityNamespaceRequest {
+        #[serde(default = "defaults::default_u64::<u32, 30>")]
+        pub cold_retention_days: u32,
+        #[serde(default = "defaults::default_u64::<u32, 1>")]
+        pub hot_retention_days: u32,
+        pub name: CreateObservabilityNamespaceRequestName,
+        #[serde(default = "defaults::default_u64::<u32, 7>")]
+        pub warm_retention_days: u32,
+    }
+    impl CreateObservabilityNamespaceRequest {
+        pub fn builder() -> builder::CreateObservabilityNamespaceRequest {
+            Default::default()
+        }
+    }
+    ///`CreateObservabilityNamespaceRequestName`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct CreateObservabilityNamespaceRequestName(::std::string::String);
+    impl ::std::ops::Deref for CreateObservabilityNamespaceRequestName {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<CreateObservabilityNamespaceRequestName> for ::std::string::String {
+        fn from(value: CreateObservabilityNamespaceRequestName) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for CreateObservabilityNamespaceRequestName {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for CreateObservabilityNamespaceRequestName {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for CreateObservabilityNamespaceRequestName {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for CreateObservabilityNamespaceRequestName {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for CreateObservabilityNamespaceRequestName {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`CreateObservabilityNamespaceResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "namespace",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "namespace": {
+    ///      "type": "string"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CreateObservabilityNamespaceResponse {
+        pub namespace: ::std::string::String,
+        pub success: bool,
+    }
+    impl CreateObservabilityNamespaceResponse {
+        pub fn builder() -> builder::CreateObservabilityNamespaceResponse {
             Default::default()
         }
     }
@@ -5581,6 +5794,448 @@ pub mod types {
             Default::default()
         }
     }
+    /// A single log entry for ingestion. `severity` defaults to `info`;
+    /// `fields` carries arbitrary structured attributes.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "A single log entry for ingestion. `severity` defaults to `info`;\n`fields` carries arbitrary structured attributes.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "message"
+    ///  ],
+    ///  "properties": {
+    ///    "fields": {
+    ///      "type": "object",
+    ///      "additionalProperties": true
+    ///    },
+    ///    "message": {
+    ///      "type": "string"
+    ///    },
+    ///    "service": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "severity": {
+    ///      "description": "One of: trace, debug, info, warn, error, fatal (case-insensitive).",
+    ///      "default": "info",
+    ///      "type": "string"
+    ///    },
+    ///    "source": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "timestamp_ns": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct LogEntryInput {
+        #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+        pub fields: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        pub message: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub service: ::std::option::Option<::std::string::String>,
+        ///One of: trace, debug, info, warn, error, fatal (case-insensitive).
+        #[serde(default = "defaults::log_entry_input_severity")]
+        pub severity: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub timestamp_ns: ::std::option::Option<i64>,
+    }
+    impl LogEntryInput {
+        pub fn builder() -> builder::LogEntryInput {
+            Default::default()
+        }
+    }
+    ///`MetricAggregationInput`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "end_time_ns",
+    ///    "metric_name",
+    ///    "start_time_ns"
+    ///  ],
+    ///  "properties": {
+    ///    "aggregation": {
+    ///      "description": "min, max, avg, sum, or count.",
+    ///      "default": "avg",
+    ///      "type": "string"
+    ///    },
+    ///    "end_time_ns": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "group_by": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "labels": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "metric_name": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "start_time_ns": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "step_seconds": {
+    ///      "default": 60,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct MetricAggregationInput {
+        ///min, max, avg, sum, or count.
+        #[serde(default = "defaults::metric_aggregation_input_aggregation")]
+        pub aggregation: ::std::string::String,
+        pub end_time_ns: i64,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub group_by: ::std::vec::Vec<::std::string::String>,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub labels: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        pub metric_name: MetricAggregationInputMetricName,
+        pub start_time_ns: i64,
+        #[serde(default = "defaults::default_u64::<u32, 60>")]
+        pub step_seconds: u32,
+    }
+    impl MetricAggregationInput {
+        pub fn builder() -> builder::MetricAggregationInput {
+            Default::default()
+        }
+    }
+    ///`MetricAggregationInputMetricName`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct MetricAggregationInputMetricName(::std::string::String);
+    impl ::std::ops::Deref for MetricAggregationInputMetricName {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<MetricAggregationInputMetricName> for ::std::string::String {
+        fn from(value: MetricAggregationInputMetricName) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for MetricAggregationInputMetricName {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for MetricAggregationInputMetricName {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for MetricAggregationInputMetricName {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for MetricAggregationInputMetricName {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for MetricAggregationInputMetricName {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`MetricAggregationResult`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query_time_ms",
+    ///    "series"
+    ///  ],
+    ///  "properties": {
+    ///    "query_time_ms": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "series": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/MetricTimeSeries"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct MetricAggregationResult {
+        pub query_time_ms: u64,
+        pub series: ::std::vec::Vec<MetricTimeSeries>,
+    }
+    impl MetricAggregationResult {
+        pub fn builder() -> builder::MetricAggregationResult {
+            Default::default()
+        }
+    }
+    ///`MetricDataPoint`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "timestamp_ns",
+    ///    "value"
+    ///  ],
+    ///  "properties": {
+    ///    "timestamp_ns": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "value": {
+    ///      "type": "number",
+    ///      "format": "double"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct MetricDataPoint {
+        pub timestamp_ns: i64,
+        pub value: f64,
+    }
+    impl MetricDataPoint {
+        pub fn builder() -> builder::MetricDataPoint {
+            Default::default()
+        }
+    }
+    ///`MetricSampleInput`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name",
+    ///    "value"
+    ///  ],
+    ///  "properties": {
+    ///    "labels": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "name": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    },
+    ///    "timestamp_ns": {
+    ///      "description": "Defaults to server receive time.",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    },
+    ///    "value": {
+    ///      "type": "number",
+    ///      "format": "double"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct MetricSampleInput {
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub labels: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        pub name: MetricSampleInputName,
+        ///Defaults to server receive time.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub timestamp_ns: ::std::option::Option<i64>,
+        pub value: f64,
+    }
+    impl MetricSampleInput {
+        pub fn builder() -> builder::MetricSampleInput {
+            Default::default()
+        }
+    }
+    ///`MetricSampleInputName`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct MetricSampleInputName(::std::string::String);
+    impl ::std::ops::Deref for MetricSampleInputName {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<MetricSampleInputName> for ::std::string::String {
+        fn from(value: MetricSampleInputName) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for MetricSampleInputName {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for MetricSampleInputName {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for MetricSampleInputName {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for MetricSampleInputName {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for MetricSampleInputName {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`MetricTimeSeries`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "labels",
+    ///    "points"
+    ///  ],
+    ///  "properties": {
+    ///    "labels": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "points": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/MetricDataPoint"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct MetricTimeSeries {
+        pub labels: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        pub points: ::std::vec::Vec<MetricDataPoint>,
+    }
+    impl MetricTimeSeries {
+        pub fn builder() -> builder::MetricTimeSeries {
+            Default::default()
+        }
+    }
     /// REST uses a decimal string for stable catalog IDs so JavaScript clients do
     /// not lose precision. gRPC exposes the same value as `uint64`.
     ///
@@ -5617,6 +6272,145 @@ pub mod types {
     }
     impl ModelRegistryRecordResponse {
         pub fn builder() -> builder::ModelRegistryRecordResponse {
+            Default::default()
+        }
+    }
+    /// Body for `POST /api/v2/nl/translate`.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Body for `POST /api/v2/nl/translate`.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "query": {
+    ///      "type": "string",
+    ///      "minLength": 1
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct NlTranslateRequest {
+        pub query: NlTranslateRequestQuery,
+    }
+    impl NlTranslateRequest {
+        pub fn builder() -> builder::NlTranslateRequest {
+            Default::default()
+        }
+    }
+    ///`NlTranslateRequestQuery`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct NlTranslateRequestQuery(::std::string::String);
+    impl ::std::ops::Deref for NlTranslateRequestQuery {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<NlTranslateRequestQuery> for ::std::string::String {
+        fn from(value: NlTranslateRequestQuery) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for NlTranslateRequestQuery {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for NlTranslateRequestQuery {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for NlTranslateRequestQuery {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for NlTranslateRequestQuery {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for NlTranslateRequestQuery {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    /// Model-generated translation output — the final query string is not
+    /// validated SQL/AQL; validate before executing it.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Model-generated translation output — the final query string is not\nvalidated SQL/AQL; validate before executing it.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "final_query",
+    ///    "normalized_query",
+    ///    "views"
+    ///  ],
+    ///  "properties": {
+    ///    "final_query": {
+    ///      "type": "string"
+    ///    },
+    ///    "normalized_query": {
+    ///      "type": "string"
+    ///    },
+    ///    "views": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct NlTranslateResult {
+        pub final_query: ::std::string::String,
+        pub normalized_query: ::std::string::String,
+        pub views: ::std::vec::Vec<::std::string::String>,
+    }
+    impl NlTranslateResult {
+        pub fn builder() -> builder::NlTranslateResult {
             Default::default()
         }
     }
@@ -5783,6 +6577,45 @@ pub mod types {
     }
     impl NodeResponse {
         pub fn builder() -> builder::NodeResponse {
+            Default::default()
+        }
+    }
+    ///`ObservabilityIngestResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "failed",
+    ///    "ingested",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "failed": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "ingested": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ObservabilityIngestResponse {
+        pub failed: u64,
+        pub ingested: u64,
+        pub success: bool,
+    }
+    impl ObservabilityIngestResponse {
+        pub fn builder() -> builder::ObservabilityIngestResponse {
             Default::default()
         }
     }
@@ -8556,6 +9389,88 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct BulkLogIngestRequest {
+            logs:
+                ::std::result::Result<::std::vec::Vec<super::LogEntryInput>, ::std::string::String>,
+        }
+        impl ::std::default::Default for BulkLogIngestRequest {
+            fn default() -> Self {
+                Self {
+                    logs: Err("no value supplied for logs".to_string()),
+                }
+            }
+        }
+        impl BulkLogIngestRequest {
+            pub fn logs<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::LogEntryInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.logs = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for logs: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<BulkLogIngestRequest> for super::BulkLogIngestRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: BulkLogIngestRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self { logs: value.logs? })
+            }
+        }
+        impl ::std::convert::From<super::BulkLogIngestRequest> for BulkLogIngestRequest {
+            fn from(value: super::BulkLogIngestRequest) -> Self {
+                Self {
+                    logs: Ok(value.logs),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct BulkMetricIngestRequest {
+            metrics: ::std::result::Result<
+                ::std::vec::Vec<super::MetricSampleInput>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for BulkMetricIngestRequest {
+            fn default() -> Self {
+                Self {
+                    metrics: Err("no value supplied for metrics".to_string()),
+                }
+            }
+        }
+        impl BulkMetricIngestRequest {
+            pub fn metrics<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::MetricSampleInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metrics = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metrics: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<BulkMetricIngestRequest> for super::BulkMetricIngestRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: BulkMetricIngestRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    metrics: value.metrics?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::BulkMetricIngestRequest> for BulkMetricIngestRequest {
+            fn from(value: super::BulkMetricIngestRequest) -> Self {
+                Self {
+                    metrics: Ok(value.metrics),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct CapabilitiesResponse {
             api_version: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
@@ -11083,6 +11998,153 @@ pub mod types {
             fn from(value: super::CreateNodeRequest) -> Self {
                 Self {
                     node: Ok(value.node),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CreateObservabilityNamespaceRequest {
+            cold_retention_days: ::std::result::Result<u32, ::std::string::String>,
+            hot_retention_days: ::std::result::Result<u32, ::std::string::String>,
+            name: ::std::result::Result<
+                super::CreateObservabilityNamespaceRequestName,
+                ::std::string::String,
+            >,
+            warm_retention_days: ::std::result::Result<u32, ::std::string::String>,
+        }
+        impl ::std::default::Default for CreateObservabilityNamespaceRequest {
+            fn default() -> Self {
+                Self {
+                    cold_retention_days: Ok(super::defaults::default_u64::<u32, 30>()),
+                    hot_retention_days: Ok(super::defaults::default_u64::<u32, 1>()),
+                    name: Err("no value supplied for name".to_string()),
+                    warm_retention_days: Ok(super::defaults::default_u64::<u32, 7>()),
+                }
+            }
+        }
+        impl CreateObservabilityNamespaceRequest {
+            pub fn cold_retention_days<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.cold_retention_days = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for cold_retention_days: {e}")
+                });
+                self
+            }
+            pub fn hot_retention_days<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.hot_retention_days = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for hot_retention_days: {e}")
+                });
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::CreateObservabilityNamespaceRequestName>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn warm_retention_days<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.warm_retention_days = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for warm_retention_days: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CreateObservabilityNamespaceRequest>
+            for super::CreateObservabilityNamespaceRequest
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CreateObservabilityNamespaceRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    cold_retention_days: value.cold_retention_days?,
+                    hot_retention_days: value.hot_retention_days?,
+                    name: value.name?,
+                    warm_retention_days: value.warm_retention_days?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CreateObservabilityNamespaceRequest>
+            for CreateObservabilityNamespaceRequest
+        {
+            fn from(value: super::CreateObservabilityNamespaceRequest) -> Self {
+                Self {
+                    cold_retention_days: Ok(value.cold_retention_days),
+                    hot_retention_days: Ok(value.hot_retention_days),
+                    name: Ok(value.name),
+                    warm_retention_days: Ok(value.warm_retention_days),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CreateObservabilityNamespaceResponse {
+            namespace: ::std::result::Result<::std::string::String, ::std::string::String>,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for CreateObservabilityNamespaceResponse {
+            fn default() -> Self {
+                Self {
+                    namespace: Err("no value supplied for namespace".to_string()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl CreateObservabilityNamespaceResponse {
+            pub fn namespace<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.namespace = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for namespace: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CreateObservabilityNamespaceResponse>
+            for super::CreateObservabilityNamespaceResponse
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CreateObservabilityNamespaceResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    namespace: value.namespace?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CreateObservabilityNamespaceResponse>
+            for CreateObservabilityNamespaceResponse
+        {
+            fn from(value: super::CreateObservabilityNamespaceResponse) -> Self {
+                Self {
+                    namespace: Ok(value.namespace),
+                    success: Ok(value.success),
                 }
             }
         }
@@ -14566,6 +15628,522 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct LogEntryInput {
+            fields: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            message: ::std::result::Result<::std::string::String, ::std::string::String>,
+            service: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            severity: ::std::result::Result<::std::string::String, ::std::string::String>,
+            source: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            timestamp_ns: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for LogEntryInput {
+            fn default() -> Self {
+                Self {
+                    fields: Ok(Default::default()),
+                    message: Err("no value supplied for message".to_string()),
+                    service: Ok(Default::default()),
+                    severity: Ok(super::defaults::log_entry_input_severity()),
+                    source: Ok(Default::default()),
+                    timestamp_ns: Ok(Default::default()),
+                }
+            }
+        }
+        impl LogEntryInput {
+            pub fn fields<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.fields = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for fields: {e}"));
+                self
+            }
+            pub fn message<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.message = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for message: {e}"));
+                self
+            }
+            pub fn service<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.service = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for service: {e}"));
+                self
+            }
+            pub fn severity<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.severity = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for severity: {e}"));
+                self
+            }
+            pub fn source<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source: {e}"));
+                self
+            }
+            pub fn timestamp_ns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.timestamp_ns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for timestamp_ns: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<LogEntryInput> for super::LogEntryInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: LogEntryInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    fields: value.fields?,
+                    message: value.message?,
+                    service: value.service?,
+                    severity: value.severity?,
+                    source: value.source?,
+                    timestamp_ns: value.timestamp_ns?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::LogEntryInput> for LogEntryInput {
+            fn from(value: super::LogEntryInput) -> Self {
+                Self {
+                    fields: Ok(value.fields),
+                    message: Ok(value.message),
+                    service: Ok(value.service),
+                    severity: Ok(value.severity),
+                    source: Ok(value.source),
+                    timestamp_ns: Ok(value.timestamp_ns),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct MetricAggregationInput {
+            aggregation: ::std::result::Result<::std::string::String, ::std::string::String>,
+            end_time_ns: ::std::result::Result<i64, ::std::string::String>,
+            group_by: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            labels: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            metric_name: ::std::result::Result<
+                super::MetricAggregationInputMetricName,
+                ::std::string::String,
+            >,
+            start_time_ns: ::std::result::Result<i64, ::std::string::String>,
+            step_seconds: ::std::result::Result<u32, ::std::string::String>,
+        }
+        impl ::std::default::Default for MetricAggregationInput {
+            fn default() -> Self {
+                Self {
+                    aggregation: Ok(super::defaults::metric_aggregation_input_aggregation()),
+                    end_time_ns: Err("no value supplied for end_time_ns".to_string()),
+                    group_by: Ok(Default::default()),
+                    labels: Ok(Default::default()),
+                    metric_name: Err("no value supplied for metric_name".to_string()),
+                    start_time_ns: Err("no value supplied for start_time_ns".to_string()),
+                    step_seconds: Ok(super::defaults::default_u64::<u32, 60>()),
+                }
+            }
+        }
+        impl MetricAggregationInput {
+            pub fn aggregation<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.aggregation = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for aggregation: {e}"));
+                self
+            }
+            pub fn end_time_ns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.end_time_ns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for end_time_ns: {e}"));
+                self
+            }
+            pub fn group_by<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.group_by = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for group_by: {e}"));
+                self
+            }
+            pub fn labels<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.labels = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for labels: {e}"));
+                self
+            }
+            pub fn metric_name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::MetricAggregationInputMetricName>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metric_name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metric_name: {e}"));
+                self
+            }
+            pub fn start_time_ns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.start_time_ns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for start_time_ns: {e}"));
+                self
+            }
+            pub fn step_seconds<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.step_seconds = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for step_seconds: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<MetricAggregationInput> for super::MetricAggregationInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: MetricAggregationInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    aggregation: value.aggregation?,
+                    end_time_ns: value.end_time_ns?,
+                    group_by: value.group_by?,
+                    labels: value.labels?,
+                    metric_name: value.metric_name?,
+                    start_time_ns: value.start_time_ns?,
+                    step_seconds: value.step_seconds?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::MetricAggregationInput> for MetricAggregationInput {
+            fn from(value: super::MetricAggregationInput) -> Self {
+                Self {
+                    aggregation: Ok(value.aggregation),
+                    end_time_ns: Ok(value.end_time_ns),
+                    group_by: Ok(value.group_by),
+                    labels: Ok(value.labels),
+                    metric_name: Ok(value.metric_name),
+                    start_time_ns: Ok(value.start_time_ns),
+                    step_seconds: Ok(value.step_seconds),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct MetricAggregationResult {
+            query_time_ms: ::std::result::Result<u64, ::std::string::String>,
+            series: ::std::result::Result<
+                ::std::vec::Vec<super::MetricTimeSeries>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for MetricAggregationResult {
+            fn default() -> Self {
+                Self {
+                    query_time_ms: Err("no value supplied for query_time_ms".to_string()),
+                    series: Err("no value supplied for series".to_string()),
+                }
+            }
+        }
+        impl MetricAggregationResult {
+            pub fn query_time_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_time_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query_time_ms: {e}"));
+                self
+            }
+            pub fn series<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::MetricTimeSeries>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.series = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for series: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<MetricAggregationResult> for super::MetricAggregationResult {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: MetricAggregationResult,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    query_time_ms: value.query_time_ms?,
+                    series: value.series?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::MetricAggregationResult> for MetricAggregationResult {
+            fn from(value: super::MetricAggregationResult) -> Self {
+                Self {
+                    query_time_ms: Ok(value.query_time_ms),
+                    series: Ok(value.series),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct MetricDataPoint {
+            timestamp_ns: ::std::result::Result<i64, ::std::string::String>,
+            value: ::std::result::Result<f64, ::std::string::String>,
+        }
+        impl ::std::default::Default for MetricDataPoint {
+            fn default() -> Self {
+                Self {
+                    timestamp_ns: Err("no value supplied for timestamp_ns".to_string()),
+                    value: Err("no value supplied for value".to_string()),
+                }
+            }
+        }
+        impl MetricDataPoint {
+            pub fn timestamp_ns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.timestamp_ns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for timestamp_ns: {e}"));
+                self
+            }
+            pub fn value<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.value = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for value: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<MetricDataPoint> for super::MetricDataPoint {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: MetricDataPoint,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    timestamp_ns: value.timestamp_ns?,
+                    value: value.value?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::MetricDataPoint> for MetricDataPoint {
+            fn from(value: super::MetricDataPoint) -> Self {
+                Self {
+                    timestamp_ns: Ok(value.timestamp_ns),
+                    value: Ok(value.value),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct MetricSampleInput {
+            labels: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            name: ::std::result::Result<super::MetricSampleInputName, ::std::string::String>,
+            timestamp_ns: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            value: ::std::result::Result<f64, ::std::string::String>,
+        }
+        impl ::std::default::Default for MetricSampleInput {
+            fn default() -> Self {
+                Self {
+                    labels: Ok(Default::default()),
+                    name: Err("no value supplied for name".to_string()),
+                    timestamp_ns: Ok(Default::default()),
+                    value: Err("no value supplied for value".to_string()),
+                }
+            }
+        }
+        impl MetricSampleInput {
+            pub fn labels<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.labels = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for labels: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::MetricSampleInputName>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn timestamp_ns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.timestamp_ns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for timestamp_ns: {e}"));
+                self
+            }
+            pub fn value<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.value = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for value: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<MetricSampleInput> for super::MetricSampleInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: MetricSampleInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    labels: value.labels?,
+                    name: value.name?,
+                    timestamp_ns: value.timestamp_ns?,
+                    value: value.value?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::MetricSampleInput> for MetricSampleInput {
+            fn from(value: super::MetricSampleInput) -> Self {
+                Self {
+                    labels: Ok(value.labels),
+                    name: Ok(value.name),
+                    timestamp_ns: Ok(value.timestamp_ns),
+                    value: Ok(value.value),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct MetricTimeSeries {
+            labels: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            points: ::std::result::Result<
+                ::std::vec::Vec<super::MetricDataPoint>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for MetricTimeSeries {
+            fn default() -> Self {
+                Self {
+                    labels: Err("no value supplied for labels".to_string()),
+                    points: Err("no value supplied for points".to_string()),
+                }
+            }
+        }
+        impl MetricTimeSeries {
+            pub fn labels<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.labels = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for labels: {e}"));
+                self
+            }
+            pub fn points<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::MetricDataPoint>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.points = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for points: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<MetricTimeSeries> for super::MetricTimeSeries {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: MetricTimeSeries,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    labels: value.labels?,
+                    points: value.points?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::MetricTimeSeries> for MetricTimeSeries {
+            fn from(value: super::MetricTimeSeries) -> Self {
+                Self {
+                    labels: Ok(value.labels),
+                    points: Ok(value.points),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct ModelRegistryRecordResponse {
             asset_id: ::std::result::Result<::std::string::String, ::std::string::String>,
             registry:
@@ -14631,6 +16209,117 @@ pub mod types {
                     asset_id: Ok(value.asset_id),
                     registry: Ok(value.registry),
                     tenant_id: Ok(value.tenant_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct NlTranslateRequest {
+            query: ::std::result::Result<super::NlTranslateRequestQuery, ::std::string::String>,
+        }
+        impl ::std::default::Default for NlTranslateRequest {
+            fn default() -> Self {
+                Self {
+                    query: Err("no value supplied for query".to_string()),
+                }
+            }
+        }
+        impl NlTranslateRequest {
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::NlTranslateRequestQuery>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<NlTranslateRequest> for super::NlTranslateRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: NlTranslateRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    query: value.query?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::NlTranslateRequest> for NlTranslateRequest {
+            fn from(value: super::NlTranslateRequest) -> Self {
+                Self {
+                    query: Ok(value.query),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct NlTranslateResult {
+            final_query: ::std::result::Result<::std::string::String, ::std::string::String>,
+            normalized_query: ::std::result::Result<::std::string::String, ::std::string::String>,
+            views: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for NlTranslateResult {
+            fn default() -> Self {
+                Self {
+                    final_query: Err("no value supplied for final_query".to_string()),
+                    normalized_query: Err("no value supplied for normalized_query".to_string()),
+                    views: Err("no value supplied for views".to_string()),
+                }
+            }
+        }
+        impl NlTranslateResult {
+            pub fn final_query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.final_query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for final_query: {e}"));
+                self
+            }
+            pub fn normalized_query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.normalized_query = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for normalized_query: {e}")
+                });
+                self
+            }
+            pub fn views<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.views = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for views: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<NlTranslateResult> for super::NlTranslateResult {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: NlTranslateResult,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    final_query: value.final_query?,
+                    normalized_query: value.normalized_query?,
+                    views: value.views?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::NlTranslateResult> for NlTranslateResult {
+            fn from(value: super::NlTranslateResult) -> Self {
+                Self {
+                    final_query: Ok(value.final_query),
+                    normalized_query: Ok(value.normalized_query),
+                    views: Ok(value.views),
                 }
             }
         }
@@ -14806,6 +16495,74 @@ pub mod types {
                     id: Ok(value.id),
                     labels: Ok(value.labels),
                     properties: Ok(value.properties),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct ObservabilityIngestResponse {
+            failed: ::std::result::Result<u64, ::std::string::String>,
+            ingested: ::std::result::Result<u64, ::std::string::String>,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for ObservabilityIngestResponse {
+            fn default() -> Self {
+                Self {
+                    failed: Err("no value supplied for failed".to_string()),
+                    ingested: Err("no value supplied for ingested".to_string()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl ObservabilityIngestResponse {
+            pub fn failed<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.failed = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for failed: {e}"));
+                self
+            }
+            pub fn ingested<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ingested = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for ingested: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ObservabilityIngestResponse> for super::ObservabilityIngestResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ObservabilityIngestResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    failed: value.failed?,
+                    ingested: value.ingested?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ObservabilityIngestResponse> for ObservabilityIngestResponse {
+            fn from(value: super::ObservabilityIngestResponse) -> Self {
+                Self {
+                    failed: Ok(value.failed),
+                    ingested: Ok(value.ingested),
+                    success: Ok(value.success),
                 }
             }
         }
@@ -17831,12 +19588,25 @@ pub mod types {
     }
     /// Generation of default values for serde.
     pub mod defaults {
+        pub(super) fn default_u64<T, const V: u64>() -> T
+        where
+            T: ::std::convert::TryFrom<u64>,
+            <T as ::std::convert::TryFrom<u64>>::Error: ::std::fmt::Debug,
+        {
+            T::try_from(V).unwrap()
+        }
         pub(super) fn default_nzu64<T, const V: u64>() -> T
         where
             T: ::std::convert::TryFrom<::std::num::NonZeroU64>,
             <T as ::std::convert::TryFrom<::std::num::NonZeroU64>>::Error: ::std::fmt::Debug,
         {
             T::try_from(::std::num::NonZeroU64::try_from(V).unwrap()).unwrap()
+        }
+        pub(super) fn log_entry_input_severity() -> ::std::string::String {
+            "info".to_string()
+        }
+        pub(super) fn metric_aggregation_input_aggregation() -> ::std::string::String {
+            "avg".to_string()
         }
     }
 }
@@ -18806,6 +20576,52 @@ impl Client {
     pub fn resolve_model_alias(&self) -> builder::ResolveModelAlias<'_> {
         builder::ResolveModelAlias::new(self)
     }
+    /// Translate natural language to a query (AV-SQL)
+    ///
+    /// Runs the three-agent AV-SQL flow (rewrite → view generation → compose)
+    /// over the configured LLM (`config.llm`) and returns the normalized
+    /// query, the agent-selected views, and the final composed query string.
+    /// Requires the LLM integration to be configured; the result is
+    /// model-generated — validate before execution.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/nl/translate`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.translate_natural_language()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn translate_natural_language(&self) -> builder::TranslateNaturalLanguage<'_> {
+        builder::TranslateNaturalLanguage::new(self)
+    }
+    /// Create an observability namespace
+    ///
+    /// Creates a namespace for log/metric/trace data with tiered retention.
+    /// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
+    /// 365 days server-side.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/observability/namespaces`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.create_observability_namespace()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn create_observability_namespace(&self) -> builder::CreateObservabilityNamespace<'_> {
+        builder::CreateObservabilityNamespace::new(self)
+    }
     /// Ingest a log entry
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs`
@@ -18825,6 +20641,25 @@ impl Client {
     pub fn ingest_log(&self) -> builder::IngestLog<'_> {
         builder::IngestLog::new(self)
     }
+    /// Ingest a batch of log entries
+    ///
+    /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs/bulk`
+    ///
+    /// Arguments:
+    /// - `namespace`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.ingest_logs()
+    /// .namespace(namespace)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn ingest_logs(&self) -> builder::IngestLogs<'_> {
+        builder::IngestLogs::new(self)
+    }
     /// Query logs
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs/search`
@@ -18843,6 +20678,67 @@ impl Client {
     /// ```
     pub fn query_logs(&self) -> builder::QueryLogs<'_> {
         builder::QueryLogs::new(self)
+    }
+    /// Ingest a single metric sample
+    ///
+    /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics`
+    ///
+    /// Arguments:
+    /// - `namespace`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.ingest_metric()
+    /// .namespace(namespace)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn ingest_metric(&self) -> builder::IngestMetric<'_> {
+        builder::IngestMetric::new(self)
+    }
+    /// Aggregate a metric over a time range
+    ///
+    /// Aggregation defaults to `avg` with a 60-second step. Results are
+    /// grouped by `group_by` label names and filtered by exact `labels` match.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics/aggregate`
+    ///
+    /// Arguments:
+    /// - `namespace`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.aggregate_metrics()
+    /// .namespace(namespace)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn aggregate_metrics(&self) -> builder::AggregateMetrics<'_> {
+        builder::AggregateMetrics::new(self)
+    }
+    /// Ingest a batch of metric samples
+    ///
+    /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics/bulk`
+    ///
+    /// Arguments:
+    /// - `namespace`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.ingest_metrics()
+    /// .namespace(namespace)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn ingest_metrics(&self) -> builder::IngestMetrics<'_> {
+        builder::IngestMetrics::new(self)
     }
     /// Execute AQL or UQL through the shared query facade
     ///
@@ -23199,6 +25095,215 @@ pub mod builder {
             }
         }
     }
+    /// Builder for [`Client::translate_natural_language`]
+    ///
+    /// [`Client::translate_natural_language`]: super::Client::translate_natural_language
+    #[derive(Debug, Clone)]
+    pub struct TranslateNaturalLanguage<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::NlTranslateRequest, String>,
+    }
+    impl<'a> TranslateNaturalLanguage<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::NlTranslateRequest>,
+            <V as std::convert::TryInto<types::NlTranslateRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `NlTranslateRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::NlTranslateRequest,
+                ) -> types::builder::NlTranslateRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/nl/translate`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::NlTranslateResult>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::NlTranslateRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/nl/translate", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "translate_natural_language",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::create_observability_namespace`]
+    ///
+    /// [`Client::create_observability_namespace`]: super::Client::create_observability_namespace
+    #[derive(Debug, Clone)]
+    pub struct CreateObservabilityNamespace<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::CreateObservabilityNamespaceRequest, String>,
+    }
+    impl<'a> CreateObservabilityNamespace<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::CreateObservabilityNamespaceRequest>,
+            <V as std::convert::TryInto<types::CreateObservabilityNamespaceRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `CreateObservabilityNamespaceRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::CreateObservabilityNamespaceRequest,
+                )
+                    -> types::builder::CreateObservabilityNamespaceRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/observability/namespaces`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::CreateObservabilityNamespaceResponse>,
+            Error<types::ErrorResponse>,
+        > {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::CreateObservabilityNamespaceRequest::try_from(v)
+                        .map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/observability/namespaces", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "create_observability_namespace",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
     /// Builder for [`Client::ingest_log`]
     ///
     /// [`Client::ingest_log`]: super::Client::ingest_log
@@ -23301,6 +25406,124 @@ pub mod builder {
             }
         }
     }
+    /// Builder for [`Client::ingest_logs`]
+    ///
+    /// [`Client::ingest_logs`]: super::Client::ingest_logs
+    #[derive(Debug, Clone)]
+    pub struct IngestLogs<'a> {
+        client: &'a super::Client,
+        namespace: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::BulkLogIngestRequest, String>,
+    }
+    impl<'a> IngestLogs<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                namespace: Err("namespace was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn namespace<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.namespace = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for namespace failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::BulkLogIngestRequest>,
+            <V as std::convert::TryInto<types::BulkLogIngestRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `BulkLogIngestRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::BulkLogIngestRequest,
+                ) -> types::builder::BulkLogIngestRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs/bulk`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ObservabilityIngestResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                namespace,
+                x_tenant_id,
+                body,
+            } = self;
+            let namespace = namespace.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::BulkLogIngestRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/observability/namespaces/{}/logs/bulk",
+                client.baseurl,
+                encode_path(&namespace.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "ingest_logs",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
     /// Builder for [`Client::query_logs`]
     ///
     /// [`Client::query_logs`]: super::Client::query_logs
@@ -23399,6 +25622,360 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::ingest_metric`]
+    ///
+    /// [`Client::ingest_metric`]: super::Client::ingest_metric
+    #[derive(Debug, Clone)]
+    pub struct IngestMetric<'a> {
+        client: &'a super::Client,
+        namespace: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::MetricSampleInput, String>,
+    }
+    impl<'a> IngestMetric<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                namespace: Err("namespace was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn namespace<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.namespace = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for namespace failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::MetricSampleInput>,
+            <V as std::convert::TryInto<types::MetricSampleInput>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `MetricSampleInput` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::MetricSampleInput,
+                ) -> types::builder::MetricSampleInput,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ObservabilityIngestResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                namespace,
+                x_tenant_id,
+                body,
+            } = self;
+            let namespace = namespace.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::MetricSampleInput::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/observability/namespaces/{}/metrics",
+                client.baseurl,
+                encode_path(&namespace.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "ingest_metric",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::aggregate_metrics`]
+    ///
+    /// [`Client::aggregate_metrics`]: super::Client::aggregate_metrics
+    #[derive(Debug, Clone)]
+    pub struct AggregateMetrics<'a> {
+        client: &'a super::Client,
+        namespace: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::MetricAggregationInput, String>,
+    }
+    impl<'a> AggregateMetrics<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                namespace: Err("namespace was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn namespace<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.namespace = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for namespace failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::MetricAggregationInput>,
+            <V as std::convert::TryInto<types::MetricAggregationInput>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `MetricAggregationInput` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::MetricAggregationInput,
+                ) -> types::builder::MetricAggregationInput,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics/aggregate`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::MetricAggregationResult>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                namespace,
+                x_tenant_id,
+                body,
+            } = self;
+            let namespace = namespace.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::MetricAggregationInput::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/observability/namespaces/{}/metrics/aggregate",
+                client.baseurl,
+                encode_path(&namespace.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "aggregate_metrics",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::ingest_metrics`]
+    ///
+    /// [`Client::ingest_metrics`]: super::Client::ingest_metrics
+    #[derive(Debug, Clone)]
+    pub struct IngestMetrics<'a> {
+        client: &'a super::Client,
+        namespace: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::BulkMetricIngestRequest, String>,
+    }
+    impl<'a> IngestMetrics<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                namespace: Err("namespace was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn namespace<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.namespace = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for namespace failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::BulkMetricIngestRequest>,
+            <V as std::convert::TryInto<types::BulkMetricIngestRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `BulkMetricIngestRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::BulkMetricIngestRequest,
+                ) -> types::builder::BulkMetricIngestRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics/bulk`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ObservabilityIngestResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                namespace,
+                x_tenant_id,
+                body,
+            } = self;
+            let namespace = namespace.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::BulkMetricIngestRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/observability/namespaces/{}/metrics/bulk",
+                client.baseurl,
+                encode_path(&namespace.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "ingest_metrics",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }

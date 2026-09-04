@@ -600,6 +600,7 @@ impl SstEngine {
                         rg_layout,
                         cache_on_write.includes_survivors(),
                         &shred_spec,
+                        Some(storage_url),
                     )
                     .context("Failed to write PAX vector segment")?;
                     pax_cache_seed = write.cache_seed;
@@ -616,6 +617,7 @@ impl SstEngine {
                         target_block,
                         rg_layout,
                         &shred_spec,
+                        Some(storage_url),
                     )
                     .context("Failed to write PAX vector segment")?
                 };
