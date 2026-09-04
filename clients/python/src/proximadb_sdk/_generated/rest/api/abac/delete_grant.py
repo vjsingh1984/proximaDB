@@ -93,6 +93,8 @@ def sync_detailed(
      Idempotent — 204 whether the grant existed (and was revoked) or was
     already unknown/revoked. Revocation under the wrong owner cannot
     even name the grant (the store is owner-partitioned).
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         owner_tenant (str):
@@ -132,6 +134,8 @@ def sync(
      Idempotent — 204 whether the grant existed (and was revoked) or was
     already unknown/revoked. Revocation under the wrong owner cannot
     even name the grant (the store is owner-partitioned).
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         owner_tenant (str):
@@ -166,6 +170,8 @@ async def asyncio_detailed(
      Idempotent — 204 whether the grant existed (and was revoked) or was
     already unknown/revoked. Revocation under the wrong owner cannot
     even name the grant (the store is owner-partitioned).
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         owner_tenant (str):
@@ -203,6 +209,8 @@ async def asyncio(
      Idempotent — 204 whether the grant existed (and was revoked) or was
     already unknown/revoked. Revocation under the wrong owner cannot
     even name the grant (the store is owner-partitioned).
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         owner_tenant (str):

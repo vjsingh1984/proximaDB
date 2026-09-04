@@ -64,6 +64,11 @@ def _parse_response(
 
         return response_422
 
+    if response.status_code == 503:
+        response_503 = AbacOperatorErrorResponse.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -91,6 +96,8 @@ def sync_detailed(
 
      Revoked grants stay listed with `revoked_at_ms` set — the audit
     trail is the point, not a live-only view.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         owner_tenant (str):
@@ -126,6 +133,8 @@ def sync(
 
      Revoked grants stay listed with `revoked_at_ms` set — the audit
     trail is the point, not a live-only view.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         owner_tenant (str):
@@ -156,6 +165,8 @@ async def asyncio_detailed(
 
      Revoked grants stay listed with `revoked_at_ms` set — the audit
     trail is the point, not a live-only view.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         owner_tenant (str):
@@ -189,6 +200,8 @@ async def asyncio(
 
      Revoked grants stay listed with `revoked_at_ms` set — the audit
     trail is the point, not a live-only view.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         owner_tenant (str):

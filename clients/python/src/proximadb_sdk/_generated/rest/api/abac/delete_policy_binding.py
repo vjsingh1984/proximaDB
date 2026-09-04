@@ -91,6 +91,8 @@ def sync_detailed(
     """Remove an ABAC policy binding.
 
      Idempotent — 204 whether or not a binding existed at `object_id`.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -128,6 +130,8 @@ def sync(
     """Remove an ABAC policy binding.
 
      Idempotent — 204 whether or not a binding existed at `object_id`.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -160,6 +164,8 @@ async def asyncio_detailed(
     """Remove an ABAC policy binding.
 
      Idempotent — 204 whether or not a binding existed at `object_id`.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -195,6 +201,8 @@ async def asyncio(
     """Remove an ABAC policy binding.
 
      Idempotent — 204 whether or not a binding existed at `object_id`.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):

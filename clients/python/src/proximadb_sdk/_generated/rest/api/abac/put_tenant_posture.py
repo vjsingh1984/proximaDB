@@ -99,6 +99,8 @@ def sync_detailed(
      Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
     zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
     is how an operator breaks a customer's traffic.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -138,6 +140,8 @@ def sync(
      Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
     zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
     is how an operator breaks a customer's traffic.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -172,6 +176,8 @@ async def asyncio_detailed(
      Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
     zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
     is how an operator breaks a customer's traffic.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -209,6 +215,8 @@ async def asyncio(
      Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
     zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
     is how an operator breaks a customer's traffic.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):

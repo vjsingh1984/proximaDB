@@ -22490,6 +22490,8 @@ impl Client {
     /// Cluster-operator scope — every `(subject, tenant)` attribute
     /// binding across every tenant, by design (cross-tenant visibility is
     /// the point of an operator inspection endpoint).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — this is a cross-tenant operator view.
     ///
     ///
     /// Sends a `GET` request to `/api/v2/abac/attribute-bindings`
@@ -22510,6 +22512,8 @@ impl Client {
     /// The authority half of ABAC — a `(subject, tenant)`-keyed,
     /// multi-valued attribute set a policy's `predicate_ref` resolves
     /// against. Writes through the same store the live enforcer reads.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the body `tenant` field governs.
     ///
     ///
     /// Sends a `POST` request to `/api/v2/abac/attribute-bindings`
@@ -22536,6 +22540,8 @@ impl Client {
     /// resolve (fail-closed on unminted tenants); the grantee subject is
     /// deliberately NOT validated against the principal registry, so a
     /// share may be provisioned before its recipient's first login.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the body `tenant` field governs.
     ///
     ///
     /// Sends a `POST` request to `/api/v2/abac/grants`
@@ -22557,6 +22563,8 @@ impl Client {
     ///
     /// Revoked grants stay listed with `revoked_at_ms` set — the audit
     /// trail is the point, not a live-only view.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the tenant path segment governs.
     ///
     ///
     /// Sends a `GET` request to `/api/v2/abac/grants/{owner_tenant}`
@@ -22579,6 +22587,8 @@ impl Client {
     /// Idempotent — 204 whether the grant existed (and was revoked) or was
     /// already unknown/revoked. Revocation under the wrong owner cannot
     /// even name the grant (the store is owner-partitioned).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the tenant path segment governs.
     ///
     ///
     /// Sends a `DELETE` request to `/api/v2/abac/grants/{owner_tenant}/{grant_id}`
@@ -22603,6 +22613,8 @@ impl Client {
     /// The exact binding set the enforcer composes for reads under
     /// `tenant` — an operator inspection endpoint, not a per-tenant
     /// self-service one.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the tenant path segment governs.
     ///
     ///
     /// Sends a `GET` request to `/api/v2/abac/policy-bindings/{tenant}`
@@ -22627,6 +22639,8 @@ impl Client {
     /// `predicate_ref` row filter and a `field_mask`). Writes through the
     /// same store the live enforcer reads: visible on the next request, no
     /// restart. `Deny` wins during resolution; the default is deny.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the tenant path segment governs.
     ///
     ///
     /// Sends a `PUT` request to `/api/v2/abac/policy-bindings/{tenant}/{object_id}`
@@ -22651,6 +22665,8 @@ impl Client {
     /// Remove an ABAC policy binding
     ///
     /// Idempotent — 204 whether or not a binding existed at `object_id`.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the tenant path segment governs.
     ///
     ///
     /// Sends a `DELETE` request to `/api/v2/abac/policy-bindings/{tenant}/{object_id}`
@@ -22689,6 +22705,10 @@ impl Client {
     ///
     /// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
     /// resolves fail-closed (safe) regardless of this endpoint.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (predicate objects are global, not tenant-scoped).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (predicate objects are global, not tenant-scoped).
     ///
     ///
     /// Sends a `GET` request to `/api/v2/abac/predicate-objects/{object_id}`
@@ -22711,6 +22731,8 @@ impl Client {
     /// The request body IS the `FilterExpression` directly (no wrapper) —
     /// a stored row-filter predicate that a policy binding's
     /// `predicate_ref` can reference.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (predicate objects are global, not tenant-scoped).
     ///
     ///
     /// Sends a `PUT` request to `/api/v2/abac/predicate-objects/{object_id}`
@@ -22734,6 +22756,8 @@ impl Client {
     ///
     /// Idempotent (204). Subsequent resolves of `object_id` by any policy
     /// binding fail-closed.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (predicate objects are global, not tenant-scoped).
     ///
     ///
     /// Sends a `DELETE` request to `/api/v2/abac/predicate-objects/{object_id}`
@@ -22756,6 +22780,8 @@ impl Client {
     /// 404 means the tenant has NO explicit record — meaningfully
     /// different from `Off`, since an absent record means the tenant
     /// inherits the process default, which may itself be `Enforce`.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the tenant path segment governs.
     ///
     ///
     /// Sends a `GET` request to `/api/v2/abac/tenant-posture/{tenant}`
@@ -22778,6 +22804,8 @@ impl Client {
     /// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
     /// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
     /// is how an operator breaks a customer's traffic.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — the tenant path segment governs.
     ///
     ///
     /// Sends a `PUT` request to `/api/v2/abac/tenant-posture/{tenant}`
@@ -24467,6 +24495,9 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

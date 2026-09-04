@@ -83,6 +83,8 @@ def sync_detailed(
      Cluster-operator scope — every `(subject, tenant)` attribute
     binding across every tenant, by design (cross-tenant visibility is
     the point of an operator inspection endpoint).
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — this is a cross-tenant operator view.
 
     Args:
         x_tenant_id (str | Unset):
@@ -116,6 +118,8 @@ def sync(
      Cluster-operator scope — every `(subject, tenant)` attribute
     binding across every tenant, by design (cross-tenant visibility is
     the point of an operator inspection endpoint).
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — this is a cross-tenant operator view.
 
     Args:
         x_tenant_id (str | Unset):
@@ -144,6 +148,8 @@ async def asyncio_detailed(
      Cluster-operator scope — every `(subject, tenant)` attribute
     binding across every tenant, by design (cross-tenant visibility is
     the point of an operator inspection endpoint).
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — this is a cross-tenant operator view.
 
     Args:
         x_tenant_id (str | Unset):
@@ -175,6 +181,8 @@ async def asyncio(
      Cluster-operator scope — every `(subject, tenant)` attribute
     binding across every tenant, by design (cross-tenant visibility is
     the point of an operator inspection endpoint).
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — this is a cross-tenant operator view.
 
     Args:
         x_tenant_id (str | Unset):

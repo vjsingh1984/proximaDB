@@ -84,6 +84,8 @@ def sync_detailed(
 
      Idempotent (204). Subsequent resolves of `object_id` by any policy
     binding fail-closed.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):
@@ -119,6 +121,8 @@ def sync(
 
      Idempotent (204). Subsequent resolves of `object_id` by any policy
     binding fail-closed.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):
@@ -149,6 +153,8 @@ async def asyncio_detailed(
 
      Idempotent (204). Subsequent resolves of `object_id` by any policy
     binding fail-closed.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):
@@ -182,6 +188,8 @@ async def asyncio(
 
      Idempotent (204). Subsequent resolves of `object_id` by any policy
     binding fail-closed.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):

@@ -104,6 +104,8 @@ def sync_detailed(
     `predicate_ref` row filter and a `field_mask`). Writes through the
     same store the live enforcer reads: visible on the next request, no
     restart. `Deny` wins during resolution; the default is deny.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -149,6 +151,8 @@ def sync(
     `predicate_ref` row filter and a `field_mask`). Writes through the
     same store the live enforcer reads: visible on the next request, no
     restart. `Deny` wins during resolution; the default is deny.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -189,6 +193,8 @@ async def asyncio_detailed(
     `predicate_ref` row filter and a `field_mask`). Writes through the
     same store the live enforcer reads: visible on the next request, no
     restart. `Deny` wins during resolution; the default is deny.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -232,6 +238,8 @@ async def asyncio(
     `predicate_ref` row filter and a `field_mask`). Writes through the
     same store the live enforcer reads: visible on the next request, no
     restart. `Deny` wins during resolution; the default is deny.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):

@@ -99,6 +99,8 @@ def sync_detailed(
     resolve (fail-closed on unminted tenants); the grantee subject is
     deliberately NOT validated against the principal registry, so a
     share may be provisioned before its recipient's first login.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the body `tenant` field governs.
 
     Args:
         x_tenant_id (str | Unset):
@@ -139,6 +141,8 @@ def sync(
     resolve (fail-closed on unminted tenants); the grantee subject is
     deliberately NOT validated against the principal registry, so a
     share may be provisioned before its recipient's first login.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the body `tenant` field governs.
 
     Args:
         x_tenant_id (str | Unset):
@@ -174,6 +178,8 @@ async def asyncio_detailed(
     resolve (fail-closed on unminted tenants); the grantee subject is
     deliberately NOT validated against the principal registry, so a
     share may be provisioned before its recipient's first login.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the body `tenant` field governs.
 
     Args:
         x_tenant_id (str | Unset):
@@ -212,6 +218,8 @@ async def asyncio(
     resolve (fail-closed on unminted tenants); the grantee subject is
     deliberately NOT validated against the principal registry, so a
     share may be provisioned before its recipient's first login.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the body `tenant` field governs.
 
     Args:
         x_tenant_id (str | Unset):

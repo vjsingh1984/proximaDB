@@ -77,7 +77,7 @@ fabricated success):**
 
 == Wave 3: ABAC control-plane (this PR)
 
-**Exposed (9 paths / 14 operations; spec 42 → 51):** the complete
+**Exposed (9 paths / 14 operations; spec 45 → 54):** the complete
 `/api/v2/abac/*` operator surface from
 `src/network/rest/canonical/abac_admin.rs` — policy-bindings
 (PUT/DELETE/GET), attribute-bindings (POST/GET), predicate-objects

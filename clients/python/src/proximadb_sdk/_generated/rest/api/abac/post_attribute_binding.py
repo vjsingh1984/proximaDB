@@ -97,6 +97,8 @@ def sync_detailed(
      The authority half of ABAC — a `(subject, tenant)`-keyed,
     multi-valued attribute set a policy's `predicate_ref` resolves
     against. Writes through the same store the live enforcer reads.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the body `tenant` field governs.
 
     Args:
         x_tenant_id (str | Unset):
@@ -133,6 +135,8 @@ def sync(
      The authority half of ABAC — a `(subject, tenant)`-keyed,
     multi-valued attribute set a policy's `predicate_ref` resolves
     against. Writes through the same store the live enforcer reads.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the body `tenant` field governs.
 
     Args:
         x_tenant_id (str | Unset):
@@ -164,6 +168,8 @@ async def asyncio_detailed(
      The authority half of ABAC — a `(subject, tenant)`-keyed,
     multi-valued attribute set a policy's `predicate_ref` resolves
     against. Writes through the same store the live enforcer reads.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the body `tenant` field governs.
 
     Args:
         x_tenant_id (str | Unset):
@@ -198,6 +204,8 @@ async def asyncio(
      The authority half of ABAC — a `(subject, tenant)`-keyed,
     multi-valued attribute set a policy's `predicate_ref` resolves
     against. Writes through the same store the live enforcer reads.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the body `tenant` field governs.
 
     Args:
         x_tenant_id (str | Unset):

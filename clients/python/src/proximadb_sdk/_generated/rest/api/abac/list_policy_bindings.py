@@ -92,6 +92,8 @@ def sync_detailed(
      The exact binding set the enforcer composes for reads under
     `tenant` — an operator inspection endpoint, not a per-tenant
     self-service one.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -128,6 +130,8 @@ def sync(
      The exact binding set the enforcer composes for reads under
     `tenant` — an operator inspection endpoint, not a per-tenant
     self-service one.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -159,6 +163,8 @@ async def asyncio_detailed(
      The exact binding set the enforcer composes for reads under
     `tenant` — an operator inspection endpoint, not a per-tenant
     self-service one.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -193,6 +199,8 @@ async def asyncio(
      The exact binding set the enforcer composes for reads under
     `tenant` — an operator inspection endpoint, not a per-tenant
     self-service one.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):

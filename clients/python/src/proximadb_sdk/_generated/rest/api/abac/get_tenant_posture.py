@@ -97,6 +97,8 @@ def sync_detailed(
      404 means the tenant has NO explicit record — meaningfully
     different from `Off`, since an absent record means the tenant
     inherits the process default, which may itself be `Enforce`.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -133,6 +135,8 @@ def sync(
      404 means the tenant has NO explicit record — meaningfully
     different from `Off`, since an absent record means the tenant
     inherits the process default, which may itself be `Enforce`.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -164,6 +168,8 @@ async def asyncio_detailed(
      404 means the tenant has NO explicit record — meaningfully
     different from `Off`, since an absent record means the tenant
     inherits the process default, which may itself be `Enforce`.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):
@@ -198,6 +204,8 @@ async def asyncio(
      404 means the tenant has NO explicit record — meaningfully
     different from `Off`, since an absent record means the tenant
     inherits the process default, which may itself be `Enforce`.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler — the tenant path segment governs.
 
     Args:
         tenant (str):

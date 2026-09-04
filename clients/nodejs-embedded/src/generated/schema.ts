@@ -1079,12 +1079,16 @@ export interface paths {
          *     `predicate_ref` row filter and a `field_mask`). Writes through the
          *     same store the live enforcer reads: visible on the next request, no
          *     restart. `Deny` wins during resolution; the default is deny.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
          */
         put: operations["putPolicyBinding"];
         post?: never;
         /**
          * Remove an ABAC policy binding.
          * @description Idempotent — 204 whether or not a binding existed at `object_id`.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
          */
         delete: operations["deletePolicyBinding"];
         options?: never;
@@ -1106,6 +1110,8 @@ export interface paths {
          * @description The exact binding set the enforcer composes for reads under
          *     `tenant` — an operator inspection endpoint, not a per-tenant
          *     self-service one.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
          */
         get: operations["listPolicyBindings"];
         put?: never;
@@ -1130,6 +1136,8 @@ export interface paths {
          * @description 404 means the tenant has NO explicit record — meaningfully
          *     different from `Off`, since an absent record means the tenant
          *     inherits the process default, which may itself be `Enforce`.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
          */
         get: operations["getTenantPosture"];
         /**
@@ -1137,6 +1145,8 @@ export interface paths {
          * @description Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
          *     zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
          *     is how an operator breaks a customer's traffic.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
          */
         put: operations["putTenantPosture"];
         post?: never;
@@ -1164,6 +1174,8 @@ export interface paths {
          *     resolve (fail-closed on unminted tenants); the grantee subject is
          *     deliberately NOT validated against the principal registry, so a
          *     share may be provisioned before its recipient's first login.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the body `tenant` field governs.
          */
         post: operations["postGrant"];
         delete?: never;
@@ -1185,6 +1197,8 @@ export interface paths {
          * List an owner tenant's grants.
          * @description Revoked grants stay listed with `revoked_at_ms` set — the audit
          *     trail is the point, not a live-only view.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
          */
         get: operations["listGrants"];
         put?: never;
@@ -1213,6 +1227,8 @@ export interface paths {
          * @description Idempotent — 204 whether the grant existed (and was revoked) or was
          *     already unknown/revoked. Revocation under the wrong owner cannot
          *     even name the grant (the store is owner-partitioned).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the tenant path segment governs.
          */
         delete: operations["deleteGrant"];
         options?: never;
@@ -1232,6 +1248,8 @@ export interface paths {
          * @description Cluster-operator scope — every `(subject, tenant)` attribute
          *     binding across every tenant, by design (cross-tenant visibility is
          *     the point of an operator inspection endpoint).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — this is a cross-tenant operator view.
          */
         get: operations["listAttributeBindings"];
         put?: never;
@@ -1240,6 +1258,8 @@ export interface paths {
          * @description The authority half of ABAC — a `(subject, tenant)`-keyed,
          *     multi-valued attribute set a policy's `predicate_ref` resolves
          *     against. Writes through the same store the live enforcer reads.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — the body `tenant` field governs.
          */
         post: operations["postAttributeBinding"];
         delete?: never;
@@ -1278,6 +1298,10 @@ export interface paths {
          * Get one ABAC predicate object.
          * @description 404 if unknown. Note a dangling `predicate_ref` on a policy binding
          *     resolves fail-closed (safe) regardless of this endpoint.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
          */
         get: operations["getPredicateObject"];
         /**
@@ -1285,6 +1309,8 @@ export interface paths {
          * @description The request body IS the `FilterExpression` directly (no wrapper) —
          *     a stored row-filter predicate that a policy binding's
          *     `predicate_ref` can reference.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
          */
         put: operations["putPredicateObject"];
         post?: never;
@@ -1292,6 +1318,8 @@ export interface paths {
          * Revoke an ABAC predicate object.
          * @description Idempotent (204). Subsequent resolves of `object_id` by any policy
          *     binding fail-closed.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (predicate objects are global, not tenant-scoped).
          */
         delete: operations["deletePredicateObject"];
         options?: never;
@@ -5570,6 +5598,7 @@ export interface operations {
             401: components["responses"]["AbacUnauthorized"];
             403: components["responses"]["AbacForbidden"];
             422: components["responses"]["AbacTenantUnresolved"];
+            503: components["responses"]["AbacUnavailable"];
         };
     };
     deleteGrant: {

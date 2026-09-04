@@ -94,6 +94,8 @@ def sync_detailed(
      The request body IS the `FilterExpression` directly (no wrapper) —
     a stored row-filter predicate that a policy binding's
     `predicate_ref` can reference.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):
@@ -154,6 +156,8 @@ def sync(
      The request body IS the `FilterExpression` directly (no wrapper) —
     a stored row-filter predicate that a policy binding's
     `predicate_ref` can reference.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):
@@ -209,6 +213,8 @@ async def asyncio_detailed(
      The request body IS the `FilterExpression` directly (no wrapper) —
     a stored row-filter predicate that a policy binding's
     `predicate_ref` can reference.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):
@@ -267,6 +273,8 @@ async def asyncio(
      The request body IS the `FilterExpression` directly (no wrapper) —
     a stored row-filter predicate that a policy binding's
     `predicate_ref` can reference.
+    The optional `X-Tenant-ID` header is not consulted by this
+    handler (predicate objects are global, not tenant-scoped).
 
     Args:
         object_id (int):

@@ -5082,6 +5082,8 @@ type ClientInterface interface {
 	// Cluster-operator scope — every `(subject, tenant)` attribute
 	// binding across every tenant, by design (cross-tenant visibility is
 	// the point of an operator inspection endpoint).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — this is a cross-tenant operator view.
 	//
 	// Corresponds with GET /api/v2/abac/attribute-bindings (the `ListAttributeBindings` operationId).
 	ListAttributeBindings(ctx context.Context, params *ListAttributeBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5091,6 +5093,8 @@ type ClientInterface interface {
 	// The authority half of ABAC — a `(subject, tenant)`-keyed,
 	// multi-valued attribute set a policy's `predicate_ref` resolves
 	// against. Writes through the same store the live enforcer reads.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5102,6 +5106,8 @@ type ClientInterface interface {
 	// The authority half of ABAC — a `(subject, tenant)`-keyed,
 	// multi-valued attribute set a policy's `predicate_ref` resolves
 	// against. Writes through the same store the live enforcer reads.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5117,6 +5123,8 @@ type ClientInterface interface {
 	// resolve (fail-closed on unminted tenants); the grantee subject is
 	// deliberately NOT validated against the principal registry, so a
 	// share may be provisioned before its recipient's first login.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5132,6 +5140,8 @@ type ClientInterface interface {
 	// resolve (fail-closed on unminted tenants); the grantee subject is
 	// deliberately NOT validated against the principal registry, so a
 	// share may be provisioned before its recipient's first login.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5142,6 +5152,8 @@ type ClientInterface interface {
 	//
 	// Revoked grants stay listed with `revoked_at_ms` set — the audit
 	// trail is the point, not a live-only view.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Corresponds with GET /api/v2/abac/grants/{owner_tenant} (the `ListGrants` operationId).
 	ListGrants(ctx context.Context, ownerTenant string, params *ListGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5151,6 +5163,8 @@ type ClientInterface interface {
 	// Idempotent — 204 whether the grant existed (and was revoked) or was
 	// already unknown/revoked. Revocation under the wrong owner cannot
 	// even name the grant (the store is owner-partitioned).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Corresponds with DELETE /api/v2/abac/grants/{owner_tenant}/{grant_id} (the `DeleteGrant` operationId).
 	DeleteGrant(ctx context.Context, ownerTenant string, grantId string, params *DeleteGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5160,6 +5174,8 @@ type ClientInterface interface {
 	// The exact binding set the enforcer composes for reads under
 	// `tenant` — an operator inspection endpoint, not a per-tenant
 	// self-service one.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Corresponds with GET /api/v2/abac/policy-bindings/{tenant} (the `ListPolicyBindings` operationId).
 	ListPolicyBindings(ctx context.Context, tenant string, params *ListPolicyBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5167,6 +5183,8 @@ type ClientInterface interface {
 	// DeletePolicyBinding Remove an ABAC policy binding.
 	//
 	// Idempotent — 204 whether or not a binding existed at `object_id`.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Corresponds with DELETE /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `DeletePolicyBinding` operationId).
 	DeletePolicyBinding(ctx context.Context, tenant string, objectId uint64, params *DeletePolicyBindingParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5178,6 +5196,8 @@ type ClientInterface interface {
 	// `predicate_ref` row filter and a `field_mask`). Writes through the
 	// same store the live enforcer reads: visible on the next request, no
 	// restart. `Deny` wins during resolution; the default is deny.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5191,6 +5211,8 @@ type ClientInterface interface {
 	// `predicate_ref` row filter and a `field_mask`). Writes through the
 	// same store the live enforcer reads: visible on the next request, no
 	// restart. `Deny` wins during resolution; the default is deny.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5206,6 +5228,8 @@ type ClientInterface interface {
 	//
 	// Idempotent (204). Subsequent resolves of `object_id` by any policy
 	// binding fail-closed.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Corresponds with DELETE /api/v2/abac/predicate-objects/{object_id} (the `DeletePredicateObject` operationId).
 	DeletePredicateObject(ctx context.Context, objectId uint64, params *DeletePredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5214,6 +5238,10 @@ type ClientInterface interface {
 	//
 	// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
 	// resolves fail-closed (safe) regardless of this endpoint.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Corresponds with GET /api/v2/abac/predicate-objects/{object_id} (the `GetPredicateObject` operationId).
 	GetPredicateObject(ctx context.Context, objectId uint64, params *GetPredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5223,6 +5251,8 @@ type ClientInterface interface {
 	// The request body IS the `FilterExpression` directly (no wrapper) —
 	// a stored row-filter predicate that a policy binding's
 	// `predicate_ref` can reference.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5234,6 +5264,8 @@ type ClientInterface interface {
 	// The request body IS the `FilterExpression` directly (no wrapper) —
 	// a stored row-filter predicate that a policy binding's
 	// `predicate_ref` can reference.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5245,6 +5277,8 @@ type ClientInterface interface {
 	// 404 means the tenant has NO explicit record — meaningfully
 	// different from `Off`, since an absent record means the tenant
 	// inherits the process default, which may itself be `Enforce`.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Corresponds with GET /api/v2/abac/tenant-posture/{tenant} (the `GetTenantPosture` operationId).
 	GetTenantPosture(ctx context.Context, tenant string, params *GetTenantPostureParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5254,6 +5288,8 @@ type ClientInterface interface {
 	// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
 	// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
 	// is how an operator breaks a customer's traffic.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5265,6 +5301,8 @@ type ClientInterface interface {
 	// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
 	// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
 	// is how an operator breaks a customer's traffic.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6224,6 +6262,8 @@ func (c *Client) GetCapabilities(ctx context.Context, params *GetCapabilitiesPar
 // Cluster-operator scope — every `(subject, tenant)` attribute
 // binding across every tenant, by design (cross-tenant visibility is
 // the point of an operator inspection endpoint).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — this is a cross-tenant operator view.
 //
 // Corresponds with GET /api/v2/abac/attribute-bindings (the `ListAttributeBindings` operationId).
 func (c *Client) ListAttributeBindings(ctx context.Context, params *ListAttributeBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6243,6 +6283,8 @@ func (c *Client) ListAttributeBindings(ctx context.Context, params *ListAttribut
 // The authority half of ABAC — a `(subject, tenant)`-keyed,
 // multi-valued attribute set a policy's `predicate_ref` resolves
 // against. Writes through the same store the live enforcer reads.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6264,6 +6306,8 @@ func (c *Client) PostAttributeBindingWithBody(ctx context.Context, params *PostA
 // The authority half of ABAC — a `(subject, tenant)`-keyed,
 // multi-valued attribute set a policy's `predicate_ref` resolves
 // against. Writes through the same store the live enforcer reads.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6289,6 +6333,8 @@ func (c *Client) PostAttributeBinding(ctx context.Context, params *PostAttribute
 // resolve (fail-closed on unminted tenants); the grantee subject is
 // deliberately NOT validated against the principal registry, so a
 // share may be provisioned before its recipient's first login.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6314,6 +6360,8 @@ func (c *Client) PostGrantWithBody(ctx context.Context, params *PostGrantParams,
 // resolve (fail-closed on unminted tenants); the grantee subject is
 // deliberately NOT validated against the principal registry, so a
 // share may be provisioned before its recipient's first login.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6334,6 +6382,8 @@ func (c *Client) PostGrant(ctx context.Context, params *PostGrantParams, body Po
 //
 // Revoked grants stay listed with `revoked_at_ms` set — the audit
 // trail is the point, not a live-only view.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Corresponds with GET /api/v2/abac/grants/{owner_tenant} (the `ListGrants` operationId).
 func (c *Client) ListGrants(ctx context.Context, ownerTenant string, params *ListGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6353,6 +6403,8 @@ func (c *Client) ListGrants(ctx context.Context, ownerTenant string, params *Lis
 // Idempotent — 204 whether the grant existed (and was revoked) or was
 // already unknown/revoked. Revocation under the wrong owner cannot
 // even name the grant (the store is owner-partitioned).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Corresponds with DELETE /api/v2/abac/grants/{owner_tenant}/{grant_id} (the `DeleteGrant` operationId).
 func (c *Client) DeleteGrant(ctx context.Context, ownerTenant string, grantId string, params *DeleteGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6372,6 +6424,8 @@ func (c *Client) DeleteGrant(ctx context.Context, ownerTenant string, grantId st
 // The exact binding set the enforcer composes for reads under
 // `tenant` — an operator inspection endpoint, not a per-tenant
 // self-service one.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Corresponds with GET /api/v2/abac/policy-bindings/{tenant} (the `ListPolicyBindings` operationId).
 func (c *Client) ListPolicyBindings(ctx context.Context, tenant string, params *ListPolicyBindingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6389,6 +6443,8 @@ func (c *Client) ListPolicyBindings(ctx context.Context, tenant string, params *
 // DeletePolicyBinding Remove an ABAC policy binding.
 //
 // Idempotent — 204 whether or not a binding existed at `object_id`.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Corresponds with DELETE /api/v2/abac/policy-bindings/{tenant}/{object_id} (the `DeletePolicyBinding` operationId).
 func (c *Client) DeletePolicyBinding(ctx context.Context, tenant string, objectId uint64, params *DeletePolicyBindingParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6410,6 +6466,8 @@ func (c *Client) DeletePolicyBinding(ctx context.Context, tenant string, objectI
 // `predicate_ref` row filter and a `field_mask`). Writes through the
 // same store the live enforcer reads: visible on the next request, no
 // restart. `Deny` wins during resolution; the default is deny.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6433,6 +6491,8 @@ func (c *Client) PutPolicyBindingWithBody(ctx context.Context, tenant string, ob
 // `predicate_ref` row filter and a `field_mask`). Writes through the
 // same store the live enforcer reads: visible on the next request, no
 // restart. `Deny` wins during resolution; the default is deny.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6468,6 +6528,8 @@ func (c *Client) ListPredicateObjects(ctx context.Context, params *ListPredicate
 //
 // Idempotent (204). Subsequent resolves of `object_id` by any policy
 // binding fail-closed.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Corresponds with DELETE /api/v2/abac/predicate-objects/{object_id} (the `DeletePredicateObject` operationId).
 func (c *Client) DeletePredicateObject(ctx context.Context, objectId uint64, params *DeletePredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6486,6 +6548,10 @@ func (c *Client) DeletePredicateObject(ctx context.Context, objectId uint64, par
 //
 // 404 if unknown. Note a dangling `predicate_ref` on a policy binding
 // resolves fail-closed (safe) regardless of this endpoint.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Corresponds with GET /api/v2/abac/predicate-objects/{object_id} (the `GetPredicateObject` operationId).
 func (c *Client) GetPredicateObject(ctx context.Context, objectId uint64, params *GetPredicateObjectParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6505,6 +6571,8 @@ func (c *Client) GetPredicateObject(ctx context.Context, objectId uint64, params
 // The request body IS the `FilterExpression` directly (no wrapper) —
 // a stored row-filter predicate that a policy binding's
 // `predicate_ref` can reference.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Takes any type of body and a specified content type.
 //
@@ -6526,6 +6594,8 @@ func (c *Client) PutPredicateObjectWithBody(ctx context.Context, objectId uint64
 // The request body IS the `FilterExpression` directly (no wrapper) —
 // a stored row-filter predicate that a policy binding's
 // `predicate_ref` can reference.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6547,6 +6617,8 @@ func (c *Client) PutPredicateObject(ctx context.Context, objectId uint64, params
 // 404 means the tenant has NO explicit record — meaningfully
 // different from `Off`, since an absent record means the tenant
 // inherits the process default, which may itself be `Enforce`.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Corresponds with GET /api/v2/abac/tenant-posture/{tenant} (the `GetTenantPosture` operationId).
 func (c *Client) GetTenantPosture(ctx context.Context, tenant string, params *GetTenantPostureParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6566,6 +6638,8 @@ func (c *Client) GetTenantPosture(ctx context.Context, tenant string, params *Ge
 // Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
 // zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
 // is how an operator breaks a customer's traffic.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6587,6 +6661,8 @@ func (c *Client) PutTenantPostureWithBody(ctx context.Context, tenant string, pa
 // Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
 // zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
 // is how an operator breaks a customer's traffic.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12410,6 +12486,8 @@ type ClientWithResponsesInterface interface {
 	// Cluster-operator scope — every `(subject, tenant)` attribute
 	// binding across every tenant, by design (cross-tenant visibility is
 	// the point of an operator inspection endpoint).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — this is a cross-tenant operator view.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12421,6 +12499,8 @@ type ClientWithResponsesInterface interface {
 	// The authority half of ABAC — a `(subject, tenant)`-keyed,
 	// multi-valued attribute set a policy's `predicate_ref` resolves
 	// against. Writes through the same store the live enforcer reads.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12432,6 +12512,8 @@ type ClientWithResponsesInterface interface {
 	// The authority half of ABAC — a `(subject, tenant)`-keyed,
 	// multi-valued attribute set a policy's `predicate_ref` resolves
 	// against. Writes through the same store the live enforcer reads.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12447,6 +12529,8 @@ type ClientWithResponsesInterface interface {
 	// resolve (fail-closed on unminted tenants); the grantee subject is
 	// deliberately NOT validated against the principal registry, so a
 	// share may be provisioned before its recipient's first login.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12462,6 +12546,8 @@ type ClientWithResponsesInterface interface {
 	// resolve (fail-closed on unminted tenants); the grantee subject is
 	// deliberately NOT validated against the principal registry, so a
 	// share may be provisioned before its recipient's first login.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the body `tenant` field governs.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12472,6 +12558,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Revoked grants stay listed with `revoked_at_ms` set — the audit
 	// trail is the point, not a live-only view.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12483,6 +12571,8 @@ type ClientWithResponsesInterface interface {
 	// Idempotent — 204 whether the grant existed (and was revoked) or was
 	// already unknown/revoked. Revocation under the wrong owner cannot
 	// even name the grant (the store is owner-partitioned).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12494,6 +12584,8 @@ type ClientWithResponsesInterface interface {
 	// The exact binding set the enforcer composes for reads under
 	// `tenant` — an operator inspection endpoint, not a per-tenant
 	// self-service one.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12503,6 +12595,8 @@ type ClientWithResponsesInterface interface {
 	// DeletePolicyBindingWithResponse Remove an ABAC policy binding.
 	//
 	// Idempotent — 204 whether or not a binding existed at `object_id`.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12516,6 +12610,8 @@ type ClientWithResponsesInterface interface {
 	// `predicate_ref` row filter and a `field_mask`). Writes through the
 	// same store the live enforcer reads: visible on the next request, no
 	// restart. `Deny` wins during resolution; the default is deny.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12529,6 +12625,8 @@ type ClientWithResponsesInterface interface {
 	// `predicate_ref` row filter and a `field_mask`). Writes through the
 	// same store the live enforcer reads: visible on the next request, no
 	// restart. `Deny` wins during resolution; the default is deny.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12546,6 +12644,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Idempotent (204). Subsequent resolves of `object_id` by any policy
 	// binding fail-closed.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12556,6 +12656,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
 	// resolves fail-closed (safe) regardless of this endpoint.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12567,6 +12671,8 @@ type ClientWithResponsesInterface interface {
 	// The request body IS the `FilterExpression` directly (no wrapper) —
 	// a stored row-filter predicate that a policy binding's
 	// `predicate_ref` can reference.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12578,6 +12684,8 @@ type ClientWithResponsesInterface interface {
 	// The request body IS the `FilterExpression` directly (no wrapper) —
 	// a stored row-filter predicate that a policy binding's
 	// `predicate_ref` can reference.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (predicate objects are global, not tenant-scoped).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12589,6 +12697,8 @@ type ClientWithResponsesInterface interface {
 	// 404 means the tenant has NO explicit record — meaningfully
 	// different from `Off`, since an absent record means the tenant
 	// inherits the process default, which may itself be `Enforce`.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12600,6 +12710,8 @@ type ClientWithResponsesInterface interface {
 	// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
 	// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
 	// is how an operator breaks a customer's traffic.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12611,6 +12723,8 @@ type ClientWithResponsesInterface interface {
 	// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
 	// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
 	// is how an operator breaks a customer's traffic.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — the tenant path segment governs.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -13852,6 +13966,8 @@ type ListGrantsHTTPResp struct {
 	JSON403 *AbacForbidden
 	// JSON422 the response for an HTTP 422 `application/json` response
 	JSON422 *AbacTenantUnresolved
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *AbacUnavailable
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -13872,6 +13988,11 @@ func (r ListGrantsHTTPResp) GetJSON403() *AbacForbidden {
 // GetJSON422 returns the response for an HTTP 422 `application/json` response
 func (r ListGrantsHTTPResp) GetJSON422() *AbacTenantUnresolved {
 	return r.JSON422
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListGrantsHTTPResp) GetJSON503() *AbacUnavailable {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -17365,6 +17486,8 @@ func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, p
 // Cluster-operator scope — every `(subject, tenant)` attribute
 // binding across every tenant, by design (cross-tenant visibility is
 // the point of an operator inspection endpoint).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — this is a cross-tenant operator view.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17382,6 +17505,8 @@ func (c *ClientWithResponses) ListAttributeBindingsWithResponse(ctx context.Cont
 // The authority half of ABAC — a `(subject, tenant)`-keyed,
 // multi-valued attribute set a policy's `predicate_ref` resolves
 // against. Writes through the same store the live enforcer reads.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17399,6 +17524,8 @@ func (c *ClientWithResponses) PostAttributeBindingWithBodyWithResponse(ctx conte
 // The authority half of ABAC — a `(subject, tenant)`-keyed,
 // multi-valued attribute set a policy's `predicate_ref` resolves
 // against. Writes through the same store the live enforcer reads.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17420,6 +17547,8 @@ func (c *ClientWithResponses) PostAttributeBindingWithResponse(ctx context.Conte
 // resolve (fail-closed on unminted tenants); the grantee subject is
 // deliberately NOT validated against the principal registry, so a
 // share may be provisioned before its recipient's first login.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17441,6 +17570,8 @@ func (c *ClientWithResponses) PostGrantWithBodyWithResponse(ctx context.Context,
 // resolve (fail-closed on unminted tenants); the grantee subject is
 // deliberately NOT validated against the principal registry, so a
 // share may be provisioned before its recipient's first login.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the body `tenant` field governs.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17457,6 +17588,8 @@ func (c *ClientWithResponses) PostGrantWithResponse(ctx context.Context, params 
 //
 // Revoked grants stay listed with `revoked_at_ms` set — the audit
 // trail is the point, not a live-only view.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17474,6 +17607,8 @@ func (c *ClientWithResponses) ListGrantsWithResponse(ctx context.Context, ownerT
 // Idempotent — 204 whether the grant existed (and was revoked) or was
 // already unknown/revoked. Revocation under the wrong owner cannot
 // even name the grant (the store is owner-partitioned).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17491,6 +17626,8 @@ func (c *ClientWithResponses) DeleteGrantWithResponse(ctx context.Context, owner
 // The exact binding set the enforcer composes for reads under
 // `tenant` — an operator inspection endpoint, not a per-tenant
 // self-service one.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17506,6 +17643,8 @@ func (c *ClientWithResponses) ListPolicyBindingsWithResponse(ctx context.Context
 // DeletePolicyBindingWithResponse Remove an ABAC policy binding.
 //
 // Idempotent — 204 whether or not a binding existed at `object_id`.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17525,6 +17664,8 @@ func (c *ClientWithResponses) DeletePolicyBindingWithResponse(ctx context.Contex
 // `predicate_ref` row filter and a `field_mask`). Writes through the
 // same store the live enforcer reads: visible on the next request, no
 // restart. `Deny` wins during resolution; the default is deny.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17544,6 +17685,8 @@ func (c *ClientWithResponses) PutPolicyBindingWithBodyWithResponse(ctx context.C
 // `predicate_ref` row filter and a `field_mask`). Writes through the
 // same store the live enforcer reads: visible on the next request, no
 // restart. `Deny` wins during resolution; the default is deny.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17573,6 +17716,8 @@ func (c *ClientWithResponses) ListPredicateObjectsWithResponse(ctx context.Conte
 //
 // Idempotent (204). Subsequent resolves of `object_id` by any policy
 // binding fail-closed.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17589,6 +17734,10 @@ func (c *ClientWithResponses) DeletePredicateObjectWithResponse(ctx context.Cont
 //
 // 404 if unknown. Note a dangling `predicate_ref` on a policy binding
 // resolves fail-closed (safe) regardless of this endpoint.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17606,6 +17755,8 @@ func (c *ClientWithResponses) GetPredicateObjectWithResponse(ctx context.Context
 // The request body IS the `FilterExpression` directly (no wrapper) —
 // a stored row-filter predicate that a policy binding's
 // `predicate_ref` can reference.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17623,6 +17774,8 @@ func (c *ClientWithResponses) PutPredicateObjectWithBodyWithResponse(ctx context
 // The request body IS the `FilterExpression` directly (no wrapper) —
 // a stored row-filter predicate that a policy binding's
 // `predicate_ref` can reference.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (predicate objects are global, not tenant-scoped).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17640,6 +17793,8 @@ func (c *ClientWithResponses) PutPredicateObjectWithResponse(ctx context.Context
 // 404 means the tenant has NO explicit record — meaningfully
 // different from `Off`, since an absent record means the tenant
 // inherits the process default, which may itself be `Enforce`.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17657,6 +17812,8 @@ func (c *ClientWithResponses) GetTenantPostureWithResponse(ctx context.Context, 
 // Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
 // zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
 // is how an operator breaks a customer's traffic.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -17674,6 +17831,8 @@ func (c *ClientWithResponses) PutTenantPostureWithBodyWithResponse(ctx context.C
 // Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
 // zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
 // is how an operator breaks a customer's traffic.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — the tenant path segment governs.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -19424,6 +19583,13 @@ func ParseListGrantsHTTPResp(rsp *http.Response) (*ListGrantsHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AbacUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
