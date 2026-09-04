@@ -612,6 +612,9 @@ fn convert_log_to_response(entry: LogEntry) -> LogEntryResponse {
                 Some(SV::Int64Value(i)) => serde_json::json!(i),
                 Some(SV::NumberValue(f)) => serde_json::json!(f),
                 Some(SV::BoolValue(b)) => serde_json::Value::Bool(b),
+                Some(SV::JsonbValue(bytes)) => {
+                    proximadb_data_model::ProximaValue::jsonb_to_json_lossy(&bytes)
+                }
                 _ => serde_json::Value::Null,
             };
             (k, json_val)
@@ -902,7 +905,7 @@ mod tests {
         fields.insert("ratio".to_string(), serde_json::json!(1.5));
         fields.insert("nested".to_string(), serde_json::json!({"k": "v"}));
 
-        let entry = convert_log_request(&LogEntryRequest {
+        let mut entry = convert_log_request(&LogEntryRequest {
             timestamp_ns: Some(123),
             message: "hello".to_string(),
             severity: "error".to_string(),
@@ -915,10 +918,22 @@ mod tests {
         assert_eq!(entry.severity, Severity::Error as i32);
         assert_eq!(entry.fields.len(), 5);
 
+        let jsonb = serde_json::json!({"trace": {"sampled": true}});
+        entry.fields.insert(
+            "jsonb".to_string(),
+            SqlValue {
+                value: Some(proximadb_proto::v1::sql_value::Value::JsonbValue(
+                    proximadb_data_model::ProximaValue::to_jsonb_vec(&jsonb)
+                        .expect("encode JSONB test value"),
+                )),
+            },
+        );
+
         let response = convert_log_to_response(entry);
         assert_eq!(response.severity, "error");
         assert_eq!(response.fields["text"], serde_json::json!("value"));
         assert_eq!(response.fields["count"], serde_json::json!(3));
+        assert_eq!(response.fields["jsonb"], jsonb);
 
         let mut labels = HashMap::new();
         labels.insert("service".to_string(), "api".to_string());

@@ -1,5 +1,6 @@
 // Helper functions for proto metadata conversion with repeated MetadataItem
 
+use proximadb_data_model::ProximaValue;
 use proximadb_proto::proximadb_v1::{MetadataItem, SqlValue, metadata_item};
 use std::collections::HashMap;
 
@@ -170,6 +171,9 @@ pub fn sqlvalue_metadata_to_json(
                     }
                     proximadb_proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
                         serde_json::Value::String("[binary data]".to_string())
+                    }
+                    proximadb_proto::proximadb_v1::sql_value::Value::JsonbValue(bytes) => {
+                        ProximaValue::jsonb_to_json_lossy(bytes)
                     }
                     proximadb_proto::proximadb_v1::sql_value::Value::NullValue(_) => {
                         serde_json::Value::Null

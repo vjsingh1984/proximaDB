@@ -142,6 +142,11 @@ jobs:
         with:
           filters: |
             rust:
+              # TD-PROTO-2 review: the v1-mirror drift guard (a #[cfg(test)]
+              # in proximadb-proto) runs ONLY in the rust lane — a proto-only
+              # change that forgets the hand-maintained v1 mirror must re-run
+              # it, so proto edits are rust-lane-visible.
+              - 'proto/**'
               - 'src/**'
               # Workspace members that `cargo` compiles, lints, and tests but that
               # the filter previously omitted — a crate-only or app-only change
@@ -1592,6 +1597,12 @@ jobs:
           - test-type: doc
             args: "--doc"
             threads: 4
+    env:
+      # TD-PROTO-2: the v1-mirror conformance guard runs in this job (unit
+      # lane). Requiring protoc keeps a skip distinguishable from a pass —
+      # if the protobuf-compiler install ever quietly fails, the gate FAILS
+      # instead of disarming to green.
+      REQUIRE_PROTOC: "1"
     steps:
       - name: Reclaim disk space
         # ubuntu-latest ships ~25 GB of preinstalled toolchains this build never

@@ -5046,6 +5046,10 @@ impl EmbeddedProximaDB {
                 let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
                 serde_json::Value::String(format!("0x{}", hex))
             }
+            Some(Value::JsonbValue(b)) => {
+                use proximadb_data_model::ProximaValue;
+                ProximaValue::jsonb_to_json_lossy(b)
+            }
         }
     }
 

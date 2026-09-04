@@ -643,6 +643,14 @@ impl TantivyLogIndex {
             Some(SqlValueVariant::BoolValue(b)) => b.to_string(),
             Some(SqlValueVariant::NullValue(_)) => String::new(),
             Some(SqlValueVariant::BytesValue(b)) => format!("<bytes:{}>", b.len()),
+            // TD-PROTO-2 round 4: the _all fulltext field indexes the decoded
+            // JSON text — a byte-length placeholder made fulltext search over
+            // JSONB attributes return zero hits while the structured filter
+            // path matched. (No legacy-index concern: the variant became
+            // producible in this change.)
+            Some(SqlValueVariant::JsonbValue(b)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(b)
+            }
             Some(SqlValueVariant::ArrayValue(arr)) => arr
                 .values
                 .iter()
@@ -957,6 +965,40 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "log1");
+    }
+
+    #[test]
+    fn fulltext_search_indexes_decoded_jsonb_fields() {
+        let document = serde_json::json!({"request_id": "req-jsonb-42"});
+        let fields = [(
+            "context".to_string(),
+            SqlValue {
+                value: Some(SqlValueVariant::JsonbValue(
+                    proximadb_data_model::ProximaValue::to_jsonb_vec(&document)
+                        .expect("encode JSONB test value"),
+                )),
+            },
+        )]
+        .into_iter()
+        .collect();
+        let index = TantivyLogIndex::new("test_ns").expect("create index");
+        let logs = vec![make_log_with_fields(
+            "jsonb-log",
+            "Request processed",
+            "api",
+            Severity::Info,
+            1000,
+            fields,
+        )];
+
+        index.index_logs(&logs).expect("index logs");
+        index.commit().expect("commit index");
+        let results = index
+            .search("req-jsonb-42", &LogSearchOptions::with_limit(10))
+            .expect("search JSONB contents");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "jsonb-log");
     }
 
     #[test]

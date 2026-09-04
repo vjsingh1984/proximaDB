@@ -1647,6 +1647,35 @@ impl FederatedExecutor {
 
         match value.value.as_ref()? {
             sql_value::Value::ObjectValue(object) => Self::extract_sql_object_vector(object, path),
+            // TD-PROTO-2 round 6: JSONB documents traverse the same paths —
+            // the wildcard silently dropped/zeroed federated vector rows
+            // whose path crossed a JSONB field.
+            sql_value::Value::JsonbValue(bytes) => {
+                let doc = proximadb_data_model::ProximaValue::jsonb_to_json_lossy(bytes);
+                let mut current = &doc;
+                for segment in path {
+                    current = match current {
+                        serde_json::Value::Object(object) => object.get(segment)?,
+                        _ => return None,
+                    };
+                }
+                Self::json_to_vector(current)
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract a vector from a JSON array of numbers (inside a JSONB doc).
+    fn json_to_vector(value: &serde_json::Value) -> Option<Vec<f32>> {
+        match value {
+            serde_json::Value::Array(items) => items
+                .iter()
+                .map(|item| match item {
+                    serde_json::Value::Number(n) => n.as_f64().map(|f| f as f32),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .filter(|vector| !vector.is_empty()),
             _ => None,
         }
     }
@@ -1685,6 +1714,10 @@ impl FederatedExecutor {
                 })
                 .collect::<Option<Vec<_>>>()
                 .filter(|vector| !vector.is_empty()),
+            // A JSONB document carrying a bare JSON array of numbers.
+            sql_value::Value::JsonbValue(bytes) => Self::json_to_vector(
+                &proximadb_data_model::ProximaValue::jsonb_to_json_lossy(bytes),
+            ),
             _ => None,
         }
     }

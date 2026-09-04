@@ -499,6 +499,12 @@ impl LogAggregator {
             Some(Value::NumberValue(f)) => f.to_string(),
             Some(Value::StringValue(s)) => s.clone(),
             Some(Value::BytesValue(b)) => format!("<bytes:{}>", b.len()),
+            // TD-PROTO-2 round 4: group-by keys decode canonical JSON — a
+            // byte-length placeholder collapsed distinct documents into
+            // length buckets.
+            Some(Value::JsonbValue(b)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(b)
+            }
             Some(Value::ArrayValue(arr)) => format!("<array:{}>", arr.values.len()),
             Some(Value::ObjectValue(obj)) => format!("<object:{}>", obj.fields.len()),
             None => "<empty>".to_string(),
@@ -895,6 +901,39 @@ mod tests {
         assert_eq!(result.buckets[0].count, 2);
         assert_eq!(result.buckets[1].key, "500");
         assert_eq!(result.buckets[1].count, 1);
+    }
+
+    #[test]
+    fn aggregation_groups_jsonb_by_document_not_byte_length() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+
+        let make_fields = |region: &str| {
+            let document = serde_json::json!({"region": region});
+            [(
+                "context".to_string(),
+                SqlValue {
+                    value: Some(Value::JsonbValue(
+                        proximadb_data_model::ProximaValue::to_jsonb_vec(&document)
+                            .expect("encode JSONB test value"),
+                    )),
+                },
+            )]
+            .into_iter()
+            .collect()
+        };
+        let logs = vec![
+            make_log_with_fields("east", Severity::Info, "api", 0, make_fields("east")),
+            make_log_with_fields("west", Severity::Info, "api", 0, make_fields("west")),
+        ];
+
+        let result =
+            LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("context".to_string()));
+        let keys: std::collections::BTreeSet<_> =
+            result.buckets.iter().map(|bucket| &bucket.key).collect();
+
+        assert_eq!(result.buckets.len(), 2);
+        assert!(keys.contains(&serde_json::json!({"region": "east"}).to_string()));
+        assert!(keys.contains(&serde_json::json!({"region": "west"}).to_string()));
     }
 
     #[test]

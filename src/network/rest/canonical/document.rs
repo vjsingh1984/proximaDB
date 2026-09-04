@@ -235,6 +235,7 @@ async fn create_collection(
         fulltext_paths: Vec::new(),
         ttl_seconds: 0, // No expiry by default
         compression: None,
+        use_jsonb: false,
     };
 
     state
@@ -668,6 +669,7 @@ fn sql_value_to_json(value: &SqlValue) -> serde_json::Value {
             // Convert bytes to hex string
             serde_json::Value::String(b.iter().map(|byte| format!("{:02x}", byte)).collect())
         }
+        Some(Value::JsonbValue(b)) => proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b),
         Some(Value::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
         }

@@ -523,6 +523,12 @@ impl ObservabilityQueryEngine {
             Some(Value::NumberValue(f)) => f.to_string(),
             Some(Value::BoolValue(b)) => b.to_string(),
             Some(Value::BytesValue(b)) => String::from_utf8_lossy(b).to_string(),
+            // TD-PROTO-2: raw MessagePack through from_utf8_lossy is mojibake
+            // and made key:value attribute filters silently drop matching
+            // logs — decode to compact JSON text (canonical representation).
+            Some(Value::JsonbValue(b)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(b)
+            }
             Some(Value::NullValue(_)) => "null".to_string(),
             Some(Value::ArrayValue(_)) => "[array]".to_string(),
             Some(Value::ObjectValue(_)) => "{object}".to_string(),

@@ -329,6 +329,9 @@ pub fn sql_value_to_json(value: &SqlValue) -> JsonValue {
             }
             ProtoSqlValueInner::StringValue(s) => JsonValue::String(s.clone()),
             ProtoSqlValueInner::BytesValue(b) => JsonValue::String(base64_helper::encode(b)),
+            ProtoSqlValueInner::JsonbValue(b) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b)
+            }
             ProtoSqlValueInner::ArrayValue(arr) => {
                 JsonValue::Array(arr.values.iter().map(sql_value_to_json).collect())
             }
@@ -444,6 +447,7 @@ pub fn sql_value_to_arrow_type(value: &SqlValue) -> DataType {
             ProtoSqlValueInner::NumberValue(_) => DataType::Float64,
             ProtoSqlValueInner::StringValue(_) => DataType::Utf8,
             ProtoSqlValueInner::BytesValue(_) => DataType::Binary,
+            ProtoSqlValueInner::JsonbValue(_) => DataType::Binary,
             ProtoSqlValueInner::ArrayValue(arr) => {
                 if let Some(first) = arr.values.first() {
                     DataType::List(Arc::new(Field::new(

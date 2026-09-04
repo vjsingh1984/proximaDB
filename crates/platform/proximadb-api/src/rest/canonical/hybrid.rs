@@ -12,6 +12,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
+use proximadb_data_model::ProximaValue;
 use proximadb_proto::v1::{FusionStrategy, HybridFusionSearchRequest, SqlValue};
 use proximadb_runtime::{BM25Document, BM25IndexPort, HybridPort};
 use serde::{Deserialize, Serialize};
@@ -134,6 +135,7 @@ pub fn sql_value_to_json(v: &SqlValue) -> serde_json::Value {
                 .map(|x| serde_json::Value::Number((*x as u64).into()))
                 .collect(),
         ),
+        Some(V::JsonbValue(b)) => ProximaValue::jsonb_to_json_lossy(b),
         Some(V::NullValue(_)) | None => serde_json::Value::Null,
         Some(V::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())

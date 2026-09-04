@@ -8354,6 +8354,7 @@ dependencies = [
  "prost",
  "prost-types",
  "proximadb-kernel",
+ "rmp-serde",
  "serde",
  "serde_json",
  "tonic",

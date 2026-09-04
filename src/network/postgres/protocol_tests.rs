@@ -4,6 +4,29 @@ use crate::query::multimodal_router;
 use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
 #[test]
+fn document_json_output_preserves_jsonb_fields() {
+    let document = serde_json::json!({"profile": {"tier": "gold"}});
+    let object = crate::proto::proximadb_v1::SqlObject {
+        fields: [(
+            "metadata".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(
+                    proximadb_data_model::ProximaValue::to_jsonb_vec(&document)
+                        .expect("encode JSONB test value"),
+                )),
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let encoded = sql_object_to_json(&object);
+    let decoded: serde_json::Value =
+        serde_json::from_str(&encoded).expect("decode document JSON output");
+    assert_eq!(decoded["metadata"], document);
+}
+
+#[test]
 fn test_frontend_message() {
     assert_eq!(FrontendMessage::Query as u8, b'Q');
     assert_eq!(FrontendMessage::Terminate as u8, b'X');

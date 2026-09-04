@@ -1334,6 +1334,7 @@ fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
                     .collect(),
             )
         }
+        Some(V::JsonbValue(b)) => proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b),
         Some(V::NullValue(_)) => serde_json::Value::Null,
         Some(V::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())

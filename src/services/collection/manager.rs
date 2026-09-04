@@ -2820,6 +2820,7 @@ mod tests {
         // Valid config
         let valid_config = CollectionConfig {
             name: "valid_collection".to_string(),
+            embedding_config: None,
             dimension: 128,
             distance_metric: Some(1),
             storage_engine: Some(1),
@@ -2944,6 +2945,7 @@ mod tests {
         for (name, should_succeed, expected_error_code) in test_cases {
             let config = CollectionConfig {
                 name: name.to_string(),
+                embedding_config: None,
                 dimension: 128,
                 distance_metric: Some(1),
                 storage_engine: Some(1),
@@ -3544,6 +3546,7 @@ mod tests {
         let name = "part";
         let config = CollectionConfig {
             name: name.to_string(),
+            embedding_config: None,
             dimension: 16,
             distance_metric: Some(1),
             storage_engine: Some(1),
@@ -3612,6 +3615,7 @@ mod tests {
 
         let config = CollectionConfig {
             name: "metric_default_test".to_string(),
+            embedding_config: None,
             dimension: 128,
             distance_metric: None,
             storage_engine: Some(StorageEngine::Viper as i32),

@@ -318,6 +318,10 @@ docs/log/
 !docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
 !docs/_internal/roadmap/V1_PROTO_USAGE_BASELINE.json
 !docs/_internal/roadmap/SILENT_FAILURE_BASELINE.json
+# TD-PROTO-2 known-drift ledger: the v1-mirror conformance ratchet reads this
+# at test time — it is a baseline like the ones above, not generated runtime
+# data. Untracked => the guard panics on every fresh checkout.
+!crates/foundation/proximadb-proto/src/proto/v1_conformance_known_drift.json
 !clients/**/package.json
 !clients/**/tsconfig.json
 !clients/**/tsconfig.*.json

@@ -96,11 +96,34 @@ impl DocumentBlock {
                 null_count: 0,
             };
 
+            // JSONB paths: track the running extremum by its rendered key so
+            // each document decodes+renders ONCE (comparing via
+            // compare_values would decode both sides on every step — O(B)
+            // decodes per stat instead of O(1) amortized).
+            let mut jsonb_min: Option<(SqlValue, String)> = None;
+            let mut jsonb_max: Option<(SqlValue, String)> = None;
+
             for (_, doc) in &documents {
                 if let Some(value) = Self::extract_path_value(doc, path) {
                     stats.count += 1;
                     if Self::is_null(&value) {
                         stats.null_count += 1;
+                    } else if let Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(
+                        bytes,
+                    )) = &value.value
+                    {
+                        let key =
+                            proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(bytes);
+                        jsonb_min = Some(match jsonb_min.take() {
+                            None => (value.clone(), key.clone()),
+                            Some((mv, mk)) if mk <= key => (mv, mk),
+                            Some(_) => (value.clone(), key.clone()),
+                        });
+                        jsonb_max = Some(match jsonb_max.take() {
+                            None => (value.clone(), key.clone()),
+                            Some((mv, mk)) if mk >= key => (mv, mk),
+                            Some(_) => (value.clone(), key),
+                        });
                     } else {
                         // Update min/max
                         stats.min_value =
@@ -115,6 +138,13 @@ impl DocumentBlock {
                             ));
                     }
                 }
+            }
+
+            if let Some((value, _)) = jsonb_min {
+                stats.min_value = Some(value);
+            }
+            if let Some((value, _)) = jsonb_max {
+                stats.max_value = Some(value);
             }
 
             if stats.count > 0 {
@@ -272,6 +302,17 @@ impl DocumentBlock {
                 af.partial_cmp(bf).map_or(0, |o| o as i32)
             }
             (Some(SqlVal::StringValue(sa)), Some(SqlVal::StringValue(sb))) => sa.cmp(sb) as i32,
+            // TD-PROTO-2: JSONB sorts by canonical JSON rendering — the
+            // wildcard collapsed every JSONB key to "equal" (0). Byte
+            // equality is a free fast path (the writer's MessagePack
+            // encoding is deterministic); unequal bytes fall through to the
+            // canonical rendering.
+            (Some(SqlVal::JsonbValue(ja)), Some(SqlVal::JsonbValue(jb))) if ja == jb => 0,
+            (Some(SqlVal::JsonbValue(ja)), Some(SqlVal::JsonbValue(jb))) => {
+                let ra = proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(ja);
+                let rb = proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(jb);
+                ra.cmp(&rb) as i32
+            }
             (Some(SqlVal::BoolValue(ba)), Some(SqlVal::BoolValue(bb))) => ba.cmp(bb) as i32,
             // Cross-type: int vs float
             (Some(SqlVal::Int64Value(ai)), Some(SqlVal::NumberValue(bf))) => {
@@ -422,6 +463,47 @@ mod tests {
         let block = DocumentBlock::from_documents(docs, &["score".to_string()], false).unwrap();
         let stats = block.header.path_stats.get("score").unwrap();
         assert_eq!(stats.count, 3);
+    }
+
+    #[test]
+    fn jsonb_path_stats_keep_document_extrema() {
+        let make_jsonb = |region: &str| SqlValue {
+            value: Some(SqlVal::JsonbValue(
+                proximadb_data_model::ProximaValue::to_jsonb_vec(
+                    &serde_json::json!({"region": region}),
+                )
+                .expect("encode JSONB test value"),
+            )),
+        };
+        let docs = vec![
+            (
+                "west".to_string(),
+                make_doc(vec![("context", make_jsonb("west"))]),
+            ),
+            (
+                "east".to_string(),
+                make_doc(vec![("context", make_jsonb("east"))]),
+            ),
+        ];
+
+        let block = DocumentBlock::from_documents(docs, &["context".to_string()], false).unwrap();
+        let stats = block.header.path_stats.get("context").unwrap();
+        let decode = |value: &SqlValue| match &value.value {
+            Some(SqlVal::JsonbValue(bytes)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(bytes)
+            }
+            other => panic!("expected JSONB path statistic, got {other:?}"),
+        };
+
+        assert_eq!(stats.count, 2);
+        assert_eq!(
+            decode(stats.min_value.as_ref().expect("minimum")),
+            serde_json::json!({"region": "east"})
+        );
+        assert_eq!(
+            decode(stats.max_value.as_ref().expect("maximum")),
+            serde_json::json!({"region": "west"})
+        );
     }
 
     #[test]

@@ -114,6 +114,7 @@ fn sql_value_to_json(
                 .map(|x| serde_json::Value::Number((*x as u64).into()))
                 .collect(),
         ),
+        Some(Value::JsonbValue(b)) => ProximaValue::jsonb_to_json_lossy(b),
         Some(Value::ArrayValue(arr)) => serde_json::Value::Array(
             arr.values
                 .iter()

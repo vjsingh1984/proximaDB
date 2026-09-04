@@ -342,6 +342,9 @@ pub fn sql_values_to_json_map(
             Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_bytes)) => {
                 serde_json::Value::String("[Binary Data]".to_string())
             }
+            Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(bytes)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(&bytes)
+            }
             Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                 serde_json::Value::Null
             }
@@ -414,6 +417,7 @@ pub fn build_collection_config(
 ) -> Result<CollectionConfig> {
     let mut config = CollectionConfig {
         name: name.clone(),
+        embedding_config: None,
         dimension: dimension as u32,
         distance_metric: distance_metric
             .map(|m| parse_distance_metric(&m))
@@ -597,6 +601,14 @@ pub fn sql_values_to_metadata_items(
                 Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => Some(
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "[Binary Data]".to_string(),
+                    ),
+                ),
+                // MetadataItem's oneof carries only String/Number/Bool — the
+                // canonical JSON text is the best lossy mapping (consistent
+                // with the sibling map fn), not a byte-length placeholder.
+                Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b)) => Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(&b),
                     ),
                 ),
                 Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => None,

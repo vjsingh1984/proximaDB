@@ -13,6 +13,7 @@ use axum::{
     response::Json as JsonResponse,
     routing::{get, post},
 };
+use proximadb_data_model::ProximaValue;
 use proximadb_proto::v1::{
     AggregateDocumentsRequest, AggregationStage, CreateDocumentCollectionRequest,
     DeleteDocumentCollectionRequest, DeleteDocumentRequest, DocIndexType, DocumentCollectionConfig,
@@ -237,6 +238,7 @@ async fn create_collection(
         fulltext_paths: Vec::new(),
         ttl_seconds: 0,
         compression: None,
+        use_jsonb: false,
     };
 
     state
@@ -691,6 +693,7 @@ pub fn sql_value_to_json(value: &SqlValue) -> serde_json::Value {
         Some(Value::BytesValue(b)) => {
             serde_json::Value::String(b.iter().map(|byte| format!("{:02x}", byte)).collect())
         }
+        Some(Value::JsonbValue(b)) => ProximaValue::jsonb_to_json_lossy(b),
         Some(Value::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
         }

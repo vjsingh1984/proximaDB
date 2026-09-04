@@ -6,8 +6,8 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — filed 2026-09-01 from the #1724 adversarial review
-| Severity | Medium — silent field/variant loss on binary decode; no guard exists
+| Status | Implemented + ledger burned to ZERO in the same change (41 → 0)
+| Severity | Medium — silent field/variant loss on binary decode; no guard existed
 | Component | `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs` vs `proto/proximadb/v1/*.proto`
 | Pillar | CORRECTNESS / TOOLING
 |===
@@ -61,6 +61,279 @@ boundary (unknown-variant hard error) — comments in
    the prost structure from the `.proto` into a check-in file and diff it in
    CI against the mirror's prost-derive surface (heavier; only if (1)
    proves insufficient).
+
+== Implementation (2026-09-02)
+
+Candidate fix **1** landed — option 2 (generating the structural half) was not
+needed: the source-scan approach proved sufficient and stays hand-maintained
+alongside the mirrors it guards.
+
+* **Guard**: `crates/foundation/proximadb-proto/src/proto/v1_conformance.rs`
+  (`#[cfg(test)]`, runs under CI's unit-test job which installs
+  `protobuf-compiler`; skips gracefully when `protoc` is absent). It compiles
+  `proto/proximadb/v1/*.proto` + `proto/proximadb/explain.proto` with `protoc
+  --include_imports`, decodes the `FileDescriptorSet`, parses ALL five v1
+  mirrors (`proximadb.v1`, `.cluster.v1`, `.streaming.v1`, `.explain.v1`,
+  `.v1.ranking`) for their `#[prost]` attributes / derives / enum discriminants
+  / name tables, and compares both directions per message: field names, tags,
+  kinds, cardinality, map-ness, oneof member tags, enum wire-name →
+  discriminant maps. Unparseable mirror syntax is a fail-loud anomaly, never a
+  silent skip. Wire-compatible leniencies (documented in the file): a proto
+  oneof may be modeled as same-tagged plain fields; message/enum Rust-name
+  renames (RbacAuditEvent vs RBACAuditEvent) are not wire drift.
+* **Ratchet**: current findings are diffed against the checked-in ledger
+  `src/proto/v1_conformance_known_drift.json` — new drift fails, fixed drift
+  fails until the ledger is shrunk (regen:
+  `UPDATE_V1_DRIFT_SNAPSHOT=1 cargo test -p proximadb-proto --lib
+  v1_conformance`). The ledger doubles as the burn-down backlog.
+* **Live instances fixed in the same change**:
+  ** `OltpCatalogConfig` message + `CatalogConfig` oneof arm `oltp = 17` +
+    `CatalogType::{OltpPostgres,OltpMysql,OltpSqlite}` (10/11/12) — the filed
+    instance. The REST construction arm declines loudly (TD-CAT-10 retirement)
+    instead of constructing: the wire shape exists so binary configs decode
+    losslessly, not to resurrect the adapter.
+  ** `SqlValue` oneof arm `jsonb_value = 9` (bytes) + the custom serde
+    (`serde_impls.rs`) round-trip + the ~20 exhaustive-match fan-out sites,
+    each extending its local `BytesValue` convention.
+* **First-run census**: the guard found 49 pre-existing findings; 8 were fixed
+  above and the remaining **41 were burned down in the same change — the ledger
+  now sits at zero** and any future finding is new drift:
+  ** Never-mirrored messages/enums added to the mirror from their protos:
+     the graph.proto PULSAR/QUASAR distributed-engine block (13 messages, 5
+     enums incl. `GraphEngineType`), the collection_types.proto server-side
+     embedding block (`EmbeddingConfig`/`EmbeddingRoute`/`ByoEndpoint`/
+     `ByoAuth`/`MtlsCert`) plus `CollectionConfig.embedding_config` (tag 25)
+     and `DocumentCollectionConfig.use_jsonb` (tag 8).
+  ** `CollectionConfig.permitted_principals` was a real mirror bug: the prost
+     attr said `message` over a `Vec<String>` (proto: `repeated string`) —
+     fixed to `string`.
+  ** The 6 mirror-only `assemble_*` messages (plus the whole generated
+     `ContextService` client/server built on them) were **deleted**: absent
+     from every proto, zero references anywhere in the workspace — dead wire
+     types left behind when the protos dropped them (pre-GA no-back-compat
+     applies). This is the guard's "invented types" direction doing its job.
+  ** 3 of the "missing" messages were parser false-positives: one-line
+     `pub struct X {}` units (prost's rendering of empty messages) — the
+     guard now recognizes them.
+* The guard caught a variant-name typo (`Polar` vs `Polaris`) introduced in
+  this very PR before review did — the class of mistake it exists for.
+
+A fresh-context adversarial review (2026-09-02) hardened the change; its
+findings and dispositions:
+
+**Round 2 (high effort, 2026-09-03) — 10 findings, all dispositioned:**
+
+* **Writer emitted tag 8, not the declared tag 9** (MAJOR):
+  `proxima_to_sql_value` encoded `ProximaValue::Jsonb` as `BytesValue`, so no
+  write path ever produced the `JsonbValue` the canonical decode expects —
+  the filter fix was unreachable. The writer now emits `JsonbValue`
+  (mixed-read safe within the lineage: pre-PR segments carry tag-8 bytes that
+  still decode via the legacy arm; the tag-9 variant did not exist before
+  this PR). Pinned by `jsonb_writes_the_declared_tag9_variant`.
+* **Six live wildcard fan-out misses** fixed (search-executor result metadata
+  collapsed JSONB to `""`; nova string column, SST text-column support,
+  document aggregation equality, document-block sort keys, timeseries tags
+  dropped it) — each now decodes via the canonical representation.
+* **Observability attribute filters**: the `JsonbValue` arm fed raw
+  MessagePack through `from_utf8_lossy` (mojibake) into `key:value`
+  matching, silently dropping matching logs — now decodes to compact JSON.
+* **serde `jsonb_value` tagged form** now commits only for a SINGLE-KEY
+  object whose value decodes — sibling keys can no longer vanish.
+* **Guard: services were unguarded** — the exact drift class that motivated
+  the TD (the deleted `ContextService` was found by luck, not by the gate).
+  The guard now compares declared services (name + rpc set, snake-cased)
+  against the tonic stubs, both directions. First run caught 7 real GraphService
+  rpc gaps (the PULSAR/QUASAR messages were mirrored but their service
+  methods were not) and the never-written `RankService` stub — all fixed by
+  splicing in fresh `tonic-prost-build` output.
+* **Guard: enum tables validated per-table** — a value must appear in every
+  PRESENT name table; previously either table sufficed, letting a missing
+  `from_str_name` arm hide behind a complete `as_str_name`.
+* **One decode-or-binary helper** (`ProximaValue::from_jsonb_or_binary`)
+  replaces the four copy-pasted match arms; the Arrow Flight codec renders
+  compact JSON instead of a Debug byte dump; `MetadataValue` (which feeds
+  equality) and its streaming.rs duplicate decode instead of emitting a
+  `[jsonb]` placeholder.
+* **Documented, not code** (mirror fidelity ≠ feature implementation):
+  ** `CollectionConfig.embedding_config` (tag 25) and
+     `DocumentCollectionConfig.use_jsonb` (tag 8) are contract-declared but
+     feature-unimplemented — the proto fields pre-date this PR; the mirror
+     now carries them faithfully. Wiring them is separate feature work.
+  ** `permitted_principals`'s attr fix (`message` → `string`) changes the
+     binary encoding of non-empty values — the OLD bytes were
+     proto-nonconformant (prost wrapped each string in a StringValue
+     submessage); JSON (the live REST authority) is unaffected, pre-GA
+     no-back-compat applies.
+
+**Round 3 (efficiency pass) — 6 findings, 4 fixed, 2 deferred with rationale:**
+
+* Fixed: `full_precision_rank` no longer round-trips metadata through
+  `serde_json` (the JSON detour decoded JSONB per candidate only to drop
+  object/array payloads on the floor at the back-conversion) — the typed map
+  is built directly from the proto items and the declared tag-9 variant
+  passes through untouched; the document-block comparator gained a
+  byte-equality fast path before the canonical JSON render; the malformed
+  fallback in `jsonb_to_json_lossy` renders hex in ONE allocation; the dead
+  `#[allow(dead_code)]` duplicate of the `MetadataValue` conversion in
+  `streaming.rs` was deleted instead of extended.
+* Deferred (accepted, tracked here): (a) `evaluate_filter_resolved` resolves
+  each `Comparison` node independently, so a two-predicate range filter on
+  one JSONB field decodes the same bytes twice per record — fixing it means
+  per-record field-resolution caching across the resolver API (SST/HELIX/
+  SWIFT callers); (b) the `SqlValue` → JSON arm still exists as ~7 local
+  `sql_value_to_json` copies that should collapse into one shared converter
+  beside `jsonb_to_json_lossy`. Both are behavior-neutral refactors — follow
+  the repo's measure-first rule before touching the filter hot path.
+
+**Round 4 (high effort, 2026-09-04) — 10 findings, 7 fixed, 3 dispositioned:**
+
+* Fixed: the SECOND live writer — `proxima_value_to_sql_value`
+  (search-types) served every engine search response with the legacy tag-8
+  magic+JSON-text encoding, leaving the canonical path unreachable for
+  reads; it now emits tag-9 MessagePack (pinned by a writer test), with the
+  magic form still decoded for legacy results. pgwire's `sql_object_to_json`
+  gained the JsonbValue arm (was silently null on the document-query
+  surface). The observability tantivy `_all` index and the group-by key
+  builder decode canonical JSON instead of `<jsonb:N>` byte-length
+  placeholders (fulltext over JSONB attributes now matches; no legacy-index
+  concern — the variant became producible in this change).
+* Fixed: `full_precision_rank`'s rewrite restored the legacy placeholders
+  for Bytes/Array/Object and the skip for unset-oneof keys, so output is
+  unchanged on unchanged data except JSONB passes through typed.
+* Fixed: the serde `{"jsonb_value": <base64>}` tagged form now also requires
+  the decoded bytes to be VALID MessagePack (a genuine JSONB payload is, by
+  construction) — generic single-key objects whose string merely
+  base64-decodes fall through to ObjectValue. Residual ambiguity mirrors the
+  pre-existing `bytes_value` tagged form.
+* Fixed (guard): field/variant TYPE REFERENCES are now compared (enum attr
+  refs and oneof payload refs vs the descriptor's type_name last segment) —
+  a variant retargeted to the wrong struct/enum no longer passes on tag+kind
+  equality. Also deleted the orphaned, not-in-module-tree
+  `rest/wrappers.rs` copy, and aligned the MetadataItem lossy mapping to
+  canonical JSON text.
+* Dispositioned: (a) the filter seam renders legacy tag-8 JSONB as bytes —
+  identical to pre-PR behavior (no regression); canonical filtering engages
+  for tag-9 values; the writer comment now states this precisely instead of
+  claiming full mixed-read equivalence; (b) the un-gated tag-9 writer flip
+  follows the owner's pre-GA no-back-compat directive (replace in place,
+  keep on-disk readability) — mixed-VERSION windows (rolling restart /
+  rollback / Raft) drop tag-9 fields on old binaries, same as any pre-GA
+  wire addition; (c) the one-shared-converter consolidation remains the
+  tracked follow-up (deferred in round 3; round 4's concrete inconsistencies
+  were fixed individually).
+
+**Round 5 (independent rebase review, 2026-09-04) — 5 findings, all fixed:**
+
+* The search-types writer's nominally unreachable encode-error fallback put
+  legacy magic+JSON bytes under tag 9, violating tag 9's MessagePack contract
+  and causing the new reader to return opaque binary. The fallback now uses
+  its legacy tag-8 encoding, which the reader already supports.
+* Three additional live output boundaries silently rendered tag-9 JSONB as
+  null: multimodal `QueryRow` metadata, canonical REST observability log
+  fields, and pgwire document JSON. Focused red/green tests now pin all three;
+  the two row/document converters are exhaustive over nested arrays and
+  objects instead of retaining wildcard null fallbacks.
+* Round 4's field type-reference guard covered enums but still discarded the
+  Rust type of ordinary `message` fields. A synthetic negative-control test
+  reproduced the hole (`WrongMessage` at the correct tag/kind passed); the
+  parser now records and compares normalized message targets as well. The
+  full zero-drift descriptor census remains green.
+
+**Round 6 (high effort, 2026-09-04) — 10 findings, 7 fixed, 3 dispositioned
+(conventions angle clean):**
+
+* Fixed: the last missed wildcard — the native Volcano vector-search
+  executor's metadata→JSON match rendered JSONB as SQL NULL in projections.
+  The SqlValue filter path now dot-traverses JSON(B) roots (`memory.type`
+  resolves inside a JsonbValue document) exactly like its ProximaTree twin,
+  pinned by `jsonb_dot_path_filtering_matches_the_proxima_tree_semantics`.
+* Fixed (guard): plain MESSAGE-field payload types are now compared (the
+  final Rust type identifier vs descriptor type_name; maps remain governed
+  by their key/value wire-kind check); rpc STREAMING FLAVOR is compared (a hand-splice rendering a
+  streaming rpc as unary fails the gate; client/bidi share the client-side
+  `.streaming` bucket); and the gate can no longer silently disarm — under
+  `REQUIRE_PROTOC=1` (now set by CI's unit lane) a missing protoc FAILS
+  instead of skipping, keeping skip and pass distinguishable.
+* Fixed (efficiency): document-block min/max stats track the running JSONB
+  extremum by its rendered key (each document decodes once, not per
+  comparison); `jsonb_to_json_string_lossy` is the named seam for the ~10
+  string-only consumers (future direct MessagePack→text transcoder drops
+  in there).
+* Dispositioned: `full_precision_rank`'s two deliberate deltas vs the old
+  serde detour (Int64 precision preserved; NaN/∞ → unset instead of 0) are
+  now documented in the code — latent until that pipeline gains a live
+  constructor; the RankService/GraphService stubs are contract surface —
+  wiring them to the existing inherent impls (`rank_service.rs`) is tracked
+  follow-up; `valid_jsonb_bytes`'s single-authority consolidation (kernel
+  home) rides with the shared-converter follow-up.
+
+**Round 6 (high effort, 2026-09-05) — 10 findings, 9 fixed (2
+mutation-proven), 1 dispositioned:**
+
+* **The guard advertised three protections that were dead or inert code** —
+  proven by the reviewer's differential mutation testing and re-verified
+  here after fixing: (a) the message-field type-ref check never fired
+  because the wrapper stripper handled only bare `Option<`/`Vec<` while
+  453/475 wrapped fields are fully qualified — now strips balanced angle
+  brackets through any spelling, and a compiling wrong-struct mutation
+  (`Vec<ShardStats>` → `Vec<NodeAccessStats>`) FAILS the gate; (b) the
+  map key/value-kind comparison was unreachable (map descriptor kind is
+  `message`, so the type-ref else-if always won) — now first in the chain;
+  (c) the rpc streaming-flavor check no-oped for client-streaming rpcs
+  (`.client_streaming` is not a superstring of `.streaming`) and its
+  24-line lookahead window was smaller than real method bodies — needle
+  added, window 100. Type-ref comparison normalizes both sides through
+  snake() so casing renames are not drift.
+* Fixed: full_precision_rank's round-5 disposition claimed NaN→unset but
+  the code passes NumberValue through — the comment now states the code's
+  actual behavior (pass-through; non-finite renders null only at the
+  serde boundary, pre-existing). The results.rs writer fallback is now
+  plain JSON-text bytes (the magic-prefixed fallback was undecodable under
+  tag 9). Federated vector extraction traverses JSONB documents (was
+  silently dropping/zeroing rows whose path crossed one). The SqlValue
+  dot-traversal walks by reference (was clone-per-segment deep copies).
+  Nova uses the jsonb_to_json_string_lossy seam (was the one bypass). The
+  Python SDK's second decoder (grpc_sync) gained the jsonb_value branch so
+  both SDK decoders agree.
+* Dispositioned: the hand-rolled line scanner remains
+  correct-only-by-enumeration of today's codegen shapes (where-clause
+  impls, raw strings, block comments can desync it) — migrating the parser
+  to `syn` or TD option 2's generate-and-diff is the tracked end state;
+  grow a special case per new shape only until then.
+
+
+* **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
+  swallowed it (now a negation beside the other ratchet baselines). Untracked,
+  the guard would have panicked on every fresh checkout — CI included.
+* **Map kinds now compared for real**: the descriptor's synthetic map-entry
+  message supplies the key/value kinds (the first cut hardcoded string keys and
+  never compared values).
+* **Enum name tables validated independently**: `as_str_name` and
+  `from_str_name` are each checked against the descriptor and cross-checked
+  against each other, so a corrupted serialize table can no longer hide behind
+  a correct decode table.
+* **`jsonb_value` handling canonicalized**: every ProximaValue-producing site
+  decodes tag-9 bytes with the canonical MessagePack codec
+  (`ProximaValue::from_jsonb_slice`, the v2 canon), with Binary fallback — the
+  AQL sources follow their local JSON heuristic (matching their BytesValue
+  arms) instead of silently nulling via the `_` wildcard; the Python SDK's
+  `_convert_from_sql_value` gained the `jsonb_value` arm instead of silently
+  returning `None`.
+* **serde `jsonb_value` key no longer hijacks the generic-object fallback**:
+  the branch commits only when the base64 payload decodes; otherwise the
+  pre-existing MVP-friendly generic-object path applies.
+* **protoc probe moved before any filesystem access**, so the graceful skip
+  holds even without the repo tree; string literals and trailing comments are
+  masked in the tokenizer's brace counting so `format!("{…}")`-style lines
+  cannot desync it.
+* **Round-trip gate extended** (`tests/sql_value_roundtrip.rs`): JsonbValue
+  now covered on both the binary (prost) and REST (custom serde, `jsonb_value`
+  base64 key pinned) paths — the format-change gate mandate #8 requires.
+
+Known divergence deliberately left to the backlog: the JSONB *stringifying*
+surfaces (REST row builders, Arrow/observability stringifiers) each follow
+their local BytesValue convention (hex / per-byte arrays / placeholders); see
+the ledger + follow-ups.
 
 == Not in scope
 

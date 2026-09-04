@@ -696,6 +696,44 @@ impl ProximaValue {
         let val: serde_json::Value = rmp_serde::from_slice(slice)?;
         Ok(val)
     }
+
+    /// Lossy decode for JSON-producing surfaces (REST rows, filter
+    /// comparison, query IR): canonical MessagePack JSONB → the JSON document
+    /// itself; a malformed payload falls back to a hex string so the value is
+    /// still observable rather than dropped. This is the ONE sanctioned
+    /// JSONB→JSON representation — don't hand-roll per-byte arrays or
+    /// placeholders on API-facing paths.
+    pub fn jsonb_to_json_lossy(slice: &[u8]) -> serde_json::Value {
+        Self::from_jsonb_slice(slice).unwrap_or_else(|_| {
+            // Single-allocation hex render (one String per byte via format!
+            // costs len() allocations for a malformed blob).
+            use std::fmt::Write as _;
+            let mut hex = String::with_capacity(slice.len() * 2);
+            for b in slice {
+                let _ = write!(hex, "{b:02x}");
+            }
+            serde_json::Value::String(hex)
+        })
+    }
+
+    /// Canonical MessagePack JSONB → `ProximaValue::Jsonb`, falling back to
+    /// `ProximaValue::Binary` for malformed bytes. The single decode-or-binary
+    /// conversion — every `SqlValue::JsonbValue` → `ProximaValue` site uses
+    /// this instead of a local copy.
+    pub fn from_jsonb_or_binary(slice: &[u8]) -> Self {
+        match Self::from_jsonb_slice(slice) {
+            Ok(json) => Self::Jsonb(json),
+            Err(_) => Self::Binary(slice.to_vec()),
+        }
+    }
+
+    /// The string form of [`Self::jsonb_to_json_lossy`] for string-only
+    /// consumers (index text, group-by keys, tag rendering) — the seam where
+    /// a future direct MessagePack→text transcoder drops in without touching
+    /// call sites.
+    pub fn jsonb_to_json_string_lossy(slice: &[u8]) -> String {
+        Self::jsonb_to_json_lossy(slice).to_string()
+    }
 }
 
 #[cfg(test)]

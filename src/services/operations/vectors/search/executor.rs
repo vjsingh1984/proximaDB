@@ -63,6 +63,14 @@ pub fn proto_results_to_vector_records(
                             Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                                 ProximaTreeNode::Value(ProximaValue::Boolean(b))
                             }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b)) => {
+                                // TD-PROTO-2: canonical MessagePack decode —
+                                // the wildcard collapsed JSONB metadata to an
+                                // empty string, silently corrupting results.
+                                ProximaTreeNode::Value(
+                                    proximadb_data_model::ProximaValue::from_jsonb_or_binary(&b),
+                                )
+                            }
                             _ => ProximaTreeNode::Value(ProximaValue::String(String::new())),
                         };
                         (k, node)

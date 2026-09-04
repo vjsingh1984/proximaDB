@@ -313,6 +313,9 @@ impl RowGroups {
                                         base64::engine::general_purpose::STANDARD.encode(b),
                                     )
                                 }
+                                Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(
+                                    b,
+                                )) => proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b),
                                 Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(
                                     _,
                                 )) => serde_json::Value::Null,
