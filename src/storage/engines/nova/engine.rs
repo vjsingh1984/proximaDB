@@ -999,9 +999,12 @@ impl NovaEngine {
                             // it can be borrowed as &str below.
                             let jsonb_text = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b) => {
+                                    // The string-only seam (round 6: was the
+                                    // one bypass among string-only consumers).
                                     Some(
-                                        proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b)
-                                            .to_string(),
+                                        proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(
+                                            b,
+                                        ),
                                     )
                                 }
                                 _ => None,

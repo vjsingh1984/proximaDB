@@ -437,13 +437,15 @@ impl UniversalSearchPipeline {
             // round-trip (the JSON detour decoded JSONB per candidate only to
             // drop object/array payloads on the floor at the back-conversion).
             // Non-JSON legacy shapes keep their pre-existing placeholders and
-            // unset-oneof keys stay absent. Two deliberate deltas vs the old
+            // unset-oneof keys stay absent. One deliberate delta vs the old
             // detour: Int64Value passes through as Int64Value (the detour
-            // coerced it to NumberValue(f64), losing precision above 2^53)
-            // and NumberValue(NaN/∞) now maps to an unset oneof (the detour
-            // clamped it to 0) — both strictly closer to the stored truth.
-            // NOTE: this pipeline currently has no live constructor, so these
-            // deltas are latent until it is wired.
+            // coerced it to NumberValue(f64), losing precision above 2^53) —
+            // closer to the stored truth. NumberValue passes through
+            // UNCHANGED (round 6 corrected an earlier claim here); non-finite
+            // floats render as null only later, at the serde/JSON boundary —
+            // pre-existing serde behavior, not this rewrite's.
+            // NOTE: this pipeline currently has no live constructor, so the
+            // delta is latent until it is wired.
             let mut typed_metadata_map = std::collections::HashMap::new();
             for (key, value) in record.metadata {
                 use crate::proto::proximadb_v1::{self as proximadb_v1};

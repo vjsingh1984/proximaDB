@@ -92,11 +92,17 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
             SqlVal::JsonbValue(bytes) => ProximaValue::jsonb_to_json_lossy(bytes),
             _ => return None,
         };
-        tail.split('.')
-            .try_fold(root, |value, segment| match value {
-                serde_json::Value::Object(object) => object.get(segment).cloned(),
-                _ => None,
-            })
+        // Walk by reference, cloning only the final leaf — a clone per
+        // segment deep-copies the remaining subtree at every step (round-6
+        // finding; this now matches resolve_proxima_value's cost shape).
+        let mut current: &serde_json::Value = &root;
+        for segment in tail.split('.') {
+            current = match current {
+                serde_json::Value::Object(object) => object.get(segment)?,
+                _ => return None,
+            };
+        }
+        Some(current.clone())
     })
 }
 

@@ -267,6 +267,40 @@ findings and dispositions:
   follow-up; `valid_jsonb_bytes`'s single-authority consolidation (kernel
   home) rides with the shared-converter follow-up.
 
+**Round 6 (high effort, 2026-09-05) — 10 findings, 9 fixed (2
+mutation-proven), 1 dispositioned:**
+
+* **The guard advertised three protections that were dead or inert code** —
+  proven by the reviewer's differential mutation testing and re-verified
+  here after fixing: (a) the message-field type-ref check never fired
+  because the wrapper stripper handled only bare `Option<`/`Vec<` while
+  453/475 wrapped fields are fully qualified — now strips balanced angle
+  brackets through any spelling, and a compiling wrong-struct mutation
+  (`Vec<ShardStats>` → `Vec<NodeAccessStats>`) FAILS the gate; (b) the
+  map key/value-kind comparison was unreachable (map descriptor kind is
+  `message`, so the type-ref else-if always won) — now first in the chain;
+  (c) the rpc streaming-flavor check no-oped for client-streaming rpcs
+  (`.client_streaming` is not a superstring of `.streaming`) and its
+  24-line lookahead window was smaller than real method bodies — needle
+  added, window 100. Type-ref comparison normalizes both sides through
+  snake() so casing renames are not drift.
+* Fixed: full_precision_rank's round-5 disposition claimed NaN→unset but
+  the code passes NumberValue through — the comment now states the code's
+  actual behavior (pass-through; non-finite renders null only at the
+  serde boundary, pre-existing). The results.rs writer fallback is now
+  plain JSON-text bytes (the magic-prefixed fallback was undecodable under
+  tag 9). Federated vector extraction traverses JSONB documents (was
+  silently dropping/zeroing rows whose path crossed one). The SqlValue
+  dot-traversal walks by reference (was clone-per-segment deep copies).
+  Nova uses the jsonb_to_json_string_lossy seam (was the one bypass). The
+  Python SDK's second decoder (grpc_sync) gained the jsonb_value branch so
+  both SDK decoders agree.
+* Dispositioned: the hand-rolled line scanner remains
+  correct-only-by-enumeration of today's codegen shapes (where-clause
+  impls, raw strings, block comments can desync it) — migrating the parser
+  to `syn` or TD option 2's generate-and-diff is the tracked end state;
+  grow a special case per new shape only until then.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

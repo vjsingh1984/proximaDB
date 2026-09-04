@@ -424,6 +424,11 @@ class ProximaDBSyncGrpcClient:
             return value.int64_value
         if kind == "bytes_value":
             return bytes(value.bytes_value)
+        if kind == "jsonb_value":
+            # TD-PROTO-2: tag-9 JSONB bytes — surface the raw bytes like
+            # bytes_value (mirrors client_v1._convert_from_sql_value); the
+            # two SDK decoders must agree.
+            return bytes(value.jsonb_value)
         if kind == "array_value":
             return [
                 self._sql_value_to_python(item) for item in value.array_value.values
