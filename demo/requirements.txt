@@ -26,7 +26,7 @@ aiohttp-cors>=0.8.1
 httpx>=0.24.0
 
 # JSON handling
-orjson>=3.8.0
+orjson>=3.12.0
 
 # Logging
 structlog>=22.3.0
