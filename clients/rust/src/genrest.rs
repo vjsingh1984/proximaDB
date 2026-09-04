@@ -1753,33 +1753,21 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "age_seconds": {
-    ///      "type": [
-    ///        "integer",
-    ///        "null"
-    ///      ],
+    ///      "type": "integer",
     ///      "format": "uint64"
     ///    },
     ///    "collection_id": {
     ///      "type": "string"
     ///    },
     ///    "node_id": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
+    ///      "type": "string"
     ///    },
     ///    "query_count": {
-    ///      "type": [
-    ///        "integer",
-    ///        "null"
-    ///      ],
+    ///      "type": "integer",
     ///      "format": "uint64"
     ///    },
     ///    "stale": {
-    ///      "type": [
-    ///        "boolean",
-    ///        "null"
-    ///      ]
+    ///      "type": "boolean"
     ///    },
     ///    "status": {
     ///      "type": "string",
@@ -8705,17 +8693,11 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "pinned_at_ns": {
-    ///      "type": [
-    ///        "integer",
-    ///        "null"
-    ///      ],
+    ///      "type": "integer",
     ///      "format": "int64"
     ///    },
     ///    "replicas": {
-    ///      "type": [
-    ///        "integer",
-    ///        "null"
-    ///      ],
+    ///      "type": "integer",
     ///      "format": "uint32"
     ///    },
     ///    "status": {
@@ -8726,24 +8708,10 @@ pub mod types {
     ///      ]
     ///    },
     ///    "target": {
-    ///      "oneOf": [
-    ///        {
-    ///          "type": "null"
-    ///        },
-    ///        {
-    ///          "allOf": [
-    ///            {
-    ///              "$ref": "#/components/schemas/PinTarget"
-    ///            }
-    ///          ]
-    ///        }
-    ///      ]
+    ///      "$ref": "#/components/schemas/PinTarget"
     ///    },
     ///    "was_pinned": {
-    ///      "type": [
-    ///        "boolean",
-    ///        "null"
-    ///      ]
+    ///      "type": "boolean"
     ///    }
     ///  }
     ///}
@@ -9205,18 +9173,7 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "primary": {
-    ///      "oneOf": [
-    ///        {
-    ///          "type": "null"
-    ///        },
-    ///        {
-    ///          "allOf": [
-    ///            {
-    ///              "$ref": "#/components/schemas/PrimaryPod"
-    ///            }
-    ///          ]
-    ///        }
-    ///      ]
+    ///      "$ref": "#/components/schemas/PrimaryPod"
     ///    },
     ///    "status": {
     ///      "type": "string",
@@ -26517,6 +26474,9 @@ impl Client {
     /// (tenant_id, collection_id).
     /// The optional `X-Tenant-ID` header is not consulted by this
     /// handler.
+    /// Requires REST auth enabled — in an auth-disabled
+    /// deployment every call to this operation returns 401
+    /// `missing_auth_context`.
     ///
     ///
     /// Sends a `GET` request to `/api/v2/primary-pod`
@@ -26538,6 +26498,9 @@ impl Client {
     /// 200 with `status: "unbound"` when none does (never 404).
     /// The optional `X-Tenant-ID` header is not consulted by this
     /// handler — the `tenant_id` PATH segment governs.
+    /// Requires REST auth enabled — in an auth-disabled
+    /// deployment every call to this operation returns 401
+    /// `missing_auth_context`.
     ///
     ///
     /// Sends a `GET` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`
@@ -26567,6 +26530,9 @@ impl Client {
     /// reconciles on the next write).
     /// The optional `X-Tenant-ID` header is not consulted by this
     /// handler — the `tenant_id` PATH segment governs.
+    /// Requires REST auth enabled — in an auth-disabled
+    /// deployment every call to this operation returns 401
+    /// `missing_auth_context`.
     ///
     ///
     /// Sends a `PUT` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`
@@ -26595,6 +26561,9 @@ impl Client {
     /// fatal).
     /// The optional `X-Tenant-ID` header is not consulted by this
     /// handler — the `tenant_id` PATH segment governs.
+    /// Requires REST auth enabled — in an auth-disabled
+    /// deployment every call to this operation returns 401
+    /// `missing_auth_context`.
     ///
     ///
     /// Sends a `DELETE` request to `/api/v2/primary-pod/{tenant_id}/{collection_id}`

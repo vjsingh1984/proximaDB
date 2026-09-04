@@ -2902,6 +2902,9 @@ paths:
         200 with `status: "unbound"` when none does (never 404).
         The optional `X-Tenant-ID` header is not consulted by this
         handler — the `tenant_id` PATH segment governs.
+        Requires REST auth enabled — in an auth-disabled
+        deployment every call to this operation returns 401
+        `missing_auth_context`.
       responses:
         '200':
           description: The binding (bound or unbound).
@@ -2934,6 +2937,9 @@ paths:
         reconciles on the next write).
         The optional `X-Tenant-ID` header is not consulted by this
         handler — the `tenant_id` PATH segment governs.
+        Requires REST auth enabled — in an auth-disabled
+        deployment every call to this operation returns 401
+        `missing_auth_context`.
       requestBody:
         required: true
         content:
@@ -2969,6 +2975,9 @@ paths:
         fatal).
         The optional `X-Tenant-ID` header is not consulted by this
         handler — the `tenant_id` PATH segment governs.
+        Requires REST auth enabled — in an auth-disabled
+        deployment every call to this operation returns 401
+        `missing_auth_context`.
       responses:
         '200':
           description: Unassign outcome.
@@ -2998,6 +3007,9 @@ paths:
         (tenant_id, collection_id).
         The optional `X-Tenant-ID` header is not consulted by this
         handler.
+        Requires REST auth enabled — in an auth-disabled
+        deployment every call to this operation returns 401
+        `missing_auth_context`.
       responses:
         '200':
           description: All bindings.
@@ -6598,23 +6610,15 @@ components:
         collection_id:
           type: string
         target:
-          oneOf:
-          - $ref: '#/components/schemas/PinTarget'
-          - type: 'null'
+          $ref: '#/components/schemas/PinTarget'
         replicas:
-          type:
-          - integer
-          - 'null'
+          type: integer
           format: uint32
         pinned_at_ns:
-          type:
-          - integer
-          - 'null'
+          type: integer
           format: int64
         was_pinned:
-          type:
-          - boolean
-          - 'null'
+          type: boolean
     PinListItem:
       type: object
       required:
@@ -6668,23 +6672,15 @@ components:
         collection_id:
           type: string
         node_id:
-          type:
-          - string
-          - 'null'
+          type: string
         query_count:
-          type:
-          - integer
-          - 'null'
+          type: integer
           format: uint64
         age_seconds:
-          type:
-          - integer
-          - 'null'
+          type: integer
           format: uint64
         stale:
-          type:
-          - boolean
-          - 'null'
+          type: boolean
     AffinityDeleteResponse:
       type: object
       required:
@@ -6786,9 +6782,7 @@ components:
         collection_id:
           type: string
         primary:
-          oneOf:
-          - $ref: '#/components/schemas/PrimaryPod'
-          - type: 'null'
+          $ref: '#/components/schemas/PrimaryPod'
     PrimaryPodAssignRequest:
       type: object
       required:

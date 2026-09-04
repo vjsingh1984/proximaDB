@@ -88,6 +88,9 @@ def sync_detailed(
     200 with `status: \"unbound\"` when none does (never 404).
     The optional `X-Tenant-ID` header is not consulted by this
     handler — the `tenant_id` PATH segment governs.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         tenant_id (str):
@@ -128,6 +131,9 @@ def sync(
     200 with `status: \"unbound\"` when none does (never 404).
     The optional `X-Tenant-ID` header is not consulted by this
     handler — the `tenant_id` PATH segment governs.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         tenant_id (str):
@@ -163,6 +169,9 @@ async def asyncio_detailed(
     200 with `status: \"unbound\"` when none does (never 404).
     The optional `X-Tenant-ID` header is not consulted by this
     handler — the `tenant_id` PATH segment governs.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         tenant_id (str):
@@ -201,6 +210,9 @@ async def asyncio(
     200 with `status: \"unbound\"` when none does (never 404).
     The optional `X-Tenant-ID` header is not consulted by this
     handler — the `tenant_id` PATH segment governs.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         tenant_id (str):

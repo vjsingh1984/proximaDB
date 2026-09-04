@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -29,18 +29,19 @@ class PinResponse:
         Attributes:
             status (PinResponseStatus):
             collection_id (str):
-            target (None | PinTarget | Unset):
-            replicas (int | None | Unset):
-            pinned_at_ns (int | None | Unset):
-            was_pinned (bool | None | Unset):
+            target (PinTarget | Unset): Physical medium to pin to. `cloud` effectively means "do not
+                promote this collection" (an explicit unpin-in-spirit).
+            replicas (int | Unset):
+            pinned_at_ns (int | Unset):
+            was_pinned (bool | Unset):
     """
 
     status: PinResponseStatus
     collection_id: str
-    target: None | PinTarget | Unset = UNSET
-    replicas: int | None | Unset = UNSET
-    pinned_at_ns: int | None | Unset = UNSET
-    was_pinned: bool | None | Unset = UNSET
+    target: PinTarget | Unset = UNSET
+    replicas: int | Unset = UNSET
+    pinned_at_ns: int | Unset = UNSET
+    was_pinned: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,31 +49,15 @@ class PinResponse:
 
         collection_id = self.collection_id
 
-        target: None | str | Unset
-        if isinstance(self.target, Unset):
-            target = UNSET
-        elif isinstance(self.target, PinTarget):
+        target: str | Unset = UNSET
+        if not isinstance(self.target, Unset):
             target = self.target.value
-        else:
-            target = self.target
 
-        replicas: int | None | Unset
-        if isinstance(self.replicas, Unset):
-            replicas = UNSET
-        else:
-            replicas = self.replicas
+        replicas = self.replicas
 
-        pinned_at_ns: int | None | Unset
-        if isinstance(self.pinned_at_ns, Unset):
-            pinned_at_ns = UNSET
-        else:
-            pinned_at_ns = self.pinned_at_ns
+        pinned_at_ns = self.pinned_at_ns
 
-        was_pinned: bool | None | Unset
-        if isinstance(self.was_pinned, Unset):
-            was_pinned = UNSET
-        else:
-            was_pinned = self.was_pinned
+        was_pinned = self.was_pinned
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -100,49 +85,18 @@ class PinResponse:
 
         collection_id = d.pop("collection_id")
 
-        def _parse_target(data: object) -> None | PinTarget | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, str):
-                    raise TypeError()
-                target_type_0 = PinTarget(data)
+        _target = d.pop("target", UNSET)
+        target: PinTarget | Unset
+        if isinstance(_target, Unset):
+            target = UNSET
+        else:
+            target = PinTarget(_target)
 
-                return target_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(None | PinTarget | Unset, data)
+        replicas = d.pop("replicas", UNSET)
 
-        target = _parse_target(d.pop("target", UNSET))
+        pinned_at_ns = d.pop("pinned_at_ns", UNSET)
 
-        def _parse_replicas(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        replicas = _parse_replicas(d.pop("replicas", UNSET))
-
-        def _parse_pinned_at_ns(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        pinned_at_ns = _parse_pinned_at_ns(d.pop("pinned_at_ns", UNSET))
-
-        def _parse_was_pinned(data: object) -> bool | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(bool | None | Unset, data)
-
-        was_pinned = _parse_was_pinned(d.pop("was_pinned", UNSET))
+        was_pinned = d.pop("was_pinned", UNSET)
 
         pin_response = cls(
             status=status,

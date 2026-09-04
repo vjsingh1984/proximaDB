@@ -99,6 +99,9 @@ def sync_detailed(
     reconciles on the next write).
     The optional `X-Tenant-ID` header is not consulted by this
     handler — the `tenant_id` PATH segment governs.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         tenant_id (str):
@@ -148,6 +151,9 @@ def sync(
     reconciles on the next write).
     The optional `X-Tenant-ID` header is not consulted by this
     handler — the `tenant_id` PATH segment governs.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         tenant_id (str):
@@ -192,6 +198,9 @@ async def asyncio_detailed(
     reconciles on the next write).
     The optional `X-Tenant-ID` header is not consulted by this
     handler — the `tenant_id` PATH segment governs.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         tenant_id (str):
@@ -239,6 +248,9 @@ async def asyncio(
     reconciles on the next write).
     The optional `X-Tenant-ID` header is not consulted by this
     handler — the `tenant_id` PATH segment governs.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         tenant_id (str):

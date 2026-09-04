@@ -155,10 +155,17 @@ Rationalization notes specific to this surface:
   catalog with mirror-failure-is-not-fatal semantics (documented in the
   spec).
 * **Permission asymmetry documented, not hidden:** pinning + affinity
-  carry NO per-route permission gate (any authenticated caller; the
-  global auth middleware still applies), while primary-pod is
+  carry NO per-route permission gate — and the auth MIDDLEWARE itself
+  only attaches when REST auth is enabled + a security coordinator
+  exists (`src/network/rest/server.rs`; the shipped default config
+  disables it). In an auth-disabled deployment the six pinning/affinity
+  operations (cluster-wide, cross-tenant, state-mutating) are reachable
+  UNAUTHENTICATED, and every primary-pod call 401s (`missing_auth_context`)
+  because the operator gate has no context to read. Primary-pod is
   operator-gated (`SystemAdmin` ∪ `ConfigureSystem`) inside each
-  handler. The spec says which is which per operation.
+  handler. The spec says which is which per operation, and every
+  primary-pod op carries the "requires REST auth enabled" availability
+  note.
 * **Tenant scoping documented:** pinning/affinity registries are
   collection-keyed and cross-tenant by construction; primary-pod is
   `(tenant_id, collection_id)`-scoped via the path. Every op carries the
@@ -170,10 +177,28 @@ Rationalization notes specific to this surface:
 * **Plain-text error body on the pin 400** (the axum `(StatusCode,
   String)` path) documented as `text/plain` — not silently dressed up as
   a JSON envelope.
-* **Stale doc comments:** the handler doc comments in `pinning.rs` /
-  `affinity.rs` / `primary_pod.rs` still say `/api/v1/...` while the
-  mount is `/api/v2/...` — the spec follows the mount (wave-1 census
-  rule); fixing the comments is left to a sweep, not this wave.
+* **Stale doc comments corrected in-wave:** the handler doc comments in
+  `pinning.rs` / `affinity.rs` / `primary_pod.rs` said `/api/v1/...`
+  while the mount is `/api/v2/...` — corrected here (comment-only .rs
+  edits) since this PR's purpose is discoverability of exactly these
+  files.
 
-**No code changes required** — all handlers are live and mounted
-unconditionally (no feature gate, unlike ABAC wave 3).
+**Deliberately NOT exposed — deferred out of this wave:**
+
+* `POST /api/v2/collections/{collection_id}/branches/{branch}/merge`
+  (`merge_graph_branch`) — the original census lumped it into
+  "collections admin", but it is the GRAPH branch-merge (reads/filters
+  the canonical WAL, `merge_branches`, write-back) with a free-form
+  `serde_json::Value` response; it belongs to the graph-analytics wave
+  and needs its response schema rationalized first. It stays
+  unexposed until then — NOT silently done with this wave.
+
+**No behavioral code changes** — all handlers are live and mounted
+unconditionally (no feature gate, unlike ABAC wave 3); the only .rs
+diff is the doc-comment v1→v2 correction above.
+
+**Adversarial-review ratchets:** the contract gate now also asserts the
+exact 6-path / 10-operation collections-admin surface plus its enum
+vocabularies (`PinTarget`, `AssignmentReason`, the internally-tagged
+`status` enums) — `test_collections_admin_surface_has_the_complete_operation_set`,
+matching the wave-3 precedent.

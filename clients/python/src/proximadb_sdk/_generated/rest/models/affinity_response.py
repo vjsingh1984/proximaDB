@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -30,18 +30,18 @@ class AffinityResponse:
         Attributes:
             status (AffinityResponseStatus):
             collection_id (str):
-            node_id (None | str | Unset):
-            query_count (int | None | Unset):
-            age_seconds (int | None | Unset):
-            stale (bool | None | Unset):
+            node_id (str | Unset):
+            query_count (int | Unset):
+            age_seconds (int | Unset):
+            stale (bool | Unset):
     """
 
     status: AffinityResponseStatus
     collection_id: str
-    node_id: None | str | Unset = UNSET
-    query_count: int | None | Unset = UNSET
-    age_seconds: int | None | Unset = UNSET
-    stale: bool | None | Unset = UNSET
+    node_id: str | Unset = UNSET
+    query_count: int | Unset = UNSET
+    age_seconds: int | Unset = UNSET
+    stale: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,29 +49,13 @@ class AffinityResponse:
 
         collection_id = self.collection_id
 
-        node_id: None | str | Unset
-        if isinstance(self.node_id, Unset):
-            node_id = UNSET
-        else:
-            node_id = self.node_id
+        node_id = self.node_id
 
-        query_count: int | None | Unset
-        if isinstance(self.query_count, Unset):
-            query_count = UNSET
-        else:
-            query_count = self.query_count
+        query_count = self.query_count
 
-        age_seconds: int | None | Unset
-        if isinstance(self.age_seconds, Unset):
-            age_seconds = UNSET
-        else:
-            age_seconds = self.age_seconds
+        age_seconds = self.age_seconds
 
-        stale: bool | None | Unset
-        if isinstance(self.stale, Unset):
-            stale = UNSET
-        else:
-            stale = self.stale
+        stale = self.stale
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -99,41 +83,13 @@ class AffinityResponse:
 
         collection_id = d.pop("collection_id")
 
-        def _parse_node_id(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
+        node_id = d.pop("node_id", UNSET)
 
-        node_id = _parse_node_id(d.pop("node_id", UNSET))
+        query_count = d.pop("query_count", UNSET)
 
-        def _parse_query_count(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
+        age_seconds = d.pop("age_seconds", UNSET)
 
-        query_count = _parse_query_count(d.pop("query_count", UNSET))
-
-        def _parse_age_seconds(data: object) -> int | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(int | None | Unset, data)
-
-        age_seconds = _parse_age_seconds(d.pop("age_seconds", UNSET))
-
-        def _parse_stale(data: object) -> bool | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(bool | None | Unset, data)
-
-        stale = _parse_stale(d.pop("stale", UNSET))
+        stale = d.pop("stale", UNSET)
 
         affinity_response = cls(
             status=status,

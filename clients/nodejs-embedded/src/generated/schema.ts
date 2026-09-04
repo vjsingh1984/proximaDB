@@ -1463,6 +1463,9 @@ export interface paths {
          *     200 with `status: "unbound"` when none does (never 404).
          *     The optional `X-Tenant-ID` header is not consulted by this
          *     handler — the `tenant_id` PATH segment governs.
+         *     Requires REST auth enabled — in an auth-disabled
+         *     deployment every call to this operation returns 401
+         *     `missing_auth_context`.
          */
         get: operations["getPrimaryPod"];
         /**
@@ -1475,6 +1478,9 @@ export interface paths {
          *     reconciles on the next write).
          *     The optional `X-Tenant-ID` header is not consulted by this
          *     handler — the `tenant_id` PATH segment governs.
+         *     Requires REST auth enabled — in an auth-disabled
+         *     deployment every call to this operation returns 401
+         *     `missing_auth_context`.
          */
         put: operations["putPrimaryPod"];
         post?: never;
@@ -1485,6 +1491,9 @@ export interface paths {
          *     fatal).
          *     The optional `X-Tenant-ID` header is not consulted by this
          *     handler — the `tenant_id` PATH segment governs.
+         *     Requires REST auth enabled — in an auth-disabled
+         *     deployment every call to this operation returns 401
+         *     `missing_auth_context`.
          */
         delete: operations["deletePrimaryPod"];
         options?: never;
@@ -1505,6 +1514,9 @@ export interface paths {
          *     (tenant_id, collection_id).
          *     The optional `X-Tenant-ID` header is not consulted by this
          *     handler.
+         *     Requires REST auth enabled — in an auth-disabled
+         *     deployment every call to this operation returns 401
+         *     `missing_auth_context`.
          */
         get: operations["listPrimaryPods"];
         put?: never;
@@ -3470,12 +3482,12 @@ export interface components {
             /** @enum {string} */
             status: "pinned" | "unpinned";
             collection_id: string;
-            target?: components["schemas"]["PinTarget"] | null;
+            target?: components["schemas"]["PinTarget"];
             /** Format: uint32 */
-            replicas?: number | null;
+            replicas?: number;
             /** Format: int64 */
-            pinned_at_ns?: number | null;
-            was_pinned?: boolean | null;
+            pinned_at_ns?: number;
+            was_pinned?: boolean;
         };
         PinListItem: {
             collection_id: string;
@@ -3503,12 +3515,12 @@ export interface components {
             /** @enum {string} */
             status: "affinitized" | "not_affinitized";
             collection_id: string;
-            node_id?: string | null;
+            node_id?: string;
             /** Format: uint64 */
-            query_count?: number | null;
+            query_count?: number;
             /** Format: uint64 */
-            age_seconds?: number | null;
-            stale?: boolean | null;
+            age_seconds?: number;
+            stale?: boolean;
         };
         /**
          * @description `status` is always `"dropped"`; the `dropped` flag
@@ -3561,7 +3573,7 @@ export interface components {
             status: "bound" | "unbound";
             tenant_id: string;
             collection_id: string;
-            primary?: components["schemas"]["PrimaryPod"] | null;
+            primary?: components["schemas"]["PrimaryPod"];
         };
         /**
          * @description Body for `PUT /api/v2/primary-pod/{tenant_id}/{collection_id}`.

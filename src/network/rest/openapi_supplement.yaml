@@ -14,6 +14,10 @@
 #     `proximadb-api` crate with private request types (RestNodeInput, ...).
 #   * hybrid / document-collections /
 #     observability                          — free-form passthrough endpoints.
+#   * abac / pinning / affinity / primary-pod — operator & control-plane
+#     routes excluded from the utoipa `ApiDoc` by convention (registered in
+#     `operator_and_control_v2_routes` / its siblings in handlers.rs), not
+#     because they lack concrete DTOs.
 #
 # The SDK contract gates (Python/Rust/Go/TS openapi_contract tests) exercise
 # several of these (graphs, health probes), so they MUST stay in the published
@@ -1053,10 +1057,15 @@ paths:
   # TD-SPECRAT-1 wave 4 — collections-admin operator surfaces
   # (src/network/rest/canonical/{pinning,affinity,primary_pod}.rs,
   # mounted unconditionally in handlers.rs). Notes:
-  #   * pinning + affinity carry NO per-route permission gate (any
-  #     authenticated caller; global auth middleware still applies);
-  #     primary-pod IS operator-gated (SystemAdmin/ConfigureSystem) in
-  #     each handler.
+  #   * pinning + affinity carry NO per-route permission gate — and the
+  #     auth MIDDLEWARE itself only attaches when REST auth is enabled
+  #     + a security coordinator exists (the shipped default config
+  #     disables it): in an auth-disabled deployment these six
+  #     cluster-wide, cross-tenant, state-mutating operations are
+  #     reachable UNAUTHENTICATED. primary-pod IS operator-gated
+  #     (SystemAdmin/ConfigureSystem) in each handler — and in an
+  #     auth-disabled deployment every primary-pod call 401s
+  #     (missing_auth_context), because the gate has no context.
   #   * pinning/affinity registries are collection-keyed and
   #     cross-tenant by construction (no tenant scoping); primary-pod
   #     is (tenant_id, collection_id)-scoped via the path.
@@ -1212,6 +1221,9 @@ paths:
         200 with `status: "unbound"` when none does (never 404).
         The optional `X-Tenant-ID` header is not consulted by this
         handler — the `tenant_id` PATH segment governs.
+        Requires REST auth enabled — in an auth-disabled
+        deployment every call to this operation returns 401
+        `missing_auth_context`.
       responses:
         "200":
           description: The binding (bound or unbound).
@@ -1234,6 +1246,9 @@ paths:
         reconciles on the next write).
         The optional `X-Tenant-ID` header is not consulted by this
         handler — the `tenant_id` PATH segment governs.
+        Requires REST auth enabled — in an auth-disabled
+        deployment every call to this operation returns 401
+        `missing_auth_context`.
       requestBody:
         required: true
         content:
@@ -1259,6 +1274,9 @@ paths:
         fatal).
         The optional `X-Tenant-ID` header is not consulted by this
         handler — the `tenant_id` PATH segment governs.
+        Requires REST auth enabled — in an auth-disabled
+        deployment every call to this operation returns 401
+        `missing_auth_context`.
       responses:
         "200":
           description: Unassign outcome.
@@ -1278,6 +1296,9 @@ paths:
         (tenant_id, collection_id).
         The optional `X-Tenant-ID` header is not consulted by this
         handler.
+        Requires REST auth enabled — in an auth-disabled
+        deployment every call to this operation returns 401
+        `missing_auth_context`.
       responses:
         "200":
           description: All bindings.
@@ -2256,18 +2277,14 @@ components:
           type: string
           enum: [pinned, unpinned]
         collection_id: { type: string }
-        target:
-          oneOf:
-            - $ref: "#/components/schemas/PinTarget"
-            - type: "null"
+        target: { $ref: "#/components/schemas/PinTarget" }
         replicas:
-          type: [integer, "null"]
+          type: integer
           format: uint32
         pinned_at_ns:
-          type: [integer, "null"]
+          type: integer
           format: int64
-        was_pinned:
-          type: [boolean, "null"]
+        was_pinned: { type: boolean }
     PinListItem:
       type: object
       required: [collection_id, target, replicas, pinned_at_ns]
@@ -2300,16 +2317,14 @@ components:
           type: string
           enum: [affinitized, not_affinitized]
         collection_id: { type: string }
-        node_id:
-          type: [string, "null"]
+        node_id: { type: string }
         query_count:
-          type: [integer, "null"]
+          type: integer
           format: uint64
         age_seconds:
-          type: [integer, "null"]
+          type: integer
           format: uint64
-        stale:
-          type: [boolean, "null"]
+        stale: { type: boolean }
     AffinityDeleteResponse:
       type: object
       required: [status, collection_id, dropped]
@@ -2371,10 +2386,7 @@ components:
           enum: [bound, unbound]
         tenant_id: { type: string }
         collection_id: { type: string }
-        primary:
-          oneOf:
-            - $ref: "#/components/schemas/PrimaryPod"
-            - type: "null"
+        primary: { $ref: "#/components/schemas/PrimaryPod" }
     PrimaryPodAssignRequest:
       type: object
       required: [pod]

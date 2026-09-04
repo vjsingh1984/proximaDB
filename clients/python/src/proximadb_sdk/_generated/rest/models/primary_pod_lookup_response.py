@@ -31,13 +31,13 @@ class PrimaryPodLookupResponse:
             status (PrimaryPodLookupResponseStatus):
             tenant_id (str):
             collection_id (str):
-            primary (None | PrimaryPod | Unset):
+            primary (PrimaryPod | Unset):
     """
 
     status: PrimaryPodLookupResponseStatus
     tenant_id: str
     collection_id: str
-    primary: None | PrimaryPod | Unset = UNSET
+    primary: PrimaryPod | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,13 +49,9 @@ class PrimaryPodLookupResponse:
 
         collection_id = self.collection_id
 
-        primary: dict[str, Any] | None | Unset
-        if isinstance(self.primary, Unset):
-            primary = UNSET
-        elif isinstance(self.primary, PrimaryPod):
+        primary: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.primary, Unset):
             primary = self.primary.to_dict()
-        else:
-            primary = self.primary
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -82,22 +78,12 @@ class PrimaryPodLookupResponse:
 
         collection_id = d.pop("collection_id")
 
-        def _parse_primary(data: object) -> None | PrimaryPod | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, dict):
-                    raise TypeError()
-                primary_type_0 = PrimaryPod.from_dict(data)
-
-                return primary_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(None | PrimaryPod | Unset, data)
-
-        primary = _parse_primary(d.pop("primary", UNSET))
+        _primary = d.pop("primary", UNSET)
+        primary: PrimaryPod | Unset
+        if isinstance(_primary, Unset):
+            primary = UNSET
+        else:
+            primary = PrimaryPod.from_dict(_primary)
 
         primary_pod_lookup_response = cls(
             status=status,

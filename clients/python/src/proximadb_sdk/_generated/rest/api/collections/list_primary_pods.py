@@ -81,6 +81,9 @@ def sync_detailed(
     (tenant_id, collection_id).
     The optional `X-Tenant-ID` header is not consulted by this
     handler.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         x_tenant_id (str | Unset):
@@ -115,6 +118,9 @@ def sync(
     (tenant_id, collection_id).
     The optional `X-Tenant-ID` header is not consulted by this
     handler.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         x_tenant_id (str | Unset):
@@ -144,6 +150,9 @@ async def asyncio_detailed(
     (tenant_id, collection_id).
     The optional `X-Tenant-ID` header is not consulted by this
     handler.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         x_tenant_id (str | Unset):
@@ -176,6 +185,9 @@ async def asyncio(
     (tenant_id, collection_id).
     The optional `X-Tenant-ID` header is not consulted by this
     handler.
+    Requires REST auth enabled — in an auth-disabled
+    deployment every call to this operation returns 401
+    `missing_auth_context`.
 
     Args:
         x_tenant_id (str | Unset):

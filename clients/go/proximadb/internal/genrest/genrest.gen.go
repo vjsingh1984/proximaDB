@@ -1994,8 +1994,11 @@ type PinResponse struct {
 	PinnedAtNs   *int64            `json:"pinned_at_ns,omitempty"`
 	Replicas     *uint32           `json:"replicas,omitempty"`
 	Status       PinResponseStatus `json:"status"`
-	Target       *PinTarget        `json:"target,omitempty"`
-	WasPinned    *bool             `json:"was_pinned,omitempty"`
+
+	// Target Physical medium to pin to. `cloud` effectively means "do not
+	// promote this collection" (an explicit unpin-in-spirit).
+	Target    *PinTarget `json:"target,omitempty"`
+	WasPinned *bool      `json:"was_pinned,omitempty"`
 }
 
 // PinResponseStatus defines model for PinResponse.Status.
@@ -6629,6 +6632,9 @@ type ClientInterface interface {
 	// (tenant_id, collection_id).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Corresponds with GET /api/v2/primary-pod (the `ListPrimaryPods` operationId).
 	ListPrimaryPods(ctx context.Context, params *ListPrimaryPodsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6640,6 +6646,9 @@ type ClientInterface interface {
 	// fatal).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler — the `tenant_id` PATH segment governs.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Corresponds with DELETE /api/v2/primary-pod/{tenant_id}/{collection_id} (the `DeletePrimaryPod` operationId).
 	DeletePrimaryPod(ctx context.Context, tenantId string, collectionId string, params *DeletePrimaryPodParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6650,6 +6659,9 @@ type ClientInterface interface {
 	// 200 with `status: "unbound"` when none does (never 404).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler — the `tenant_id` PATH segment governs.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Corresponds with GET /api/v2/primary-pod/{tenant_id}/{collection_id} (the `GetPrimaryPod` operationId).
 	GetPrimaryPod(ctx context.Context, tenantId string, collectionId string, params *GetPrimaryPodParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6664,6 +6676,9 @@ type ClientInterface interface {
 	// reconciles on the next write).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler — the `tenant_id` PATH segment governs.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6680,6 +6695,9 @@ type ClientInterface interface {
 	// reconciles on the next write).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler — the `tenant_id` PATH segment governs.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -9018,6 +9036,9 @@ func (c *Client) IngestMetrics(ctx context.Context, namespace string, params *In
 // (tenant_id, collection_id).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Corresponds with GET /api/v2/primary-pod (the `ListPrimaryPods` operationId).
 func (c *Client) ListPrimaryPods(ctx context.Context, params *ListPrimaryPodsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9039,6 +9060,9 @@ func (c *Client) ListPrimaryPods(ctx context.Context, params *ListPrimaryPodsPar
 // fatal).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler — the `tenant_id` PATH segment governs.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Corresponds with DELETE /api/v2/primary-pod/{tenant_id}/{collection_id} (the `DeletePrimaryPod` operationId).
 func (c *Client) DeletePrimaryPod(ctx context.Context, tenantId string, collectionId string, params *DeletePrimaryPodParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9059,6 +9083,9 @@ func (c *Client) DeletePrimaryPod(ctx context.Context, tenantId string, collecti
 // 200 with `status: "unbound"` when none does (never 404).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler — the `tenant_id` PATH segment governs.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Corresponds with GET /api/v2/primary-pod/{tenant_id}/{collection_id} (the `GetPrimaryPod` operationId).
 func (c *Client) GetPrimaryPod(ctx context.Context, tenantId string, collectionId string, params *GetPrimaryPodParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9083,6 +9110,9 @@ func (c *Client) GetPrimaryPod(ctx context.Context, tenantId string, collectionI
 // reconciles on the next write).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler — the `tenant_id` PATH segment governs.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9109,6 +9139,9 @@ func (c *Client) PutPrimaryPodWithBody(ctx context.Context, tenantId string, col
 // reconciles on the next write).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler — the `tenant_id` PATH segment governs.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -15041,6 +15074,9 @@ type ClientWithResponsesInterface interface {
 	// (tenant_id, collection_id).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15054,6 +15090,9 @@ type ClientWithResponsesInterface interface {
 	// fatal).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler — the `tenant_id` PATH segment governs.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15066,6 +15105,9 @@ type ClientWithResponsesInterface interface {
 	// 200 with `status: "unbound"` when none does (never 404).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler — the `tenant_id` PATH segment governs.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15082,6 +15124,9 @@ type ClientWithResponsesInterface interface {
 	// reconciles on the next write).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler — the `tenant_id` PATH segment governs.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15098,6 +15143,9 @@ type ClientWithResponsesInterface interface {
 	// reconciles on the next write).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler — the `tenant_id` PATH segment governs.
+	// Requires REST auth enabled — in an auth-disabled
+	// deployment every call to this operation returns 401
+	// `missing_auth_context`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21308,6 +21356,9 @@ func (c *ClientWithResponses) IngestMetricsWithResponse(ctx context.Context, nam
 // (tenant_id, collection_id).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -21327,6 +21378,9 @@ func (c *ClientWithResponses) ListPrimaryPodsWithResponse(ctx context.Context, p
 // fatal).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler — the `tenant_id` PATH segment governs.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -21345,6 +21399,9 @@ func (c *ClientWithResponses) DeletePrimaryPodWithResponse(ctx context.Context, 
 // 200 with `status: "unbound"` when none does (never 404).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler — the `tenant_id` PATH segment governs.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -21367,6 +21424,9 @@ func (c *ClientWithResponses) GetPrimaryPodWithResponse(ctx context.Context, ten
 // reconciles on the next write).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler — the `tenant_id` PATH segment governs.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -21389,6 +21449,9 @@ func (c *ClientWithResponses) PutPrimaryPodWithBodyWithResponse(ctx context.Cont
 // reconciles on the next write).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler — the `tenant_id` PATH segment governs.
+// Requires REST auth enabled — in an auth-disabled
+// deployment every call to this operation returns 401
+// `missing_auth_context`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
