@@ -1220,38 +1220,61 @@ pub(crate) async fn read_records_by_positions(
     embedding_model_ids: &[String],
     user_column_keys: &[String],
     tenant_ctx: Option<&str>,
+    // TD-RDSTRAT-13 PR-B 2b: the invariants cache the cascade just warmed —
+    // the rehydrate's header/footer reads become cache hits (zero GETs)
+    // instead of 3 duplicate IO ops per segment per query.
+    cache: Option<&SegmentInvariantsCache>,
 ) -> Result<Vec<Option<proximadb_records::ProximaRecord>>> {
     use proximadb_block_format::{PaxBlockReader, record::FlatRow};
     use proximadb_storage_common::segment_layout::{SegmentFooterIndex, SegmentHeaderPrefix};
 
+    // TD-RDSTRAT-13 PR-B: attribute the whole rehydration pass (metadata +
+    // header/footer + block fetches + decode) — the second Region-D read.
+    let rehydrate_started = std::time::Instant::now();
     let mut out: Vec<Option<proximadb_records::ProximaRecord>> = vec![None; positions.len()];
     if positions.is_empty() {
         return Ok(out);
     }
 
-    // 1-2. Header prefix + footer → block table (mirrors stage F; a
-    // non-coalesced segment is an error here — the cascade only runs on
-    // coalesced segments).
-    let size = fs
-        .metadata(path)
-        .await
-        .map_err(|e| anyhow::anyhow!("rehydrate stat {path}: {e}"))?
-        .size;
-    if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
-        anyhow::bail!("rehydrate {path}: not a coalesced segment");
-    }
-    let read_len = (coalesced_header_prefetch_floor() as u64).min(size);
-    let header_bytes = fs
-        .read_range(path, 0, read_len)
-        .await
-        .map_err(|e| anyhow::anyhow!("rehydrate header {path}: {e}"))?;
-    let header = SegmentHeaderPrefix::parse(&header_bytes)
-        .map_err(|e| anyhow::anyhow!("rehydrate header parse {path}: {e}"))?;
-    let footer_bytes = fs
-        .read_range(path, header.footer_off, header.footer_len)
-        .await
-        .map_err(|e| anyhow::anyhow!("rehydrate footer {path}: {e}"))?;
-    let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+    // 1-2. Header prefix + footer → block table. Cache-first (TD-RDSTRAT-13
+    // 2b): the probe warmed the invariants cache EARLIER IN THIS QUERY, so the
+    // rehydrate's lookups are L1 hits — no HEAD, no header GET, no footer GET.
+    // On a miss (cold cache), fall back to the exact stat+read path.
+    let (_header, footer) = if let Some(cache) = cache
+        && let Some(inv) = cache.get_or_promote(path).await.value()
+    {
+        match (
+            SegmentHeaderPrefix::parse(&inv.header_bytes),
+            SegmentFooterIndex::parse(&inv.footer_bytes),
+        ) {
+            (Ok(h), Ok(f)) => (h, f),
+            (Err(e), _) | (_, Err(e)) => {
+                anyhow::bail!("rehydrate cached layout {path}: {e}")
+            }
+        }
+    } else {
+        let size = fs
+            .metadata(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("rehydrate stat {path}: {e}"))?
+            .size;
+        if size < (SEG_HEADER_PREFIX_LEN as u64 + SEGMENT_MAGIC.len() as u64) {
+            anyhow::bail!("rehydrate {path}: not a coalesced segment");
+        }
+        let read_len = (coalesced_header_prefetch_floor() as u64).min(size);
+        let header_bytes = fs
+            .read_range(path, 0, read_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("rehydrate header {path}: {e}"))?;
+        let header = SegmentHeaderPrefix::parse(&header_bytes)
+            .map_err(|e| anyhow::anyhow!("rehydrate header parse {path}: {e}"))?;
+        let footer_bytes = fs
+            .read_range(path, header.footer_off, header.footer_len)
+            .await
+            .map_err(|e| anyhow::anyhow!("rehydrate footer {path}: {e}"))?;
+        let footer = SegmentFooterIndex::parse(&footer_bytes)?;
+        (header, footer)
+    };
     let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
     let mut acc = 0u64;
     for b in &footer.blocks {
@@ -1345,6 +1368,12 @@ pub(crate) async fn read_records_by_positions(
             }
         }
     }
+    crate::observability::io_trace::record_rehydrate_us(
+        rehydrate_started.elapsed().as_micros() as u64
+    );
+    crate::storage::engines::sst::metrics::record_rehydrate_us(
+        rehydrate_started.elapsed().as_micros() as u64,
+    );
     Ok(out)
 }
 
@@ -3969,6 +3998,9 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     //    dense — no bystander props/fp32). The dequant key (min + scale) is
     //    mirrored in the footer (already read), so there is NO separate 24 B
     //    Region-B-header GET — reconstruct the params + codes_base from the footer.
+    // TD-RDSTRAT-13 PR-B: this section (fetch + rerank) is one of the four
+    // attributed tail segments; the wall is recorded at the `scored` boundary.
+    let region_b_started = std::time::Instant::now();
     let dim = footer.embed_dim as usize;
     let sq8_params = coalesced_sq8::params_from_min_scale(footer.sq8_min, footer.sq8_scale);
     let query_norm_squared = if metric == RankMetric::Cosine {
@@ -4340,7 +4372,18 @@ pub async fn rabitq_search_segment_coalesced_allowed(
         }
     }
     if scored.is_empty() {
+        crate::observability::io_trace::record_region_b_rerank_us(
+            region_b_started.elapsed().as_micros() as u64,
+        );
+        crate::storage::engines::sst::metrics::record_region_b_rerank_us(
+            region_b_started.elapsed().as_micros() as u64,
+        );
         return Ok(Some(Vec::new()));
+    }
+    {
+        let us = region_b_started.elapsed().as_micros() as u64;
+        crate::observability::io_trace::record_region_b_rerank_us(us);
+        crate::storage::engines::sst::metrics::record_region_b_rerank_us(us);
     }
     // Global top-k survivor rows (nearest-first; lower score = nearer).
     scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -4349,6 +4392,8 @@ pub async fn rabitq_search_segment_coalesced_allowed(
     // 5. ADR-065 Region D: fetch ONLY the top-k OIDs from the row blocks (≤k
     //    coalesced GETs — vs PR2's M-survivor block fetches). Map top-k rows →
     //    blocks via cumulative row counts.
+    // TD-RDSTRAT-13 PR-B: fetch+decode wall attributed here (both arms).
+    let region_d_started = std::time::Instant::now();
     let mut block_start: Vec<u64> = Vec::with_capacity(footer.blocks.len());
     let mut acc = 0u64;
     for b in &footer.blocks {
@@ -4386,9 +4431,24 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             .is_some_and(|s| s.as_ref().is_some_and(|stats| stats.oid_chunk_len > 0))
     });
     if v4_chunk_fetch {
-        // TD-PAXRG-1 Phase D: per-RG OID-chunk fetch — the footer's stats
-        // payload addresses each RG's chunk; decode via decode_str_chunk.
-        for (&bi, locals) in &block_rows {
+        // TD-PAXRG-1 Phase D + TD-RDSTRAT-13 PR-B 2b: per-RG OID-chunk fetch,
+        // WAVED — the chunks were previously fetched strictly sequentially
+        // (up to ~top-k serial GETs; on object stores that is ~top-k × RTT).
+        // Same peek·batch·feed discipline as the legacy whole-block tail:
+        // classify via the side-effect-free peek, ONE bounded wave for the
+        // true-cold chunks (D4 bound: min(INFLIGHT,N) × chunk_len ≤ small —
+        // chunks are ~tens of bytes per row), then feed pre-fetched bytes
+        // through the SAME get_or_fetch seam so cache semantics, LRU and
+        // counters stay byte-identical; serial fallback on wave Err.
+        struct ChunkDesc {
+            start: u64,
+            range_len: u64,
+            row_count: usize,
+            encoding_id: u8,
+            is_lz4: bool,
+        }
+        let mut chunk_descs: Vec<ChunkDesc> = Vec::with_capacity(block_rows.len());
+        for &bi in block_rows.keys() {
             let b = footer.blocks.get(bi).ok_or_else(|| {
                 anyhow::anyhow!("coalesced scan OID chunk block {bi} is missing from footer")
             })?;
@@ -4413,39 +4473,161 @@ pub async fn rabitq_search_segment_coalesced_allowed(
             let start = b.offset.checked_add(relative_start).ok_or_else(|| {
                 anyhow::anyhow!("coalesced scan OID chunk absolute offset overflows for block {bi}")
             })?;
+            chunk_descs.push(ChunkDesc {
+                start,
+                range_len,
+                row_count: b.row_count as usize,
+                encoding_id: stats.oid_encoding_id,
+                is_lz4: stats.oid_is_lz4,
+            });
+        }
+
+        enum ChunkSlot {
+            SiteServed,
+            Cold(usize),
+        }
+        let mut chunk_slots: Vec<ChunkSlot> = Vec::with_capacity(chunk_descs.len());
+        let mut chunk_cold_ranges: Vec<std::ops::Range<u64>> = Vec::new();
+        for (desc_i, (_bi, _locals)) in block_rows.iter().enumerate() {
+            let desc = &chunk_descs[desc_i];
+            match survivor_cache {
+                // TD-IOBUDGET-2 review: L2-aware classification — a chunk
+                // resident in the persistent exact-key L2 would be served by
+                // the consume call's `get_or_fetch` with ZERO object-store
+                // GETs; classifying it Cold (DRAM-only peek) turned that free
+                // serve into a billed wave GET whose bytes were then dropped.
+                Some(sc)
+                    if sc
+                        .peek_exact_residency(CacheKind::Other, path, desc.start, desc.range_len)
+                        .await
+                        .is_some() =>
+                {
+                    chunk_slots.push(ChunkSlot::SiteServed);
+                }
+                _ => {
+                    chunk_slots.push(ChunkSlot::Cold(chunk_cold_ranges.len()));
+                    chunk_cold_ranges.push(desc.start..desc.start + desc.range_len);
+                }
+            }
+        }
+        let mut chunk_cold_bytes: Vec<Option<Vec<u8>>> = vec![None; chunk_cold_ranges.len()];
+        if !chunk_cold_ranges.is_empty() {
+            let batched = match fs
+                .read_ranges_prefetch(path, chunk_cold_ranges.clone())
+                .await
+            {
+                Ok(bufs) => bufs,
+                Err(_) => {
+                    // Defensive fallback to the sequential baseline shape.
+                    let mut seq = Vec::with_capacity(chunk_cold_ranges.len());
+                    for range in &chunk_cold_ranges {
+                        let b = fs
+                            .read_range(path, range.start, range.end - range.start)
+                            .await
+                            .map_err(|err| {
+                                anyhow::anyhow!("coalesced scan OID-chunk fallback {path}: {err}")
+                            })?;
+                        seq.push(b);
+                    }
+                    seq
+                }
+            };
+            // Metrics parity: one record per physical GET, at batch time.
+            for ((range, buf), slot) in chunk_cold_ranges
+                .iter()
+                .zip(batched)
+                .zip(chunk_cold_bytes.iter_mut())
+            {
+                record_get_physical(CacheTier::ResultPayload, range.end - range.start, trace_on);
+                *slot = Some(buf);
+            }
+            crate::observability::io_trace::drain_and_forward_read_ranges_metrics();
+        }
+
+        for (desc_i, (bi, locals)) in block_rows.iter().enumerate() {
+            let desc = &chunk_descs[desc_i];
+            let pre = match &chunk_slots[desc_i] {
+                ChunkSlot::Cold(i) => Some(chunk_cold_bytes[*i].take().ok_or_else(|| {
+                    anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: cold chunk {i} missing")
+                })?),
+                ChunkSlot::SiteServed => None,
+            };
             // ADR-065 Q3: same read-through cache class as the legacy OID path.
             let buf: Arc<[u8]> = if let Some(sc) = survivor_cache {
-                sc.get_or_fetch(CacheKind::Other, path, start, range_len, || async move {
-                    let b = fs.read_range(path, start, range_len).await?;
-                    record_get_physical(CacheTier::ResultPayload, range_len, trace_on);
-                    Ok(b)
-                })
-                .await
-                .map_err(|e| anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}"))?
+                match pre {
+                    Some(mut pre) => sc
+                        .get_or_fetch(
+                            CacheKind::Other,
+                            path,
+                            desc.start,
+                            desc.range_len,
+                            || async {
+                                Ok::<_, proximadb_storage_filesystem_types::FilesystemError>(
+                                    std::mem::take(&mut pre),
+                                )
+                            },
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}")
+                        })?,
+                    None => {
+                        // SiteServed (or a peek/consume race): the original
+                        // baseline loader — records fire iff it truly runs.
+                        sc.get_or_fetch(
+                            CacheKind::Other,
+                            path,
+                            desc.start,
+                            desc.range_len,
+                            || async move {
+                                let b = fs.read_range(path, desc.start, desc.range_len).await?;
+                                record_get_physical(
+                                    CacheTier::ResultPayload,
+                                    desc.range_len,
+                                    trace_on,
+                                );
+                                Ok(b)
+                            },
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}")
+                        })?
+                    }
+                }
             } else {
-                let b = fs
-                    .read_range(path, start, range_len)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}"))?;
-                record_get_physical(CacheTier::ResultPayload, range_len, trace_on);
-                Arc::from(b)
+                match pre {
+                    Some(b) => Arc::from(b),
+                    None => {
+                        let b = fs
+                            .read_range(path, desc.start, desc.range_len)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("coalesced scan OID-chunk fetch {path}: {e}")
+                            })?;
+                        record_get_physical(CacheTier::ResultPayload, desc.range_len, trace_on);
+                        Arc::from(b)
+                    }
+                }
             };
-            if buf.len() as u64 != range_len {
+            if buf.len() as u64 != desc.range_len {
                 anyhow::bail!(
-                    "coalesced scan OID chunk fetch {path} block {bi} returned {} bytes, expected {range_len}",
-                    buf.len()
+                    "coalesced scan OID chunk fetch {path} block {bi} returned {} bytes, expected {}",
+                    buf.len(),
+                    desc.range_len
                 );
             }
             let oids = proximadb_block_format::decode_str_chunk_checked(
                 &buf,
-                stats.oid_encoding_id,
-                stats.oid_is_lz4,
-                b.row_count as usize,
+                desc.encoding_id,
+                desc.is_lz4,
+                desc.row_count,
             )
             .map_err(|err| {
                 anyhow::anyhow!("coalesced scan OID chunk decode {path} block {bi}: {err}")
             })?;
             for &local in locals {
+                let bi = *bi;
                 let oid = oids
                     .get(local)
                     .and_then(Option::as_ref)
@@ -4647,6 +4829,14 @@ pub async fn rabitq_search_segment_coalesced_allowed(
                 }
             }
         }
+    }
+
+    // TD-RDSTRAT-13 PR-B: Region-D fetch+decode wall recorded at the boundary
+    // where all top-k OIDs are resolved.
+    {
+        let us = region_d_started.elapsed().as_micros() as u64;
+        crate::observability::io_trace::record_region_d_fetch_decode_us(us);
+        crate::storage::engines::sst::metrics::record_region_d_fetch_decode_us(us);
     }
 
     // 6. Build the top-k hits in nearest-first order (from `scored`); step 7
