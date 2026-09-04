@@ -336,10 +336,13 @@ fn sql_value_to_property_value(sql_value: &SqlValue) -> Result<PropertyValue> {
         Some(sql_value::Value::BytesValue(bytes)) => {
             Some(property_value::Value::BytesValue(bytes.clone()))
         }
-        // JSONB carries typed JSON semantics property_value lacks — pass the
-        // bytes through like BytesValue.
+        // Round 7: decode to canonical JSON text like the array/object arms —
+        // raw MessagePack bytes would render as AqlValue::Null at the AQL
+        // graph seam (from_slice fails on the map header), the silent-drop
+        // class eradicated everywhere else.
         Some(sql_value::Value::JsonbValue(bytes)) => {
-            Some(property_value::Value::BytesValue(bytes.clone()))
+            let text = proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(bytes);
+            Some(property_value::Value::StringValue(text))
         }
         Some(sql_value::Value::NullValue(_)) => None,
         // For complex types (arrays, objects), serialize to JSON string for now

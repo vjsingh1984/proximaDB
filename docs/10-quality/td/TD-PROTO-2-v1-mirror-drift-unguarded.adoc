@@ -301,6 +301,35 @@ mutation-proven), 1 dispositioned:**
   to `syn` or TD option 2's generate-and-diff is the tracked end state;
   grow a special case per new shape only until then.
 
+**Round 7 (post-merge confirmation, 2026-09-05) — 10 findings, 7 fixed in
+the follow-up PR, 3 deferred with rationale:**
+
+* Fixed (guard): an enum whose wire-name tables are BOTH absent now FAILS
+  LOUD instead of silently downgrading to discriminant-multiset comparison
+  (prost always generates both tables — joint absence is drift, and the weak
+  fallback would let a wire-name rename pass green). REQUIRE_PROTOC now
+  gates the FILESYSTEM disarm causes too (absent repo root, unreadable proto
+  tree) — a repo restructure can no longer silently disarm the gate on CI.
+* Fixed (runtime): document-block path stats merge JSONB and scalar extrema
+  with a deterministic cross-kind comparison instead of the JSONB extremum
+  blindly overwriting the scalar one (pure columns keep exact semantics).
+  The records-crate writer's encode-error fallback is the legacy tag-8
+  magic encoding (matching search-types; plain JSON-text under tag 9
+  violated the MessagePack contract). The graph seam converts JSONB to
+  canonical JSON text like its array/object arms (raw MessagePack bytes
+  rendered as AqlValue::Null). The two new SqlValue→JSON converter copies
+  (pgwire protocol.rs, executor.rs) delegate to the shared
+  arrow_conversion helper. The SqlValue dot-traversal walks ObjectValue
+  roots by reference instead of materializing the whole owned tree.
+* Deferred: (a) the `{"jsonb_value": …}` sniffed-tag ambiguity — rmp-serde
+  accepts almost any short byte sequence, so the round-4 MessagePack-validity
+  gate narrows little; the durable fix is an unambiguous tagged shape, which
+  is a wire-visible REST change needing owner sign-off; (b) a shared
+  big-stack test-runtime builder for the ~670 in-process-server tests
+  (only 8 set stack sizes; production already runs 32 MiB) — separate
+  test-infra PR; (c) filter+group-by on the same JSONB field renders twice
+  per log — measure-first before plumbing pre-rendered keys.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

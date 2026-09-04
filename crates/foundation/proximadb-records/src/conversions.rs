@@ -223,9 +223,20 @@ pub fn proxima_to_sql_value(value: &ProximaValue) -> SqlValue {
         // tag-9 values — legacy-tagged JSONB filters exactly as it did before
         // this PR (byte-rendering miss), until rewritten. The tag-9 variant
         // did not exist before this PR.
-        ProximaValue::Jsonb(v) => sql_value::Value::JsonbValue(
-            ProximaValue::to_jsonb_vec(v).unwrap_or_else(|_| v.to_string().into_bytes()),
-        ),
+        ProximaValue::Jsonb(v) => match ProximaValue::to_jsonb_vec(v) {
+            Ok(bytes) => sql_value::Value::JsonbValue(bytes),
+            Err(_) => {
+                // Round 7: fall back to the legacy tag-8 magic+JSON-text
+                // encoding (matching search-types' writer) — the existing
+                // magic-stripping decoder recovers it losslessly. Plain
+                // JSON-text under tag 9 would violate tag 9's MessagePack
+                // contract and silently change type on read.
+                const JSONB_MAGIC: &[u8] = b"\xff\xfeJSNB";
+                let mut bytes = JSONB_MAGIC.to_vec();
+                bytes.extend_from_slice(v.to_string().as_bytes());
+                sql_value::Value::BytesValue(bytes)
+            }
+        },
         ProximaValue::Array(values) => sql_value::Value::ArrayValue(SqlArray {
             values: values.iter().map(proxima_to_sql_value).collect(),
         }),

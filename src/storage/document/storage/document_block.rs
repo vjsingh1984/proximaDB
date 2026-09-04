@@ -140,11 +140,35 @@ impl DocumentBlock {
                 }
             }
 
-            if let Some((value, _)) = jsonb_min {
-                stats.min_value = Some(value);
+            // Round 7: a path can mix JSONB and scalar values — the JSONB
+            // extremum must not blindly overwrite the scalar extremum the
+            // else-branch accumulated. Merge with a deterministic cross-kind
+            // comparison over the canonical renderings (scalar display form
+            // vs JSON text) so the recorded extrema always bound the column.
+            // Pure-scalar and pure-JSONB columns keep their exact prior
+            // semantics.
+            let scalar_render = |v: &SqlValue| -> String {
+                match &v.value {
+                    Some(SqlVal::StringValue(s)) => s.clone(),
+                    Some(SqlVal::NumberValue(n)) => n.to_string(),
+                    Some(SqlVal::Int64Value(i)) => i.to_string(),
+                    Some(SqlVal::BoolValue(b)) => b.to_string(),
+                    _ => String::new(),
+                }
+            };
+            if let Some((jv, jk)) = jsonb_min {
+                stats.min_value = Some(match stats.min_value.take() {
+                    None => jv,
+                    Some(sv) if scalar_render(&sv) <= jk => sv,
+                    Some(_) => jv,
+                });
             }
-            if let Some((value, _)) = jsonb_max {
-                stats.max_value = Some(value);
+            if let Some((jv, jk)) = jsonb_max {
+                stats.max_value = Some(match stats.max_value.take() {
+                    None => jv,
+                    Some(sv) if scalar_render(&sv) >= jk => sv,
+                    Some(_) => jv,
+                });
             }
 
             if stats.count > 0 {

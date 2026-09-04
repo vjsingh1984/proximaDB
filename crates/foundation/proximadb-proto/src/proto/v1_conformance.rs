@@ -1520,19 +1520,18 @@ impl Comparer {
             }
 
             if as_table.is_empty() && from_table.is_empty() {
-                // No name table at all: fall back to comparing the discriminant
-                // multisets (weaker — a renamed value would pass, a missing or
-                // renumbered one would not).
-                let mut dnums: Vec<i32> = dvalues.iter().map(|(_, n)| *n).collect();
-                let mut mnums: Vec<i32> = menum.values.iter().map(|(_, n)| *n).collect();
-                dnums.sort_unstable();
-                mnums.sort_unstable();
-                if dnums != mnums {
-                    self.record(
-                        key,
-                        format!("enum value numbers mismatch proto {dnums:?} vs mirror {mnums:?}"),
-                    );
-                }
+                // prost::Enumeration ALWAYS generates both name tables, so
+                // their joint absence is itself drift (a deleted impl block,
+                // or a scanner miss on a new codegen shape) — and the weak
+                // discriminant-multiset fallback would let a wire-NAME rename
+                // (the Polar/Polaris class) pass green. Fail loud instead of
+                // silently downgrading the check (round-7 finding).
+                self.record(
+                    key,
+                    "enum has NEITHER as_str_name NOR from_str_name tables — prost always \
+                     generates both; their joint absence is drift (deleted impl or scanner \
+                     miss), not a comparable shape",
+                );
                 continue;
             }
             for (wire, number) in dvalues {
@@ -1591,16 +1590,18 @@ impl Comparer {
 /// machines. Under `REQUIRE_PROTOC=1` (set by CI's unit-test job) the same
 /// condition FAILS, so the gate can never silently disarm where it is the
 /// only drift check — a skip and a pass stay distinguishable.
-fn skip_protoc_absent() -> Option<Vec<u8>> {
-    let message = "SKIP: protoc not found — TD-PROTO-2 mirror conformance check \
-         did not run. Install protobuf-compiler (or set PROTOC).";
+fn skip_or_fail(cause: &str) -> Option<Vec<u8>> {
+    // CI's unit lane sets REQUIRE_PROTOC=1: there, ANY disarm cause (missing
+    // protoc, absent repo root, unreadable proto tree) FAILS so the gate
+    // cannot silently return green exactly when what it guards has moved
+    // (round-7 finding). Developer machines keep the graceful skip.
     if std::env::var_os("REQUIRE_PROTOC").is_some() {
         panic!(
-            "TD-PROTO-2: protoc is REQUIRED here (REQUIRE_PROTOC=1) but not available — \
-                the conformance gate refuses to silently disarm. {message}"
+            "TD-PROTO-2: the conformance gate is REQUIRED here (REQUIRE_PROTOC=1) \
+             but cannot run: {cause} — refusing to silently disarm."
         );
     }
-    eprintln!("{message}");
+    eprintln!("SKIP: {cause} — TD-PROTO-2 mirror conformance check did not run.");
     None
 }
 
@@ -1612,15 +1613,14 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     match Command::new(&protoc).arg("--version").output() {
         Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return skip_protoc_absent();
+            return skip_or_fail("protoc not found — install protobuf-compiler (or set PROTOC)");
         }
         Err(err) => panic!("failed to spawn protoc: {err}"),
     }
 
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let Some(repo_root) = manifest.ancestors().nth(3) else {
-        eprintln!("SKIP: repository root not found above the crate manifest");
-        return None;
+        return skip_or_fail("repository root not found above the crate manifest");
     };
     let repo_root = repo_root.to_path_buf();
     let proto_root = repo_root.join("proto");
@@ -1628,8 +1628,9 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     let mut inputs = vec![proto_root.join("proximadb/explain.proto")];
     let v1_dir = proto_root.join("proximadb/v1");
     let Ok(v1_entries) = std::fs::read_dir(&v1_dir) else {
-        // proto/ absent (graceful-skip contract above): nothing to check.
-        return None;
+        // proto/ absent: skip on dev machines, FAIL under REQUIRE_PROTOC —
+        // a repo restructure must not silently disarm the gate (round-7).
+        return skip_or_fail("proto tree unreadable (moved or missing)");
     };
     let mut v1_files: Vec<PathBuf> = v1_entries
         .filter_map(|e| e.ok())
@@ -1655,7 +1656,7 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     {
         Ok(output) => output,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return skip_protoc_absent();
+            return skip_or_fail("protoc not found — install protobuf-compiler (or set PROTOC)");
         }
         Err(err) => panic!("failed to spawn protoc: {err}"),
     };

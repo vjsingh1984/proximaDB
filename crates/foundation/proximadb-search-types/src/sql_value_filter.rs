@@ -85,24 +85,59 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
         // so the SqlValue and ProximaTree paths agree for nested fields:
         // `memory.type` resolves inside JsonbValue({"memory":{"type":…}}).
         let (head, tail) = field.split_once('.')?;
-        let root = match metadata.get(head)?.value.as_ref()? {
-            SqlVal::ObjectValue(obj) => obj_to_json(obj),
+        let mut segments = tail.split('.');
+        // Object roots walk the SqlObject BY REFERENCE (round 7: building the
+        // whole owned tree via obj_to_json converted every sibling subtree
+        // off the queried path); JSONB roots decode once then walk by
+        // reference. Only the final leaf is cloned.
+        let mut root_value;
+        let mut object_cursor: Option<&proximadb_proto::proximadb_v1::SqlObject> = None;
+        let mut json_cursor: Option<&serde_json::Value> = None;
+        match metadata.get(head)?.value.as_ref()? {
+            SqlVal::ObjectValue(obj) => object_cursor = Some(obj),
             // Canonical JSONB decodes to the document; legacy tag-8 bytes
             // stay opaque (pre-PR behavior).
-            SqlVal::JsonbValue(bytes) => ProximaValue::jsonb_to_json_lossy(bytes),
+            SqlVal::JsonbValue(bytes) => {
+                root_value = ProximaValue::jsonb_to_json_lossy(bytes);
+                json_cursor = Some(&root_value);
+            }
             _ => return None,
-        };
-        // Walk by reference, cloning only the final leaf — a clone per
-        // segment deep-copies the remaining subtree at every step (round-6
-        // finding; this now matches resolve_proxima_value's cost shape).
-        let mut current: &serde_json::Value = &root;
-        for segment in tail.split('.') {
-            current = match current {
-                serde_json::Value::Object(object) => object.get(segment)?,
-                _ => return None,
-            };
         }
-        Some(current.clone())
+        for segment in segments.by_ref() {
+            if let Some(obj) = object_cursor {
+                let next = obj.fields.get(segment)?.value.as_ref()?;
+                match next {
+                    SqlVal::ObjectValue(inner) => object_cursor = Some(inner),
+                    // A JSONB leaf mid-path decodes and continues as JSON.
+                    SqlVal::JsonbValue(bytes) => {
+                        root_value = ProximaValue::jsonb_to_json_lossy(bytes);
+                        json_cursor = Some(&root_value);
+                        object_cursor = None;
+                    }
+                    other => {
+                        // Non-object scalar mid-path: only valid as the leaf.
+                        let last = segments.next().is_none();
+                        return if last {
+                            Some(sql_val_to_json(other))
+                        } else {
+                            None
+                        };
+                    }
+                }
+                continue;
+            }
+            if let Some(json) = json_cursor {
+                json_cursor = Some(match json {
+                    serde_json::Value::Object(object) => object.get(segment)?,
+                    _ => return None,
+                });
+            }
+        }
+        if let Some(json) = json_cursor {
+            return Some(json.clone());
+        }
+        // Ended on an ObjectValue cursor: convert that node (the leaf).
+        object_cursor.map(obj_to_json)
     })
 }
 
