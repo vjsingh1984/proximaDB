@@ -44,6 +44,1501 @@ pub mod types {
             }
         }
     }
+    /// An ABAC subject attribute value — an externally-tagged Rust enum;
+    /// exactly one of `Str`, `Int`, `Bool`, or `List` is present.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "An ABAC subject attribute value — an externally-tagged Rust enum;\nexactly one of `Str`, `Int`, `Bool`, or `List` is present.\n",
+    ///  "oneOf": [
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "Str"
+    ///      ],
+    ///      "properties": {
+    ///        "Str": {
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "Int"
+    ///      ],
+    ///      "properties": {
+    ///        "Int": {
+    ///          "type": "integer",
+    ///          "format": "int64"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "Bool"
+    ///      ],
+    ///      "properties": {
+    ///        "Bool": {
+    ///          "type": "boolean"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "List"
+    ///      ],
+    ///      "properties": {
+    ///        "List": {
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "string"
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub enum AbacAttrValue {
+        Str(::std::string::String),
+        Int(i64),
+        Bool(bool),
+        List(::std::vec::Vec<::std::string::String>),
+    }
+    impl ::std::convert::From<i64> for AbacAttrValue {
+        fn from(value: i64) -> Self {
+            Self::Int(value)
+        }
+    }
+    impl ::std::convert::From<bool> for AbacAttrValue {
+        fn from(value: bool) -> Self {
+            Self::Bool(value)
+        }
+    }
+    impl ::std::convert::From<::std::vec::Vec<::std::string::String>> for AbacAttrValue {
+        fn from(value: ::std::vec::Vec<::std::string::String>) -> Self {
+            Self::List(value)
+        }
+    }
+    ///`AbacAttributeBinding`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "attrs",
+    ///    "subject_id",
+    ///    "tenant_stable_id"
+    ///  ],
+    ///  "properties": {
+    ///    "attrs": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "$ref": "#/components/schemas/AbacAttrValue"
+    ///      }
+    ///    },
+    ///    "subject_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "tenant_stable_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacAttributeBinding {
+        pub attrs: ::std::collections::HashMap<::std::string::String, AbacAttrValue>,
+        pub subject_id: ::std::string::String,
+        pub tenant_stable_id: u64,
+    }
+    impl AbacAttributeBinding {
+        pub fn builder() -> builder::AbacAttributeBinding {
+            Default::default()
+        }
+    }
+    ///`AbacAttributeBindingsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "bindings",
+    ///    "count"
+    ///  ],
+    ///  "properties": {
+    ///    "bindings": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/AbacAttributeBinding"
+    ///      }
+    ///    },
+    ///    "count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacAttributeBindingsResponse {
+        pub bindings: ::std::vec::Vec<AbacAttributeBinding>,
+        pub count: u64,
+    }
+    impl AbacAttributeBindingsResponse {
+        pub fn builder() -> builder::AbacAttributeBindingsResponse {
+            Default::default()
+        }
+    }
+    ///The `Column` variant payload of [AbacScope](#/components/schemas/AbacScope).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "The `Column` variant payload of [AbacScope](#/components/schemas/AbacScope).",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "column",
+    ///    "table"
+    ///  ],
+    ///  "properties": {
+    ///    "column": {
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "table": {
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacColumnScope {
+        pub column: u32,
+        pub table: u32,
+    }
+    impl AbacColumnScope {
+        pub fn builder() -> builder::AbacColumnScope {
+            Default::default()
+        }
+    }
+    ///`AbacComparisonOperator`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "Equals",
+    ///    "NotEquals",
+    ///    "GreaterThan",
+    ///    "GreaterThanOrEqual",
+    ///    "LessThan",
+    ///    "LessThanOrEqual",
+    ///    "In",
+    ///    "NotIn",
+    ///    "Contains",
+    ///    "StartsWith",
+    ///    "EndsWith",
+    ///    "Between",
+    ///    "IsNull",
+    ///    "IsNotNull",
+    ///    "Like"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum AbacComparisonOperator {
+        Equals,
+        NotEquals,
+        GreaterThan,
+        GreaterThanOrEqual,
+        LessThan,
+        LessThanOrEqual,
+        In,
+        NotIn,
+        Contains,
+        StartsWith,
+        EndsWith,
+        Between,
+        IsNull,
+        IsNotNull,
+        Like,
+    }
+    impl ::std::fmt::Display for AbacComparisonOperator {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Equals => f.write_str("Equals"),
+                Self::NotEquals => f.write_str("NotEquals"),
+                Self::GreaterThan => f.write_str("GreaterThan"),
+                Self::GreaterThanOrEqual => f.write_str("GreaterThanOrEqual"),
+                Self::LessThan => f.write_str("LessThan"),
+                Self::LessThanOrEqual => f.write_str("LessThanOrEqual"),
+                Self::In => f.write_str("In"),
+                Self::NotIn => f.write_str("NotIn"),
+                Self::Contains => f.write_str("Contains"),
+                Self::StartsWith => f.write_str("StartsWith"),
+                Self::EndsWith => f.write_str("EndsWith"),
+                Self::Between => f.write_str("Between"),
+                Self::IsNull => f.write_str("IsNull"),
+                Self::IsNotNull => f.write_str("IsNotNull"),
+                Self::Like => f.write_str("Like"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for AbacComparisonOperator {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "Equals" => Ok(Self::Equals),
+                "NotEquals" => Ok(Self::NotEquals),
+                "GreaterThan" => Ok(Self::GreaterThan),
+                "GreaterThanOrEqual" => Ok(Self::GreaterThanOrEqual),
+                "LessThan" => Ok(Self::LessThan),
+                "LessThanOrEqual" => Ok(Self::LessThanOrEqual),
+                "In" => Ok(Self::In),
+                "NotIn" => Ok(Self::NotIn),
+                "Contains" => Ok(Self::Contains),
+                "StartsWith" => Ok(Self::StartsWith),
+                "EndsWith" => Ok(Self::EndsWith),
+                "Between" => Ok(Self::Between),
+                "IsNull" => Ok(Self::IsNull),
+                "IsNotNull" => Ok(Self::IsNotNull),
+                "Like" => Ok(Self::Like),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AbacComparisonOperator {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AbacComparisonOperator {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AbacComparisonOperator {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///Permit or deny; deny wins during policy resolution.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Permit or deny; deny wins during policy resolution.",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "Permit",
+    ///    "Deny"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum AbacEffect {
+        Permit,
+        Deny,
+    }
+    impl ::std::fmt::Display for AbacEffect {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Permit => f.write_str("Permit"),
+                Self::Deny => f.write_str("Deny"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for AbacEffect {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "Permit" => Ok(Self::Permit),
+                "Deny" => Ok(Self::Deny),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AbacEffect {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AbacEffect {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AbacEffect {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    /// Column-level masking. `Forbid` rejects the read (existence must
+    /// not leak); `Null`/`Redact` are projection rewrites.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Column-level masking. `Forbid` rejects the read (existence must\nnot leak); `Null`/`Redact` are projection rewrites.\n",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "Null",
+    ///    "Redact",
+    ///    "Forbid"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum AbacFieldMask {
+        Null,
+        Redact,
+        Forbid,
+    }
+    impl ::std::fmt::Display for AbacFieldMask {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Null => f.write_str("Null"),
+                Self::Redact => f.write_str("Redact"),
+                Self::Forbid => f.write_str("Forbid"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for AbacFieldMask {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "Null" => Ok(Self::Null),
+                "Redact" => Ok(Self::Redact),
+                "Forbid" => Ok(Self::Forbid),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AbacFieldMask {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AbacFieldMask {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AbacFieldMask {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    /// A predicate-object row filter — a RECURSIVE, externally-tagged Rust
+    /// enum (`proximadb_filter_expression::FilterExpression`). Modeled
+    /// here as free-form JSON (rather than a typed `oneOf`) because the
+    /// self-referential union is not representable in a form the SDK
+    /// codegen tooling can process (openapi-python-client cannot resolve
+    /// a `oneOf` branch whose `items` `$ref`s the union being defined);
+    /// this is the one schema in the ABAC surface where the generated
+    /// client falls back to an untyped object. Construct exactly one of:
+    ///
+    /// * `{"Comparison": {"field": <string>, "operator": <one of
+    ///   "Equals","NotEquals","GreaterThan","GreaterThanOrEqual",
+    ///   "LessThan","LessThanOrEqual","In","NotIn","Contains",
+    ///   "StartsWith","EndsWith","Between","IsNull","IsNotNull","Like">,
+    ///   "value": <any JSON value>}}`
+    /// * `{"And": [<AbacFilterExpression>, ...]}`
+    /// * `{"Or": [<AbacFilterExpression>, ...]}`
+    /// * `{"Not": <AbacFilterExpression>}`
+    ///
+    /// See [AbacComparisonOperator](#/components/schemas/AbacComparisonOperator)
+    /// for the authoritative operator enum (referenced here for docs only;
+    /// not structurally, for the same recursion reason).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "A predicate-object row filter — a RECURSIVE, externally-tagged Rust\nenum (`proximadb_filter_expression::FilterExpression`). Modeled\nhere as free-form JSON (rather than a typed `oneOf`) because the\nself-referential union is not representable in a form the SDK\ncodegen tooling can process (openapi-python-client cannot resolve\na `oneOf` branch whose `items` `$ref`s the union being defined);\nthis is the one schema in the ABAC surface where the generated\nclient falls back to an untyped object. Construct exactly one of:\n\n* `{\"Comparison\": {\"field\": <string>, \"operator\": <one of\n  \"Equals\",\"NotEquals\",\"GreaterThan\",\"GreaterThanOrEqual\",\n  \"LessThan\",\"LessThanOrEqual\",\"In\",\"NotIn\",\"Contains\",\n  \"StartsWith\",\"EndsWith\",\"Between\",\"IsNull\",\"IsNotNull\",\"Like\">,\n  \"value\": <any JSON value>}}`\n* `{\"And\": [<AbacFilterExpression>, ...]}`\n* `{\"Or\": [<AbacFilterExpression>, ...]}`\n* `{\"Not\": <AbacFilterExpression>}`\n\nSee [AbacComparisonOperator](#/components/schemas/AbacComparisonOperator)\nfor the authoritative operator enum (referenced here for docs only;\nnot structurally, for the same recursion reason).\n",
+    ///  "type": "object",
+    ///  "additionalProperties": true
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct AbacFilterExpression(
+        pub ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    );
+    impl ::std::ops::Deref for AbacFilterExpression {
+        type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+        fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<AbacFilterExpression>
+        for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+    {
+        fn from(value: AbacFilterExpression) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+        for AbacFilterExpression
+    {
+        fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+            Self(value)
+        }
+    }
+    /// `Grant` is delegation authority (further re-grant); it is not
+    /// consulted for data access, only by the admin surface.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "`Grant` is delegation authority (further re-grant); it is not\nconsulted for data access, only by the admin surface.\n",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "Read",
+    ///    "Write",
+    ///    "Ddl",
+    ///    "Grant"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum AbacGrantAction {
+        Read,
+        Write,
+        Ddl,
+        Grant,
+    }
+    impl ::std::fmt::Display for AbacGrantAction {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Read => f.write_str("Read"),
+                Self::Write => f.write_str("Write"),
+                Self::Ddl => f.write_str("Ddl"),
+                Self::Grant => f.write_str("Grant"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for AbacGrantAction {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "Read" => Ok(Self::Read),
+                "Write" => Ok(Self::Write),
+                "Ddl" => Ok(Self::Ddl),
+                "Grant" => Ok(Self::Grant),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AbacGrantAction {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AbacGrantAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AbacGrantAction {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    /// Rollout is intended `Off` -> `Audit` (would-be-denials logged, read
+    /// still admitted) -> `Enforce` (no applicable grant denies).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Rollout is intended `Off` -> `Audit` (would-be-denials logged, read\nstill admitted) -> `Enforce` (no applicable grant denies).\n",
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "Off",
+    ///    "Audit",
+    ///    "Enforce"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum AbacGrantEnforcement {
+        Off,
+        Audit,
+        Enforce,
+    }
+    impl ::std::fmt::Display for AbacGrantEnforcement {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::Off => f.write_str("Off"),
+                Self::Audit => f.write_str("Audit"),
+                Self::Enforce => f.write_str("Enforce"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for AbacGrantEnforcement {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "Off" => Ok(Self::Off),
+                "Audit" => Ok(Self::Audit),
+                "Enforce" => Ok(Self::Enforce),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AbacGrantEnforcement {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AbacGrantEnforcement {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AbacGrantEnforcement {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    /// Grantee as provisioned over the wire: a tenant-wide share when
+    /// `subject` is omitted/empty, else one user of (possibly foreign)
+    /// `tenant`. Clients supply tenant/subject strings; stable ids are
+    /// resolved server-side.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Grantee as provisioned over the wire: a tenant-wide share when\n`subject` is omitted/empty, else one user of (possibly foreign)\n`tenant`. Clients supply tenant/subject strings; stable ids are\nresolved server-side.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "tenant"
+    ///  ],
+    ///  "properties": {
+    ///    "subject": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "tenant": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacGrantGranteeRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub subject: ::std::option::Option<::std::string::String>,
+        pub tenant: ::std::string::String,
+    }
+    impl AbacGrantGranteeRequest {
+        pub fn builder() -> builder::AbacGrantGranteeRequest {
+            Default::default()
+        }
+    }
+    ///`AbacGrantRecord`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "actions",
+    ///    "created_at_ms",
+    ///    "grant_id",
+    ///    "grantee",
+    ///    "owner_tenant_stable_id",
+    ///    "resource"
+    ///  ],
+    ///  "properties": {
+    ///    "actions": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/AbacGrantAction"
+    ///      }
+    ///    },
+    ///    "created_at_ms": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "expires_at_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    },
+    ///    "field_mask": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/AbacFieldMask"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    },
+    ///    "grant_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "grantee": {
+    ///      "$ref": "#/components/schemas/AbacGrantee"
+    ///    },
+    ///    "owner_tenant_stable_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "predicate_ref": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "resource": {
+    ///      "$ref": "#/components/schemas/AbacScope"
+    ///    },
+    ///    "revoked_at_ms": {
+    ///      "description": "Set once revoked; the record stays listed (audit trail).",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacGrantRecord {
+        pub actions: ::std::vec::Vec<AbacGrantAction>,
+        pub created_at_ms: i64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub expires_at_ms: ::std::option::Option<i64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub field_mask: ::std::option::Option<AbacFieldMask>,
+        pub grant_id: ::std::string::String,
+        pub grantee: AbacGrantee,
+        pub owner_tenant_stable_id: u64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub predicate_ref: ::std::option::Option<u64>,
+        pub resource: AbacScope,
+        ///Set once revoked; the record stays listed (audit trail).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub revoked_at_ms: ::std::option::Option<i64>,
+    }
+    impl AbacGrantRecord {
+        pub fn builder() -> builder::AbacGrantRecord {
+            Default::default()
+        }
+    }
+    /// Who a grant admits — an externally-tagged Rust enum. Exactly one
+    /// of `Tenant` (every subject of that tenant) or `User` (one specific
+    /// subject, possibly of a foreign tenant) is present.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Who a grant admits — an externally-tagged Rust enum. Exactly one\nof `Tenant` (every subject of that tenant) or `User` (one specific\nsubject, possibly of a foreign tenant) is present.\n",
+    ///  "oneOf": [
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "Tenant"
+    ///      ],
+    ///      "properties": {
+    ///        "Tenant": {
+    ///          "type": "integer",
+    ///          "format": "uint64"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "User"
+    ///      ],
+    ///      "properties": {
+    ///        "User": {
+    ///          "$ref": "#/components/schemas/AbacGranteeUser"
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub enum AbacGrantee {
+        Tenant(u64),
+        User(AbacGranteeUser),
+    }
+    impl ::std::convert::From<u64> for AbacGrantee {
+        fn from(value: u64) -> Self {
+            Self::Tenant(value)
+        }
+    }
+    impl ::std::convert::From<AbacGranteeUser> for AbacGrantee {
+        fn from(value: AbacGranteeUser) -> Self {
+            Self::User(value)
+        }
+    }
+    ///The `User` variant payload of [AbacGrantee](#/components/schemas/AbacGrantee).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "The `User` variant payload of [AbacGrantee](#/components/schemas/AbacGrantee).",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "subject",
+    ///    "tenant_stable_id"
+    ///  ],
+    ///  "properties": {
+    ///    "subject": {
+    ///      "type": "string"
+    ///    },
+    ///    "tenant_stable_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacGranteeUser {
+        pub subject: ::std::string::String,
+        pub tenant_stable_id: u64,
+    }
+    impl AbacGranteeUser {
+        pub fn builder() -> builder::AbacGranteeUser {
+            Default::default()
+        }
+    }
+    /// The FLAT error shape every ABAC operator endpoint returns —
+    /// `{error, message, code}` where `error` is a short machine-readable
+    /// slug (e.g. `"tenant_unresolved"`). This is deliberately DISTINCT
+    /// from the canonical nested `ErrorResponse` (`{error: {type,
+    /// message, code}}`) used elsewhere in this spec; it is the actual
+    /// wire format of `abac_admin::OperatorErrorResponse`, carried
+    /// verbatim rather than normalized.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "The FLAT error shape every ABAC operator endpoint returns —\n`{error, message, code}` where `error` is a short machine-readable\nslug (e.g. `\"tenant_unresolved\"`). This is deliberately DISTINCT\nfrom the canonical nested `ErrorResponse` (`{error: {type,\nmessage, code}}`) used elsewhere in this spec; it is the actual\nwire format of `abac_admin::OperatorErrorResponse`, carried\nverbatim rather than normalized.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "code",
+    ///    "error",
+    ///    "message"
+    ///  ],
+    ///  "properties": {
+    ///    "code": {
+    ///      "description": "The HTTP status code, repeated in the body.",
+    ///      "type": "integer"
+    ///    },
+    ///    "error": {
+    ///      "description": "Machine-readable error slug.",
+    ///      "type": "string"
+    ///    },
+    ///    "message": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacOperatorErrorResponse {
+        ///The HTTP status code, repeated in the body.
+        pub code: i64,
+        ///Machine-readable error slug.
+        pub error: ::std::string::String,
+        pub message: ::std::string::String,
+    }
+    impl AbacOperatorErrorResponse {
+        pub fn builder() -> builder::AbacOperatorErrorResponse {
+            Default::default()
+        }
+    }
+    ///`AbacPolicyBinding`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "effect",
+    ///    "object_id",
+    ///    "scope",
+    ///    "tenant_stable_id"
+    ///  ],
+    ///  "properties": {
+    ///    "effect": {
+    ///      "$ref": "#/components/schemas/AbacEffect"
+    ///    },
+    ///    "field_mask": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/AbacFieldMask"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    },
+    ///    "object_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "predicate_ref": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "scope": {
+    ///      "$ref": "#/components/schemas/AbacScope"
+    ///    },
+    ///    "tenant_stable_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPolicyBinding {
+        pub effect: AbacEffect,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub field_mask: ::std::option::Option<AbacFieldMask>,
+        pub object_id: u64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub predicate_ref: ::std::option::Option<u64>,
+        pub scope: AbacScope,
+        pub tenant_stable_id: u64,
+    }
+    impl AbacPolicyBinding {
+        pub fn builder() -> builder::AbacPolicyBinding {
+            Default::default()
+        }
+    }
+    ///`AbacPolicyBindingsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "bindings",
+    ///    "count",
+    ///    "tenant",
+    ///    "tenant_stable_id"
+    ///  ],
+    ///  "properties": {
+    ///    "bindings": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/AbacPolicyBinding"
+    ///      }
+    ///    },
+    ///    "count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "tenant": {
+    ///      "type": "string"
+    ///    },
+    ///    "tenant_stable_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPolicyBindingsResponse {
+        pub bindings: ::std::vec::Vec<AbacPolicyBinding>,
+        pub count: u64,
+        pub tenant: ::std::string::String,
+        pub tenant_stable_id: u64,
+    }
+    impl AbacPolicyBindingsResponse {
+        pub fn builder() -> builder::AbacPolicyBindingsResponse {
+            Default::default()
+        }
+    }
+    ///Body for `POST /api/v2/abac/attribute-bindings`.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Body for `POST /api/v2/abac/attribute-bindings`.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "attrs",
+    ///    "subject_id",
+    ///    "tenant"
+    ///  ],
+    ///  "properties": {
+    ///    "attrs": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "$ref": "#/components/schemas/AbacAttrValue"
+    ///      }
+    ///    },
+    ///    "subject_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "tenant": {
+    ///      "description": "Tenant display name; resolved to the stable u64 server-side.",
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPostAttributeBindingRequest {
+        pub attrs: ::std::collections::HashMap<::std::string::String, AbacAttrValue>,
+        pub subject_id: ::std::string::String,
+        ///Tenant display name; resolved to the stable u64 server-side.
+        pub tenant: ::std::string::String,
+    }
+    impl AbacPostAttributeBindingRequest {
+        pub fn builder() -> builder::AbacPostAttributeBindingRequest {
+            Default::default()
+        }
+    }
+    ///Body for `POST /api/v2/abac/grants`.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Body for `POST /api/v2/abac/grants`.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "actions",
+    ///    "grantee",
+    ///    "owner_tenant",
+    ///    "resource"
+    ///  ],
+    ///  "properties": {
+    ///    "actions": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/AbacGrantAction"
+    ///      },
+    ///      "uniqueItems": true
+    ///    },
+    ///    "expires_at_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    },
+    ///    "field_mask": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/AbacFieldMask"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    },
+    ///    "grantee": {
+    ///      "$ref": "#/components/schemas/AbacGrantGranteeRequest"
+    ///    },
+    ///    "owner_tenant": {
+    ///      "description": "The resource-owner tenant (string; resolved and must be minted).",
+    ///      "type": "string"
+    ///    },
+    ///    "predicate_ref": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "resource": {
+    ///      "$ref": "#/components/schemas/AbacScope"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPostGrantRequest {
+        pub actions: Vec<AbacGrantAction>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub expires_at_ms: ::std::option::Option<i64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub field_mask: ::std::option::Option<AbacFieldMask>,
+        pub grantee: AbacGrantGranteeRequest,
+        ///The resource-owner tenant (string; resolved and must be minted).
+        pub owner_tenant: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub predicate_ref: ::std::option::Option<u64>,
+        pub resource: AbacScope,
+    }
+    impl AbacPostGrantRequest {
+        pub fn builder() -> builder::AbacPostGrantRequest {
+            Default::default()
+        }
+    }
+    ///`AbacPostGrantResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "grant_id",
+    ///    "owner_tenant_stable_id"
+    ///  ],
+    ///  "properties": {
+    ///    "grant_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "owner_tenant_stable_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPostGrantResponse {
+        pub grant_id: ::std::string::String,
+        pub owner_tenant_stable_id: u64,
+    }
+    impl AbacPostGrantResponse {
+        pub fn builder() -> builder::AbacPostGrantResponse {
+            Default::default()
+        }
+    }
+    ///`AbacPredicateObjectResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "expression",
+    ///    "object_id"
+    ///  ],
+    ///  "properties": {
+    ///    "expression": {
+    ///      "$ref": "#/components/schemas/AbacFilterExpression"
+    ///    },
+    ///    "object_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPredicateObjectResponse {
+        pub expression: AbacFilterExpression,
+        pub object_id: u64,
+    }
+    impl AbacPredicateObjectResponse {
+        pub fn builder() -> builder::AbacPredicateObjectResponse {
+            Default::default()
+        }
+    }
+    ///`AbacPredicateObjectsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "count",
+    ///    "objects"
+    ///  ],
+    ///  "properties": {
+    ///    "count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "objects": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/AbacPredicateObjectResponse"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPredicateObjectsResponse {
+        pub count: u64,
+        pub objects: ::std::vec::Vec<AbacPredicateObjectResponse>,
+    }
+    impl AbacPredicateObjectsResponse {
+        pub fn builder() -> builder::AbacPredicateObjectsResponse {
+            Default::default()
+        }
+    }
+    ///Body for `PUT /api/v2/abac/policy-bindings/{tenant}/{object_id}`.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Body for `PUT /api/v2/abac/policy-bindings/{tenant}/{object_id}`.",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "effect",
+    ///    "scope"
+    ///  ],
+    ///  "properties": {
+    ///    "effect": {
+    ///      "$ref": "#/components/schemas/AbacEffect"
+    ///    },
+    ///    "field_mask": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/AbacFieldMask"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    },
+    ///    "predicate_ref": {
+    ///      "description": "The predicate object this binding carries (a row-level rule).\nOmit for a predicate-free table-level grant. A dangling ref\nresolves fail-closed at read time.\n",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "scope": {
+    ///      "$ref": "#/components/schemas/AbacScope"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPutPolicyBindingRequest {
+        pub effect: AbacEffect,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub field_mask: ::std::option::Option<AbacFieldMask>,
+        /// The predicate object this binding carries (a row-level rule).
+        /// Omit for a predicate-free table-level grant. A dangling ref
+        /// resolves fail-closed at read time.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub predicate_ref: ::std::option::Option<u64>,
+        pub scope: AbacScope,
+    }
+    impl AbacPutPolicyBindingRequest {
+        pub fn builder() -> builder::AbacPutPolicyBindingRequest {
+            Default::default()
+        }
+    }
+    ///`AbacPutTenantPostureRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "grant_enforcement"
+    ///  ],
+    ///  "properties": {
+    ///    "grant_enforcement": {
+    ///      "$ref": "#/components/schemas/AbacGrantEnforcement"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacPutTenantPostureRequest {
+        pub grant_enforcement: AbacGrantEnforcement,
+    }
+    impl AbacPutTenantPostureRequest {
+        pub fn builder() -> builder::AbacPutTenantPostureRequest {
+            Default::default()
+        }
+    }
+    /// The catalog container a policy/grant governs — a stable-id-keyed,
+    /// externally-tagged Rust enum. Exactly one of `Namespace`, `Table`,
+    /// or `Column` is present.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "The catalog container a policy/grant governs — a stable-id-keyed,\nexternally-tagged Rust enum. Exactly one of `Namespace`, `Table`,\nor `Column` is present.\n",
+    ///  "oneOf": [
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "Namespace"
+    ///      ],
+    ///      "properties": {
+    ///        "Namespace": {
+    ///          "type": "integer",
+    ///          "maximum": 65535.0,
+    ///          "minimum": 0.0
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "Table"
+    ///      ],
+    ///      "properties": {
+    ///        "Table": {
+    ///          "type": "integer",
+    ///          "format": "uint32"
+    ///        }
+    ///      }
+    ///    },
+    ///    {
+    ///      "type": "object",
+    ///      "required": [
+    ///        "Column"
+    ///      ],
+    ///      "properties": {
+    ///        "Column": {
+    ///          "$ref": "#/components/schemas/AbacColumnScope"
+    ///        }
+    ///      }
+    ///    }
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub enum AbacScope {
+        Namespace(u16),
+        Table(u32),
+        Column(AbacColumnScope),
+    }
+    impl ::std::convert::From<u16> for AbacScope {
+        fn from(value: u16) -> Self {
+            Self::Namespace(value)
+        }
+    }
+    impl ::std::convert::From<u32> for AbacScope {
+        fn from(value: u32) -> Self {
+            Self::Table(value)
+        }
+    }
+    impl ::std::convert::From<AbacColumnScope> for AbacScope {
+        fn from(value: AbacColumnScope) -> Self {
+            Self::Column(value)
+        }
+    }
+    ///`AbacTenantSecurityPosture`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "tenant_stable_id",
+    ///    "updated_at_ms"
+    ///  ],
+    ///  "properties": {
+    ///    "grant_enforcement": {
+    ///      "$ref": "#/components/schemas/AbacGrantEnforcement"
+    ///    },
+    ///    "tenant_stable_id": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "updated_at_ms": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct AbacTenantSecurityPosture {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub grant_enforcement: ::std::option::Option<AbacGrantEnforcement>,
+        pub tenant_stable_id: u64,
+        pub updated_at_ms: i64,
+    }
+    impl AbacTenantSecurityPosture {
+        pub fn builder() -> builder::AbacTenantSecurityPosture {
+            Default::default()
+        }
+    }
     ///`ApplyModelRegistryMutationRequest`
     ///
     /// <details><summary>JSON schema</summary>
@@ -9025,6 +10520,1311 @@ pub mod types {
     }
     /// Types for composing complex structures.
     pub mod builder {
+        #[derive(Clone, Debug)]
+        pub struct AbacAttributeBinding {
+            attrs: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, super::AbacAttrValue>,
+                ::std::string::String,
+            >,
+            subject_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            tenant_stable_id: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacAttributeBinding {
+            fn default() -> Self {
+                Self {
+                    attrs: Err("no value supplied for attrs".to_string()),
+                    subject_id: Err("no value supplied for subject_id".to_string()),
+                    tenant_stable_id: Err("no value supplied for tenant_stable_id".to_string()),
+                }
+            }
+        }
+        impl AbacAttributeBinding {
+            pub fn attrs<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, super::AbacAttrValue>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.attrs = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for attrs: {e}"));
+                self
+            }
+            pub fn subject_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.subject_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for subject_id: {e}"));
+                self
+            }
+            pub fn tenant_stable_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_stable_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for tenant_stable_id: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacAttributeBinding> for super::AbacAttributeBinding {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacAttributeBinding,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    attrs: value.attrs?,
+                    subject_id: value.subject_id?,
+                    tenant_stable_id: value.tenant_stable_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacAttributeBinding> for AbacAttributeBinding {
+            fn from(value: super::AbacAttributeBinding) -> Self {
+                Self {
+                    attrs: Ok(value.attrs),
+                    subject_id: Ok(value.subject_id),
+                    tenant_stable_id: Ok(value.tenant_stable_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacAttributeBindingsResponse {
+            bindings: ::std::result::Result<
+                ::std::vec::Vec<super::AbacAttributeBinding>,
+                ::std::string::String,
+            >,
+            count: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacAttributeBindingsResponse {
+            fn default() -> Self {
+                Self {
+                    bindings: Err("no value supplied for bindings".to_string()),
+                    count: Err("no value supplied for count".to_string()),
+                }
+            }
+        }
+        impl AbacAttributeBindingsResponse {
+            pub fn bindings<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::AbacAttributeBinding>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.bindings = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for bindings: {e}"));
+                self
+            }
+            pub fn count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for count: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacAttributeBindingsResponse>
+            for super::AbacAttributeBindingsResponse
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacAttributeBindingsResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    bindings: value.bindings?,
+                    count: value.count?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacAttributeBindingsResponse> for AbacAttributeBindingsResponse {
+            fn from(value: super::AbacAttributeBindingsResponse) -> Self {
+                Self {
+                    bindings: Ok(value.bindings),
+                    count: Ok(value.count),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacColumnScope {
+            column: ::std::result::Result<u32, ::std::string::String>,
+            table: ::std::result::Result<u32, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacColumnScope {
+            fn default() -> Self {
+                Self {
+                    column: Err("no value supplied for column".to_string()),
+                    table: Err("no value supplied for table".to_string()),
+                }
+            }
+        }
+        impl AbacColumnScope {
+            pub fn column<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.column = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for column: {e}"));
+                self
+            }
+            pub fn table<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.table = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for table: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacColumnScope> for super::AbacColumnScope {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacColumnScope,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    column: value.column?,
+                    table: value.table?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacColumnScope> for AbacColumnScope {
+            fn from(value: super::AbacColumnScope) -> Self {
+                Self {
+                    column: Ok(value.column),
+                    table: Ok(value.table),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacGrantGranteeRequest {
+            subject: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            tenant: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacGrantGranteeRequest {
+            fn default() -> Self {
+                Self {
+                    subject: Ok(Default::default()),
+                    tenant: Err("no value supplied for tenant".to_string()),
+                }
+            }
+        }
+        impl AbacGrantGranteeRequest {
+            pub fn subject<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.subject = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for subject: {e}"));
+                self
+            }
+            pub fn tenant<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacGrantGranteeRequest> for super::AbacGrantGranteeRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacGrantGranteeRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    subject: value.subject?,
+                    tenant: value.tenant?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacGrantGranteeRequest> for AbacGrantGranteeRequest {
+            fn from(value: super::AbacGrantGranteeRequest) -> Self {
+                Self {
+                    subject: Ok(value.subject),
+                    tenant: Ok(value.tenant),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacGrantRecord {
+            actions: ::std::result::Result<
+                ::std::vec::Vec<super::AbacGrantAction>,
+                ::std::string::String,
+            >,
+            created_at_ms: ::std::result::Result<i64, ::std::string::String>,
+            expires_at_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            field_mask: ::std::result::Result<
+                ::std::option::Option<super::AbacFieldMask>,
+                ::std::string::String,
+            >,
+            grant_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            grantee: ::std::result::Result<super::AbacGrantee, ::std::string::String>,
+            owner_tenant_stable_id: ::std::result::Result<u64, ::std::string::String>,
+            predicate_ref: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            resource: ::std::result::Result<super::AbacScope, ::std::string::String>,
+            revoked_at_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacGrantRecord {
+            fn default() -> Self {
+                Self {
+                    actions: Err("no value supplied for actions".to_string()),
+                    created_at_ms: Err("no value supplied for created_at_ms".to_string()),
+                    expires_at_ms: Ok(Default::default()),
+                    field_mask: Ok(Default::default()),
+                    grant_id: Err("no value supplied for grant_id".to_string()),
+                    grantee: Err("no value supplied for grantee".to_string()),
+                    owner_tenant_stable_id: Err(
+                        "no value supplied for owner_tenant_stable_id".to_string()
+                    ),
+                    predicate_ref: Ok(Default::default()),
+                    resource: Err("no value supplied for resource".to_string()),
+                    revoked_at_ms: Ok(Default::default()),
+                }
+            }
+        }
+        impl AbacGrantRecord {
+            pub fn actions<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::AbacGrantAction>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.actions = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for actions: {e}"));
+                self
+            }
+            pub fn created_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.created_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for created_at_ms: {e}"));
+                self
+            }
+            pub fn expires_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.expires_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for expires_at_ms: {e}"));
+                self
+            }
+            pub fn field_mask<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::AbacFieldMask>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.field_mask = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for field_mask: {e}"));
+                self
+            }
+            pub fn grant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.grant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for grant_id: {e}"));
+                self
+            }
+            pub fn grantee<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacGrantee>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.grantee = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for grantee: {e}"));
+                self
+            }
+            pub fn owner_tenant_stable_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.owner_tenant_stable_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for owner_tenant_stable_id: {e}")
+                });
+                self
+            }
+            pub fn predicate_ref<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.predicate_ref = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for predicate_ref: {e}"));
+                self
+            }
+            pub fn resource<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacScope>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.resource = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for resource: {e}"));
+                self
+            }
+            pub fn revoked_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.revoked_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for revoked_at_ms: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacGrantRecord> for super::AbacGrantRecord {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacGrantRecord,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    actions: value.actions?,
+                    created_at_ms: value.created_at_ms?,
+                    expires_at_ms: value.expires_at_ms?,
+                    field_mask: value.field_mask?,
+                    grant_id: value.grant_id?,
+                    grantee: value.grantee?,
+                    owner_tenant_stable_id: value.owner_tenant_stable_id?,
+                    predicate_ref: value.predicate_ref?,
+                    resource: value.resource?,
+                    revoked_at_ms: value.revoked_at_ms?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacGrantRecord> for AbacGrantRecord {
+            fn from(value: super::AbacGrantRecord) -> Self {
+                Self {
+                    actions: Ok(value.actions),
+                    created_at_ms: Ok(value.created_at_ms),
+                    expires_at_ms: Ok(value.expires_at_ms),
+                    field_mask: Ok(value.field_mask),
+                    grant_id: Ok(value.grant_id),
+                    grantee: Ok(value.grantee),
+                    owner_tenant_stable_id: Ok(value.owner_tenant_stable_id),
+                    predicate_ref: Ok(value.predicate_ref),
+                    resource: Ok(value.resource),
+                    revoked_at_ms: Ok(value.revoked_at_ms),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacGranteeUser {
+            subject: ::std::result::Result<::std::string::String, ::std::string::String>,
+            tenant_stable_id: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacGranteeUser {
+            fn default() -> Self {
+                Self {
+                    subject: Err("no value supplied for subject".to_string()),
+                    tenant_stable_id: Err("no value supplied for tenant_stable_id".to_string()),
+                }
+            }
+        }
+        impl AbacGranteeUser {
+            pub fn subject<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.subject = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for subject: {e}"));
+                self
+            }
+            pub fn tenant_stable_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_stable_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for tenant_stable_id: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacGranteeUser> for super::AbacGranteeUser {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacGranteeUser,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    subject: value.subject?,
+                    tenant_stable_id: value.tenant_stable_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacGranteeUser> for AbacGranteeUser {
+            fn from(value: super::AbacGranteeUser) -> Self {
+                Self {
+                    subject: Ok(value.subject),
+                    tenant_stable_id: Ok(value.tenant_stable_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacOperatorErrorResponse {
+            code: ::std::result::Result<i64, ::std::string::String>,
+            error: ::std::result::Result<::std::string::String, ::std::string::String>,
+            message: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacOperatorErrorResponse {
+            fn default() -> Self {
+                Self {
+                    code: Err("no value supplied for code".to_string()),
+                    error: Err("no value supplied for error".to_string()),
+                    message: Err("no value supplied for message".to_string()),
+                }
+            }
+        }
+        impl AbacOperatorErrorResponse {
+            pub fn code<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.code = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for code: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn message<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.message = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for message: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacOperatorErrorResponse> for super::AbacOperatorErrorResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacOperatorErrorResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    code: value.code?,
+                    error: value.error?,
+                    message: value.message?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacOperatorErrorResponse> for AbacOperatorErrorResponse {
+            fn from(value: super::AbacOperatorErrorResponse) -> Self {
+                Self {
+                    code: Ok(value.code),
+                    error: Ok(value.error),
+                    message: Ok(value.message),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPolicyBinding {
+            effect: ::std::result::Result<super::AbacEffect, ::std::string::String>,
+            field_mask: ::std::result::Result<
+                ::std::option::Option<super::AbacFieldMask>,
+                ::std::string::String,
+            >,
+            object_id: ::std::result::Result<u64, ::std::string::String>,
+            predicate_ref: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            scope: ::std::result::Result<super::AbacScope, ::std::string::String>,
+            tenant_stable_id: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacPolicyBinding {
+            fn default() -> Self {
+                Self {
+                    effect: Err("no value supplied for effect".to_string()),
+                    field_mask: Ok(Default::default()),
+                    object_id: Err("no value supplied for object_id".to_string()),
+                    predicate_ref: Ok(Default::default()),
+                    scope: Err("no value supplied for scope".to_string()),
+                    tenant_stable_id: Err("no value supplied for tenant_stable_id".to_string()),
+                }
+            }
+        }
+        impl AbacPolicyBinding {
+            pub fn effect<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacEffect>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.effect = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for effect: {e}"));
+                self
+            }
+            pub fn field_mask<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::AbacFieldMask>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.field_mask = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for field_mask: {e}"));
+                self
+            }
+            pub fn object_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.object_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for object_id: {e}"));
+                self
+            }
+            pub fn predicate_ref<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.predicate_ref = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for predicate_ref: {e}"));
+                self
+            }
+            pub fn scope<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacScope>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.scope = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for scope: {e}"));
+                self
+            }
+            pub fn tenant_stable_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_stable_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for tenant_stable_id: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPolicyBinding> for super::AbacPolicyBinding {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPolicyBinding,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    effect: value.effect?,
+                    field_mask: value.field_mask?,
+                    object_id: value.object_id?,
+                    predicate_ref: value.predicate_ref?,
+                    scope: value.scope?,
+                    tenant_stable_id: value.tenant_stable_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPolicyBinding> for AbacPolicyBinding {
+            fn from(value: super::AbacPolicyBinding) -> Self {
+                Self {
+                    effect: Ok(value.effect),
+                    field_mask: Ok(value.field_mask),
+                    object_id: Ok(value.object_id),
+                    predicate_ref: Ok(value.predicate_ref),
+                    scope: Ok(value.scope),
+                    tenant_stable_id: Ok(value.tenant_stable_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPolicyBindingsResponse {
+            bindings: ::std::result::Result<
+                ::std::vec::Vec<super::AbacPolicyBinding>,
+                ::std::string::String,
+            >,
+            count: ::std::result::Result<u64, ::std::string::String>,
+            tenant: ::std::result::Result<::std::string::String, ::std::string::String>,
+            tenant_stable_id: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacPolicyBindingsResponse {
+            fn default() -> Self {
+                Self {
+                    bindings: Err("no value supplied for bindings".to_string()),
+                    count: Err("no value supplied for count".to_string()),
+                    tenant: Err("no value supplied for tenant".to_string()),
+                    tenant_stable_id: Err("no value supplied for tenant_stable_id".to_string()),
+                }
+            }
+        }
+        impl AbacPolicyBindingsResponse {
+            pub fn bindings<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::AbacPolicyBinding>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.bindings = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for bindings: {e}"));
+                self
+            }
+            pub fn count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for count: {e}"));
+                self
+            }
+            pub fn tenant<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant: {e}"));
+                self
+            }
+            pub fn tenant_stable_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_stable_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for tenant_stable_id: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPolicyBindingsResponse> for super::AbacPolicyBindingsResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPolicyBindingsResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    bindings: value.bindings?,
+                    count: value.count?,
+                    tenant: value.tenant?,
+                    tenant_stable_id: value.tenant_stable_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPolicyBindingsResponse> for AbacPolicyBindingsResponse {
+            fn from(value: super::AbacPolicyBindingsResponse) -> Self {
+                Self {
+                    bindings: Ok(value.bindings),
+                    count: Ok(value.count),
+                    tenant: Ok(value.tenant),
+                    tenant_stable_id: Ok(value.tenant_stable_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPostAttributeBindingRequest {
+            attrs: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, super::AbacAttrValue>,
+                ::std::string::String,
+            >,
+            subject_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            tenant: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacPostAttributeBindingRequest {
+            fn default() -> Self {
+                Self {
+                    attrs: Err("no value supplied for attrs".to_string()),
+                    subject_id: Err("no value supplied for subject_id".to_string()),
+                    tenant: Err("no value supplied for tenant".to_string()),
+                }
+            }
+        }
+        impl AbacPostAttributeBindingRequest {
+            pub fn attrs<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, super::AbacAttrValue>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.attrs = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for attrs: {e}"));
+                self
+            }
+            pub fn subject_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.subject_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for subject_id: {e}"));
+                self
+            }
+            pub fn tenant<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPostAttributeBindingRequest>
+            for super::AbacPostAttributeBindingRequest
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPostAttributeBindingRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    attrs: value.attrs?,
+                    subject_id: value.subject_id?,
+                    tenant: value.tenant?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPostAttributeBindingRequest>
+            for AbacPostAttributeBindingRequest
+        {
+            fn from(value: super::AbacPostAttributeBindingRequest) -> Self {
+                Self {
+                    attrs: Ok(value.attrs),
+                    subject_id: Ok(value.subject_id),
+                    tenant: Ok(value.tenant),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPostGrantRequest {
+            actions: ::std::result::Result<Vec<super::AbacGrantAction>, ::std::string::String>,
+            expires_at_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            field_mask: ::std::result::Result<
+                ::std::option::Option<super::AbacFieldMask>,
+                ::std::string::String,
+            >,
+            grantee: ::std::result::Result<super::AbacGrantGranteeRequest, ::std::string::String>,
+            owner_tenant: ::std::result::Result<::std::string::String, ::std::string::String>,
+            predicate_ref: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            resource: ::std::result::Result<super::AbacScope, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacPostGrantRequest {
+            fn default() -> Self {
+                Self {
+                    actions: Err("no value supplied for actions".to_string()),
+                    expires_at_ms: Ok(Default::default()),
+                    field_mask: Ok(Default::default()),
+                    grantee: Err("no value supplied for grantee".to_string()),
+                    owner_tenant: Err("no value supplied for owner_tenant".to_string()),
+                    predicate_ref: Ok(Default::default()),
+                    resource: Err("no value supplied for resource".to_string()),
+                }
+            }
+        }
+        impl AbacPostGrantRequest {
+            pub fn actions<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<Vec<super::AbacGrantAction>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.actions = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for actions: {e}"));
+                self
+            }
+            pub fn expires_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.expires_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for expires_at_ms: {e}"));
+                self
+            }
+            pub fn field_mask<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::AbacFieldMask>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.field_mask = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for field_mask: {e}"));
+                self
+            }
+            pub fn grantee<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacGrantGranteeRequest>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.grantee = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for grantee: {e}"));
+                self
+            }
+            pub fn owner_tenant<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.owner_tenant = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for owner_tenant: {e}"));
+                self
+            }
+            pub fn predicate_ref<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.predicate_ref = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for predicate_ref: {e}"));
+                self
+            }
+            pub fn resource<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacScope>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.resource = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for resource: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPostGrantRequest> for super::AbacPostGrantRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPostGrantRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    actions: value.actions?,
+                    expires_at_ms: value.expires_at_ms?,
+                    field_mask: value.field_mask?,
+                    grantee: value.grantee?,
+                    owner_tenant: value.owner_tenant?,
+                    predicate_ref: value.predicate_ref?,
+                    resource: value.resource?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPostGrantRequest> for AbacPostGrantRequest {
+            fn from(value: super::AbacPostGrantRequest) -> Self {
+                Self {
+                    actions: Ok(value.actions),
+                    expires_at_ms: Ok(value.expires_at_ms),
+                    field_mask: Ok(value.field_mask),
+                    grantee: Ok(value.grantee),
+                    owner_tenant: Ok(value.owner_tenant),
+                    predicate_ref: Ok(value.predicate_ref),
+                    resource: Ok(value.resource),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPostGrantResponse {
+            grant_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            owner_tenant_stable_id: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacPostGrantResponse {
+            fn default() -> Self {
+                Self {
+                    grant_id: Err("no value supplied for grant_id".to_string()),
+                    owner_tenant_stable_id: Err(
+                        "no value supplied for owner_tenant_stable_id".to_string()
+                    ),
+                }
+            }
+        }
+        impl AbacPostGrantResponse {
+            pub fn grant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.grant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for grant_id: {e}"));
+                self
+            }
+            pub fn owner_tenant_stable_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.owner_tenant_stable_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for owner_tenant_stable_id: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPostGrantResponse> for super::AbacPostGrantResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPostGrantResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    grant_id: value.grant_id?,
+                    owner_tenant_stable_id: value.owner_tenant_stable_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPostGrantResponse> for AbacPostGrantResponse {
+            fn from(value: super::AbacPostGrantResponse) -> Self {
+                Self {
+                    grant_id: Ok(value.grant_id),
+                    owner_tenant_stable_id: Ok(value.owner_tenant_stable_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPredicateObjectResponse {
+            expression: ::std::result::Result<super::AbacFilterExpression, ::std::string::String>,
+            object_id: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacPredicateObjectResponse {
+            fn default() -> Self {
+                Self {
+                    expression: Err("no value supplied for expression".to_string()),
+                    object_id: Err("no value supplied for object_id".to_string()),
+                }
+            }
+        }
+        impl AbacPredicateObjectResponse {
+            pub fn expression<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacFilterExpression>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.expression = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for expression: {e}"));
+                self
+            }
+            pub fn object_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.object_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for object_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPredicateObjectResponse> for super::AbacPredicateObjectResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPredicateObjectResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    expression: value.expression?,
+                    object_id: value.object_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPredicateObjectResponse> for AbacPredicateObjectResponse {
+            fn from(value: super::AbacPredicateObjectResponse) -> Self {
+                Self {
+                    expression: Ok(value.expression),
+                    object_id: Ok(value.object_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPredicateObjectsResponse {
+            count: ::std::result::Result<u64, ::std::string::String>,
+            objects: ::std::result::Result<
+                ::std::vec::Vec<super::AbacPredicateObjectResponse>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for AbacPredicateObjectsResponse {
+            fn default() -> Self {
+                Self {
+                    count: Err("no value supplied for count".to_string()),
+                    objects: Err("no value supplied for objects".to_string()),
+                }
+            }
+        }
+        impl AbacPredicateObjectsResponse {
+            pub fn count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for count: {e}"));
+                self
+            }
+            pub fn objects<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::AbacPredicateObjectResponse>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.objects = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for objects: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPredicateObjectsResponse> for super::AbacPredicateObjectsResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPredicateObjectsResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    count: value.count?,
+                    objects: value.objects?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPredicateObjectsResponse> for AbacPredicateObjectsResponse {
+            fn from(value: super::AbacPredicateObjectsResponse) -> Self {
+                Self {
+                    count: Ok(value.count),
+                    objects: Ok(value.objects),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPutPolicyBindingRequest {
+            effect: ::std::result::Result<super::AbacEffect, ::std::string::String>,
+            field_mask: ::std::result::Result<
+                ::std::option::Option<super::AbacFieldMask>,
+                ::std::string::String,
+            >,
+            predicate_ref: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            scope: ::std::result::Result<super::AbacScope, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacPutPolicyBindingRequest {
+            fn default() -> Self {
+                Self {
+                    effect: Err("no value supplied for effect".to_string()),
+                    field_mask: Ok(Default::default()),
+                    predicate_ref: Ok(Default::default()),
+                    scope: Err("no value supplied for scope".to_string()),
+                }
+            }
+        }
+        impl AbacPutPolicyBindingRequest {
+            pub fn effect<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacEffect>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.effect = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for effect: {e}"));
+                self
+            }
+            pub fn field_mask<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::AbacFieldMask>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.field_mask = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for field_mask: {e}"));
+                self
+            }
+            pub fn predicate_ref<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.predicate_ref = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for predicate_ref: {e}"));
+                self
+            }
+            pub fn scope<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacScope>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.scope = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for scope: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPutPolicyBindingRequest> for super::AbacPutPolicyBindingRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPutPolicyBindingRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    effect: value.effect?,
+                    field_mask: value.field_mask?,
+                    predicate_ref: value.predicate_ref?,
+                    scope: value.scope?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPutPolicyBindingRequest> for AbacPutPolicyBindingRequest {
+            fn from(value: super::AbacPutPolicyBindingRequest) -> Self {
+                Self {
+                    effect: Ok(value.effect),
+                    field_mask: Ok(value.field_mask),
+                    predicate_ref: Ok(value.predicate_ref),
+                    scope: Ok(value.scope),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacPutTenantPostureRequest {
+            grant_enforcement:
+                ::std::result::Result<super::AbacGrantEnforcement, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacPutTenantPostureRequest {
+            fn default() -> Self {
+                Self {
+                    grant_enforcement: Err("no value supplied for grant_enforcement".to_string()),
+                }
+            }
+        }
+        impl AbacPutTenantPostureRequest {
+            pub fn grant_enforcement<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::AbacGrantEnforcement>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.grant_enforcement = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for grant_enforcement: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacPutTenantPostureRequest> for super::AbacPutTenantPostureRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacPutTenantPostureRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    grant_enforcement: value.grant_enforcement?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacPutTenantPostureRequest> for AbacPutTenantPostureRequest {
+            fn from(value: super::AbacPutTenantPostureRequest) -> Self {
+                Self {
+                    grant_enforcement: Ok(value.grant_enforcement),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct AbacTenantSecurityPosture {
+            grant_enforcement: ::std::result::Result<
+                ::std::option::Option<super::AbacGrantEnforcement>,
+                ::std::string::String,
+            >,
+            tenant_stable_id: ::std::result::Result<u64, ::std::string::String>,
+            updated_at_ms: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for AbacTenantSecurityPosture {
+            fn default() -> Self {
+                Self {
+                    grant_enforcement: Ok(Default::default()),
+                    tenant_stable_id: Err("no value supplied for tenant_stable_id".to_string()),
+                    updated_at_ms: Err("no value supplied for updated_at_ms".to_string()),
+                }
+            }
+        }
+        impl AbacTenantSecurityPosture {
+            pub fn grant_enforcement<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::AbacGrantEnforcement>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.grant_enforcement = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for grant_enforcement: {e}")
+                });
+                self
+            }
+            pub fn tenant_stable_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_stable_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for tenant_stable_id: {e}")
+                });
+                self
+            }
+            pub fn updated_at_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.updated_at_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for updated_at_ms: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<AbacTenantSecurityPosture> for super::AbacTenantSecurityPosture {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: AbacTenantSecurityPosture,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    grant_enforcement: value.grant_enforcement?,
+                    tenant_stable_id: value.tenant_stable_id?,
+                    updated_at_ms: value.updated_at_ms?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::AbacTenantSecurityPosture> for AbacTenantSecurityPosture {
+            fn from(value: super::AbacTenantSecurityPosture) -> Self {
+                Self {
+                    grant_enforcement: Ok(value.grant_enforcement),
+                    tenant_stable_id: Ok(value.tenant_stable_id),
+                    updated_at_ms: Ok(value.updated_at_ms),
+                }
+            }
+        }
         #[derive(Clone, Debug)]
         pub struct ApplyModelRegistryMutationRequest {
             expected_revision: ::std::result::Result<i64, ::std::string::String>,
@@ -19685,6 +22485,318 @@ impl Client {
     pub fn get_capabilities(&self) -> builder::GetCapabilities<'_> {
         builder::GetCapabilities::new(self)
     }
+    /// List every ABAC attribute binding
+    ///
+    /// Cluster-operator scope — every `(subject, tenant)` attribute
+    /// binding across every tenant, by design (cross-tenant visibility is
+    /// the point of an operator inspection endpoint).
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/abac/attribute-bindings`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_attribute_bindings()
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_attribute_bindings(&self) -> builder::ListAttributeBindings<'_> {
+        builder::ListAttributeBindings::new(self)
+    }
+    /// Upsert a subject's ABAC attribute binding
+    ///
+    /// The authority half of ABAC — a `(subject, tenant)`-keyed,
+    /// multi-valued attribute set a policy's `predicate_ref` resolves
+    /// against. Writes through the same store the live enforcer reads.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/abac/attribute-bindings`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.post_attribute_binding()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn post_attribute_binding(&self) -> builder::PostAttributeBinding<'_> {
+        builder::PostAttributeBinding::new(self)
+    }
+    /// Provision an ADR-090 grant (cross-tenant entitlement)
+    ///
+    /// Grants are the entitlement layer: "this grantee may perform these
+    /// actions on this resource", where the grantee MAY be a foreign
+    /// tenant or a foreign tenant's user — the one place cross-tenant
+    /// sharing is expressible. Both the owner and the grantee tenant must
+    /// resolve (fail-closed on unminted tenants); the grantee subject is
+    /// deliberately NOT validated against the principal registry, so a
+    /// share may be provisioned before its recipient's first login.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/abac/grants`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.post_grant()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn post_grant(&self) -> builder::PostGrant<'_> {
+        builder::PostGrant::new(self)
+    }
+    /// List an owner tenant's grants
+    ///
+    /// Revoked grants stay listed with `revoked_at_ms` set — the audit
+    /// trail is the point, not a live-only view.
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/abac/grants/{owner_tenant}`
+    ///
+    /// Arguments:
+    /// - `owner_tenant`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_grants()
+    /// .owner_tenant(owner_tenant)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_grants(&self) -> builder::ListGrants<'_> {
+        builder::ListGrants::new(self)
+    }
+    /// Revoke a grant
+    ///
+    /// Idempotent — 204 whether the grant existed (and was revoked) or was
+    /// already unknown/revoked. Revocation under the wrong owner cannot
+    /// even name the grant (the store is owner-partitioned).
+    ///
+    ///
+    /// Sends a `DELETE` request to `/api/v2/abac/grants/{owner_tenant}/{grant_id}`
+    ///
+    /// Arguments:
+    /// - `owner_tenant`
+    /// - `grant_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_grant()
+    /// .owner_tenant(owner_tenant)
+    /// .grant_id(grant_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_grant(&self) -> builder::DeleteGrant<'_> {
+        builder::DeleteGrant::new(self)
+    }
+    /// List a tenant's live ABAC policy bindings
+    ///
+    /// The exact binding set the enforcer composes for reads under
+    /// `tenant` — an operator inspection endpoint, not a per-tenant
+    /// self-service one.
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/abac/policy-bindings/{tenant}`
+    ///
+    /// Arguments:
+    /// - `tenant`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_policy_bindings()
+    /// .tenant(tenant)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_policy_bindings(&self) -> builder::ListPolicyBindings<'_> {
+        builder::ListPolicyBindings::new(self)
+    }
+    /// Upsert an ABAC policy binding
+    ///
+    /// Provisions (or replaces) the policy binding at `object_id` for
+    /// `tenant` — a constraint-layer rule (`scope` + `effect`, optionally a
+    /// `predicate_ref` row filter and a `field_mask`). Writes through the
+    /// same store the live enforcer reads: visible on the next request, no
+    /// restart. `Deny` wins during resolution; the default is deny.
+    ///
+    ///
+    /// Sends a `PUT` request to `/api/v2/abac/policy-bindings/{tenant}/{object_id}`
+    ///
+    /// Arguments:
+    /// - `tenant`
+    /// - `object_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.put_policy_binding()
+    /// .tenant(tenant)
+    /// .object_id(object_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn put_policy_binding(&self) -> builder::PutPolicyBinding<'_> {
+        builder::PutPolicyBinding::new(self)
+    }
+    /// Remove an ABAC policy binding
+    ///
+    /// Idempotent — 204 whether or not a binding existed at `object_id`.
+    ///
+    ///
+    /// Sends a `DELETE` request to `/api/v2/abac/policy-bindings/{tenant}/{object_id}`
+    ///
+    /// Arguments:
+    /// - `tenant`
+    /// - `object_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_policy_binding()
+    /// .tenant(tenant)
+    /// .object_id(object_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_policy_binding(&self) -> builder::DeletePolicyBinding<'_> {
+        builder::DeletePolicyBinding::new(self)
+    }
+    /// List every registered ABAC predicate object
+    ///
+    /// Sends a `GET` request to `/api/v2/abac/predicate-objects`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_predicate_objects()
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_predicate_objects(&self) -> builder::ListPredicateObjects<'_> {
+        builder::ListPredicateObjects::new(self)
+    }
+    /// Get one ABAC predicate object
+    ///
+    /// 404 if unknown. Note a dangling `predicate_ref` on a policy binding
+    /// resolves fail-closed (safe) regardless of this endpoint.
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/abac/predicate-objects/{object_id}`
+    ///
+    /// Arguments:
+    /// - `object_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_predicate_object()
+    /// .object_id(object_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_predicate_object(&self) -> builder::GetPredicateObject<'_> {
+        builder::GetPredicateObject::new(self)
+    }
+    /// Register (or replace) an ABAC predicate object
+    ///
+    /// The request body IS the `FilterExpression` directly (no wrapper) —
+    /// a stored row-filter predicate that a policy binding's
+    /// `predicate_ref` can reference.
+    ///
+    ///
+    /// Sends a `PUT` request to `/api/v2/abac/predicate-objects/{object_id}`
+    ///
+    /// Arguments:
+    /// - `object_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.put_predicate_object()
+    /// .object_id(object_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn put_predicate_object(&self) -> builder::PutPredicateObject<'_> {
+        builder::PutPredicateObject::new(self)
+    }
+    /// Revoke an ABAC predicate object
+    ///
+    /// Idempotent (204). Subsequent resolves of `object_id` by any policy
+    /// binding fail-closed.
+    ///
+    ///
+    /// Sends a `DELETE` request to `/api/v2/abac/predicate-objects/{object_id}`
+    ///
+    /// Arguments:
+    /// - `object_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_predicate_object()
+    /// .object_id(object_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_predicate_object(&self) -> builder::DeletePredicateObject<'_> {
+        builder::DeletePredicateObject::new(self)
+    }
+    /// Get a tenant's explicit ABAC grant-enforcement posture
+    ///
+    /// 404 means the tenant has NO explicit record — meaningfully
+    /// different from `Off`, since an absent record means the tenant
+    /// inherits the process default, which may itself be `Enforce`.
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/abac/tenant-posture/{tenant}`
+    ///
+    /// Arguments:
+    /// - `tenant`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_tenant_posture()
+    /// .tenant(tenant)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_tenant_posture(&self) -> builder::GetTenantPosture<'_> {
+        builder::GetTenantPosture::new(self)
+    }
+    /// Set a tenant's ABAC grant-enforcement posture
+    ///
+    /// Intended rollout: `Off` -> `Audit` (watch would-be-denials fall to
+    /// zero for this tenant) -> `Enforce`. Skipping the `Audit` rehearsal
+    /// is how an operator breaks a customer's traffic.
+    ///
+    ///
+    /// Sends a `PUT` request to `/api/v2/abac/tenant-posture/{tenant}`
+    ///
+    /// Arguments:
+    /// - `tenant`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.put_tenant_posture()
+    /// .tenant(tenant)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn put_tenant_posture(&self) -> builder::PutTenantPosture<'_> {
+        builder::PutTenantPosture::new(self)
+    }
     /// List collections
     ///
     /// List all collections with pagination.
@@ -20965,6 +24077,1454 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::list_attribute_bindings`]
+    ///
+    /// [`Client::list_attribute_bindings`]: super::Client::list_attribute_bindings
+    #[derive(Debug, Clone)]
+    pub struct ListAttributeBindings<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListAttributeBindings<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/abac/attribute-bindings`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacAttributeBindingsResponse>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/abac/attribute-bindings", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_attribute_bindings",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::post_attribute_binding`]
+    ///
+    /// [`Client::post_attribute_binding`]: super::Client::post_attribute_binding
+    #[derive(Debug, Clone)]
+    pub struct PostAttributeBinding<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::AbacPostAttributeBindingRequest, String>,
+    }
+    impl<'a> PostAttributeBinding<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::AbacPostAttributeBindingRequest>,
+            <V as std::convert::TryInto<types::AbacPostAttributeBindingRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `AbacPostAttributeBindingRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::AbacPostAttributeBindingRequest,
+                ) -> types::builder::AbacPostAttributeBindingRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/abac/attribute-bindings`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacAttributeBinding>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::AbacPostAttributeBindingRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/abac/attribute-bindings", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "post_attribute_binding",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::post_grant`]
+    ///
+    /// [`Client::post_grant`]: super::Client::post_grant
+    #[derive(Debug, Clone)]
+    pub struct PostGrant<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::AbacPostGrantRequest, String>,
+    }
+    impl<'a> PostGrant<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::AbacPostGrantRequest>,
+            <V as std::convert::TryInto<types::AbacPostGrantRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `AbacPostGrantRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::AbacPostGrantRequest,
+                ) -> types::builder::AbacPostGrantRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/abac/grants`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacPostGrantResponse>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::AbacPostGrantRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/abac/grants", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "post_grant",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::list_grants`]
+    ///
+    /// [`Client::list_grants`]: super::Client::list_grants
+    #[derive(Debug, Clone)]
+    pub struct ListGrants<'a> {
+        client: &'a super::Client,
+        owner_tenant: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListGrants<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                owner_tenant: Err("owner_tenant was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn owner_tenant<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.owner_tenant = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for owner_tenant failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/abac/grants/{owner_tenant}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<::std::vec::Vec<types::AbacGrantRecord>>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                owner_tenant,
+                x_tenant_id,
+            } = self;
+            let owner_tenant = owner_tenant.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/grants/{}",
+                client.baseurl,
+                encode_path(&owner_tenant.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_grants",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_grant`]
+    ///
+    /// [`Client::delete_grant`]: super::Client::delete_grant
+    #[derive(Debug, Clone)]
+    pub struct DeleteGrant<'a> {
+        client: &'a super::Client,
+        owner_tenant: Result<::std::string::String, String>,
+        grant_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeleteGrant<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                owner_tenant: Err("owner_tenant was not initialized".to_string()),
+                grant_id: Err("grant_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn owner_tenant<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.owner_tenant = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for owner_tenant failed".to_string()
+            });
+            self
+        }
+        pub fn grant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.grant_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for grant_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/abac/grants/{owner_tenant}/{grant_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<()>, Error<types::AbacOperatorErrorResponse>> {
+            let Self {
+                client,
+                owner_tenant,
+                grant_id,
+                x_tenant_id,
+            } = self;
+            let owner_tenant = owner_tenant.map_err(Error::InvalidRequest)?;
+            let grant_id = grant_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/grants/{}/{}",
+                client.baseurl,
+                encode_path(&owner_tenant.to_string()),
+                encode_path(&grant_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_grant",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                204u16 => Ok(ResponseValue::empty(response)),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::list_policy_bindings`]
+    ///
+    /// [`Client::list_policy_bindings`]: super::Client::list_policy_bindings
+    #[derive(Debug, Clone)]
+    pub struct ListPolicyBindings<'a> {
+        client: &'a super::Client,
+        tenant: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListPolicyBindings<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                tenant: Err("tenant was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn tenant<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.tenant = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for tenant failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/abac/policy-bindings/{tenant}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacPolicyBindingsResponse>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                tenant,
+                x_tenant_id,
+            } = self;
+            let tenant = tenant.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/policy-bindings/{}",
+                client.baseurl,
+                encode_path(&tenant.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_policy_bindings",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::put_policy_binding`]
+    ///
+    /// [`Client::put_policy_binding`]: super::Client::put_policy_binding
+    #[derive(Debug, Clone)]
+    pub struct PutPolicyBinding<'a> {
+        client: &'a super::Client,
+        tenant: Result<::std::string::String, String>,
+        object_id: Result<u64, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::AbacPutPolicyBindingRequest, String>,
+    }
+    impl<'a> PutPolicyBinding<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                tenant: Err("tenant was not initialized".to_string()),
+                object_id: Err("object_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn tenant<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.tenant = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for tenant failed".to_string()
+            });
+            self
+        }
+        pub fn object_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<u64>,
+        {
+            self.object_id = value
+                .try_into()
+                .map_err(|_| "conversion to `u64` for object_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::AbacPutPolicyBindingRequest>,
+            <V as std::convert::TryInto<types::AbacPutPolicyBindingRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `AbacPutPolicyBindingRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::AbacPutPolicyBindingRequest,
+                ) -> types::builder::AbacPutPolicyBindingRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `PUT` request to `/api/v2/abac/policy-bindings/{tenant}/{object_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::AbacPolicyBinding>, Error<types::AbacOperatorErrorResponse>>
+        {
+            let Self {
+                client,
+                tenant,
+                object_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let tenant = tenant.map_err(Error::InvalidRequest)?;
+            let object_id = object_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::AbacPutPolicyBindingRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/policy-bindings/{}/{}",
+                client.baseurl,
+                encode_path(&tenant.to_string()),
+                encode_path(&object_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .put(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "put_policy_binding",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_policy_binding`]
+    ///
+    /// [`Client::delete_policy_binding`]: super::Client::delete_policy_binding
+    #[derive(Debug, Clone)]
+    pub struct DeletePolicyBinding<'a> {
+        client: &'a super::Client,
+        tenant: Result<::std::string::String, String>,
+        object_id: Result<u64, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeletePolicyBinding<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                tenant: Err("tenant was not initialized".to_string()),
+                object_id: Err("object_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn tenant<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.tenant = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for tenant failed".to_string()
+            });
+            self
+        }
+        pub fn object_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<u64>,
+        {
+            self.object_id = value
+                .try_into()
+                .map_err(|_| "conversion to `u64` for object_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/abac/policy-bindings/{tenant}/{object_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<()>, Error<types::AbacOperatorErrorResponse>> {
+            let Self {
+                client,
+                tenant,
+                object_id,
+                x_tenant_id,
+            } = self;
+            let tenant = tenant.map_err(Error::InvalidRequest)?;
+            let object_id = object_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/policy-bindings/{}/{}",
+                client.baseurl,
+                encode_path(&tenant.to_string()),
+                encode_path(&object_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_policy_binding",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                204u16 => Ok(ResponseValue::empty(response)),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::list_predicate_objects`]
+    ///
+    /// [`Client::list_predicate_objects`]: super::Client::list_predicate_objects
+    #[derive(Debug, Clone)]
+    pub struct ListPredicateObjects<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListPredicateObjects<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/abac/predicate-objects`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacPredicateObjectsResponse>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/abac/predicate-objects", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_predicate_objects",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_predicate_object`]
+    ///
+    /// [`Client::get_predicate_object`]: super::Client::get_predicate_object
+    #[derive(Debug, Clone)]
+    pub struct GetPredicateObject<'a> {
+        client: &'a super::Client,
+        object_id: Result<u64, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetPredicateObject<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                object_id: Err("object_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn object_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<u64>,
+        {
+            self.object_id = value
+                .try_into()
+                .map_err(|_| "conversion to `u64` for object_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/abac/predicate-objects/{object_id}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacPredicateObjectResponse>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                object_id,
+                x_tenant_id,
+            } = self;
+            let object_id = object_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/predicate-objects/{}",
+                client.baseurl,
+                encode_path(&object_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_predicate_object",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::put_predicate_object`]
+    ///
+    /// [`Client::put_predicate_object`]: super::Client::put_predicate_object
+    #[derive(Debug, Clone)]
+    pub struct PutPredicateObject<'a> {
+        client: &'a super::Client,
+        object_id: Result<u64, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::AbacFilterExpression, String>,
+    }
+    impl<'a> PutPredicateObject<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                object_id: Err("object_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Err("body was not initialized".to_string()),
+            }
+        }
+        pub fn object_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<u64>,
+        {
+            self.object_id = value
+                .try_into()
+                .map_err(|_| "conversion to `u64` for object_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::AbacFilterExpression>,
+        {
+            self.body = value
+                .try_into()
+                .map_err(|_| "conversion to `AbacFilterExpression` for body failed".to_string());
+            self
+        }
+        ///Sends a `PUT` request to `/api/v2/abac/predicate-objects/{object_id}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacPredicateObjectResponse>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                object_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let object_id = object_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/predicate-objects/{}",
+                client.baseurl,
+                encode_path(&object_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .put(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "put_predicate_object",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_predicate_object`]
+    ///
+    /// [`Client::delete_predicate_object`]: super::Client::delete_predicate_object
+    #[derive(Debug, Clone)]
+    pub struct DeletePredicateObject<'a> {
+        client: &'a super::Client,
+        object_id: Result<u64, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeletePredicateObject<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                object_id: Err("object_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn object_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<u64>,
+        {
+            self.object_id = value
+                .try_into()
+                .map_err(|_| "conversion to `u64` for object_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/abac/predicate-objects/{object_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<()>, Error<types::AbacOperatorErrorResponse>> {
+            let Self {
+                client,
+                object_id,
+                x_tenant_id,
+            } = self;
+            let object_id = object_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/predicate-objects/{}",
+                client.baseurl,
+                encode_path(&object_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_predicate_object",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                204u16 => Ok(ResponseValue::empty(response)),
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_tenant_posture`]
+    ///
+    /// [`Client::get_tenant_posture`]: super::Client::get_tenant_posture
+    #[derive(Debug, Clone)]
+    pub struct GetTenantPosture<'a> {
+        client: &'a super::Client,
+        tenant: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetTenantPosture<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                tenant: Err("tenant was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn tenant<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.tenant = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for tenant failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/abac/tenant-posture/{tenant}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacTenantSecurityPosture>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                tenant,
+                x_tenant_id,
+            } = self;
+            let tenant = tenant.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/tenant-posture/{}",
+                client.baseurl,
+                encode_path(&tenant.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_tenant_posture",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::put_tenant_posture`]
+    ///
+    /// [`Client::put_tenant_posture`]: super::Client::put_tenant_posture
+    #[derive(Debug, Clone)]
+    pub struct PutTenantPosture<'a> {
+        client: &'a super::Client,
+        tenant: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::AbacPutTenantPostureRequest, String>,
+    }
+    impl<'a> PutTenantPosture<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                tenant: Err("tenant was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn tenant<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.tenant = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for tenant failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::AbacPutTenantPostureRequest>,
+            <V as std::convert::TryInto<types::AbacPutTenantPostureRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `AbacPutTenantPostureRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::AbacPutTenantPostureRequest,
+                ) -> types::builder::AbacPutTenantPostureRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `PUT` request to `/api/v2/abac/tenant-posture/{tenant}`
+        pub async fn send(
+            self,
+        ) -> Result<
+            ResponseValue<types::AbacTenantSecurityPosture>,
+            Error<types::AbacOperatorErrorResponse>,
+        > {
+            let Self {
+                client,
+                tenant,
+                x_tenant_id,
+                body,
+            } = self;
+            let tenant = tenant.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::AbacPutTenantPostureRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/abac/tenant-posture/{}",
+                client.baseurl,
+                encode_path(&tenant.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .put(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "put_tenant_posture",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                403u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
