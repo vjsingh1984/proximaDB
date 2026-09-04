@@ -90,12 +90,9 @@ pub fn proxima_value_to_sql_value(v: ProximaValue) -> proximadb_proto::proximadb
             // JSON stored as StringValue — readable and queryable at the gRPC layer
             Value::StringValue(json.to_string())
         }
-        ProximaValue::Jsonb(json) => {
-            // JSONB stored as BytesValue with magic prefix — preserves binary-optimized semantics
-            let mut bytes = JSONB_MAGIC.to_vec();
-            bytes.extend_from_slice(json.to_string().as_bytes());
-            Value::BytesValue(bytes)
-        }
+        ProximaValue::Jsonb(json) => Value::JsonbValue(
+            ProximaValue::to_jsonb_vec(&json).unwrap_or_else(|_| json.to_string().into_bytes()),
+        ),
         ProximaValue::Null => {
             return SqlValue { value: None };
         }
@@ -670,6 +667,22 @@ mod score_vector_tests {
     //! R-0 tests for the ScoreVector promotion into OptimizedSearchRecord.
     //! See roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md §6.1.
     use super::*;
+
+    #[test]
+    fn jsonb_protocol_writer_uses_declared_tag9_variant() {
+        let document = serde_json::json!({"kind": "fact", "active": true});
+
+        let sql = proxima_value_to_sql_value(ProximaValue::Jsonb(document.clone()));
+
+        let Some(proximadb_proto::proximadb_v1::sql_value::Value::JsonbValue(bytes)) = sql.value
+        else {
+            panic!("JSONB must use SqlValue.jsonb_value (tag 9)");
+        };
+        assert_eq!(
+            ProximaValue::from_jsonb_or_binary(&bytes),
+            ProximaValue::Jsonb(document)
+        );
+    }
 
     #[test]
     fn record_default_has_no_score_vector() {

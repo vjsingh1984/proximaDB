@@ -29,6 +29,34 @@ static TEST_GRAPH_RESULTS: std::sync::OnceLock<
     Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
 > = std::sync::OnceLock::new();
 
+fn sql_value_to_query_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
+    use crate::proto::proximadb_v1::sql_value::Value;
+
+    match &value.value {
+        Some(Value::StringValue(value)) => serde_json::Value::String(value.clone()),
+        Some(Value::NumberValue(value)) => serde_json::json!(value),
+        Some(Value::BoolValue(value)) => serde_json::Value::Bool(*value),
+        Some(Value::Int64Value(value)) => {
+            serde_json::Value::Number(serde_json::Number::from(*value))
+        }
+        Some(Value::BytesValue(value)) => {
+            serde_json::Value::String(proximadb_kernel::encoding::base64_encode(value))
+        }
+        Some(Value::JsonbValue(value)) => ProximaValue::jsonb_to_json_lossy(value),
+        Some(Value::ObjectValue(value)) => serde_json::Value::Object(
+            value
+                .fields
+                .iter()
+                .map(|(key, value)| (key.clone(), sql_value_to_query_json(value)))
+                .collect(),
+        ),
+        Some(Value::ArrayValue(value)) => {
+            serde_json::Value::Array(value.values.iter().map(sql_value_to_query_json).collect())
+        }
+        Some(Value::NullValue(_)) | None => serde_json::Value::Null,
+    }
+}
+
 /// Memory pool for reusing vectors to reduce allocations
 pub struct VectorPool {
     query_row_pool: Arc<Mutex<Vec<Vec<QueryRow>>>>,
@@ -867,29 +895,7 @@ impl MultiModalQueryExecutor {
 
                     // Add metadata fields with "metadata." prefix
                     for (key, sql_value) in &record.metadata {
-                        let json_value = match &sql_value.value {
-                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                                serde_json::Value::String(s.clone())
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                                serde_json::json!(n)
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                                serde_json::Value::Bool(*b)
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                                serde_json::Value::Number(serde_json::Number::from(*i))
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                                serde_json::Value::String(
-                                    proximadb_kernel::encoding::base64_encode(b),
-                                )
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
-                                serde_json::Value::Null
-                            }
-                            _ => serde_json::Value::Null,
-                        };
+                        let json_value = sql_value_to_query_json(sql_value);
                         // Prefix with "metadata." for SQL projection compatibility
                         fields.insert(format!("metadata.{}", key), json_value);
                     }
@@ -1650,6 +1656,19 @@ mod executor_tests {
         CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
     };
     use async_trait::async_trait;
+
+    #[test]
+    fn query_rows_preserve_jsonb_metadata_as_json() {
+        let document = serde_json::json!({"memory": {"type": "fact"}});
+        let bytes = ProximaValue::to_jsonb_vec(&document).expect("encode JSONB test value");
+        let value = crate::proto::proximadb_v1::SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(
+                bytes,
+            )),
+        };
+
+        assert_eq!(super::sql_value_to_query_json(&value), document);
+    }
 
     #[test]
     fn test_apply_limit_offset_slices_rows() {

@@ -42,6 +42,42 @@ use crate::storage::document::DocumentService;
 use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
 
+fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
+    use crate::proto::proximadb_v1::sql_value::Value;
+
+    match &value.value {
+        Some(Value::StringValue(value)) => serde_json::Value::String(value.clone()),
+        Some(Value::Int64Value(value)) => serde_json::json!(value),
+        Some(Value::NumberValue(value)) => serde_json::json!(value),
+        Some(Value::BoolValue(value)) => serde_json::Value::Bool(*value),
+        Some(Value::BytesValue(value)) => {
+            serde_json::Value::String(proximadb_kernel::encoding::base64_encode(value))
+        }
+        Some(Value::JsonbValue(value)) => ProximaValue::jsonb_to_json_lossy(value),
+        Some(Value::ObjectValue(value)) => serde_json::Value::Object(
+            value
+                .fields
+                .iter()
+                .map(|(key, value)| (key.clone(), sql_value_to_json(value)))
+                .collect(),
+        ),
+        Some(Value::ArrayValue(value)) => {
+            serde_json::Value::Array(value.values.iter().map(sql_value_to_json).collect())
+        }
+        Some(Value::NullValue(_)) | None => serde_json::Value::Null,
+    }
+}
+
+fn sql_object_to_json(obj: &crate::proto::proximadb_v1::SqlObject) -> String {
+    let value = serde_json::Value::Object(
+        obj.fields
+            .iter()
+            .map(|(key, value)| (key.clone(), sql_value_to_json(value)))
+            .collect(),
+    );
+    serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// PostgreSQL protocol handler
 pub struct PostgresProtocol {
     /// TCP stream
@@ -3297,21 +3333,7 @@ impl PostgresProtocol {
 
     /// Convert SqlObject to JSON string
     fn sql_object_to_json(&self, obj: &crate::proto::proximadb_v1::SqlObject) -> String {
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
-
-        let mut map = serde_json::Map::new();
-        for (k, v) in &obj.fields {
-            let json_val = match &v.value {
-                Some(SqlVal::StringValue(s)) => serde_json::Value::String(s.clone()),
-                Some(SqlVal::Int64Value(i)) => serde_json::json!(*i),
-                Some(SqlVal::NumberValue(f)) => serde_json::json!(*f),
-                Some(SqlVal::BoolValue(b)) => serde_json::Value::Bool(*b),
-                Some(SqlVal::NullValue(_)) => serde_json::Value::Null,
-                _ => serde_json::Value::Null,
-            };
-            map.insert(k.clone(), json_val);
-        }
-        serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_else(|_| "{}".to_string())
+        sql_object_to_json(obj)
     }
 
     /// Execute an observability store query (logs, metrics)
