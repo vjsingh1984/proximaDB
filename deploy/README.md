@@ -198,9 +198,9 @@ gcloud container clusters get-credentials proximadb-gke \
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| 5678 | HTTP | REST API |
-| 5679 | gRPC | gRPC API |
-| 5680 | TCP | Arrow IPC (bulk data) |
+| 5678 | HTTP/gRPC/Arrow | Unified multiplexed surface (REST + gRPC + Arrow Flight; `unified_mode = true` in the shipped config.toml/docker image — the code default is false, and shipped k8s/helm artifacts run multi-port) |
+| 5433 | PostgreSQL wire | SQL clients (pgvector-compatible) |
+| 5679 / 5680 | gRPC / Arrow IPC | Legacy multi-port mode only (`unified_mode = false`) |
 | 9090 | HTTP | Metrics (Prometheus) |
 
 ### Environment Variables
@@ -209,8 +209,8 @@ gcloud container clusters get-credentials proximadb-gke \
 |----------|---------|-------------|
 | `PROXIMADB_BIND_ADDRESS` | `0.0.0.0` | Listen address |
 | `PROXIMADB_REST_PORT` | `5678` | REST API port |
-| `PROXIMADB_GRPC_PORT` | `5679` | gRPC API port |
-| `PROXIMADB_ARROW_IPC_PORT` | `5680` | Arrow IPC port |
+| `PROXIMADB_GRPC_PORT` | `5679` | gRPC API port (legacy multi-port mode) |
+| `PROXIMADB_ARROW_IPC_PORT` | `5680` | Arrow IPC port (legacy multi-port mode) |
 | `PROXIMADB_METRICS_PORT` | `9090` | Metrics port |
 | `PROXIMADB_DATA_DIR` | `/data/proximadb` | Data directory |
 | `PROXIMADB_DEFAULT_ENGINE` | `sst` | Default storage engine |

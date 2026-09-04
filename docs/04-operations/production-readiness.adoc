@@ -314,10 +314,10 @@ One week in production with:
 
 ==== Storage Engines
 
-* **SST** - ✅ Production Ready (recommended for write-heavy workloads)
-* **VIPER** - ✅ Production Ready (recommended for analytics)
-* **HELIX** - ✅ Production Ready (spatial locality workloads)
-* **NOVA** - ✅ Production Ready (mixed workloads)
+* **SST** - ✅ Production Ready (recommended for write-heavy workloads; the default vector engine)
+* **VIPER** - ⚠️ Deprecated (ADR-093, 2026-08-29) — migrate to SST
+* **HELIX** - 🟡 Beta (spatial locality workloads)
+* **NOVA** - 🟡 Beta (mixed workloads)
 
 ==== Graph Engines
 
@@ -332,10 +332,9 @@ One week in production with:
 
 ==== Network Protocols
 
-* **REST API** - ✅ Production Ready (port 5678)
-* **gRPC API** - ✅ Production Ready (port 5679)
-* **PostgreSQL Wire** - ✅ Production Ready (port 5433, pgvector compatible)
-* **Arrow Flight** - ✅ Production Ready (port 5680)
+* **REST API** - ✅ Production Ready (unified port 5678; REST+gRPC+Arrow Flight multiplex when `unified_mode = true` — set in the shipped config.toml/docker image; the code default is false, and shipped k8s/helm artifacts run multi-port)
+* **PostgreSQL Wire** - 🟡 Beta (port 5433, pgvector compatible)
+* **gRPC / Arrow Flight direct ports** - legacy multi-port mode (5679 / 5680, only when `unified_mode = false`; not separately tiered in SUPPORTED_SURFACE)
 
 ==== Security
 
