@@ -185,6 +185,43 @@ findings and dispositions:
   beside `jsonb_to_json_lossy`. Both are behavior-neutral refactors — follow
   the repo's measure-first rule before touching the filter hot path.
 
+**Round 4 (high effort, 2026-09-05) — 10 findings, 7 fixed, 3 dispositioned:**
+
+* Fixed: the SECOND live writer — `proxima_value_to_sql_value`
+  (search-types) served every engine search response with the legacy tag-8
+  magic+JSON-text encoding, leaving the canonical path unreachable for
+  reads; it now emits tag-9 MessagePack (pinned by a writer test), with the
+  magic form still decoded for legacy results. pgwire's `sql_object_to_json`
+  gained the JsonbValue arm (was silently null on the document-query
+  surface). The observability tantivy `_all` index and the group-by key
+  builder decode canonical JSON instead of `<jsonb:N>` byte-length
+  placeholders (fulltext over JSONB attributes now matches; no legacy-index
+  concern — the variant became producible in this change).
+* Fixed: `full_precision_rank`'s rewrite restored the legacy placeholders
+  for Bytes/Array/Object and the skip for unset-oneof keys, so output is
+  unchanged on unchanged data except JSONB passes through typed.
+* Fixed: the serde `{"jsonb_value": <base64>}` tagged form now also requires
+  the decoded bytes to be VALID MessagePack (a genuine JSONB payload is, by
+  construction) — generic single-key objects whose string merely
+  base64-decodes fall through to ObjectValue. Residual ambiguity mirrors the
+  pre-existing `bytes_value` tagged form.
+* Fixed (guard): field/variant TYPE REFERENCES are now compared (enum attr
+  refs and oneof payload refs vs the descriptor's type_name last segment) —
+  a variant retargeted to the wrong struct/enum no longer passes on tag+kind
+  equality. Also deleted the orphaned, not-in-module-tree
+  `rest/wrappers.rs` copy, and aligned the MetadataItem lossy mapping to
+  canonical JSON text.
+* Dispositioned: (a) the filter seam renders legacy tag-8 JSONB as bytes —
+  identical to pre-PR behavior (no regression); canonical filtering engages
+  for tag-9 values; the writer comment now states this precisely instead of
+  claiming full mixed-read equivalence; (b) the un-gated tag-9 writer flip
+  follows the owner's pre-GA no-back-compat directive (replace in place,
+  keep on-disk readability) — mixed-VERSION windows (rolling restart /
+  rollback / Raft) drop tag-9 fields on old binaries, same as any pre-GA
+  wire addition; (c) the one-shared-converter consolidation remains the
+  tracked follow-up (deferred in round 3; round 4's concrete inconsistencies
+  were fixed individually).
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

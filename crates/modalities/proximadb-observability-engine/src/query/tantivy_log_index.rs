@@ -643,7 +643,14 @@ impl TantivyLogIndex {
             Some(SqlValueVariant::BoolValue(b)) => b.to_string(),
             Some(SqlValueVariant::NullValue(_)) => String::new(),
             Some(SqlValueVariant::BytesValue(b)) => format!("<bytes:{}>", b.len()),
-            Some(SqlValueVariant::JsonbValue(b)) => format!("<jsonb:{}>", b.len()),
+            // TD-PROTO-2 round 4: the _all fulltext field indexes the decoded
+            // JSON text — a byte-length placeholder made fulltext search over
+            // JSONB attributes return zero hits while the structured filter
+            // path matched. (No legacy-index concern: the variant became
+            // producible in this change.)
+            Some(SqlValueVariant::JsonbValue(b)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b).to_string()
+            }
             Some(SqlValueVariant::ArrayValue(arr)) => arr
                 .values
                 .iter()

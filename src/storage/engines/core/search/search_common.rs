@@ -433,10 +433,12 @@ impl UniversalSearchPipeline {
                 distance_metric,
             );
 
-            // Convert metadata from Vec<MetadataItem> to HashMap<String, Value>
             // Convert metadata directly to the typed map — no serde_json
             // round-trip (the JSON detour decoded JSONB per candidate only to
             // drop object/array payloads on the floor at the back-conversion).
+            // Non-JSON legacy shapes keep their pre-existing placeholders and
+            // unset-oneof keys stay absent, so output is unchanged on
+            // unchanged data except JSONB now passes through typed.
             let mut typed_metadata_map = std::collections::HashMap::new();
             for (key, value) in record.metadata {
                 use crate::proto::proximadb_v1::{self as proximadb_v1};
@@ -463,7 +465,30 @@ impl UniversalSearchPipeline {
                             value: Some(proximadb_v1::sql_value::Value::JsonbValue(bytes)),
                         }
                     }
-                    _ => proximadb_v1::SqlValue { value: None },
+                    Some(proximadb_v1::sql_value::Value::BytesValue(_)) => proximadb_v1::SqlValue {
+                        value: Some(proximadb_v1::sql_value::Value::StringValue(
+                            "[binary data]".to_string(),
+                        )),
+                    },
+                    Some(proximadb_v1::sql_value::Value::ArrayValue(_)) => proximadb_v1::SqlValue {
+                        value: Some(proximadb_v1::sql_value::Value::StringValue(
+                            "[array]".to_string(),
+                        )),
+                    },
+                    Some(proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        proximadb_v1::SqlValue {
+                            value: Some(proximadb_v1::sql_value::Value::StringValue(
+                                "[object]".to_string(),
+                            )),
+                        }
+                    }
+                    // NullValue and unset oneof: the legacy path kept the key
+                    // with an unset oneof for NullValue, and dropped keys
+                    // whose oneof was entirely unset.
+                    Some(proximadb_v1::sql_value::Value::NullValue(_)) => {
+                        proximadb_v1::SqlValue { value: None }
+                    }
+                    None => continue,
                 };
                 typed_metadata_map.insert(key, sql_value);
             }

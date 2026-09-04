@@ -90,9 +90,26 @@ pub fn proxima_value_to_sql_value(v: ProximaValue) -> proximadb_proto::proximadb
             // JSON stored as StringValue — readable and queryable at the gRPC layer
             Value::StringValue(json.to_string())
         }
-        ProximaValue::Jsonb(json) => Value::JsonbValue(
-            ProximaValue::to_jsonb_vec(&json).unwrap_or_else(|_| json.to_string().into_bytes()),
-        ),
+        ProximaValue::Jsonb(json) => {
+            // TD-PROTO-2 round 4: emit the declared tag-9 variant with the
+            // canonical MessagePack payload — the legacy tag-8 magic+JSON-text
+            // encoding made the canonical decode, structured filters, and every
+            // JsonbValue render arm unreachable for engine search responses.
+            // The tag-8 magic form is still DECODED (below) for results
+            // serialized before this change.
+            match ProximaValue::to_jsonb_vec(&json) {
+                Ok(bytes) => Value::JsonbValue(bytes),
+                Err(_) => {
+                    // Preserve the established fallback encoding under its
+                    // legacy tag. Putting magic+JSON bytes under tag 9 would
+                    // violate tag 9's MessagePack contract and decode as
+                    // opaque binary.
+                    let mut bytes = JSONB_MAGIC.to_vec();
+                    bytes.extend_from_slice(json.to_string().as_bytes());
+                    Value::BytesValue(bytes)
+                }
+            }
+        }
         ProximaValue::Null => {
             return SqlValue { value: None };
         }
@@ -669,7 +686,7 @@ mod score_vector_tests {
     use super::*;
 
     #[test]
-    fn jsonb_protocol_writer_uses_declared_tag9_variant() {
+    fn jsonb_writes_the_declared_tag9_variant_on_search_results() {
         let document = serde_json::json!({"kind": "fact", "active": true});
 
         let sql = proxima_value_to_sql_value(ProximaValue::Jsonb(document.clone()));

@@ -603,9 +603,12 @@ pub fn sql_values_to_metadata_items(
                         "[Binary Data]".to_string(),
                     ),
                 ),
-                Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(_)) => Some(
+                // MetadataItem's oneof carries only String/Number/Bool — the
+                // canonical JSON text is the best lossy mapping (consistent
+                // with the sibling map fn), not a byte-length placeholder.
+                Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b)) => Some(
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "[Jsonb Data]".to_string(),
+                        proximadb_data_model::ProximaValue::jsonb_to_json_lossy(&b).to_string(),
                     ),
                 ),
                 Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => None,

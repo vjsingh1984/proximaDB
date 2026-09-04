@@ -499,7 +499,12 @@ impl LogAggregator {
             Some(Value::NumberValue(f)) => f.to_string(),
             Some(Value::StringValue(s)) => s.clone(),
             Some(Value::BytesValue(b)) => format!("<bytes:{}>", b.len()),
-            Some(Value::JsonbValue(b)) => format!("<jsonb:{}>", b.len()),
+            // TD-PROTO-2 round 4: group-by keys decode canonical JSON — a
+            // byte-length placeholder collapsed distinct documents into
+            // length buckets.
+            Some(Value::JsonbValue(b)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b).to_string()
+            }
             Some(Value::ArrayValue(arr)) => format!("<array:{}>", arr.values.len()),
             Some(Value::ObjectValue(obj)) => format!("<object:{}>", obj.fields.len()),
             None => "<empty>".to_string(),

@@ -215,10 +215,14 @@ pub fn proxima_to_sql_value(value: &ProximaValue) -> SqlValue {
         ProximaValue::Json(v) => sql_value::Value::StringValue(v.to_string()),
         // TD-PROTO-2: emit the declared tag-9 variant so JSONB is typed on the
         // wire and the canonical decode path (jsonb_to_json_lossy / filter
-        // lowering) is reachable. Segments written before this change carry
-        // the same MessagePack bytes under tag 8 (BytesValue) and keep
-        // decoding via the legacy bytes arm — mixed-read safe within the
-        // develop lineage; the tag-9 variant did not exist before this PR.
+        // lowering) is reachable. Transitional mixed-read state, stated
+        // precisely: segments written before this change carry the same
+        // MessagePack bytes under tag 8 (BytesValue). Readers still DECODE
+        // those (BytesValue arm → opaque bytes/binary), so no data is lost,
+        // but canonical JSON rendering and structured filters only engage for
+        // tag-9 values — legacy-tagged JSONB filters exactly as it did before
+        // this PR (byte-rendering miss), until rewritten. The tag-9 variant
+        // did not exist before this PR.
         ProximaValue::Jsonb(v) => sql_value::Value::JsonbValue(
             ProximaValue::to_jsonb_vec(v).unwrap_or_else(|_| v.to_string().into_bytes()),
         ),

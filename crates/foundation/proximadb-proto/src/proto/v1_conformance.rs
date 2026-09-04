@@ -79,6 +79,8 @@ struct MirrorField {
     repeated: bool,
     optional: bool,
     map: Option<(String, String)>,
+    /// `enumeration = "…"` reference, for type-ref comparison.
+    enum_ref: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -98,8 +100,8 @@ struct MirrorMessage {
 
 #[derive(Debug, Default)]
 struct MirrorOneof {
-    /// (variant name, tag, kind)
-    variants: Vec<(String, u32, String)>,
+    /// (variant name, tag, kind, payload type ref)
+    variants: Vec<(String, u32, String, Option<String>)>,
 }
 
 #[derive(Debug, Default)]
@@ -591,6 +593,10 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
                                         repeated: parsed.repeated,
                                         optional: parsed.optional,
                                         map: parsed.map_kv,
+                                        // For enumeration fields: the attr's
+                                        // type reference (compared against the
+                                        // descriptor's type_name last segment).
+                                        enum_ref: parsed.r#ref.clone(),
                                     });
                                 }
                             }
@@ -607,12 +613,44 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
                         .next()
                         .unwrap_or_default()
                         .to_string();
+                    // Payload between the parens is the variant's type — for
+                    // message/enum variants this is the reference compared
+                    // against the descriptor's type_name (last segment).
+                    // Scalar payloads (f64, String, Vec<u8>, …) are NOT
+                    // references and carry None.
+                    let payload_ref = |kind: &str| {
+                        if !matches!(kind, "message" | "enumeration") {
+                            return None;
+                        }
+                        line.split_once('(')
+                            .and_then(|(_, rest)| rest.rsplit_once(')'))
+                            .map(|(inner, _)| inner)
+                            .map(|inner| {
+                                inner
+                                    .rsplit("::")
+                                    .next()
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_string()
+                            })
+                    };
                     match parse_prost_attr(&attr) {
                         Ok(parsed) => {
+                            let kind = parsed.kind.clone().unwrap_or_default();
+                            // Enumeration variants carry their reference in
+                            // the attr (`enumeration = "…"`); message variants
+                            // in the payload type; scalars carry none.
+                            let r = match kind.as_str() {
+                                "enumeration" => parsed.r#ref.as_ref().map(|rf| {
+                                    rf.rsplit("::").next().unwrap_or_default().to_string()
+                                }),
+                                _ => payload_ref(&kind),
+                            };
                             model.oneofs.entry(key.clone()).or_default().variants.push((
                                 variant,
                                 parsed.tag.unwrap_or(0),
-                                parsed.kind.unwrap_or_default(),
+                                kind,
+                                r,
                             ));
                         }
                         Err(reason) => model.anomalies.push(format!("{file_label}: {reason}")),
@@ -737,6 +775,9 @@ struct DescField {
     is_map: bool,
     /// (key kind, value kind) from the synthetic map-entry message.
     map: Option<(String, String)>,
+    /// Last segment of the descriptor's fully-qualified type_name, for
+    /// message/enum type-reference comparison.
+    type_ref: Option<String>,
     oneof: Option<String>,
 }
 
@@ -994,6 +1035,10 @@ fn describe_field(
         proto3_optional: field.proto3_optional.unwrap_or(false),
         is_map,
         map,
+        type_ref: field
+            .type_name
+            .as_deref()
+            .map(|tn| tn.rsplit('.').next().unwrap_or_default().to_string()),
         oneof,
     })
 }
@@ -1159,6 +1204,20 @@ impl Comparer {
                                 df.attr_kind()
                             ),
                         );
+                    } else if df.kind == "enumeration"
+                        && let (Some(mr), Some(dr)) = (&mf.enum_ref, &df.type_ref)
+                        && mr.rsplit("::").next().unwrap_or_default() != dr.as_str()
+                    {
+                        // Type-reference check: a mirror field pointed at the
+                        // WRONG existing enum passes tag+kind equality — the
+                        // reference must match too (last segment; cross-
+                        // package collisions are accepted guard noise).
+                        self.record(
+                            key,
+                            format!(
+                                "field {name:?}: enum type-ref mismatch mirror {mr:?} vs proto {dr:?}"
+                            ),
+                        );
                     } else if let (Some((dk, dv)), Some((mk, mv))) = (&df.map, &mf.map) {
                         // Both key and value kinds must match the descriptor's
                         // synthetic entry message.
@@ -1284,28 +1343,33 @@ impl Comparer {
                             ),
                         );
                     }
-                    let proto: BTreeSet<(String, u32, &str)> = members
+                    // 4-tuple adds the type REFERENCE for message/enum
+                    // members (None for scalars) so a variant retargeted to
+                    // the wrong struct/enum cannot pass on tag+kind alone.
+                    let proto: BTreeSet<(String, u32, String, Option<String>)> = members
                         .iter()
-                        .map(|f| (pascal(&f.name), f.number, f.attr_kind()))
+                        .map(|f| {
+                            let r = match f.attr_kind() {
+                                "message" | "enumeration" => f.type_ref.clone(),
+                                _ => None,
+                            };
+                            (pascal(&f.name), f.number, f.attr_kind().to_string(), r)
+                        })
                         .collect();
-                    let mirror_variants: BTreeSet<(String, u32, String)> = oneof_enum
-                        .variants
-                        .iter()
-                        .map(|(n, t, k)| (n.clone(), *t, k.clone()))
-                        .collect();
-                    if proto
-                        != mirror_variants
-                            .iter()
-                            .map(|(n, t, k)| (n.clone(), *t, k.as_str()))
-                            .collect::<BTreeSet<(String, u32, &str)>>()
-                    {
+                    let mirror_variants: BTreeSet<(String, u32, String, Option<String>)> =
+                        oneof_enum.variants.iter().map(Clone::clone).collect();
+                    if proto != mirror_variants {
                         let proto_dbg: Vec<String> = proto
                             .iter()
-                            .map(|(n, t, k)| format!("{n}:{t}:{k}"))
+                            .map(|(n, t, k, r)| {
+                                format!("{n}:{t}:{k}{}", r.as_deref().unwrap_or(""))
+                            })
                             .collect();
                         let mirror_dbg: Vec<String> = mirror_variants
                             .iter()
-                            .map(|(n, t, k)| format!("{n}:{t}:{k}"))
+                            .map(|(n, t, k, r)| {
+                                format!("{n}:{t}:{k}{}", r.as_deref().unwrap_or(""))
+                            })
                             .collect();
                         self.record(
                             key,
