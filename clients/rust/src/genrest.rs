@@ -5821,7 +5821,7 @@ pub mod types {
     ///      ]
     ///    },
     ///    "severity": {
-    ///      "description": "One of: trace, debug, info, warn, error, fatal (case-insensitive).",
+    ///      "description": "Canonical: trace, debug, info, warn, error, fatal. Aliases accepted (case-insensitive): verbose->trace, information->info, warning->warn, err->error, critical->fatal. Unknown values fall back to info.",
     ///      "default": "info",
     ///      "type": "string"
     ///    },
@@ -5849,7 +5849,7 @@ pub mod types {
         pub message: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub service: ::std::option::Option<::std::string::String>,
-        ///One of: trace, debug, info, warn, error, fatal (case-insensitive).
+        ///Canonical: trace, debug, info, warn, error, fatal. Aliases accepted (case-insensitive): verbose->trace, information->info, warning->warn, err->error, critical->fatal. Unknown values fall back to info.
         #[serde(default = "defaults::log_entry_input_severity")]
         pub severity: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -5876,7 +5876,7 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "aggregation": {
-    ///      "description": "min, max, avg, sum, or count.",
+    ///      "description": "Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate.",
     ///      "default": "avg",
     ///      "type": "string"
     ///    },
@@ -5915,7 +5915,7 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct MetricAggregationInput {
-        ///min, max, avg, sum, or count.
+        ///Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate.
         #[serde(default = "defaults::metric_aggregation_input_aggregation")]
         pub aggregation: ::std::string::String,
         pub end_time_ns: i64,
@@ -20606,6 +20606,11 @@ impl Client {
     /// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
     /// 365 days server-side.
     ///
+    /// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+    /// the storage tenant key. The request's X-Tenant-ID header is not
+    /// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+    /// ownership). Not mounted when the server runs with gRPC disabled.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces`
     ///
@@ -20642,6 +20647,11 @@ impl Client {
         builder::IngestLog::new(self)
     }
     /// Ingest a batch of log entries
+    ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+    /// runs with gRPC disabled.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs/bulk`
     ///
@@ -20681,6 +20691,11 @@ impl Client {
     }
     /// Ingest a single metric sample
     ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+    /// runs with gRPC disabled.
+    ///
+    ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics`
     ///
     /// Arguments:
@@ -20703,6 +20718,10 @@ impl Client {
     /// Aggregation defaults to `avg` with a 60-second step. Results are
     /// grouped by `group_by` label names and filtered by exact `labels` match.
     ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+    /// runs with gRPC disabled.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics/aggregate`
     ///
@@ -20722,6 +20741,11 @@ impl Client {
         builder::AggregateMetrics::new(self)
     }
     /// Ingest a batch of metric samples
+    ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+    /// runs with gRPC disabled.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics/bulk`
     ///
@@ -25300,6 +25324,9 @@ pub mod builder {
                 401u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -25520,6 +25547,9 @@ pub mod builder {
                 401u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -25738,6 +25768,9 @@ pub mod builder {
                 401u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -25854,6 +25887,9 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -25974,6 +26010,9 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

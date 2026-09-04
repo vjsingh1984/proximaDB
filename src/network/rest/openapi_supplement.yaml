@@ -436,6 +436,11 @@ paths:
         Creates a namespace for log/metric/trace data with tiered retention.
         Retention days default to hot=1, warm=7, cold=30; archive is fixed at
         365 days server-side.
+
+        Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+        the storage tenant key. The request's X-Tenant-ID header is not
+        consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+        ownership). Not mounted when the server runs with gRPC disabled.
       requestBody:
         required: true
         content:
@@ -451,6 +456,12 @@ paths:
                 $ref: "#/components/schemas/CreateObservabilityNamespaceResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: Storage/processing failure (maps to internal_error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/observability/namespaces/{namespace}/logs/bulk:
     parameters:
       - name: namespace
@@ -461,6 +472,10 @@ paths:
       tags: [Observability]
       operationId: ingestLogs
       summary: Ingest a batch of log entries.
+      description: |
+        Scope: path-namespace = isolation boundary (storage tenant key);
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+        runs with gRPC disabled.
       requestBody:
         required: true
         content:
@@ -476,6 +491,12 @@ paths:
                 $ref: "#/components/schemas/ObservabilityIngestResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: Storage/processing failure (maps to internal_error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/observability/namespaces/{namespace}/metrics:
     parameters:
       - name: namespace
@@ -486,6 +507,10 @@ paths:
       tags: [Observability]
       operationId: ingestMetric
       summary: Ingest a single metric sample.
+      description: |
+        Scope: path-namespace = isolation boundary (storage tenant key);
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+        runs with gRPC disabled.
       requestBody:
         required: true
         content:
@@ -501,6 +526,12 @@ paths:
                 $ref: "#/components/schemas/ObservabilityIngestResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: Storage/processing failure (maps to internal_error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/observability/namespaces/{namespace}/metrics/bulk:
     parameters:
       - name: namespace
@@ -511,6 +542,10 @@ paths:
       tags: [Observability]
       operationId: ingestMetrics
       summary: Ingest a batch of metric samples.
+      description: |
+        Scope: path-namespace = isolation boundary (storage tenant key);
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+        runs with gRPC disabled.
       requestBody:
         required: true
         content:
@@ -526,6 +561,12 @@ paths:
                 $ref: "#/components/schemas/ObservabilityIngestResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: Storage/processing failure (maps to internal_error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/observability/namespaces/{namespace}/metrics/aggregate:
     parameters:
       - name: namespace
@@ -539,6 +580,10 @@ paths:
       description: |
         Aggregation defaults to `avg` with a 60-second step. Results are
         grouped by `group_by` label names and filtered by exact `labels` match.
+
+        Scope: path-namespace = isolation boundary (storage tenant key);
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+        runs with gRPC disabled.
       requestBody:
         required: true
         content:
@@ -554,6 +599,12 @@ paths:
                 $ref: "#/components/schemas/MetricAggregationResult"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: Storage/processing failure (maps to internal_error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/nl/translate:
     post:
       tags: [Query]
@@ -1001,7 +1052,7 @@ components:
         severity:
           type: string
           default: info
-          description: "One of: trace, debug, info, warn, error, fatal (case-insensitive)."
+          description: "Canonical: trace, debug, info, warn, error, fatal. Aliases accepted (case-insensitive): verbose->trace, information->info, warning->warn, err->error, critical->fatal. Unknown values fall back to info."
         source:
           type: string
           nullable: true
@@ -1075,7 +1126,7 @@ components:
         aggregation:
           type: string
           default: avg
-          description: "min, max, avg, sum, or count."
+          description: "Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate."
         step_seconds:
           type: integer
           format: uint32

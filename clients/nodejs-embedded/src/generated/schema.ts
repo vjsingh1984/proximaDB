@@ -900,6 +900,11 @@ export interface paths {
          * @description Creates a namespace for log/metric/trace data with tiered retention.
          *     Retention days default to hot=1, warm=7, cold=30; archive is fixed at
          *     365 days server-side.
+         *
+         *     Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+         *     the storage tenant key. The request's X-Tenant-ID header is not
+         *     consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+         *     ownership). Not mounted when the server runs with gRPC disabled.
          */
         post: operations["createObservabilityNamespace"];
         delete?: never;
@@ -919,7 +924,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ingest a batch of log entries. */
+        /**
+         * Ingest a batch of log entries.
+         * @description Scope: path-namespace = isolation boundary (storage tenant key);
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+         *     runs with gRPC disabled.
+         */
         post: operations["ingestLogs"];
         delete?: never;
         options?: never;
@@ -938,7 +948,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ingest a single metric sample. */
+        /**
+         * Ingest a single metric sample.
+         * @description Scope: path-namespace = isolation boundary (storage tenant key);
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+         *     runs with gRPC disabled.
+         */
         post: operations["ingestMetric"];
         delete?: never;
         options?: never;
@@ -957,7 +972,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ingest a batch of metric samples. */
+        /**
+         * Ingest a batch of metric samples.
+         * @description Scope: path-namespace = isolation boundary (storage tenant key);
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+         *     runs with gRPC disabled.
+         */
         post: operations["ingestMetrics"];
         delete?: never;
         options?: never;
@@ -980,6 +1000,10 @@ export interface paths {
          * Aggregate a metric over a time range.
          * @description Aggregation defaults to `avg` with a 60-second step. Results are
          *     grouped by `group_by` label names and filtered by exact `labels` match.
+         *
+         *     Scope: path-namespace = isolation boundary (storage tenant key);
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+         *     runs with gRPC disabled.
          */
         post: operations["aggregateMetrics"];
         delete?: never;
@@ -2610,7 +2634,7 @@ export interface components {
             timestamp_ns?: number | null;
             message: string;
             /**
-             * @description One of: trace, debug, info, warn, error, fatal (case-insensitive).
+             * @description Canonical: trace, debug, info, warn, error, fatal. Aliases accepted (case-insensitive): verbose->trace, information->info, warning->warn, err->error, critical->fatal. Unknown values fall back to info.
              * @default info
              */
             severity: string;
@@ -2653,7 +2677,7 @@ export interface components {
             /** Format: int64 */
             end_time_ns: number;
             /**
-             * @description min, max, avg, sum, or count.
+             * @description Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate.
              * @default avg
              */
             aggregation: string;
@@ -4543,6 +4567,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /** @description Storage/processing failure (maps to internal_error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     ingestLogs: {
@@ -4574,6 +4607,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /** @description Storage/processing failure (maps to internal_error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     ingestMetric: {
@@ -4605,6 +4647,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /** @description Storage/processing failure (maps to internal_error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     ingestMetrics: {
@@ -4636,6 +4687,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /** @description Storage/processing failure (maps to internal_error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     aggregateMetrics: {
@@ -4667,6 +4727,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /** @description Storage/processing failure (maps to internal_error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     translateNaturalLanguage: {

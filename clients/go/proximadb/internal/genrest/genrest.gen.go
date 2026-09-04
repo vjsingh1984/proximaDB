@@ -1246,7 +1246,7 @@ type LogEntryInput struct {
 	Message string                  `json:"message"`
 	Service *string                 `json:"service,omitempty"`
 
-	// Severity One of: trace, debug, info, warn, error, fatal (case-insensitive).
+	// Severity Canonical: trace, debug, info, warn, error, fatal. Aliases accepted (case-insensitive): verbose->trace, information->info, warning->warn, err->error, critical->fatal. Unknown values fall back to info.
 	Severity    *string `json:"severity,omitempty"`
 	Source      *string `json:"source,omitempty"`
 	TimestampNs *int64  `json:"timestamp_ns,omitempty"`
@@ -1254,7 +1254,7 @@ type LogEntryInput struct {
 
 // MetricAggregationInput defines model for MetricAggregationInput.
 type MetricAggregationInput struct {
-	// Aggregation min, max, avg, sum, or count.
+	// Aggregation Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate.
 	Aggregation *string            `json:"aggregation,omitempty"`
 	EndTimeNs   int64              `json:"end_time_ns"`
 	GroupBy     *[]string          `json:"group_by,omitempty"`
@@ -4886,6 +4886,11 @@ type ClientInterface interface {
 	// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
 	// 365 days server-side.
 	//
+	// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+	// the storage tenant key. The request's X-Tenant-ID header is not
+	// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+	// ownership). Not mounted when the server runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
@@ -4896,6 +4901,11 @@ type ClientInterface interface {
 	// Creates a namespace for log/metric/trace data with tiered retention.
 	// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
 	// 365 days server-side.
+	//
+	// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+	// the storage tenant key. The request's X-Tenant-ID header is not
+	// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+	// ownership). Not mounted when the server runs with gRPC disabled.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4918,12 +4928,20 @@ type ClientInterface interface {
 
 	// IngestLogsWithBody Ingest a batch of log entries.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
 	IngestLogsWithBody(ctx context.Context, namespace string, params *IngestLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestLogs Ingest a batch of log entries.
+	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4946,12 +4964,20 @@ type ClientInterface interface {
 
 	// IngestMetricWithBody Ingest a single metric sample.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
 	IngestMetricWithBody(ctx context.Context, namespace string, params *IngestMetricParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestMetric Ingest a single metric sample.
+	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4963,6 +4989,10 @@ type ClientInterface interface {
 	// Aggregation defaults to `avg` with a 60-second step. Results are
 	// grouped by `group_by` label names and filtered by exact `labels` match.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
@@ -4973,6 +5003,10 @@ type ClientInterface interface {
 	// Aggregation defaults to `avg` with a 60-second step. Results are
 	// grouped by `group_by` label names and filtered by exact `labels` match.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
@@ -4980,12 +5014,20 @@ type ClientInterface interface {
 
 	// IngestMetricsWithBody Ingest a batch of metric samples.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
 	IngestMetricsWithBody(ctx context.Context, namespace string, params *IngestMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestMetrics Ingest a batch of metric samples.
+	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6406,6 +6448,11 @@ func (c *Client) TranslateNaturalLanguage(ctx context.Context, params *Translate
 // Retention days default to hot=1, warm=7, cold=30; archive is fixed at
 // 365 days server-side.
 //
+// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+// the storage tenant key. The request's X-Tenant-ID header is not
+// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+// ownership). Not mounted when the server runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
@@ -6426,6 +6473,11 @@ func (c *Client) CreateObservabilityNamespaceWithBody(ctx context.Context, param
 // Creates a namespace for log/metric/trace data with tiered retention.
 // Retention days default to hot=1, warm=7, cold=30; archive is fixed at
 // 365 days server-side.
+//
+// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+// the storage tenant key. The request's X-Tenant-ID header is not
+// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+// ownership). Not mounted when the server runs with gRPC disabled.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6478,6 +6530,10 @@ func (c *Client) IngestLog(ctx context.Context, namespace string, params *Ingest
 
 // IngestLogsWithBody Ingest a batch of log entries.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
@@ -6494,6 +6550,10 @@ func (c *Client) IngestLogsWithBody(ctx context.Context, namespace string, param
 }
 
 // IngestLogs Ingest a batch of log entries.
+//
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6546,6 +6606,10 @@ func (c *Client) QueryLogs(ctx context.Context, namespace string, params *QueryL
 
 // IngestMetricWithBody Ingest a single metric sample.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
@@ -6562,6 +6626,10 @@ func (c *Client) IngestMetricWithBody(ctx context.Context, namespace string, par
 }
 
 // IngestMetric Ingest a single metric sample.
+//
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6583,6 +6651,10 @@ func (c *Client) IngestMetric(ctx context.Context, namespace string, params *Ing
 // Aggregation defaults to `avg` with a 60-second step. Results are
 // grouped by `group_by` label names and filtered by exact `labels` match.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
@@ -6603,6 +6675,10 @@ func (c *Client) AggregateMetricsWithBody(ctx context.Context, namespace string,
 // Aggregation defaults to `avg` with a 60-second step. Results are
 // grouped by `group_by` label names and filtered by exact `labels` match.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
@@ -6620,6 +6696,10 @@ func (c *Client) AggregateMetrics(ctx context.Context, namespace string, params 
 
 // IngestMetricsWithBody Ingest a batch of metric samples.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
@@ -6636,6 +6716,10 @@ func (c *Client) IngestMetricsWithBody(ctx context.Context, namespace string, pa
 }
 
 // IngestMetrics Ingest a batch of metric samples.
+//
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10762,6 +10846,11 @@ type ClientWithResponsesInterface interface {
 	// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
 	// 365 days server-side.
 	//
+	// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+	// the storage tenant key. The request's X-Tenant-ID header is not
+	// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+	// ownership). Not mounted when the server runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
@@ -10772,6 +10861,11 @@ type ClientWithResponsesInterface interface {
 	// Creates a namespace for log/metric/trace data with tiered retention.
 	// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
 	// 365 days server-side.
+	//
+	// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+	// the storage tenant key. The request's X-Tenant-ID header is not
+	// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+	// ownership). Not mounted when the server runs with gRPC disabled.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10794,12 +10888,20 @@ type ClientWithResponsesInterface interface {
 
 	// IngestLogsWithBodyWithResponse Ingest a batch of log entries.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
 	IngestLogsWithBodyWithResponse(ctx context.Context, namespace string, params *IngestLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestLogsHTTPResp, error)
 
 	// IngestLogsWithResponse Ingest a batch of log entries.
+	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10822,12 +10924,20 @@ type ClientWithResponsesInterface interface {
 
 	// IngestMetricWithBodyWithResponse Ingest a single metric sample.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
 	IngestMetricWithBodyWithResponse(ctx context.Context, namespace string, params *IngestMetricParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestMetricHTTPResp, error)
 
 	// IngestMetricWithResponse Ingest a single metric sample.
+	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10839,6 +10949,10 @@ type ClientWithResponsesInterface interface {
 	// Aggregation defaults to `avg` with a 60-second step. Results are
 	// grouped by `group_by` label names and filtered by exact `labels` match.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
@@ -10849,6 +10963,10 @@ type ClientWithResponsesInterface interface {
 	// Aggregation defaults to `avg` with a 60-second step. Results are
 	// grouped by `group_by` label names and filtered by exact `labels` match.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
@@ -10856,12 +10974,20 @@ type ClientWithResponsesInterface interface {
 
 	// IngestMetricsWithBodyWithResponse Ingest a batch of metric samples.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
 	IngestMetricsWithBodyWithResponse(ctx context.Context, namespace string, params *IngestMetricsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestMetricsHTTPResp, error)
 
 	// IngestMetricsWithResponse Ingest a batch of metric samples.
+	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+	// runs with gRPC disabled.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -13097,6 +13223,8 @@ type CreateObservabilityNamespaceHTTPResp struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -13112,6 +13240,11 @@ func (r CreateObservabilityNamespaceHTTPResp) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateObservabilityNamespaceHTTPResp) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateObservabilityNamespaceHTTPResp) GetJSON500() *ErrorResponse {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -13193,6 +13326,8 @@ type IngestLogsHTTPResp struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -13208,6 +13343,11 @@ func (r IngestLogsHTTPResp) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r IngestLogsHTTPResp) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r IngestLogsHTTPResp) GetJSON500() *ErrorResponse {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -13289,6 +13429,8 @@ type IngestMetricHTTPResp struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -13304,6 +13446,11 @@ func (r IngestMetricHTTPResp) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r IngestMetricHTTPResp) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r IngestMetricHTTPResp) GetJSON500() *ErrorResponse {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -13344,6 +13491,8 @@ type AggregateMetricsHTTPResp struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -13359,6 +13508,11 @@ func (r AggregateMetricsHTTPResp) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AggregateMetricsHTTPResp) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AggregateMetricsHTTPResp) GetJSON500() *ErrorResponse {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -13399,6 +13553,8 @@ type IngestMetricsHTTPResp struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -13414,6 +13570,11 @@ func (r IngestMetricsHTTPResp) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r IngestMetricsHTTPResp) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r IngestMetricsHTTPResp) GetJSON500() *ErrorResponse {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -14847,6 +15008,11 @@ func (c *ClientWithResponses) TranslateNaturalLanguageWithResponse(ctx context.C
 // Retention days default to hot=1, warm=7, cold=30; archive is fixed at
 // 365 days server-side.
 //
+// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+// the storage tenant key. The request's X-Tenant-ID header is not
+// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+// ownership). Not mounted when the server runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/observability/namespaces (the `CreateObservabilityNamespace` operationId).
@@ -14863,6 +15029,11 @@ func (c *ClientWithResponses) CreateObservabilityNamespaceWithBodyWithResponse(c
 // Creates a namespace for log/metric/trace data with tiered retention.
 // Retention days default to hot=1, warm=7, cold=30; archive is fixed at
 // 365 days server-side.
+//
+// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+// the storage tenant key. The request's X-Tenant-ID header is not
+// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+// ownership). Not mounted when the server runs with gRPC disabled.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -14903,6 +15074,10 @@ func (c *ClientWithResponses) IngestLogWithResponse(ctx context.Context, namespa
 
 // IngestLogsWithBodyWithResponse Ingest a batch of log entries.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/bulk (the `IngestLogs` operationId).
@@ -14915,6 +15090,10 @@ func (c *ClientWithResponses) IngestLogsWithBodyWithResponse(ctx context.Context
 }
 
 // IngestLogsWithResponse Ingest a batch of log entries.
+//
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -14955,6 +15134,10 @@ func (c *ClientWithResponses) QueryLogsWithResponse(ctx context.Context, namespa
 
 // IngestMetricWithBodyWithResponse Ingest a single metric sample.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics (the `IngestMetric` operationId).
@@ -14967,6 +15150,10 @@ func (c *ClientWithResponses) IngestMetricWithBodyWithResponse(ctx context.Conte
 }
 
 // IngestMetricWithResponse Ingest a single metric sample.
+//
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -14984,6 +15171,10 @@ func (c *ClientWithResponses) IngestMetricWithResponse(ctx context.Context, name
 // Aggregation defaults to `avg` with a 60-second step. Results are
 // grouped by `group_by` label names and filtered by exact `labels` match.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
@@ -15000,6 +15191,10 @@ func (c *ClientWithResponses) AggregateMetricsWithBodyWithResponse(ctx context.C
 // Aggregation defaults to `avg` with a 60-second step. Results are
 // grouped by `group_by` label names and filtered by exact `labels` match.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/aggregate (the `AggregateMetrics` operationId).
@@ -15013,6 +15208,10 @@ func (c *ClientWithResponses) AggregateMetricsWithResponse(ctx context.Context, 
 
 // IngestMetricsWithBodyWithResponse Ingest a batch of metric samples.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/metrics/bulk (the `IngestMetrics` operationId).
@@ -15025,6 +15224,10 @@ func (c *ClientWithResponses) IngestMetricsWithBodyWithResponse(ctx context.Cont
 }
 
 // IngestMetricsWithResponse Ingest a batch of metric samples.
+//
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
+// runs with gRPC disabled.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -16700,6 +16903,13 @@ func ParseCreateObservabilityNamespaceHTTPResp(rsp *http.Response) (*CreateObser
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -16765,6 +16975,13 @@ func ParseIngestLogsHTTPResp(rsp *http.Response) (*IngestLogsHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -16832,6 +17049,13 @@ func ParseIngestMetricHTTPResp(rsp *http.Response) (*IngestMetricHTTPResp, error
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -16872,6 +17096,13 @@ func ParseAggregateMetricsHTTPResp(rsp *http.Response) (*AggregateMetricsHTTPRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -16911,6 +17142,13 @@ func ParseIngestMetricsHTTPResp(rsp *http.Response) (*IngestMetricsHTTPResp, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
