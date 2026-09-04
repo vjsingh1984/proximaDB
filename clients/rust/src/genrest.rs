@@ -5821,7 +5821,7 @@ pub mod types {
     ///      ]
     ///    },
     ///    "severity": {
-    ///      "description": "One of: trace, debug, info, warn, error, fatal (case-insensitive).",
+    ///      "description": "Canonical: trace, debug, info, warn, error, fatal. Aliases accepted (case-insensitive): verbose->trace, information->info, warning->warn, err->error, critical->fatal. Unknown values fall back to info.",
     ///      "default": "info",
     ///      "type": "string"
     ///    },
@@ -5849,7 +5849,7 @@ pub mod types {
         pub message: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub service: ::std::option::Option<::std::string::String>,
-        ///One of: trace, debug, info, warn, error, fatal (case-insensitive).
+        ///Canonical: trace, debug, info, warn, error, fatal. Aliases accepted (case-insensitive): verbose->trace, information->info, warning->warn, err->error, critical->fatal. Unknown values fall back to info.
         #[serde(default = "defaults::log_entry_input_severity")]
         pub severity: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -5876,7 +5876,7 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "aggregation": {
-    ///      "description": "min, max, avg, sum, or count.",
+    ///      "description": "Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate. Unknown values fall back to avg.",
     ///      "default": "avg",
     ///      "type": "string"
     ///    },
@@ -5915,7 +5915,7 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct MetricAggregationInput {
-        ///min, max, avg, sum, or count.
+        ///Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate. Unknown values fall back to avg.
         #[serde(default = "defaults::metric_aggregation_input_aggregation")]
         pub aggregation: ::std::string::String,
         pub end_time_ns: i64,
@@ -20606,6 +20606,13 @@ impl Client {
     /// Retention days default to hot=1, warm=7, cold=30; archive is fixed at
     /// 365 days server-side.
     ///
+    /// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
+    /// the storage tenant key. The request's X-Tenant-ID header is not
+    /// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
+    /// ownership). Availability: mounted unconditionally on the unified
+    /// server (the default, port 5678); legacy multi-port mode mounts it only
+    /// with gRPC enabled; cluster-mode REST does not mount it.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces`
     ///
@@ -20623,6 +20630,13 @@ impl Client {
         builder::CreateObservabilityNamespace::new(self)
     }
     /// Ingest a log entry
+    ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    /// unconditionally on the unified server (the default, port 5678);
+    /// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    /// REST does not mount it.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs`
     ///
@@ -20643,6 +20657,13 @@ impl Client {
     }
     /// Ingest a batch of log entries
     ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    /// unconditionally on the unified server (the default, port 5678);
+    /// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    /// REST does not mount it.
+    ///
+    ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs/bulk`
     ///
     /// Arguments:
@@ -20662,6 +20683,14 @@ impl Client {
     }
     /// Query logs
     ///
+    /// Reads are scoped by the path namespace — the same boundary the other
+    /// observability ops use (any authenticated caller may query any
+    /// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+    /// mounted unconditionally on the unified server (the default, port
+    /// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+    /// cluster-mode REST does not mount it.
+    ///
+    ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/logs/search`
     ///
     /// Arguments:
@@ -20680,6 +20709,13 @@ impl Client {
         builder::QueryLogs::new(self)
     }
     /// Ingest a single metric sample
+    ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    /// unconditionally on the unified server (the default, port 5678);
+    /// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    /// REST does not mount it.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics`
     ///
@@ -20703,6 +20739,12 @@ impl Client {
     /// Aggregation defaults to `avg` with a 60-second step. Results are
     /// grouped by `group_by` label names and filtered by exact `labels` match.
     ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    /// unconditionally on the unified server (the default, port 5678);
+    /// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    /// REST does not mount it.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics/aggregate`
     ///
@@ -20722,6 +20764,13 @@ impl Client {
         builder::AggregateMetrics::new(self)
     }
     /// Ingest a batch of metric samples
+    ///
+    /// Scope: path-namespace = isolation boundary (storage tenant key);
+    /// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    /// unconditionally on the unified server (the default, port 5678);
+    /// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    /// REST does not mount it.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/observability/namespaces/{namespace}/metrics/bulk`
     ///
@@ -25300,6 +25349,9 @@ pub mod builder {
                 401u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -25358,7 +25410,7 @@ pub mod builder {
             self,
         ) -> Result<
             ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-            Error<()>,
+            Error<types::ErrorResponse>,
         > {
             let Self {
                 client,
@@ -25402,6 +25454,9 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -25520,6 +25575,9 @@ pub mod builder {
                 401u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -25578,7 +25636,7 @@ pub mod builder {
             self,
         ) -> Result<
             ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-            Error<()>,
+            Error<types::ErrorResponse>,
         > {
             let Self {
                 client,
@@ -25622,6 +25680,9 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -25736,6 +25797,9 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -25856,6 +25920,9 @@ pub mod builder {
                 401u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -25974,6 +26041,9 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 401u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
