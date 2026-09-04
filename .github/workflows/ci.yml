@@ -1986,6 +1986,11 @@ jobs:
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.query_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
+    env:
+      # Match the QA recall lane and the hardened server runtime: the
+      # delete/flush ANN recall path has a deep-but-finite async call chain
+      # that overflows tokio's default ~2 MiB worker stack on Linux.
+      RUST_MIN_STACK: "8388608"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
