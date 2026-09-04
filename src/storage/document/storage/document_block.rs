@@ -108,9 +108,9 @@ impl DocumentBlock {
                     stats.count += 1;
                     if Self::is_null(&value) {
                         stats.null_count += 1;
-                    } else if let Some(
-                        crate::proto::proximadb_v1::sql_value::Value::JsonbValue(bytes),
-                    ) = &value.value
+                    } else if let Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(
+                        bytes,
+                    )) = &value.value
                     {
                         let key =
                             proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(bytes);
@@ -463,6 +463,47 @@ mod tests {
         let block = DocumentBlock::from_documents(docs, &["score".to_string()], false).unwrap();
         let stats = block.header.path_stats.get("score").unwrap();
         assert_eq!(stats.count, 3);
+    }
+
+    #[test]
+    fn jsonb_path_stats_keep_document_extrema() {
+        let make_jsonb = |region: &str| SqlValue {
+            value: Some(SqlVal::JsonbValue(
+                proximadb_data_model::ProximaValue::to_jsonb_vec(
+                    &serde_json::json!({"region": region}),
+                )
+                .expect("encode JSONB test value"),
+            )),
+        };
+        let docs = vec![
+            (
+                "west".to_string(),
+                make_doc(vec![("context", make_jsonb("west"))]),
+            ),
+            (
+                "east".to_string(),
+                make_doc(vec![("context", make_jsonb("east"))]),
+            ),
+        ];
+
+        let block = DocumentBlock::from_documents(docs, &["context".to_string()], false).unwrap();
+        let stats = block.header.path_stats.get("context").unwrap();
+        let decode = |value: &SqlValue| match &value.value {
+            Some(SqlVal::JsonbValue(bytes)) => {
+                proximadb_data_model::ProximaValue::jsonb_to_json_lossy(bytes)
+            }
+            other => panic!("expected JSONB path statistic, got {other:?}"),
+        };
+
+        assert_eq!(stats.count, 2);
+        assert_eq!(
+            decode(stats.min_value.as_ref().expect("minimum")),
+            serde_json::json!({"region": "east"})
+        );
+        assert_eq!(
+            decode(stats.max_value.as_ref().expect("maximum")),
+            serde_json::json!({"region": "west"})
+        );
     }
 
     #[test]

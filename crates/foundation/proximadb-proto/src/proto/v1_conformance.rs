@@ -278,8 +278,7 @@ fn pascal(name: &str) -> String {
 /// protobuf type name that must agree with the descriptor.
 fn final_rust_type_ident(ty: &str) -> Option<String> {
     ty.split(|ch: char| !ch.is_alphanumeric() && ch != '_')
-        .filter(|part| !part.is_empty())
-        .next_back()
+        .rfind(|part| !part.is_empty())
         .map(str::to_string)
 }
 
@@ -500,22 +499,29 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
         {
             let name = name.trim();
             if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                // Streaming flavor: the client body calls exactly one of
-                // self.inner.unary / .server_streaming / .streaming — scan
-                // ahead to the first such call (both client-streaming and
-                // bidi render as `.streaming` on the client side).
-                let all: Vec<&str> = source_lines.iter().map(String::as_str).collect();
-                let flavor = all
+                // Streaming flavor: scan this client method through the next
+                // method boundary for its tonic dispatch call. Normalize
+                // client-streaming and bidi to the descriptor comparison's
+                // shared `streaming` bucket.
+                let flavor = source_lines
                     .iter()
                     .skip(line_index + 1)
-                    .take(24)
+                    .take_while(|line| {
+                        !line.trim().starts_with("pub async fn ")
+                            && !line.trim().starts_with("pub const SERVICE_NAME")
+                    })
                     .find_map(|l| {
-                        ["unary", "server_streaming", "streaming"]
-                            .iter()
-                            .find_map(|f| {
-                                l.contains(&format!("self.inner.{f}"))
-                                    .then(|| f.to_string())
-                            })
+                        [
+                            ("unary", "unary"),
+                            ("server_streaming", "server_streaming"),
+                            ("client_streaming", "streaming"),
+                            ("streaming", "streaming"),
+                        ]
+                        .iter()
+                        .find_map(|(call, flavor)| {
+                            l.contains(&format!("self.inner.{call}"))
+                                .then(|| flavor.to_string())
+                        })
                     })
                     .unwrap_or_default();
                 mod_async_fns
@@ -1192,7 +1198,6 @@ impl Comparer {
                     // streaming rpc as unary truncates/hangs the call.
                     for (dmethod, dflavor) in dmethods {
                         if let Some(mflavor) = mmethods.get(&snake(dmethod))
-                            && !mflavor.is_empty()
                             && mflavor != dflavor
                         {
                             self.record(

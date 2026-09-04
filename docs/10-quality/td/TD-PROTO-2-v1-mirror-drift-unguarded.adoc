@@ -247,9 +247,9 @@ findings and dispositions:
   The SqlValue filter path now dot-traverses JSON(B) roots (`memory.type`
   resolves inside a JsonbValue document) exactly like its ProximaTree twin,
   pinned by `jsonb_dot_path_filtering_matches_the_proxima_tree_semantics`.
-* Fixed (guard): plain MESSAGE-field payload types are now compared (Rust
-  type text vs descriptor type_name; wrapped/map types conservatively
-  skipped); rpc STREAMING FLAVOR is compared (a hand-splice rendering a
+* Fixed (guard): plain MESSAGE-field payload types are now compared (the
+  final Rust type identifier vs descriptor type_name; maps remain governed
+  by their key/value wire-kind check); rpc STREAMING FLAVOR is compared (a hand-splice rendering a
   streaming rpc as unary fails the gate; client/bidi share the client-side
   `.streaming` bucket); and the gate can no longer silently disarm — under
   `REQUIRE_PROTOC=1` (now set by CI's unit lane) a missing protoc FAILS
