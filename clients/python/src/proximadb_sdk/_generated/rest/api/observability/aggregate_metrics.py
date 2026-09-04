@@ -95,8 +95,10 @@ def sync_detailed(
     grouped by `group_by` label names and filtered by exact `labels` match.
 
     Scope: path-namespace = isolation boundary (storage tenant key);
-    X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-    runs with gRPC disabled.
+    X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    unconditionally on the unified server (the default, port 5678);
+    legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    REST does not mount it.
 
     Args:
         namespace (str):
@@ -137,8 +139,10 @@ def sync(
     grouped by `group_by` label names and filtered by exact `labels` match.
 
     Scope: path-namespace = isolation boundary (storage tenant key);
-    X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-    runs with gRPC disabled.
+    X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    unconditionally on the unified server (the default, port 5678);
+    legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    REST does not mount it.
 
     Args:
         namespace (str):
@@ -174,8 +178,10 @@ async def asyncio_detailed(
     grouped by `group_by` label names and filtered by exact `labels` match.
 
     Scope: path-namespace = isolation boundary (storage tenant key);
-    X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-    runs with gRPC disabled.
+    X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    unconditionally on the unified server (the default, port 5678);
+    legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    REST does not mount it.
 
     Args:
         namespace (str):
@@ -214,8 +220,10 @@ async def asyncio(
     grouped by `group_by` label names and filtered by exact `labels` match.
 
     Scope: path-namespace = isolation boundary (storage tenant key);
-    X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-    runs with gRPC disabled.
+    X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    unconditionally on the unified server (the default, port 5678);
+    legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    REST does not mount it.
 
     Args:
         namespace (str):

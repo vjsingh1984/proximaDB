@@ -1254,7 +1254,7 @@ type LogEntryInput struct {
 
 // MetricAggregationInput defines model for MetricAggregationInput.
 type MetricAggregationInput struct {
-	// Aggregation Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate.
+	// Aggregation Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate. Unknown values fall back to avg.
 	Aggregation *string            `json:"aggregation,omitempty"`
 	EndTimeNs   int64              `json:"end_time_ns"`
 	GroupBy     *[]string          `json:"group_by,omitempty"`
@@ -4889,7 +4889,9 @@ type ClientInterface interface {
 	// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
 	// the storage tenant key. The request's X-Tenant-ID header is not
 	// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-	// ownership). Not mounted when the server runs with gRPC disabled.
+	// ownership). Availability: mounted unconditionally on the unified
+	// server (the default, port 5678); legacy multi-port mode mounts it only
+	// with gRPC enabled; cluster-mode REST does not mount it.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4905,7 +4907,9 @@ type ClientInterface interface {
 	// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
 	// the storage tenant key. The request's X-Tenant-ID header is not
 	// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-	// ownership). Not mounted when the server runs with gRPC disabled.
+	// ownership). Availability: mounted unconditionally on the unified
+	// server (the default, port 5678); legacy multi-port mode mounts it only
+	// with gRPC enabled; cluster-mode REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4914,12 +4918,24 @@ type ClientInterface interface {
 
 	// IngestLogWithBody Ingest a log entry.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs (the `IngestLog` operationId).
 	IngestLogWithBody(ctx context.Context, namespace string, params *IngestLogParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestLog Ingest a log entry.
+	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4929,8 +4945,10 @@ type ClientInterface interface {
 	// IngestLogsWithBody Ingest a batch of log entries.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4940,8 +4958,10 @@ type ClientInterface interface {
 	// IngestLogs Ingest a batch of log entries.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4950,12 +4970,26 @@ type ClientInterface interface {
 
 	// QueryLogsWithBody Query logs.
 	//
+	// Reads are scoped by the path namespace — the same boundary the other
+	// observability ops use (any authenticated caller may query any
+	// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+	// mounted unconditionally on the unified server (the default, port
+	// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+	// cluster-mode REST does not mount it.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/search (the `QueryLogs` operationId).
 	QueryLogsWithBody(ctx context.Context, namespace string, params *QueryLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// QueryLogs Query logs.
+	//
+	// Reads are scoped by the path namespace — the same boundary the other
+	// observability ops use (any authenticated caller may query any
+	// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+	// mounted unconditionally on the unified server (the default, port
+	// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+	// cluster-mode REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4965,8 +4999,10 @@ type ClientInterface interface {
 	// IngestMetricWithBody Ingest a single metric sample.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4976,8 +5012,10 @@ type ClientInterface interface {
 	// IngestMetric Ingest a single metric sample.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4990,8 +5028,10 @@ type ClientInterface interface {
 	// grouped by `group_by` label names and filtered by exact `labels` match.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5004,8 +5044,10 @@ type ClientInterface interface {
 	// grouped by `group_by` label names and filtered by exact `labels` match.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5015,8 +5057,10 @@ type ClientInterface interface {
 	// IngestMetricsWithBody Ingest a batch of metric samples.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5026,8 +5070,10 @@ type ClientInterface interface {
 	// IngestMetrics Ingest a batch of metric samples.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6451,7 +6497,9 @@ func (c *Client) TranslateNaturalLanguage(ctx context.Context, params *Translate
 // Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
 // the storage tenant key. The request's X-Tenant-ID header is not
 // consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-// ownership). Not mounted when the server runs with gRPC disabled.
+// ownership). Availability: mounted unconditionally on the unified
+// server (the default, port 5678); legacy multi-port mode mounts it only
+// with gRPC enabled; cluster-mode REST does not mount it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6477,7 +6525,9 @@ func (c *Client) CreateObservabilityNamespaceWithBody(ctx context.Context, param
 // Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
 // the storage tenant key. The request's X-Tenant-ID header is not
 // consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-// ownership). Not mounted when the server runs with gRPC disabled.
+// ownership). Availability: mounted unconditionally on the unified
+// server (the default, port 5678); legacy multi-port mode mounts it only
+// with gRPC enabled; cluster-mode REST does not mount it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6496,6 +6546,12 @@ func (c *Client) CreateObservabilityNamespace(ctx context.Context, params *Creat
 
 // IngestLogWithBody Ingest a log entry.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs (the `IngestLog` operationId).
@@ -6512,6 +6568,12 @@ func (c *Client) IngestLogWithBody(ctx context.Context, namespace string, params
 }
 
 // IngestLog Ingest a log entry.
+//
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6531,8 +6593,10 @@ func (c *Client) IngestLog(ctx context.Context, namespace string, params *Ingest
 // IngestLogsWithBody Ingest a batch of log entries.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6552,8 +6616,10 @@ func (c *Client) IngestLogsWithBody(ctx context.Context, namespace string, param
 // IngestLogs Ingest a batch of log entries.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6572,6 +6638,13 @@ func (c *Client) IngestLogs(ctx context.Context, namespace string, params *Inges
 
 // QueryLogsWithBody Query logs.
 //
+// Reads are scoped by the path namespace — the same boundary the other
+// observability ops use (any authenticated caller may query any
+// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+// mounted unconditionally on the unified server (the default, port
+// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+// cluster-mode REST does not mount it.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/search (the `QueryLogs` operationId).
@@ -6588,6 +6661,13 @@ func (c *Client) QueryLogsWithBody(ctx context.Context, namespace string, params
 }
 
 // QueryLogs Query logs.
+//
+// Reads are scoped by the path namespace — the same boundary the other
+// observability ops use (any authenticated caller may query any
+// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+// mounted unconditionally on the unified server (the default, port
+// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+// cluster-mode REST does not mount it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6607,8 +6687,10 @@ func (c *Client) QueryLogs(ctx context.Context, namespace string, params *QueryL
 // IngestMetricWithBody Ingest a single metric sample.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6628,8 +6710,10 @@ func (c *Client) IngestMetricWithBody(ctx context.Context, namespace string, par
 // IngestMetric Ingest a single metric sample.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6652,8 +6736,10 @@ func (c *Client) IngestMetric(ctx context.Context, namespace string, params *Ing
 // grouped by `group_by` label names and filtered by exact `labels` match.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6676,8 +6762,10 @@ func (c *Client) AggregateMetricsWithBody(ctx context.Context, namespace string,
 // grouped by `group_by` label names and filtered by exact `labels` match.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6697,8 +6785,10 @@ func (c *Client) AggregateMetrics(ctx context.Context, namespace string, params 
 // IngestMetricsWithBody Ingest a batch of metric samples.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6718,8 +6808,10 @@ func (c *Client) IngestMetricsWithBody(ctx context.Context, namespace string, pa
 // IngestMetrics Ingest a batch of metric samples.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10849,7 +10941,9 @@ type ClientWithResponsesInterface interface {
 	// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
 	// the storage tenant key. The request's X-Tenant-ID header is not
 	// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-	// ownership). Not mounted when the server runs with gRPC disabled.
+	// ownership). Availability: mounted unconditionally on the unified
+	// server (the default, port 5678); legacy multi-port mode mounts it only
+	// with gRPC enabled; cluster-mode REST does not mount it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10865,7 +10959,9 @@ type ClientWithResponsesInterface interface {
 	// Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
 	// the storage tenant key. The request's X-Tenant-ID header is not
 	// consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-	// ownership). Not mounted when the server runs with gRPC disabled.
+	// ownership). Availability: mounted unconditionally on the unified
+	// server (the default, port 5678); legacy multi-port mode mounts it only
+	// with gRPC enabled; cluster-mode REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10874,12 +10970,24 @@ type ClientWithResponsesInterface interface {
 
 	// IngestLogWithBodyWithResponse Ingest a log entry.
 	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs (the `IngestLog` operationId).
 	IngestLogWithBodyWithResponse(ctx context.Context, namespace string, params *IngestLogParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestLogHTTPResp, error)
 
 	// IngestLogWithResponse Ingest a log entry.
+	//
+	// Scope: path-namespace = isolation boundary (storage tenant key);
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10889,8 +10997,10 @@ type ClientWithResponsesInterface interface {
 	// IngestLogsWithBodyWithResponse Ingest a batch of log entries.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10900,8 +11010,10 @@ type ClientWithResponsesInterface interface {
 	// IngestLogsWithResponse Ingest a batch of log entries.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10910,12 +11022,26 @@ type ClientWithResponsesInterface interface {
 
 	// QueryLogsWithBodyWithResponse Query logs.
 	//
+	// Reads are scoped by the path namespace — the same boundary the other
+	// observability ops use (any authenticated caller may query any
+	// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+	// mounted unconditionally on the unified server (the default, port
+	// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+	// cluster-mode REST does not mount it.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/search (the `QueryLogs` operationId).
 	QueryLogsWithBodyWithResponse(ctx context.Context, namespace string, params *QueryLogsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryLogsHTTPResp, error)
 
 	// QueryLogsWithResponse Query logs.
+	//
+	// Reads are scoped by the path namespace — the same boundary the other
+	// observability ops use (any authenticated caller may query any
+	// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+	// mounted unconditionally on the unified server (the default, port
+	// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+	// cluster-mode REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10925,8 +11051,10 @@ type ClientWithResponsesInterface interface {
 	// IngestMetricWithBodyWithResponse Ingest a single metric sample.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10936,8 +11064,10 @@ type ClientWithResponsesInterface interface {
 	// IngestMetricWithResponse Ingest a single metric sample.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10950,8 +11080,10 @@ type ClientWithResponsesInterface interface {
 	// grouped by `group_by` label names and filtered by exact `labels` match.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10964,8 +11096,10 @@ type ClientWithResponsesInterface interface {
 	// grouped by `group_by` label names and filtered by exact `labels` match.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10975,8 +11109,10 @@ type ClientWithResponsesInterface interface {
 	// IngestMetricsWithBodyWithResponse Ingest a batch of metric samples.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10986,8 +11122,10 @@ type ClientWithResponsesInterface interface {
 	// IngestMetricsWithResponse Ingest a batch of metric samples.
 	//
 	// Scope: path-namespace = isolation boundary (storage tenant key);
-	// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-	// runs with gRPC disabled.
+	// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+	// unconditionally on the unified server (the default, port 5678);
+	// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+	// REST does not mount it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -13281,11 +13419,18 @@ type IngestLogHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *map[string]interface{}
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r IngestLogHTTPResp) GetJSON200() *map[string]interface{} {
 	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r IngestLogHTTPResp) GetJSON500() *ErrorResponse {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -13384,11 +13529,18 @@ type QueryLogsHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *map[string]interface{}
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r QueryLogsHTTPResp) GetJSON200() *map[string]interface{} {
 	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r QueryLogsHTTPResp) GetJSON500() *ErrorResponse {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -15011,7 +15163,9 @@ func (c *ClientWithResponses) TranslateNaturalLanguageWithResponse(ctx context.C
 // Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
 // the storage tenant key. The request's X-Tenant-ID header is not
 // consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-// ownership). Not mounted when the server runs with gRPC disabled.
+// ownership). Availability: mounted unconditionally on the unified
+// server (the default, port 5678); legacy multi-port mode mounts it only
+// with gRPC enabled; cluster-mode REST does not mount it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15033,7 +15187,9 @@ func (c *ClientWithResponses) CreateObservabilityNamespaceWithBodyWithResponse(c
 // Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
 // the storage tenant key. The request's X-Tenant-ID header is not
 // consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-// ownership). Not mounted when the server runs with gRPC disabled.
+// ownership). Availability: mounted unconditionally on the unified
+// server (the default, port 5678); legacy multi-port mode mounts it only
+// with gRPC enabled; cluster-mode REST does not mount it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15048,6 +15204,12 @@ func (c *ClientWithResponses) CreateObservabilityNamespaceWithResponse(ctx conte
 
 // IngestLogWithBodyWithResponse Ingest a log entry.
 //
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs (the `IngestLog` operationId).
@@ -15060,6 +15222,12 @@ func (c *ClientWithResponses) IngestLogWithBodyWithResponse(ctx context.Context,
 }
 
 // IngestLogWithResponse Ingest a log entry.
+//
+// Scope: path-namespace = isolation boundary (storage tenant key);
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15075,8 +15243,10 @@ func (c *ClientWithResponses) IngestLogWithResponse(ctx context.Context, namespa
 // IngestLogsWithBodyWithResponse Ingest a batch of log entries.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15092,8 +15262,10 @@ func (c *ClientWithResponses) IngestLogsWithBodyWithResponse(ctx context.Context
 // IngestLogsWithResponse Ingest a batch of log entries.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15108,6 +15280,13 @@ func (c *ClientWithResponses) IngestLogsWithResponse(ctx context.Context, namesp
 
 // QueryLogsWithBodyWithResponse Query logs.
 //
+// Reads are scoped by the path namespace — the same boundary the other
+// observability ops use (any authenticated caller may query any
+// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+// mounted unconditionally on the unified server (the default, port
+// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+// cluster-mode REST does not mount it.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/observability/namespaces/{namespace}/logs/search (the `QueryLogs` operationId).
@@ -15120,6 +15299,13 @@ func (c *ClientWithResponses) QueryLogsWithBodyWithResponse(ctx context.Context,
 }
 
 // QueryLogsWithResponse Query logs.
+//
+// Reads are scoped by the path namespace — the same boundary the other
+// observability ops use (any authenticated caller may query any
+// namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+// mounted unconditionally on the unified server (the default, port
+// 5678); legacy multi-port mode mounts it only with gRPC enabled;
+// cluster-mode REST does not mount it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15135,8 +15321,10 @@ func (c *ClientWithResponses) QueryLogsWithResponse(ctx context.Context, namespa
 // IngestMetricWithBodyWithResponse Ingest a single metric sample.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15152,8 +15340,10 @@ func (c *ClientWithResponses) IngestMetricWithBodyWithResponse(ctx context.Conte
 // IngestMetricWithResponse Ingest a single metric sample.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15172,8 +15362,10 @@ func (c *ClientWithResponses) IngestMetricWithResponse(ctx context.Context, name
 // grouped by `group_by` label names and filtered by exact `labels` match.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15192,8 +15384,10 @@ func (c *ClientWithResponses) AggregateMetricsWithBodyWithResponse(ctx context.C
 // grouped by `group_by` label names and filtered by exact `labels` match.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15209,8 +15403,10 @@ func (c *ClientWithResponses) AggregateMetricsWithResponse(ctx context.Context, 
 // IngestMetricsWithBodyWithResponse Ingest a batch of metric samples.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15226,8 +15422,10 @@ func (c *ClientWithResponses) IngestMetricsWithBodyWithResponse(ctx context.Cont
 // IngestMetricsWithResponse Ingest a batch of metric samples.
 //
 // Scope: path-namespace = isolation boundary (storage tenant key);
-// X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-// runs with gRPC disabled.
+// X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+// unconditionally on the unified server (the default, port 5678);
+// legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+// REST does not mount it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -16936,6 +17134,13 @@ func ParseIngestLogHTTPResp(rsp *http.Response) (*IngestLogHTTPResp, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -17008,6 +17213,13 @@ func ParseQueryLogsHTTPResp(rsp *http.Response) (*QueryLogsHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

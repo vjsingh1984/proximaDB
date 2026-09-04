@@ -54,8 +54,10 @@ struct RecordingAgents {
     views: Vec<String>,
     /// The final query the composer will return.
     final_query: String,
-    /// When true, the rewriter fails (failure-propagation leg).
+    /// When set, that agent fails (failure-propagation legs).
     fail_rewriter: bool,
+    fail_view_gen: bool,
+    fail_composer: bool,
 }
 
 impl RecordingAgents {
@@ -68,6 +70,8 @@ impl RecordingAgents {
             views: views.iter().map(|s| s.to_string()).collect(),
             final_query: final_query.to_string(),
             fail_rewriter: false,
+            fail_view_gen: false,
+            fail_composer: false,
         }
     }
 
@@ -101,6 +105,11 @@ impl AgentViewGenerator for RecordingAgents {
             .lock()
             .unwrap()
             .push(normalized_query.to_string());
+        if self.fail_view_gen {
+            return Err(ProximaDBError::Internal(
+                "view generator unavailable (eval-injected)".to_string(),
+            ));
+        }
         Ok(self.views.clone())
     }
 }
@@ -112,6 +121,11 @@ impl AgentComposer for RecordingAgents {
             .lock()
             .unwrap()
             .push((normalized_query.to_string(), views.to_vec()));
+        if self.fail_composer {
+            return Err(ProximaDBError::Internal(
+                "composer unavailable (eval-injected)".to_string(),
+            ));
+        }
         Ok(self.final_query.clone())
     }
 }
@@ -180,20 +194,14 @@ async fn trajectory_threads_query_through_agents_in_contract_order() {
 }
 
 /// Trajectory: an upstream agent failure aborts the flow — downstream
-/// agents are never invoked (no partial work, no fabricated fallback).
+/// agents are never invoked (no partial work, no fabricated fallback, and
+/// no per-agent catch-and-continue "resilience" that would fabricate a
+/// result from a degraded agent chain).
 #[tokio::test]
-async fn trajectory_rewriter_failure_never_reaches_downstream_agents() {
-    let agents = std::sync::Arc::new(RecordingAgents {
-        rewriter_inputs: Mutex::new(Vec::new()),
-        view_inputs: Mutex::new(Vec::new()),
-        composer_inputs: Mutex::new(Vec::new()),
-        normalized: String::new(),
-        views: Vec::new(),
-        final_query: String::new(),
-        fail_rewriter: true,
-    });
+async fn trajectory_agent_failures_never_reach_downstream_agents() {
+    // Leg 1: rewriter failure — nobody downstream runs.
+    let agents = recording_with(|a| a.fail_rewriter = true);
     let engine = AvSqlEngine::new(agents.clone(), agents.clone(), agents.clone());
-
     let err = engine
         .translate("query that will fail rewrite")
         .await
@@ -203,16 +211,61 @@ async fn trajectory_rewriter_failure_never_reaches_downstream_agents() {
         "error must carry the agent's cause, got: {err}"
     );
     assert_eq!(agents.calls("rewriter"), 1, "rewriter attempted once");
-    assert_eq!(
-        agents.calls("views"),
-        0,
-        "view generator must NOT run after rewrite failure"
+    assert_eq!(agents.calls("views"), 0, "view generator must NOT run");
+    assert_eq!(agents.calls("composer"), 0, "composer must NOT run");
+
+    // Leg 2: view-generator failure — the composer must NOT run (no
+    // "compose anyway with empty views" fallback).
+    let agents = recording_with(|a| a.fail_view_gen = true);
+    let engine = AvSqlEngine::new(agents.clone(), agents.clone(), agents.clone());
+    let err = engine
+        .translate("query whose view generation fails")
+        .await
+        .expect_err("view-gen failure must propagate");
+    assert!(
+        err.to_string().contains("view generator unavailable"),
+        "error must carry the agent's cause, got: {err}"
     );
+    assert_eq!(agents.calls("rewriter"), 1);
+    assert_eq!(agents.calls("views"), 1, "view generator attempted once");
     assert_eq!(
         agents.calls("composer"),
         0,
-        "composer must NOT run after rewrite failure"
+        "composer must NOT run after view-gen failure"
     );
+
+    // Leg 3: composer failure — surfaces as the flow's error (rewriter and
+    // view-gen already ran; nothing fabricated).
+    let agents = recording_with(|a| a.fail_composer = true);
+    let engine = AvSqlEngine::new(agents.clone(), agents.clone(), agents.clone());
+    let err = engine
+        .translate("query whose composition fails")
+        .await
+        .expect_err("composer failure must propagate");
+    assert!(
+        err.to_string().contains("composer unavailable"),
+        "error must carry the agent's cause, got: {err}"
+    );
+    assert_eq!(agents.calls("rewriter"), 1);
+    assert_eq!(agents.calls("views"), 1);
+    assert_eq!(agents.calls("composer"), 1);
+}
+
+/// Blank recording set, customized by the closure (keeps the legs readable).
+fn recording_with(f: impl FnOnce(&mut RecordingAgents)) -> std::sync::Arc<RecordingAgents> {
+    let mut a = RecordingAgents {
+        rewriter_inputs: Mutex::new(Vec::new()),
+        view_inputs: Mutex::new(Vec::new()),
+        composer_inputs: Mutex::new(Vec::new()),
+        normalized: String::new(),
+        views: Vec::new(),
+        final_query: String::new(),
+        fail_rewriter: false,
+        fail_view_gen: false,
+        fail_composer: false,
+    };
+    f(&mut a);
+    std::sync::Arc::new(a)
 }
 
 /// Output rubric (deterministic core): the SDK-facing result shape is the
@@ -236,9 +289,8 @@ async fn output_contract_is_exact_agent_composition() {
         assert_eq!(out.normalized_query, norm, "normalized field cross-wired");
         assert_eq!(out.views, views, "views field cross-wired");
         assert_eq!(out.final_query, final_q, "final_query cross-wired");
-        // Empty view set must still flow: composer sees an empty slice and
-        // its output is used verbatim (empty views ≠ empty final query).
-        assert!(!out.final_query.is_empty());
+        // Empty view set must still flow: the composer is invoked (with an
+        // empty slice) and its output is used verbatim.
         assert_eq!(agents.calls("composer"), 1);
     }
 }

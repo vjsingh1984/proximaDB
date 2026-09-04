@@ -859,7 +859,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ingest a log entry. */
+        /**
+         * Ingest a log entry.
+         * @description Scope: path-namespace = isolation boundary (storage tenant key);
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+         *     unconditionally on the unified server (the default, port 5678);
+         *     legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+         *     REST does not mount it.
+         */
         post: operations["ingestLog"];
         delete?: never;
         options?: never;
@@ -878,7 +885,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Query logs. */
+        /**
+         * Query logs.
+         * @description Reads are scoped by the path namespace — the same boundary the other
+         *     observability ops use (any authenticated caller may query any
+         *     namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+         *     mounted unconditionally on the unified server (the default, port
+         *     5678); legacy multi-port mode mounts it only with gRPC enabled;
+         *     cluster-mode REST does not mount it.
+         */
         post: operations["queryLogs"];
         delete?: never;
         options?: never;
@@ -904,7 +919,9 @@ export interface paths {
          *     Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
          *     the storage tenant key. The request's X-Tenant-ID header is not
          *     consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-         *     ownership). Not mounted when the server runs with gRPC disabled.
+         *     ownership). Availability: mounted unconditionally on the unified
+         *     server (the default, port 5678); legacy multi-port mode mounts it only
+         *     with gRPC enabled; cluster-mode REST does not mount it.
          */
         post: operations["createObservabilityNamespace"];
         delete?: never;
@@ -927,8 +944,10 @@ export interface paths {
         /**
          * Ingest a batch of log entries.
          * @description Scope: path-namespace = isolation boundary (storage tenant key);
-         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-         *     runs with gRPC disabled.
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+         *     unconditionally on the unified server (the default, port 5678);
+         *     legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+         *     REST does not mount it.
          */
         post: operations["ingestLogs"];
         delete?: never;
@@ -951,8 +970,10 @@ export interface paths {
         /**
          * Ingest a single metric sample.
          * @description Scope: path-namespace = isolation boundary (storage tenant key);
-         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-         *     runs with gRPC disabled.
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+         *     unconditionally on the unified server (the default, port 5678);
+         *     legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+         *     REST does not mount it.
          */
         post: operations["ingestMetric"];
         delete?: never;
@@ -975,8 +996,10 @@ export interface paths {
         /**
          * Ingest a batch of metric samples.
          * @description Scope: path-namespace = isolation boundary (storage tenant key);
-         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-         *     runs with gRPC disabled.
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+         *     unconditionally on the unified server (the default, port 5678);
+         *     legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+         *     REST does not mount it.
          */
         post: operations["ingestMetrics"];
         delete?: never;
@@ -1002,8 +1025,10 @@ export interface paths {
          *     grouped by `group_by` label names and filtered by exact `labels` match.
          *
          *     Scope: path-namespace = isolation boundary (storage tenant key);
-         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-         *     runs with gRPC disabled.
+         *     X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+         *     unconditionally on the unified server (the default, port 5678);
+         *     legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+         *     REST does not mount it.
          */
         post: operations["aggregateMetrics"];
         delete?: never;
@@ -2677,7 +2702,7 @@ export interface components {
             /** Format: int64 */
             end_time_ns: number;
             /**
-             * @description Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate.
+             * @description Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate. Unknown values fall back to avg.
              * @default avg
              */
             aggregation: string;
@@ -4505,6 +4530,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description Storage/processing failure (maps to internal_error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     queryLogs: {
@@ -4536,6 +4570,15 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Storage/processing failure (maps to internal_error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

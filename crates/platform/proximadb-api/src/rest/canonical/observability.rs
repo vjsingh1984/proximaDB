@@ -511,8 +511,8 @@ async fn query_promql(
     Json(request): Json<PromQLRequest>,
 ) -> RestResult<JsonResponse<PromQLResponse>> {
     debug!("PromQL query in namespace {}: {}", namespace, request.query);
-    // Full PromQL wiring comes with the CHRONO engine. Fail honestly with
-    // 501 rather than returning an empty vector — an always-empty result is
+    // No PromQL engine yet (arrives with CHRONO). Fail honestly with 501
+    // rather than returning an empty vector — an always-empty result is
     // indistinguishable from "no data" and silently misleads pollers/dashboards
     // (the silent-Ok anti-pattern; TD-SPECRAT-1 wave 2).
     Err(RestError::NotImplemented(
@@ -530,12 +530,15 @@ async fn ingest_traces(
         request.spans.len(),
         namespace
     );
-    // The observability port has no trace ingest yet. Previously this
-    // fabricated success (ingested=total) without persisting anything —
-    // the silent-Ok anti-pattern. Fail honestly with 501 (TD-SPECRAT-1
-    // wave 2); wire the port and flip when traces land.
+    // The PORT already carries trace ingest (backed by storage and served
+    // over gRPC today) — what is missing is this REST adapter's JSON-span →
+    // proto TraceData mapping. Previously this handler fabricated success
+    // (ingested=total) without persisting anything (the silent-Ok
+    // anti-pattern). Fail honestly with 501 until the adapter mapping lands
+    // (TD-SPECRAT-1 wave 2).
     Err(RestError::NotImplemented(
-        "Trace ingest is not wired to storage yet (TD-SPECRAT-1 follow-up)".to_string(),
+        "Trace ingest REST adapter is not mapped to the port yet (TD-SPECRAT-1 follow-up)"
+            .to_string(),
     ))
 }
 
@@ -548,11 +551,13 @@ async fn query_traces(
         "Querying traces in namespace: {} (trace_id={:?}, service={:?}, range={}..{})",
         namespace, request.trace_id, request.service, request.start_ns, request.end_ns
     );
-    // No trace storage behind this handler — returning an empty result set
-    // would read as "no matching spans" instead of "capability absent".
-    // Fail honestly with 501 (TD-SPECRAT-1 wave 2).
+    // The PORT's query_traces is backed by storage (gRPC serves it); this
+    // REST adapter is not mapped yet. Returning an empty result set would
+    // read as "no matching spans" instead of "capability absent" — fail
+    // honestly with 501 (TD-SPECRAT-1 wave 2).
     Err(RestError::NotImplemented(
-        "Trace query is not wired to storage yet (TD-SPECRAT-1 follow-up)".to_string(),
+        "Trace query REST adapter is not mapped to the port yet (TD-SPECRAT-1 follow-up)"
+            .to_string(),
     ))
 }
 

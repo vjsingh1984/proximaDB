@@ -27,8 +27,13 @@ binding between the **requesting tenant** and the namespace:
 * consequently ANY authenticated caller can create/ingest/query ANY
   observability namespace.
 
-The wave-1 spec entries now document this honestly (per-path scope note:
-"path namespace IS the isolation boundary; X-Tenant-ID not consulted").
+All seven exposed observability ops (the five wave-1 additions AND the two
+pre-existing loose entries — ingestLog/queryLogs, upgraded in wave 2) now
+carry per-path scope notes ("path namespace IS the isolation boundary;
+X-Tenant-ID not consulted") plus the accurate availability gating: mounted
+unconditionally on the unified server (the default, port 5678); legacy
+multi-port mode mounts it only with gRPC enabled; cluster-mode REST does not
+mount it.
 
 == Why this is a product decision, not a mechanical fix
 

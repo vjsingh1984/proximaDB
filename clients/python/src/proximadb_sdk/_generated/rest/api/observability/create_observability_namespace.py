@@ -98,7 +98,9 @@ def sync_detailed(
     Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
     the storage tenant key. The request's X-Tenant-ID header is not
     consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-    ownership). Not mounted when the server runs with gRPC disabled.
+    ownership). Availability: mounted unconditionally on the unified
+    server (the default, port 5678); legacy multi-port mode mounts it only
+    with gRPC enabled; cluster-mode REST does not mount it.
 
     Args:
         x_tenant_id (str | Unset):
@@ -141,7 +143,9 @@ def sync(
     Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
     the storage tenant key. The request's X-Tenant-ID header is not
     consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-    ownership). Not mounted when the server runs with gRPC disabled.
+    ownership). Availability: mounted unconditionally on the unified
+    server (the default, port 5678); legacy multi-port mode mounts it only
+    with gRPC enabled; cluster-mode REST does not mount it.
 
     Args:
         x_tenant_id (str | Unset):
@@ -179,7 +183,9 @@ async def asyncio_detailed(
     Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
     the storage tenant key. The request's X-Tenant-ID header is not
     consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-    ownership). Not mounted when the server runs with gRPC disabled.
+    ownership). Availability: mounted unconditionally on the unified
+    server (the default, port 5678); legacy multi-port mode mounts it only
+    with gRPC enabled; cluster-mode REST does not mount it.
 
     Args:
         x_tenant_id (str | Unset):
@@ -220,7 +226,9 @@ async def asyncio(
     Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
     the storage tenant key. The request's X-Tenant-ID header is not
     consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-    ownership). Not mounted when the server runs with gRPC disabled.
+    ownership). Availability: mounted unconditionally on the unified
+    server (the default, port 5678); legacy multi-port mode mounts it only
+    with gRPC enabled; cluster-mode REST does not mount it.
 
     Args:
         x_tenant_id (str | Unset):

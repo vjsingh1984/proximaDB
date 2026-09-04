@@ -92,8 +92,10 @@ def sync_detailed(
     """Ingest a batch of metric samples.
 
      Scope: path-namespace = isolation boundary (storage tenant key);
-    X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-    runs with gRPC disabled.
+    X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    unconditionally on the unified server (the default, port 5678);
+    legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    REST does not mount it.
 
     Args:
         namespace (str):
@@ -131,8 +133,10 @@ def sync(
     """Ingest a batch of metric samples.
 
      Scope: path-namespace = isolation boundary (storage tenant key);
-    X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-    runs with gRPC disabled.
+    X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    unconditionally on the unified server (the default, port 5678);
+    legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    REST does not mount it.
 
     Args:
         namespace (str):
@@ -165,8 +169,10 @@ async def asyncio_detailed(
     """Ingest a batch of metric samples.
 
      Scope: path-namespace = isolation boundary (storage tenant key);
-    X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-    runs with gRPC disabled.
+    X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    unconditionally on the unified server (the default, port 5678);
+    legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    REST does not mount it.
 
     Args:
         namespace (str):
@@ -202,8 +208,10 @@ async def asyncio(
     """Ingest a batch of metric samples.
 
      Scope: path-namespace = isolation boundary (storage tenant key);
-    X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-    runs with gRPC disabled.
+    X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+    unconditionally on the unified server (the default, port 5678);
+    legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+    REST does not mount it.
 
     Args:
         namespace (str):

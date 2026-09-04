@@ -403,6 +403,12 @@ paths:
       tags: [Observability]
       operationId: ingestLog
       summary: Ingest a log entry.
+      description: |
+        Scope: path-namespace = isolation boundary (storage tenant key);
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+        unconditionally on the unified server (the default, port 5678);
+        legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+        REST does not mount it.
       requestBody:
         required: true
         content:
@@ -410,6 +416,12 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         "200": { description: Ingested., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "500":
+          description: Storage/processing failure (maps to internal_error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/observability/namespaces/{namespace}/logs/search:
     parameters:
       - name: namespace
@@ -420,6 +432,13 @@ paths:
       tags: [Observability]
       operationId: queryLogs
       summary: Query logs.
+      description: |
+        Reads are scoped by the path namespace — the same boundary the other
+        observability ops use (any authenticated caller may query any
+        namespace; TD-SPECRAT-2 tracks the ownership decision). Availability:
+        mounted unconditionally on the unified server (the default, port
+        5678); legacy multi-port mode mounts it only with gRPC enabled;
+        cluster-mode REST does not mount it.
       requestBody:
         required: true
         content:
@@ -427,6 +446,12 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         "200": { description: Matching logs., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "500":
+          description: Storage/processing failure (maps to internal_error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/observability/namespaces:
     post:
       tags: [Observability]
@@ -440,7 +465,9 @@ paths:
         Scope: the path namespace IS the isolation boundary — it maps 1:1 onto
         the storage tenant key. The request's X-Tenant-ID header is not
         consulted by this surface (TD-SPECRAT-2 tracks multi-tenant namespace
-        ownership). Not mounted when the server runs with gRPC disabled.
+        ownership). Availability: mounted unconditionally on the unified
+        server (the default, port 5678); legacy multi-port mode mounts it only
+        with gRPC enabled; cluster-mode REST does not mount it.
       requestBody:
         required: true
         content:
@@ -474,8 +501,10 @@ paths:
       summary: Ingest a batch of log entries.
       description: |
         Scope: path-namespace = isolation boundary (storage tenant key);
-        X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-        runs with gRPC disabled.
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+        unconditionally on the unified server (the default, port 5678);
+        legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+        REST does not mount it.
       requestBody:
         required: true
         content:
@@ -509,8 +538,10 @@ paths:
       summary: Ingest a single metric sample.
       description: |
         Scope: path-namespace = isolation boundary (storage tenant key);
-        X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-        runs with gRPC disabled.
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+        unconditionally on the unified server (the default, port 5678);
+        legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+        REST does not mount it.
       requestBody:
         required: true
         content:
@@ -544,8 +575,10 @@ paths:
       summary: Ingest a batch of metric samples.
       description: |
         Scope: path-namespace = isolation boundary (storage tenant key);
-        X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-        runs with gRPC disabled.
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+        unconditionally on the unified server (the default, port 5678);
+        legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+        REST does not mount it.
       requestBody:
         required: true
         content:
@@ -582,8 +615,10 @@ paths:
         grouped by `group_by` label names and filtered by exact `labels` match.
 
         Scope: path-namespace = isolation boundary (storage tenant key);
-        X-Tenant-ID not consulted (TD-SPECRAT-2). Not mounted when the server
-        runs with gRPC disabled.
+        X-Tenant-ID not consulted (TD-SPECRAT-2). Availability: mounted
+        unconditionally on the unified server (the default, port 5678);
+        legacy multi-port mode mounts it only with gRPC enabled; cluster-mode
+        REST does not mount it.
       requestBody:
         required: true
         content:
@@ -1126,7 +1161,7 @@ components:
         aggregation:
           type: string
           default: avg
-          description: "Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate."
+          description: "Canonical: min, max, avg, sum, count. Percentile/rate forms also accepted: p50, p90, p95, p99, rate. Unknown values fall back to avg."
         step_seconds:
           type: integer
           format: uint32
