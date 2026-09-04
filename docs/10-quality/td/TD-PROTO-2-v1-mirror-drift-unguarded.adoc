@@ -185,7 +185,7 @@ findings and dispositions:
   beside `jsonb_to_json_lossy`. Both are behavior-neutral refactors — follow
   the repo's measure-first rule before touching the filter hot path.
 
-**Round 4 (high effort, 2026-09-05) — 10 findings, 7 fixed, 3 dispositioned:**
+**Round 4 (high effort, 2026-09-04) — 10 findings, 7 fixed, 3 dispositioned:**
 
 * Fixed: the SECOND live writer — `proxima_value_to_sql_value`
   (search-types) served every engine search response with the legacy tag-8
@@ -221,6 +221,23 @@ findings and dispositions:
   wire addition; (c) the one-shared-converter consolidation remains the
   tracked follow-up (deferred in round 3; round 4's concrete inconsistencies
   were fixed individually).
+
+**Round 5 (independent rebase review, 2026-09-04) — 5 findings, all fixed:**
+
+* The search-types writer's nominally unreachable encode-error fallback put
+  legacy magic+JSON bytes under tag 9, violating tag 9's MessagePack contract
+  and causing the new reader to return opaque binary. The fallback now uses
+  its legacy tag-8 encoding, which the reader already supports.
+* Three additional live output boundaries silently rendered tag-9 JSONB as
+  null: multimodal `QueryRow` metadata, canonical REST observability log
+  fields, and pgwire document JSON. Focused red/green tests now pin all three;
+  the two row/document converters are exhaustive over nested arrays and
+  objects instead of retaining wildcard null fallbacks.
+* Round 4's field type-reference guard covered enums but still discarded the
+  Rust type of ordinary `message` fields. A synthetic negative-control test
+  reproduced the hole (`WrongMessage` at the correct tag/kind passed); the
+  parser now records and compares normalized message targets as well. The
+  full zero-drift descriptor census remains green.
 
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently

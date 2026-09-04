@@ -79,8 +79,8 @@ struct MirrorField {
     repeated: bool,
     optional: bool,
     map: Option<(String, String)>,
-    /// `enumeration = "…"` reference, for type-ref comparison.
-    enum_ref: Option<String>,
+    /// Referenced message/enum type, for type-ref comparison.
+    type_ref: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -269,6 +269,17 @@ fn pascal(name: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Last Rust identifier in a field or oneof payload type. Generated mirror
+/// shapes wrap message types in paths and containers such as
+/// `Option<super::Foo>` / `Vec<crate::Bar>`; the final identifier is the
+/// protobuf type name that must agree with the descriptor.
+fn final_rust_type_ident(ty: &str) -> Option<String> {
+    ty.split(|ch: char| !ch.is_alphanumeric() && ch != '_')
+        .filter(|part| !part.is_empty())
+        .next_back()
+        .map(str::to_string)
 }
 
 /// Normalize a type path key: snake_case the LAST component only ("A::B::Camel"
@@ -567,7 +578,7 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
         match &item {
             Some(ItemKind::Message(key)) => {
                 if let Some(rest) = line.strip_prefix("pub ")
-                    && let Some((name, _ty)) = rest.split_once(':')
+                    && let Some((name, ty)) = rest.split_once(':')
                 {
                     // Raw identifiers (`pub r#type:`) mirror proto field
                     // names that are Rust keywords — normalize.
@@ -586,17 +597,22 @@ fn parse_mirror(source: &str, file_label: &str) -> MirrorModel {
                                         tags: parsed.tags,
                                     });
                                 } else {
+                                    let kind = parsed.kind.unwrap_or_default();
+                                    let type_ref = match kind.as_str() {
+                                        "enumeration" => {
+                                            parsed.r#ref.as_deref().and_then(final_rust_type_ident)
+                                        }
+                                        "message" => final_rust_type_ident(ty),
+                                        _ => None,
+                                    };
                                     message.fields.push(MirrorField {
                                         name,
                                         tag: parsed.tag.unwrap_or(0),
-                                        kind: parsed.kind.unwrap_or_default(),
+                                        kind,
                                         repeated: parsed.repeated,
                                         optional: parsed.optional,
                                         map: parsed.map_kv,
-                                        // For enumeration fields: the attr's
-                                        // type reference (compared against the
-                                        // descriptor's type_name last segment).
-                                        enum_ref: parsed.r#ref.clone(),
+                                        type_ref,
                                     });
                                 }
                             }
@@ -1204,20 +1220,22 @@ impl Comparer {
                                 df.attr_kind()
                             ),
                         );
-                    } else if df.kind == "enumeration"
-                        && let (Some(mr), Some(dr)) = (&mf.enum_ref, &df.type_ref)
-                        && mr.rsplit("::").next().unwrap_or_default() != dr.as_str()
-                    {
-                        // Type-reference check: a mirror field pointed at the
-                        // WRONG existing enum passes tag+kind equality — the
-                        // reference must match too (last segment; cross-
-                        // package collisions are accepted guard noise).
-                        self.record(
-                            key,
-                            format!(
-                                "field {name:?}: enum type-ref mismatch mirror {mr:?} vs proto {dr:?}"
-                            ),
-                        );
+                    } else if !df.is_map && matches!(df.kind, "message" | "enumeration") {
+                        let mirror_ref = mf.type_ref.as_deref().map(snake);
+                        let descriptor_ref = df.type_ref.as_deref().map(snake);
+                        if mirror_ref != descriptor_ref {
+                            // A field pointed at the WRONG existing message or
+                            // enum passes tag+wire-kind equality. Compare the
+                            // normalized final type segment too; package paths
+                            // and Rust acronym casing are not wire-significant.
+                            self.record(
+                                key,
+                                format!(
+                                    "field {name:?}: {} type-ref mismatch mirror {:?} vs proto {:?}",
+                                    df.kind, mf.type_ref, df.type_ref
+                                ),
+                            );
+                        }
                     } else if let (Some((dk, dv)), Some((mk, mv))) = (&df.map, &mf.map) {
                         // Both key and value kinds must match the descriptor's
                         // synthetic entry message.
@@ -1709,4 +1727,51 @@ fn v1_mirrors_conform_to_proto_descriptors() {
         }
         panic!("TD-PROTO-2 v1-mirror drift ratchet:{report}");
     }
+}
+
+#[test]
+fn message_field_type_reference_mismatch_is_reported() {
+    let mirror = parse_mirror(
+        r#"
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Holder {
+    #[prost(message, optional, tag = "1")]
+    pub item: ::core::option::Option<WrongMessage>,
+}
+"#,
+        "synthetic.rs",
+    );
+    let mut desc = DescIndex::default();
+    desc.messages.insert(
+        "holder".to_string(),
+        DescMessage {
+            fields: vec![DescField {
+                name: "item".to_string(),
+                number: 1,
+                kind: "message",
+                repeated: false,
+                proto3_optional: false,
+                is_map: false,
+                map: None,
+                type_ref: Some("RightMessage".to_string()),
+                oneof: None,
+            }],
+            oneofs: Vec::new(),
+        },
+    );
+
+    let mut comparer = Comparer {
+        file_label: "synthetic.rs",
+        errors: Vec::new(),
+    };
+    comparer.compare(&desc, &mirror);
+
+    assert!(
+        comparer
+            .errors
+            .iter()
+            .any(|error| error.contains("message type-ref mismatch")),
+        "ordinary message-field retargeting must fail the guard: {:?}",
+        comparer.errors
+    );
 }

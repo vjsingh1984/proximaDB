@@ -904,6 +904,39 @@ mod tests {
     }
 
     #[test]
+    fn aggregation_groups_jsonb_by_document_not_byte_length() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+
+        let make_fields = |region: &str| {
+            let document = serde_json::json!({"region": region});
+            [(
+                "context".to_string(),
+                SqlValue {
+                    value: Some(Value::JsonbValue(
+                        proximadb_data_model::ProximaValue::to_jsonb_vec(&document)
+                            .expect("encode JSONB test value"),
+                    )),
+                },
+            )]
+            .into_iter()
+            .collect()
+        };
+        let logs = vec![
+            make_log_with_fields("east", Severity::Info, "api", 0, make_fields("east")),
+            make_log_with_fields("west", Severity::Info, "api", 0, make_fields("west")),
+        ];
+
+        let result =
+            LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("context".to_string()));
+        let keys: std::collections::BTreeSet<_> =
+            result.buckets.iter().map(|bucket| &bucket.key).collect();
+
+        assert_eq!(result.buckets.len(), 2);
+        assert!(keys.contains(&serde_json::json!({"region": "east"}).to_string()));
+        assert!(keys.contains(&serde_json::json!({"region": "west"}).to_string()));
+    }
+
+    #[test]
     fn test_query_aggregate() {
         let logs = vec![
             make_log("Error 1", Severity::Error, "api"),
