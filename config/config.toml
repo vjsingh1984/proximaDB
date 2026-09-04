@@ -367,9 +367,11 @@ require_authentication = false
 default_session_timeout_minutes = 60
 
 [security.authentication.api_keys]
-# TD-TENANT-1 follow-up (a): an entry may carry roles = ["gateway"] to make
-# the key a gateway principal — enabling GatewayOnly tenant delegation.
-# Delegation ONLY: it grants no data-plane permission.
+# TD-TENANT-1 follow-up (a): a legacy config-backed entry may carry
+# roles = ["gateway"] to make the key a gateway principal — enabling
+# GatewayOnly tenant delegation. Registry-backed `pxk_` keys use their own
+# authoritative identity path and do not inherit this claim. Delegation ONLY:
+# it grants no UnifiedPermission.
 "dev-key" = { user_id = "devuser", permissions = ["*"], ip_restrictions = [] }
 
 # Generic OIDC provider (TD-SSO-1): bearer tokens from ANY compliant IdP,
