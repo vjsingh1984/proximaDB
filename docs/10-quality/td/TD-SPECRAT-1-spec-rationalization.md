@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1 (observability+nl), 2 (stub-rule fixes, TD-SPECRAT-2), 3 (ABAC) landed; wave 4 (collections admin) landing
+| Status | Waves 1-4 landed (observability+nl, stub-rule fixes, ABAC, collections admin); wave 5 (catalog routing/explain) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -202,3 +202,48 @@ exact 6-path / 10-operation collections-admin surface plus its enum
 vocabularies (`PinTarget`, `AssignmentReason`, the internally-tagged
 `status` enums) — `test_collections_admin_surface_has_the_complete_operation_set`,
 matching the wave-3 precedent.
+
+== Wave 5: catalog routing/explain (this PR)
+
+**Exposed (2 paths / 2 operations; spec 60 → 62):**
+
+* `GET /api/v2/catalog/table-routing` — `getCatalogTableRouting`: the
+  `information_schema.table_routing` projection as a table-shaped
+  result (all cells strings — the same shape pgwire/SQL clients see),
+  optional `table_name` exact-match query filter.
+* `POST /api/v2/catalog/table-write/explain` — `explainTableWriteRoute`:
+  the DML write planner in explain-only mode (nothing is written) —
+  selected backend + access method, write lane (+ rejected lanes with
+  reasons), candidate/rejected paths, estimated cost + data movement,
+  required guards, write intent. 11 new schemas (the 9-schema
+  `TableWriteRouteExplanation` tree + the request + the introspection
+  result; plus the shared `InternalError` response entry) model the
+  **complete** tree — round-1 adversarial review caught 7 dropped
+  fields (5 on every response: `stats_freshness`, `constraint_gaps`,
+  `lossy`, `support_status`, `batch_local_constraints_sufficient`, plus
+  optional `benchmark_gate`/`freshness_sla_ms`) and the ratchet now
+  pins every response property set.
+
+Rationalization notes:
+
+* **Alias-accepting request fields are strings, not enums**:
+  `write_mode`/`distribution` accept many case-insensitive spellings
+  (`insert_only`, `insert-only`, …) — modeled as plain strings with the
+  accepted vocabulary documented; the RESPONSE echoes the resolved
+  canonical PascalCase enum name (e.g. `PseudoDistributed`) — also
+  documented.
+* **No per-route permission gate** on either op (global auth middleware
+  applies when enabled — same posture note as wave 4); X-Tenant-ID
+  not-consulted notes carried (tenant context rides the explain body's
+  `tenant_id` when present).
+* **Reused `InternalError` response** added to the shared responses
+  (canonical error envelope) — these handlers go through `ApiResult`
+  mapping, unlike wave-4's plain-text/flat-error paths.
+
+**Deliberately NOT exposed — deferred out of this wave:**
+
+* `/api/v2/catalogs/*` (enterprise external-catalog surface, the
+  `enterprise-catalogs` feature gate) — a large separate area (Iceberg/
+  Delta/UC federation); needs its own census + rationalization wave.
+* `POST /api/v2/collections/{collection_id}/branches/{branch}/merge` —
+  still deferred to the graph-analytics wave (wave-4 decision).

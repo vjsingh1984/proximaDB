@@ -92,6 +92,7 @@ from .catalog_embedding_model_version import CatalogEmbeddingModelVersion
 from .catalog_embedding_output_contract import CatalogEmbeddingOutputContract
 from .catalog_evaluation_evidence import CatalogEvaluationEvidence
 from .catalog_evaluation_evidence_metrics import CatalogEvaluationEvidenceMetrics
+from .catalog_introspection_result import CatalogIntrospectionResult
 from .catalog_lineage_input import CatalogLineageInput
 from .catalog_lineage_input_kind import CatalogLineageInputKind
 from .catalog_model_access import CatalogModelAccess
@@ -212,6 +213,7 @@ from .primary_pod_lookup_response_status import PrimaryPodLookupResponseStatus
 from .primary_pod_operator_error_response import PrimaryPodOperatorErrorResponse
 from .primary_pod_unassign_response import PrimaryPodUnassignResponse
 from .probe_response import ProbeResponse
+from .projection_route_metadata_explanation import ProjectionRouteMetadataExplanation
 from .proxima_record_input import ProximaRecordInput
 from .proxima_record_input_props_type_0 import ProximaRecordInputPropsType0
 from .quantization_config_input import QuantizationConfigInput
@@ -248,6 +250,15 @@ from .search_entities_response import SearchEntitiesResponse
 from .sql_request import SqlRequest
 from .sql_response import SqlResponse
 from .sql_response_rows_item import SqlResponseRowsItem
+from .table_write_candidate_explanation import TableWriteCandidateExplanation
+from .table_write_cost_explanation import TableWriteCostExplanation
+from .table_write_data_movement_explanation import TableWriteDataMovementExplanation
+from .table_write_explain_request import TableWriteExplainRequest
+from .table_write_intent_explanation import TableWriteIntentExplanation
+from .table_write_rejected_lane_explanation import TableWriteRejectedLaneExplanation
+from .table_write_rejected_path_explanation import TableWriteRejectedPathExplanation
+from .table_write_route_explanation import TableWriteRouteExplanation
+from .table_write_route_metadata_explanation import TableWriteRouteMetadataExplanation
 from .text_field_input import TextFieldInput
 from .text_field_output import TextFieldOutput
 from .traverse_request import TraverseRequest
@@ -341,6 +352,7 @@ __all__ = (
     "CatalogEmbeddingOutputContract",
     "CatalogEvaluationEvidence",
     "CatalogEvaluationEvidenceMetrics",
+    "CatalogIntrospectionResult",
     "CatalogLineageInput",
     "CatalogLineageInputKind",
     "CatalogModelAccess",
@@ -457,6 +469,7 @@ __all__ = (
     "PrimaryPodOperatorErrorResponse",
     "PrimaryPodUnassignResponse",
     "ProbeResponse",
+    "ProjectionRouteMetadataExplanation",
     "ProximaRecordInput",
     "ProximaRecordInputPropsType0",
     "QuantizationConfigInput",
@@ -489,6 +502,15 @@ __all__ = (
     "SqlRequest",
     "SqlResponse",
     "SqlResponseRowsItem",
+    "TableWriteCandidateExplanation",
+    "TableWriteCostExplanation",
+    "TableWriteDataMovementExplanation",
+    "TableWriteExplainRequest",
+    "TableWriteIntentExplanation",
+    "TableWriteRejectedLaneExplanation",
+    "TableWriteRejectedPathExplanation",
+    "TableWriteRouteExplanation",
+    "TableWriteRouteMetadataExplanation",
     "TextFieldInput",
     "TextFieldOutput",
     "TraverseRequest",

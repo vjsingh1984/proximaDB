@@ -3028,6 +3028,93 @@ paths:
         description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
         schema:
           type: string
+  /api/v2/catalog/table-routing:
+    get:
+      tags:
+      - Catalog
+      operationId: getCatalogTableRouting
+      summary: Table-level xCatalog routing metadata.
+      description: |
+        Serves `information_schema.table_routing` as a table-shaped
+        result — the same projection pgwire/SQL clients see. All cell
+        values are strings.
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler (the introspection projection is cluster-scope).
+        The filter dispatch is LEXICAL over the composed SQL text, so a
+        `table_name` containing SQL fragments (e.g. ` from
+        xcatalog.namespaces`) can be misread as a different view — do
+        not treat this endpoint as a structured query interface
+        (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+        case-insensitively; a name containing a single quote silently
+        truncates the filter at the quote.
+      parameters:
+      - name: table_name
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Filter to one table (case-insensitive name match).
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Routing rows (columns/column_types/rows, all strings).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogIntrospectionResult'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v2/catalog/table-write/explain:
+    post:
+      tags:
+      - Catalog
+      operationId: explainTableWriteRoute
+      summary: Explain table-write route selection WITHOUT executing.
+      description: |
+        Runs the DML write planner in explain-only mode: resolves the
+        target (and source) tables, plans the copy/write, and returns
+        the full route decision — selected backend + access method,
+        write lane (+ rejected lanes with reasons), candidate/rejected
+        paths, estimated cost and data movement, required guards, and
+        the write intent summary. Nothing is written.
+        Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+        Extractor rejections (malformed JSON body, duplicate query
+        params) bypass the JSON error envelope and return axum's
+        plain-text 400/415/422 bodies — the typed envelope below covers
+        handler-emitted errors only.
+        The optional `X-Tenant-ID` header is not consulted — tenant
+        context, if any, rides the body's `tenant_id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TableWriteExplainRequest'
+      responses:
+        '200':
+          description: The route explanation (no write executed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableWriteRouteExplanation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
 components:
   schemas:
     ApplyModelRegistryMutationRequest:
@@ -6872,6 +6959,481 @@ components:
           type: string
         code:
           type: integer
+    CatalogIntrospectionResult:
+      type: object
+      required:
+      - columns
+      - column_types
+      - rows
+      description: |
+        Table-shaped catalog metadata (the projection pgwire/SQL clients
+        see). Every cell value is a string.
+      properties:
+        columns:
+          type: array
+          items:
+            type: string
+        column_types:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+    TableWriteExplainRequest:
+      type: object
+      required:
+      - target_table
+      description: |
+        Body for `POST /api/v2/catalog/table-write/explain`. Provide
+        EITHER `source_table` OR `source_sql` — both, or neither, is a
+        400. `write_mode` (default `append`) accepts, case-insensitive:
+        append | insert | insert_only | insert-only | upsert | overwrite
+        | insert_overwrite | insert-overwrite | overwrite_table |
+        overwrite-table | merge. `distribution` (default `auto`) accepts:
+        auto | local | local_only | local-only | pseudo |
+        pseudo_distributed | pseudo-distributed | distributed. Upsert/
+        merge imply upsert conflict policy; everything else errors on
+        conflict.
+      properties:
+        target_table:
+          type: string
+          description: Dotted name (`[namespace.]…table`); last segment is the table.
+        source_table:
+          type:
+          - string
+          - 'null'
+        source_sql:
+          type:
+          - string
+          - 'null'
+        write_mode:
+          type:
+          - string
+          - 'null'
+        distribution:
+          type:
+          - string
+          - 'null'
+        target_columns:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+        tenant_id:
+          type:
+          - string
+          - 'null'
+        actor:
+          type:
+          - string
+          - 'null'
+        idempotency_key:
+          type:
+          - string
+          - 'null'
+        row_count_hint:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        estimated_bytes:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        requires_row_level_semantics:
+          type:
+          - boolean
+          - 'null'
+        batch_local_constraints_sufficient:
+          type:
+          - boolean
+          - 'null'
+    TableWriteRouteExplanation:
+      type: object
+      required:
+      - target_table
+      - source
+      - write_mode
+      - distribution
+      - write_intent
+      - write_lane
+      - write_lane_reason
+      - write_lane_required_guards
+      - rejected_write_lanes
+      - selected_backend
+      - selected_access_method
+      - estimated_cost
+      - data_movement
+      - required_guards
+      - route_metadata
+      - candidate_paths
+      - rejected_paths
+      description: |
+        The full DML write-planner route decision (explain-only; nothing
+        was written). `write_mode`/`distribution` echo the resolved
+        canonical enum names (PascalCase, e.g. `Append`,
+        `PseudoDistributed`). `execution_*` fields appear only for
+        EXPLAIN ANALYZE (never set by this REST explain path).
+      properties:
+        target_table:
+          type: string
+        source:
+          type: string
+        write_mode:
+          type: string
+        distribution:
+          type: string
+        write_intent:
+          $ref: '#/components/schemas/TableWriteIntentExplanation'
+        write_lane:
+          type: string
+        write_lane_reason:
+          type: string
+        write_lane_required_guards:
+          type: array
+          items:
+            type: string
+        rejected_write_lanes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableWriteRejectedLaneExplanation'
+        selected_backend:
+          type: string
+        selected_access_method:
+          type: string
+        estimated_cost:
+          $ref: '#/components/schemas/TableWriteCostExplanation'
+        data_movement:
+          $ref: '#/components/schemas/TableWriteDataMovementExplanation'
+        required_guards:
+          type: array
+          items:
+            type: string
+        route_metadata:
+          $ref: '#/components/schemas/TableWriteRouteMetadataExplanation'
+        candidate_paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableWriteCandidateExplanation'
+        rejected_paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableWriteRejectedPathExplanation'
+        execution_elapsed_us:
+          type: integer
+          format: uint64
+        execution_rows_written:
+          type: integer
+          format: uint64
+    TableWriteIntentExplanation:
+      type: object
+      required:
+      - target_table
+      - operation_kind
+      - durability
+      - isolation
+      - projection_freshness
+      - requires_row_level_semantics
+      - batch_local_constraints_sufficient
+      properties:
+        target_table:
+          type: string
+        operation_kind:
+          type: string
+        durability:
+          type: string
+        isolation:
+          type: string
+        projection_freshness:
+          type: string
+        tenant_id:
+          type:
+          - string
+          - 'null'
+        actor:
+          type:
+          - string
+          - 'null'
+        idempotency_key:
+          type:
+          - string
+          - 'null'
+        catalog_schema_version:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        row_count_hint:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        estimated_bytes:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        requires_row_level_semantics:
+          type: boolean
+        batch_local_constraints_sufficient:
+          type: boolean
+    TableWriteRejectedLaneExplanation:
+      type: object
+      required:
+      - lane
+      - reason
+      properties:
+        lane:
+          type: string
+        reason:
+          type: string
+    TableWriteCostExplanation:
+      type: object
+      required:
+      - relative_cost
+      - reason
+      properties:
+        rows:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        bytes:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        relative_cost:
+          type: number
+          description: Relative cost (unitless planner estimate).
+        reason:
+          type: string
+    TableWriteDataMovementExplanation:
+      type: object
+      required:
+      - estimate_source
+      - stats_freshness
+      properties:
+        source_rows:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        source_bytes:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        target_rows_before_write:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        target_bytes_before_write:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        estimated_read_bytes:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        estimated_write_bytes:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        estimated_rewrite_bytes:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        estimate_source:
+          type: string
+        source_last_analyzed_ms:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        target_last_analyzed_ms:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        source_stats_age_ms:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        target_stats_age_ms:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        freshness_sla_ms:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        stats_freshness:
+          type: string
+    TableWriteRouteMetadataExplanation:
+      type: object
+      required:
+      - authority_mode
+      - workload_profile
+      - storage_specialization
+      - projection_metadata
+      - policy_boundary
+      - constraint_enforcement
+      - constraint_gaps
+      properties:
+        authority_mode:
+          type: string
+        workload_profile:
+          type: string
+        storage_specialization:
+          type: string
+        primary_format:
+          type:
+          - string
+          - 'null'
+        preferred_compute_route:
+          type:
+          - string
+          - 'null'
+        partitioning:
+          type:
+          - string
+          - 'null'
+        isolation_profile:
+          type:
+          - string
+          - 'null'
+        freshness_sla:
+          type:
+          - string
+          - 'null'
+        projection_freshness_state:
+          type:
+          - string
+          - 'null'
+        projection_metadata:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectionRouteMetadataExplanation'
+        policy_boundary:
+          type: string
+        constraint_enforcement:
+          type: string
+        constraint_gaps:
+          type: array
+          items:
+            type: string
+    ProjectionRouteMetadataExplanation:
+      type: object
+      required:
+      - name
+      - kind
+      - physical_format
+      - rebuild_source
+      - freshness
+      - freshness_state
+      - rebuildable
+      - lossy
+      - support_status
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+        physical_format:
+          type: string
+        rebuild_source:
+          type: string
+        freshness:
+          type: string
+        freshness_state:
+          type: string
+        max_lag_ms:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        source_range:
+          type:
+          - string
+          - 'null'
+        last_included_position:
+          type:
+          - string
+          - 'null'
+        rebuildable:
+          type: boolean
+        invalidation_policy:
+          type:
+          - string
+          - 'null'
+        policy_boundary:
+          type:
+          - string
+          - 'null'
+        lossy:
+          type: boolean
+        support_status:
+          type: string
+        benchmark_gate:
+          type:
+          - string
+          - 'null'
+    TableWriteCandidateExplanation:
+      type: object
+      required:
+      - backend
+      - access_method
+      - estimated_cost
+      - required_guards
+      - pushdown
+      properties:
+        backend:
+          type: string
+        access_method:
+          type: string
+        estimated_cost:
+          $ref: '#/components/schemas/TableWriteCostExplanation'
+        required_guards:
+          type: array
+          items:
+            type: string
+        pushdown:
+          type: array
+          items:
+            type: string
+    TableWriteRejectedPathExplanation:
+      type: object
+      required:
+      - backend
+      - access_method
+      - reason
+      - required_guards
+      properties:
+        backend:
+          type: string
+        access_method:
+          type: string
+        reason:
+          type: string
+        required_guards:
+          type: array
+          items:
+            type: string
   securitySchemes:
     bearerAuth:
       type: http
@@ -6966,6 +7528,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/PrimaryPodOperatorErrorResponse'
+    InternalError:
+      description: Internal server error (canonical error envelope).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
 tags:
 - name: Collections
   description: Collection lifecycle.

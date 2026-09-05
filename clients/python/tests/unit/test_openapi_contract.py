@@ -230,6 +230,145 @@ def test_collections_admin_surface_has_the_complete_operation_set(openapi_spec):
     ]
 
 
+def test_catalog_routing_surface_has_the_complete_operation_set(openapi_spec):
+    """TD-SPECRAT-1 wave 5: catalog table-routing + table-write explain."""
+    catalog_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/catalog/")
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in catalog_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(catalog_paths) == 2
+    assert actual_operations == {"getCatalogTableRouting", "explainTableWriteRoute"}
+
+    # The explain request carries the source XOR rule and the alias
+    # vocabularies as strings (not enums) — the required/optional split
+    # must match the Rust handler exactly.
+    schemas = openapi_spec["components"]["schemas"]
+    explain = schemas["TableWriteExplainRequest"]
+    assert explain["required"] == ["target_table"]
+    for optional_field in (
+        "source_table",
+        "source_sql",
+        "write_mode",
+        "distribution",
+        "target_columns",
+        "tenant_id",
+        "actor",
+        "idempotency_key",
+        "row_count_hint",
+        "estimated_bytes",
+        "requires_row_level_semantics",
+        "batch_local_constraints_sufficient",
+    ):
+        assert optional_field in explain["properties"], optional_field
+    # The introspection result is table-shaped, all strings.
+    intro = schemas["CatalogIntrospectionResult"]
+    assert intro["required"] == ["columns", "column_types", "rows"]
+
+    # Response property sets are pinned EXACTLY — the round-1 review
+    # caught 7 dropped fields that every gate was blind to (SDK models
+    # silently discarded response fields the server always emits).
+    expected_properties = {
+        "TableWriteRouteExplanation": {
+            "target_table",
+            "source",
+            "write_mode",
+            "distribution",
+            "write_intent",
+            "write_lane",
+            "write_lane_reason",
+            "write_lane_required_guards",
+            "rejected_write_lanes",
+            "selected_backend",
+            "selected_access_method",
+            "estimated_cost",
+            "data_movement",
+            "required_guards",
+            "route_metadata",
+            "candidate_paths",
+            "rejected_paths",
+            "execution_elapsed_us",
+            "execution_rows_written",
+        },
+        "TableWriteIntentExplanation": {
+            "target_table",
+            "operation_kind",
+            "durability",
+            "isolation",
+            "projection_freshness",
+            "tenant_id",
+            "actor",
+            "idempotency_key",
+            "catalog_schema_version",
+            "row_count_hint",
+            "estimated_bytes",
+            "requires_row_level_semantics",
+            "batch_local_constraints_sufficient",
+        },
+        "TableWriteDataMovementExplanation": {
+            "source_rows",
+            "source_bytes",
+            "target_rows_before_write",
+            "target_bytes_before_write",
+            "estimated_read_bytes",
+            "estimated_write_bytes",
+            "estimated_rewrite_bytes",
+            "estimate_source",
+            "source_last_analyzed_ms",
+            "target_last_analyzed_ms",
+            "source_stats_age_ms",
+            "target_stats_age_ms",
+            "freshness_sla_ms",
+            "stats_freshness",
+        },
+        "TableWriteRouteMetadataExplanation": {
+            "authority_mode",
+            "workload_profile",
+            "storage_specialization",
+            "primary_format",
+            "preferred_compute_route",
+            "partitioning",
+            "isolation_profile",
+            "freshness_sla",
+            "projection_freshness_state",
+            "projection_metadata",
+            "policy_boundary",
+            "constraint_enforcement",
+            "constraint_gaps",
+        },
+        "ProjectionRouteMetadataExplanation": {
+            "name",
+            "kind",
+            "physical_format",
+            "rebuild_source",
+            "freshness",
+            "freshness_state",
+            "max_lag_ms",
+            "source_range",
+            "last_included_position",
+            "rebuildable",
+            "invalidation_policy",
+            "policy_boundary",
+            "lossy",
+            "support_status",
+            "benchmark_gate",
+        },
+    }
+    for schema_name, expected in expected_properties.items():
+        actual = set(schemas[schema_name]["properties"])
+        assert actual == expected, (
+            f"{schema_name} property set drifted: "
+            f"missing={expected - actual} extra={actual - expected}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Capturing transport
 # ---------------------------------------------------------------------------
