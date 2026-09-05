@@ -183,9 +183,12 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
         let node_id = Self::entity_node_id(&collection, &entity_id);
         let mut node_properties = HashMap::new();
         for (k, v) in &entity.flexible_metadata {
-            if let Some(pv) = typed_value_to_property_value(v) {
-                node_properties.insert(k.clone(), pv);
-            }
+            let pv = typed_value_to_property_value(v).map_err(|reason| {
+                Status::invalid_argument(format!(
+                    "upsert_entity: invalid flexible_metadata[{k}]: {reason}"
+                ))
+            })?;
+            node_properties.insert(k.clone(), pv);
         }
         node_properties.insert("_entity_type".to_string(), str_property("entity"));
         node_properties.insert("_collection_id".to_string(), str_property(&collection));
@@ -631,10 +634,8 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
 fn node_to_entity(node: &Node, collection: &str) -> pv2::Entity {
     let mut flexible_metadata = HashMap::new();
     for (k, v) in &node.properties {
-        if !k.starts_with('_')
-            && let Some(tv) = property_value_to_typed_value(v)
-        {
-            flexible_metadata.insert(k.clone(), tv);
+        if !k.starts_with('_') {
+            flexible_metadata.insert(k.clone(), property_value_to_typed_value(v));
         }
     }
 
@@ -696,83 +697,18 @@ fn entity_op_to_graph_op(entity_op: i32) -> i32 {
 }
 
 /// Convert v2 `TypedValue` to graph `PropertyValue`.
-fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> {
-    use pv2::typed_value::Value;
-
-    let value = match &tv.value {
-        None => return None,
-        Some(Value::TextValue(s)) => Some(GraphValue::StringValue(s.clone())),
-        Some(Value::IntegerValue(i)) => Some(GraphValue::IntValue(*i)),
-        Some(Value::FloatValue(f)) => Some(GraphValue::DoubleValue(*f)),
-        Some(Value::BooleanValue(b)) => Some(GraphValue::BoolValue(*b)),
-        Some(Value::TimestampValue(t)) => {
-            // Graph has no native timestamp; store as string for round-trip.
-            Some(GraphValue::StringValue(t.to_string()))
-        }
-        Some(Value::UuidValue(u)) | Some(Value::BinaryValue(u)) => {
-            Some(GraphValue::BytesValue(u.clone()))
-        }
-        Some(Value::IsNull(_)) => return None,
-        // Round 11: JSON(B) as canonical JSON text — the wildcard silently
-        // dropped the property at this sibling of the adjacency seam the
-        // round-8 fix closed.
-        Some(Value::JsonValue(json)) => {
-            // Round 17: mirror the sibling services (document/record route
-            // TypedValue through typed_value_to_proxima, which REJECTS
-            // malformed JSON). Parse strictly: a valid JSON document becomes
-            // its canonical text; malformed input is rejected (no silent
-            // raw-string spellings that differ per service).
-            match serde_json::from_str::<serde_json::Value>(json) {
-                Ok(parsed) => match parsed {
-                    serde_json::Value::Null => None,
-                    serde_json::Value::String(inner) => Some(GraphValue::StringValue(inner)),
-                    other => Some(GraphValue::StringValue(
-                        crate::storage::entity_store::graph_schema::canonical_json_string(&other),
-                    )),
-                },
-                // Round 19: malformed JSON REJECTS the whole value
-                // (return None from the fn — the round-18 arm only nulled
-                // the inner Option, which the tail re-wrapped into a present
-                // value-less property, making the fix inert).
-                Err(_) => return None,
-            }
-        }
-        _ => return None, // Arrays / maps are not supported as scalar node props.
-    };
-
-    Some(PropertyValue { value })
+fn typed_value_to_property_value(
+    tv: &pv2::TypedValue,
+) -> std::result::Result<PropertyValue, String> {
+    let canonical = proximadb_records::proto_v2::typed_value_to_proxima(tv)
+        .map_err(|error| error.to_string())?;
+    Ok(crate::graph::adjacency_projection::proxima_value_to_property_value(&canonical))
 }
 
 /// Convert graph `PropertyValue` to v2 `TypedValue`.
-fn property_value_to_typed_value(pv: &PropertyValue) -> Option<pv2::TypedValue> {
-    use pv2::typed_value::Value;
-
-    let value = match &pv.value {
-        None => return None,
-        Some(GraphValue::StringValue(s)) => Some(Value::TextValue(s.clone())),
-        Some(GraphValue::IntValue(i)) => Some(Value::IntegerValue(*i)),
-        Some(GraphValue::DoubleValue(f)) => Some(Value::FloatValue(*f)),
-        Some(GraphValue::BoolValue(b)) => Some(Value::BooleanValue(*b)),
-        Some(GraphValue::BytesValue(b)) => {
-            // Heuristic: a 16-byte blob is a UUID, anything else binary.
-            if b.len() == 16 {
-                Some(Value::UuidValue(b.clone()))
-            } else {
-                Some(Value::BinaryValue(b.clone()))
-            }
-        }
-        Some(GraphValue::VectorValue(v)) => {
-            // Lossy: store the first float only as a scalar marker. Vector-typed
-            // node properties are uncommon; full vector data lives in embeddings.
-            v.first().map(|f| Value::FloatValue(*f as f64))
-        }
-        _ => return None, // Array / Object values not surfaced as scalar metadata.
-    };
-
-    Some(pv2::TypedValue {
-        declared_type: 0,
-        value,
-    })
+fn property_value_to_typed_value(pv: &PropertyValue) -> pv2::TypedValue {
+    let canonical = crate::graph::adjacency_projection::property_value_to_proxima(pv);
+    proximadb_records::proto_v2::proxima_value_to_typed_value(&canonical)
 }
 
 /// Convert a v2 search `FilterClause` value to a graph `PropertyValue`.
@@ -803,12 +739,50 @@ mod tests {
         };
 
         let pv = typed_value_to_property_value(&tv).unwrap();
-        let back = property_value_to_typed_value(&pv).unwrap();
+        let back = property_value_to_typed_value(&pv);
 
         match back.value {
             Some(Value::TextValue(s)) => assert_eq!(s, "test"),
             other => panic!("expected TextValue, got {other:?}"),
         }
+
+        let structured = ProximaValue::Map(HashMap::from([(
+            "items".to_string(),
+            ProximaValue::Array(vec![ProximaValue::Int64(7), ProximaValue::Null]),
+        )]));
+        let typed = proximadb_records::proto_v2::proxima_value_to_typed_value(&structured);
+        let property = typed_value_to_property_value(&typed).unwrap();
+        let round_tripped = property_value_to_typed_value(&property);
+        let round_tripped =
+            proximadb_records::proto_v2::typed_value_to_proxima(&round_tripped).unwrap();
+        assert_eq!(
+            proximadb_records::conversions::proxima_to_json(&round_tripped),
+            proximadb_records::conversions::proxima_to_json(&structured),
+            "v2 structured metadata and null children survive the graph boundary"
+        );
+    }
+
+    #[test]
+    fn json_null_property_is_parsed_and_invalid_json_is_rejected() {
+        use pv2::typed_value::Value;
+
+        let null = pv2::TypedValue {
+            declared_type: 0,
+            value: Some(Value::JsonValue(" \n null \t".to_string())),
+        };
+        assert_eq!(
+            typed_value_to_property_value(&null),
+            Ok(PropertyValue { value: None })
+        );
+
+        let invalid = pv2::TypedValue {
+            declared_type: 0,
+            value: Some(Value::JsonValue("not-json".to_string())),
+        };
+        assert!(
+            typed_value_to_property_value(&invalid).is_err(),
+            "malformed v2 JSON must reject the request"
+        );
     }
 
     #[test]

@@ -164,7 +164,7 @@ fn sql_value_to_json(sql: &SqlValue) -> serde_json::Value {
 /// metadata path shares the canonical operator semantics (the seam compares on
 /// `serde_json::Value`). Numbers stay numeric (so `compare_json_numbers` keeps
 /// integer precision); bytes become a JSON array of byte values.
-pub fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
+fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
     match value {
         SqlVal::StringValue(s) => serde_json::Value::String(s.clone()),
         SqlVal::NumberValue(n) => serde_json::Number::from_f64(*n)

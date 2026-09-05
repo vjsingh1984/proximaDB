@@ -500,15 +500,19 @@ addressed in the same PR:**
   depth-2 rule via a NullValue sentinel — `a.b = null` and
   `a.b IS NULL` agree, and the triple-nested child special-case
   collapsed to the same sentinel.
-* graph_schema's Object/Array arms lower canonically via the shared
-  `sql_val_to_json` (serde_json::to_string on the prost struct emitted
-  the proto serde ENVELOPE — `{"fields":{…}}` — unmatchable by the
-  exact-string entity filter and divergent from the JSONB arm).
-* The v2 seam's null detection is parse-based (" null" is valid JSON
-  text and was stored as a string property).
-* The legacy vector-search executor no longer collapses nulls/bytes to
-  String("") — nulls stay null, bytes stay binary, objects lower
-  canonically.
+* `graph_schema` lowers its legacy `SqlValue` compatibility input to
+  `ProximaValue` first, then projects structured values as natural JSON
+  text. Directly serializing the prost wrapper emitted
+  `{"fields":{…}}`, which was unmatchable by the exact-string entity
+  filter. JSON null remains a present property rather than being skipped.
+* The v2 entity seam delegates `TypedValue -> ProximaValue ->
+  PropertyValue`, preserving arrays/maps/null and rejecting malformed JSON
+  before graph mutation. The reverse path uses the same canonical adapters
+  instead of dropping null/structures or truncating vectors to one float.
+* The legacy vector-search executor now delegates its entire `SqlValue ->
+  ProximaValue` boundary conversion. Arrays no longer fall through to
+  `String("")`, object children retain nulls, and bytes/JSONB keep their
+  canonical types.
 * HELIX/SWIFT extraction keeps unset-oneof keys as JSON null instead of
   dropping them (per-seam null accounting).
 * The last two hand-rolled root-crate REST converters (canonical

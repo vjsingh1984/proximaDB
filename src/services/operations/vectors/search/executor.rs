@@ -125,7 +125,10 @@ mod tests {
 
     #[test]
     fn test_proto_results_to_vector_records() {
-        use crate::proto::proximadb_v1::{SearchResult as ProtoSearchResult, SearchVectorRecord};
+        use crate::proto::proximadb_v1::{
+            SearchResult as ProtoSearchResult, SearchVectorRecord, SqlArray, SqlObject, SqlValue,
+            sql_value,
+        };
 
         let proto_result = ProtoSearchResult {
             collection_id: Some("test".to_string()),
@@ -134,7 +137,30 @@ mod tests {
                 id: "vec1".to_string(),
                 score: 0.95,
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: HashMap::new(),
+                metadata: HashMap::from([
+                    (
+                        "tags".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::ArrayValue(SqlArray {
+                                values: vec![SqlValue {
+                                    value: Some(sql_value::Value::StringValue("red".to_string())),
+                                }],
+                            })),
+                        },
+                    ),
+                    (
+                        "profile".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::ObjectValue(SqlObject {
+                                fields: HashMap::from([(
+                                    "deleted".to_string(),
+                                    SqlValue { value: None },
+                                )]),
+                            })),
+                        },
+                    ),
+                    ("null_value".to_string(), SqlValue { value: None }),
+                ]),
                 version: None,
                 similarity: None,
                 timestamp: None,
@@ -152,5 +178,23 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].oid, "vec1");
         assert_eq!(records[0].origin, Some("search_result".to_string()));
+        assert_eq!(
+            records[0].props.get("tags"),
+            Some(&proximadb_records::ProximaTreeNode::Value(
+                ProximaValue::Array(vec![ProximaValue::String("red".to_string())])
+            ))
+        );
+        assert_eq!(
+            records[0].props.get("profile"),
+            Some(&proximadb_records::ProximaTreeNode::Value(
+                ProximaValue::Map(HashMap::from([("deleted".to_string(), ProximaValue::Null)]))
+            ))
+        );
+        assert_eq!(
+            records[0].props.get("null_value"),
+            Some(&proximadb_records::ProximaTreeNode::Value(
+                ProximaValue::Null
+            ))
+        );
     }
 }
