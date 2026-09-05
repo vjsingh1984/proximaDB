@@ -393,7 +393,13 @@ fn proxima_value_to_property_value(value: &ProximaValue) -> PropertyValue {
         // Round 8: JSON(B) maps to canonical JSON text — the wildcard silently
         // dropped it at this live projection seam (the round-7 fix landed in
         // the dead sql_value_to_property_value twin).
-        ProximaValue::Json(v) | ProximaValue::Jsonb(v) => Some(Value::StringValue(v.to_string())),
+        ProximaValue::Json(v) | ProximaValue::Jsonb(v) => match v {
+            // A JSON null stays the property model's null form — rendering it
+            // as the string "null" would flip null-equality to string
+            // equality at graph filters (round 12).
+            serde_json::Value::Null => None,
+            other => Some(Value::StringValue(other.to_string())),
+        },
         _ => None,
     };
     PropertyValue { value: inner }

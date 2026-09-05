@@ -65,10 +65,7 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
                     Err(_) => return ProximaValue::Binary(b.clone()),
                 }
             }
-            match ProximaValue::from_jsonb_slice(b) {
-                Ok(v) => ProximaValue::Jsonb(v),
-                Err(_) => ProximaValue::Binary(b.clone()),
-            }
+            ProximaValue::from_jsonb_or_binary(b)
         }
         // types.proto tag 9: JSONB by declaration — canonical decode-or-binary
         // via the shared helper.

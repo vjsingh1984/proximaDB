@@ -425,6 +425,30 @@ addressed in the same PR:**
   home (arrow_conversion) is unreachable from extracted crates; the
   foundation-level anchor (proximadb-records) is the consolidation target.
 
+**Round 12 (2026-09-05) — 8 findings: 6 fixed, 2 tracked/dispositioned:**
+
+* Correctness: the round-11 null fix was depth-inconsistent — a TOP-LEVEL
+  unset oneof (`a = null`) still resolved as absent and dropped rows while
+  the nested form matched. The fast path now maps an unset oneof to JSON
+  null at every depth; pinned by
+  `top_level_none_valued_field_resolves_to_json_null`.
+* The `.expect("checked")` in the traversal is gone (no-expect mandate; the
+  panic-policy guard scans only src/ so nothing machine-checked this
+  crate) — restructured as a plain match.
+* `obj_to_json` deleted — it duplicated `sql_val_to_json`'s ObjectValue arm
+  (including the round-11 null-children change, re-derived by hand); the
+  post-loop leaf lowers through the one shared function.
+* The records BytesValue tail delegates to `from_jsonb_or_binary` (was a
+  verbatim copy of the helper the adjacent arm already uses).
+* Graph seam: a JSON null document stays the property model's null form —
+  rendering it as the string "null" flipped null-equality to string
+  equality.
+* Tracked: (a) SqlValue-vs-ProximaTree object-literal equality divergence
+  (`a.b = {"c":1}` matches one evaluator, not the other) — pre-existing on
+  develop, needs a tree_get contract change in proximadb-records;
+  (b) the canonical-JSON-text-as-StringValue policy is hand-encoded at two
+  sibling graph seams — rides with the shared-converter consolidation.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,
