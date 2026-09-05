@@ -517,6 +517,37 @@ addressed in the same PR:**
 * Doc blocks disentangled (the payload-lowering contract sits on
   `sql_val_to_json` again).
 
+**Round 15 (2026-09-05) — 10 findings: 8 fixed, 1 pre-addressed, 1
+inherent:**
+
+* Null-LITERAL semantics restored: `!= null` had become a zero-rows trap
+  (the Mongo-style exclude-nulls idiom, live on the REST neq path) and
+  NOT IN with a null literal rejected everything. The central rule now
+  distinguishes a null literal (Equals/=null pinned; NotEquals/NotIn
+  exclude nulls; In false) from a null FIELD (no value comparison
+  matches).
+* NOT IN with a null ELEMENT in the list now denies (SQL UNKNOWN ⇒
+  deny) — including via the security walker's delegation.
+* The stale in-file converter tests (bytes int-array, NaN→0) updated to
+  the shared helper's rendering — the delegation would have gone red on
+  CI's unit lane (the #[cfg(test)] invisibility class again).
+* The executor's object/array arms delegate to the canonical converter
+  (the hand-rolled JSON round-trip dropped null children, re-typed
+  bytes, degraded floats; ArrayValue still hit the wildcard → "");
+  the owned-bytes clone dropped.
+* The v2 seam's unparseable-JSON fallback keeps the raw string verbatim
+  (was double-serialized — JSON quoting the filter can never match).
+* The dead outer NULL sentinel removed with an accurate comment (a null
+  HEAD is untraversable; `a.b` over `{"a":null}` resolves to nothing,
+  consistent with IS NULL).
+* Pre-addressed by the parallel session: the guard's surplus wire-name
+  key check (verified present and correctly keyed).
+* Inherent (documented): a JSONB-null flexible-metadata field becomes
+  an ABSENT v1-entity property (the v1 property map cannot express
+  present-null) while v2/adjacency store present nulls — the v1 entity
+  path's property map would need an Option<Value> shape change; tracked
+  with the typed-property consolidation.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

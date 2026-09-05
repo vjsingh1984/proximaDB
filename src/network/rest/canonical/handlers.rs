@@ -2947,7 +2947,8 @@ mod tests {
             value: Some(proximadb_v1::sql_value::Value::BytesValue(vec![0, 1, 255])),
         };
         let json = sql_value_to_json(&val);
-        assert_eq!(json, serde_json::json!([0, 1, 255]));
+        // Round 15: delegated to the shared converter — bytes render base64.
+        assert_eq!(json, serde_json::json!("AAH/"));
     }
 
     #[test]
@@ -3017,8 +3018,8 @@ mod tests {
             value: Some(proximadb_v1::sql_value::Value::NumberValue(f64::NAN)),
         };
         let json = sql_value_to_json(&val);
-        // NaN cannot be represented in JSON, falls back to 0
-        assert_eq!(json, serde_json::json!(0));
+        // Round 15: the shared converter renders non-finite floats as null.
+        assert_eq!(json, serde_json::json!(null));
     }
 
     // ============================================================

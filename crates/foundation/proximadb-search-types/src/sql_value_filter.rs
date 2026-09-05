@@ -93,12 +93,10 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
         // walker for the remainder. Only the final leaf is cloned.
         let (head, tail) = field.split_once('.')?;
         let mut segments = tail.split('.');
-        // Sentinel for a null HEAD (unset oneof at depth 1): NullValue is
-        // the wire null the rest of the file already lowers — a dotted path
-        // into it dead-ends in the wildcard below; as a leaf it lowers to
-        // JSON null (round 14: null behaved differently at depth 1 vs 2).
-        static NULL_SENTINEL: SqlVal = SqlVal::NullValue(0);
-        let mut current = metadata.get(head)?.value.as_ref().unwrap_or(&NULL_SENTINEL);
+        // A null HEAD (unset oneof at depth 1) is untraversable — no object
+        // behind it, so a dotted path dead-ends: `a.b` over {"a": null}
+        // resolves to nothing (consistent with its IS NULL answer).
+        let mut current = metadata.get(head)?.value.as_ref()?;
         for segment in segments.by_ref() {
             match current {
                 SqlVal::ObjectValue(obj) => match obj.fields.get(segment) {
@@ -374,12 +372,27 @@ pub fn compare_json_op(
     // the pinned JSON-consistent `field = null` (both sides null ⇒ true).
     // Subsumes the round-13 per-arm range guards (which missed Between) and
     // closes the !=/NOT-IN null admission.
-    let either_null = json_val.is_null() || value.is_null();
-    if either_null {
+    // A null LITERAL is only meaningful to Equals (= null), IS NULL, and
+    // IS NOT NULL. For NotEquals/NotIn it is the Mongo-style "exclude nulls"
+    // idiom (`!= null` admits non-null rows) — not an SQL three-valued trap.
+    // A null FIELD satisfies no value comparison (round 14).
+    if value.is_null() {
         return match operator {
             ComparisonOperator::IsNull => json_val.is_null(),
             ComparisonOperator::IsNotNull => !json_val.is_null(),
-            ComparisonOperator::Equals => json_val.is_null() && value.is_null(),
+            ComparisonOperator::Equals => json_val.is_null(),
+            ComparisonOperator::NotEquals => !json_val.is_null(),
+            ComparisonOperator::NotIn => true,
+            ComparisonOperator::In => false,
+            _ => false,
+        };
+    }
+    if json_val.is_null() {
+        return match operator {
+            ComparisonOperator::IsNull => true,
+            ComparisonOperator::IsNotNull => false,
+            // pinned JSON-consistent carve-out
+            ComparisonOperator::Equals => false,
             _ => false,
         };
     }
@@ -403,18 +416,30 @@ pub fn compare_json_op(
                 .as_array()
                 .is_some_and(|values| values.iter().any(|v| json_eq(json_val, v))),
         },
-        ComparisonOperator::NotIn => match json_val {
-            // Array-valued prop: pass when the prop set is
-            // disjoint from the query list.
-            serde_json::Value::Array(items) => value.as_array().is_none_or(|values| {
-                !items
-                    .iter()
-                    .any(|item| values.iter().any(|v| json_eq(item, v)))
-            }),
-            _ => value
+        ComparisonOperator::NotIn => {
+            // SQL: a null element in the list makes NOT IN UNKNOWN ⇒ deny
+            // (round 15; the security walker delegates here too).
+            let list_has_null = value
                 .as_array()
-                .is_none_or(|values| values.iter().all(|v| !json_eq(json_val, v))),
-        },
+                .is_some_and(|vs| vs.iter().any(|v| v.is_null()));
+            if list_has_null {
+                false
+            } else {
+                match json_val {
+                    // Array-valued prop: pass when the prop set is
+                    // disjoint from the query list.
+                    serde_json::Value::Array(items) => value.as_array().is_none_or(|values| {
+                        !items
+                            .iter()
+                            .any(|item| values.iter().any(|v| json_eq(item, v)))
+                    }),
+                    // Scalar prop: excluded when it equals any list element.
+                    _ => value
+                        .as_array()
+                        .is_none_or(|values| values.iter().all(|v| !json_eq(json_val, v))),
+                }
+            }
+        }
         ComparisonOperator::Contains => match json_val {
             // Array-valued prop: element membership
             // (e.g. `member_oids` contains `"u1"`).
@@ -892,8 +917,7 @@ mod tests {
 
         // The deliberate stricter carve-out: `!= null` is FALSE for every
         // field (either-null short-circuit) — IS NOT NULL is the operator
-        // that speaks about null. Pinned so a future refactor cannot
-        // silently revive `!= null` as a half-working IS NOT NULL.
+        // that speaks about null.
         metadata.insert("status".to_string(), SqlValue { value: None });
         let ne_null = FilterExpression::Comparison {
             field: "status".to_string(),
@@ -901,11 +925,15 @@ mod tests {
             value: json!(null),
         };
         assert!(!evaluate_filter(&ne_null, &metadata));
+        // Round 15 DELIBERATELY diverges from an earlier pin here: `!= null`
+        // is the Mongo-style exclude-nulls idiom (live on the REST neq path),
+        // and develop admitted non-null rows — zero rows was the regression
+        // the round-15 review flagged. Use IS NOT NULL for null-testing.
         metadata.insert(
             "status".to_string(),
             make_sql_value(SqlVal::StringValue("active".to_string())),
         );
-        assert!(!evaluate_filter(&ne_null, &metadata));
+        assert!(evaluate_filter(&ne_null, &metadata));
     }
 
     #[test]

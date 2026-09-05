@@ -1565,6 +1565,8 @@ impl Comparer {
                     }
                 }
             }
+            // Both tables key by WIRE NAME (built from the parsed arms), so
+            // .keys() iterates wire names — surplus/typo arms are caught here.
             for wire in as_table.keys().chain(from_table.keys()) {
                 if !dvalues.iter().any(|(w, _)| w == wire) {
                     self.record(

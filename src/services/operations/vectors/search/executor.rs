@@ -79,29 +79,19 @@ pub fn proto_results_to_vector_records(
                             }
                             None => ProximaTreeNode::Value(ProximaValue::Null),
                             Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                                ProximaTreeNode::Value(ProximaValue::Binary(b.clone()))
+                                ProximaTreeNode::Value(ProximaValue::Binary(b))
                             }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(obj)) => {
-                                let mut map = std::collections::HashMap::new();
-                                for (k, v) in &obj.fields {
-                                    if let Some(inner) = v.value.as_ref() {
-                                        map.insert(
-                                            k.clone(),
-                                            proximadb_search_types::sql_value_filter::sql_val_to_json(
-                                                inner,
-                                            ),
-                                        );
-                                    }
-                                }
-                                ProximaTreeNode::Value(ProximaValue::Map(
-                                    map.into_iter()
-                                        .map(|(k, v)| {
-                                            (k, proximadb_records::conversions::json_to_proxima(&v))
-                                        })
-                                        .collect(),
-                                ))
+                            // Round 15: objects and arrays lower via the
+                            // canonical converter (was a hand-rolled
+                            // JSON round-trip that dropped null children,
+                            // re-typed bytes, and degraded floats; arrays
+                            // hit the wildcard and became String("")).
+                            Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_))
+                            | Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                                ProximaTreeNode::Value(
+                                    proximadb_records::conversions::sql_value_to_proxima(&v),
+                                )
                             }
-                            _ => ProximaTreeNode::Value(ProximaValue::String(String::new())),
                         };
                         (k, node)
                     })

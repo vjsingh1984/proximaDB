@@ -719,14 +719,13 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
         Some(Value::JsonValue(json)) => {
             // Round 14: null detection is PARSE-based — raw text equality
             // misses non-canonical spellings (" null" is valid JSON).
-            let parsed: serde_json::Value = serde_json::from_str(json).unwrap_or(
-                // Not parseable JSON text: keep the raw string (observable,
-                // not dropped).
-                serde_json::Value::String(json.clone()),
-            );
-            match parsed {
-                serde_json::Value::Null => None,
-                other => Some(GraphValue::StringValue(other.to_string())),
+            match serde_json::from_str::<serde_json::Value>(json) {
+                Ok(serde_json::Value::Null) => None,
+                Ok(other) => Some(GraphValue::StringValue(other.to_string())),
+                // Not parseable JSON text: keep the raw string verbatim —
+                // wrapping it in Value::String and re-serializing would add
+                // JSON quoting the filter can never match (round 15).
+                Err(_) => Some(GraphValue::StringValue(json.clone())),
             }
         }
         _ => return None, // Arrays / maps are not supported as scalar node props.
