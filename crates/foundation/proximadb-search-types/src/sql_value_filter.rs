@@ -854,6 +854,61 @@ mod tests {
     }
 
     #[test]
+    fn null_valued_field_satisfies_no_not_equals_or_not_in() {
+        // Round 14's centralized guard: a null on either side makes every
+        // comparison false except IS NULL / IS NOT NULL and both-null `=`.
+        // Pins the !=/NOT-IN half the round-13 guards missed — a null field
+        // is not "different from" a literal.
+        let mut metadata = HashMap::new();
+        metadata.insert("status".to_string(), SqlValue { value: None });
+
+        let ne_literal = FilterExpression::Comparison {
+            field: "status".to_string(),
+            operator: ComparisonOperator::NotEquals,
+            value: json!("deleted"),
+        };
+        assert!(
+            !evaluate_filter(&ne_literal, &metadata),
+            "null != 'deleted' is UNKNOWN, not TRUE — the row must not match"
+        );
+
+        let not_in = FilterExpression::Comparison {
+            field: "status".to_string(),
+            operator: ComparisonOperator::NotIn,
+            value: json!(["archived", "deleted"]),
+        };
+        assert!(
+            !evaluate_filter(&not_in, &metadata),
+            "null NOT IN (...) is UNKNOWN, not TRUE"
+        );
+
+        // Positive control: a non-null field keeps matching both forms.
+        metadata.insert(
+            "status".to_string(),
+            make_sql_value(SqlVal::StringValue("active".to_string())),
+        );
+        assert!(evaluate_filter(&ne_literal, &metadata));
+        assert!(evaluate_filter(&not_in, &metadata));
+
+        // The deliberate stricter carve-out: `!= null` is FALSE for every
+        // field (either-null short-circuit) — IS NOT NULL is the operator
+        // that speaks about null. Pinned so a future refactor cannot
+        // silently revive `!= null` as a half-working IS NOT NULL.
+        metadata.insert("status".to_string(), SqlValue { value: None });
+        let ne_null = FilterExpression::Comparison {
+            field: "status".to_string(),
+            operator: ComparisonOperator::NotEquals,
+            value: json!(null),
+        };
+        assert!(!evaluate_filter(&ne_null, &metadata));
+        metadata.insert(
+            "status".to_string(),
+            make_sql_value(SqlVal::StringValue("active".to_string())),
+        );
+        assert!(!evaluate_filter(&ne_null, &metadata));
+    }
+
+    #[test]
     fn top_level_none_valued_field_resolves_to_json_null() {
         // Round 12: the same wire form of null at the TOP level — `a = null`
         // must match, not drop the row.
