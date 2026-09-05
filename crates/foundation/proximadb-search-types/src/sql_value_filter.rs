@@ -505,23 +505,24 @@ where
         FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter_resolved(e, resolve)),
         FilterExpression::Not(e) => {
             // SQL 3VL: NOT(UNKNOWN) = UNKNOWN ⇒ deny. The two-valued flip
-            // would ADMIT null-field rows whose inner comparison denied
-            // (round 18 regression vs develop). A direct Comparison child
-            // resolving to null with a value operator is exactly UNKNOWN;
-            // deeper nestings fall through to the flip (double negation
-            // cancels; documented limitation).
-            if let FilterExpression::Comparison {
-                field, operator, ..
-            } = &**e
+            // would ADMIT null/absent-field rows whose inner comparison
+            // denied (rounds 18-19 vs develop). Nullness is probed only when
+            // the inner comparison DENIED (single resolution in the common
+            // match case — the eager probe double-resolved every record).
+            let inner = evaluate_filter_resolved(e, resolve);
+            if !inner
+                && let FilterExpression::Comparison {
+                    field, operator, ..
+                } = &**e
                 && !matches!(
                     operator,
                     ComparisonOperator::IsNull | ComparisonOperator::IsNotNull
                 )
-                && resolve(field).is_some_and(|v| v.is_null())
+                && resolve(field).is_none_or(|v| v.is_null())
             {
                 false
             } else {
-                !evaluate_filter_resolved(e, resolve)
+                !inner
             }
         }
         FilterExpression::Comparison {
@@ -586,7 +587,24 @@ where
                 None => Ok(false),
             }
         }
-        FilterExpression::Not(e) => Ok(!evaluate_filter_resolved_strict(e, resolve)?),
+        FilterExpression::Not(e) => {
+            // Round 19: same SQL NOT(UNKNOWN)=deny rule as the permissive
+            // walker (round 18 fixed only that one — strict/legacy modes
+            // disagreed on null-field rows).
+            if let FilterExpression::Comparison {
+                field, operator, ..
+            } = &**e
+                && !matches!(
+                    operator,
+                    ComparisonOperator::IsNull | ComparisonOperator::IsNotNull
+                )
+                && resolve(field).is_none_or(|v| v.is_null())
+            {
+                Ok(false)
+            } else {
+                Ok(!evaluate_filter_resolved_strict(e, resolve)?)
+            }
+        }
         FilterExpression::Comparison {
             field,
             operator,
@@ -751,7 +769,23 @@ pub fn evaluate_filter_proxima_strict(
                 None => Ok(false),
             }
         }
-        FilterExpression::Not(e) => Ok(!evaluate_filter_proxima_strict(e, props)?),
+        FilterExpression::Not(e) => {
+            // Round 19: NOT(UNKNOWN)=deny — see the resolved-strict arm.
+            if let FilterExpression::Comparison {
+                field, operator, ..
+            } = &**e
+                && !matches!(
+                    operator,
+                    ComparisonOperator::IsNull | ComparisonOperator::IsNotNull
+                )
+                && proximadb_records::tree_get(props, field)
+                    .is_none_or(|pv| matches!(pv, ProximaValue::Null))
+            {
+                Ok(false)
+            } else {
+                Ok(!evaluate_filter_proxima_strict(e, props)?)
+            }
+        }
         FilterExpression::Comparison {
             field,
             operator,

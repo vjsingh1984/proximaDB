@@ -69,11 +69,15 @@ pub(crate) fn canonical_json_string(value: &serde_json::Value) -> String {
     sort_rec(value).to_string()
 }
 
-fn json_text_property(text: &str) -> Option<property_value::Value> {
-    if text == "null" {
-        None
-    } else {
-        Some(property_value::Value::StringValue(text.to_string()))
+/// JSON document → property value. A JSON null stays the property model's
+/// null form (matched on the PARSED value, not a serialized-text compare —
+/// round 19: the string compare silently depended on the renderer).
+fn json_text_property(json: &serde_json::Value) -> Option<property_value::Value> {
+    match json {
+        serde_json::Value::Null => None,
+        _ => Some(property_value::Value::StringValue(canonical_json_string(
+            json,
+        ))),
     }
 }
 
@@ -138,7 +142,7 @@ impl EntityNodeMapper {
                             // junk — drop the property instead (develop's
                             // behavior for corrupt input).
                             match proximadb_data_model::ProximaValue::from_jsonb_slice(bytes) {
-                                Ok(json) => json_text_property(&canonical_json_string(&json)),
+                                Ok(json) => json_text_property(&json),
                                 Err(_) => None,
                             }
                         }
@@ -153,7 +157,7 @@ impl EntityNodeMapper {
                             let json = crate::storage::formats::arrow_conversion::sql_value_to_json(
                                 sql_value,
                             );
-                            json_text_property(&canonical_json_string(&json))
+                            json_text_property(&json)
                         }
                         _ => None, // bytes and nulls stay blob-only
                     };

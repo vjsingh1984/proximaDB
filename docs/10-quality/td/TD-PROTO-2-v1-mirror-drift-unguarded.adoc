@@ -608,6 +608,32 @@ inherent:**
   write path.
 * Fixed: unreachable null-test arms' comment corrected; dead is_empty
   branches in helix/swift extraction dropped.
+
+**Round 19 (2026-09-05) — 10 findings: 6 fixed, 4 tracked:**
+
+* Fixed: NOT(UNKNOWN)=deny extended to BOTH strict evaluators (round 18
+  patched only the permissive one — strict/legacy filter modes returned
+  different result sets for the same filter+record) and to ABSENT
+  fields (is_none_or — present-null and absent are both "null" per the
+  file's own rule; they denied differently).
+* Fixed: the v2 malformed-JSON fix made effective (return None from the
+  fn — the round-18 arm only nulled the inner Option, which the fn tail
+  re-wrapped into exactly the present value-less property the comment
+  claimed eliminated).
+* Fixed: json_text_property matches the PARSED Value::Null (was a
+  serialized-text compare against "null" — renderer-dependent).
+* Fixed: the AXIS eventlog consumer lowers structured metadata via the
+  canonical JSON→ProximaValue mapping (the round-16 extraction contract
+  change had been silently re-lowered to Null — tags changed value
+  with no error).
+* Fixed: the Not null-probe resolves once (probe only when the inner
+  comparison denied — was double-resolution per record).
+* Tracked: JSON string-document spelling divergence between the v2
+  entity seam (unwrapped inner text) and adjacency/graph_schema
+  (quoted canonical text); the extraction twin blocks (helix/swift,
+  parity-edited three times); canonical_json_string's clone-per-write
+  (in-place sort_keys pending); the two unconsolidated dot-walkers
+  (auth oidc claim_at_path, plan_executor field_value).
 * Tracked: evaluate_filter_proxima_strict decides IS NULL on the raw
   ProximaValue (Jsonb(Null) answers false there, true elsewhere —
   pre-existing; needs null normalization at the records boundary);

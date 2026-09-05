@@ -730,12 +730,11 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
                         crate::storage::entity_store::graph_schema::canonical_json_string(&other),
                     )),
                 },
-                // Round 18: malformed JSON yields None (property SKIPPED —
-                // no present value-less property stored, which the round-17
-                // arm silently created). Full write-rejection parity with the
-                // sibling services' typed_value_to_proxima needs a Result
-                // signature threaded through upsert — tracked in TD-PROTO-2.
-                Err(_) => None,
+                // Round 19: malformed JSON REJECTS the whole value
+                // (return None from the fn — the round-18 arm only nulled
+                // the inner Option, which the tail re-wrapped into a present
+                // value-less property, making the fix inert).
+                Err(_) => return None,
             }
         }
         _ => return None, // Arrays / maps are not supported as scalar node props.
