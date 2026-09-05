@@ -13,50 +13,50 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="DeleteNodeResponse")
+T = TypeVar("T", bound="GraphResponseMetadata")
 
 
 @_attrs_define
-class DeleteNodeResponse:
+class GraphResponseMetadata:
     """
     Attributes:
-        success (bool | Unset):
-        id (str | Unset):
+        request_id (str | Unset):
+        execution_time_ms (int | Unset):
     """
 
-    success: bool | Unset = UNSET
-    id: str | Unset = UNSET
+    request_id: str | Unset = UNSET
+    execution_time_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        success = self.success
+        request_id = self.request_id
 
-        id = self.id
+        execution_time_ms = self.execution_time_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
-        if success is not UNSET:
-            field_dict["success"] = success
-        if id is not UNSET:
-            field_dict["id"] = id
+        if request_id is not UNSET:
+            field_dict["request_id"] = request_id
+        if execution_time_ms is not UNSET:
+            field_dict["execution_time_ms"] = execution_time_ms
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        success = d.pop("success", UNSET)
+        request_id = d.pop("request_id", UNSET)
 
-        id = d.pop("id", UNSET)
+        execution_time_ms = d.pop("execution_time_ms", UNSET)
 
-        delete_node_response = cls(
-            success=success,
-            id=id,
+        graph_response_metadata = cls(
+            request_id=request_id,
+            execution_time_ms=execution_time_ms,
         )
 
-        delete_node_response.additional_properties = d
-        return delete_node_response
+        graph_response_metadata.additional_properties = d
+        return graph_response_metadata
 
     @property
     def additional_keys(self) -> list[str]:

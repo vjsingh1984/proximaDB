@@ -6,73 +6,50 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-if TYPE_CHECKING:
-    from ..models.batch_nodes_response_data import BatchNodesResponseData
-
-
-T = TypeVar("T", bound="BatchNodesResponse")
+T = TypeVar("T", bound="GraphDdlData")
 
 
 @_attrs_define
-class BatchNodesResponse:
-    """Server returns a `GraphResponse<BatchResults<Node>>` envelope.
-
+class GraphDdlData:
+    """
     Attributes:
-        success (bool | Unset):
-        data (BatchNodesResponseData | Unset):
+        success (bool):
     """
 
-    success: bool | Unset = UNSET
-    data: BatchNodesResponseData | Unset = UNSET
+    success: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.batch_nodes_response_data import BatchNodesResponseData
-
         success = self.success
-
-        data: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.data, Unset):
-            data = self.data.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if success is not UNSET:
-            field_dict["success"] = success
-        if data is not UNSET:
-            field_dict["data"] = data
+        field_dict.update(
+            {
+                "success": success,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.batch_nodes_response_data import BatchNodesResponseData
-
         d = dict(src_dict)
-        success = d.pop("success", UNSET)
+        success = d.pop("success")
 
-        _data = d.pop("data", UNSET)
-        data: BatchNodesResponseData | Unset
-        if isinstance(_data, Unset):
-            data = UNSET
-        else:
-            data = BatchNodesResponseData.from_dict(_data)
-
-        batch_nodes_response = cls(
+        graph_ddl_data = cls(
             success=success,
-            data=data,
         )
 
-        batch_nodes_response.additional_properties = d
-        return batch_nodes_response
+        graph_ddl_data.additional_properties = d
+        return graph_ddl_data
 
     @property
     def additional_keys(self) -> list[str]:

@@ -13,70 +13,60 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-if TYPE_CHECKING:
-    from ..models.node_response import NodeResponse
-
-
-T = TypeVar("T", bound="BatchNodesResponseData")
+T = TypeVar("T", bound="GraphShortestPathData")
 
 
 @_attrs_define
-class BatchNodesResponseData:
+class GraphShortestPathData:
     """
     Attributes:
-        results (list[NodeResponse] | Unset):
-        count (int | Unset):
+        path (list[str]):
+        found (bool):
+        total_weight (float | Unset):
     """
 
-    results: list[NodeResponse] | Unset = UNSET
-    count: int | Unset = UNSET
+    path: list[str]
+    found: bool
+    total_weight: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.node_response import NodeResponse
+        path = self.path
 
-        results: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.results, Unset):
-            results = []
-            for results_item_data in self.results:
-                results_item = results_item_data.to_dict()
-                results.append(results_item)
+        found = self.found
 
-        count = self.count
+        total_weight = self.total_weight
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if results is not UNSET:
-            field_dict["results"] = results
-        if count is not UNSET:
-            field_dict["count"] = count
+        field_dict.update(
+            {
+                "path": path,
+                "found": found,
+            }
+        )
+        if total_weight is not UNSET:
+            field_dict["total_weight"] = total_weight
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.node_response import NodeResponse
-
         d = dict(src_dict)
-        _results = d.pop("results", UNSET)
-        results: list[NodeResponse] | Unset = UNSET
-        if _results is not UNSET:
-            results = []
-            for results_item_data in _results:
-                results_item = NodeResponse.from_dict(results_item_data)
+        path = cast(list[str], d.pop("path"))
 
-                results.append(results_item)
+        found = d.pop("found")
 
-        count = d.pop("count", UNSET)
+        total_weight = d.pop("total_weight", UNSET)
 
-        batch_nodes_response_data = cls(
-            results=results,
-            count=count,
+        graph_shortest_path_data = cls(
+            path=path,
+            found=found,
+            total_weight=total_weight,
         )
 
-        batch_nodes_response_data.additional_properties = d
-        return batch_nodes_response_data
+        graph_shortest_path_data.additional_properties = d
+        return graph_shortest_path_data
 
     @property
     def additional_keys(self) -> list[str]:

@@ -627,8 +627,37 @@ export interface paths {
         get: operations["getGraph"];
         put?: never;
         post?: never;
-        /** Delete a graph collection. */
+        /**
+         * Delete a graph collection.
+         * @description 204 on success (the handler's success body is not transmitted on
+         *     a 204). Not-found maps to 404 with the envelope error.
+         */
         delete: operations["deleteGraph"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update a graph collection's schema.
+         * @description The body carries the schema as free-form JSON (the handler
+         *     deserializes it into the port's GraphSchema). 200 returns the
+         *     updated collection (envelope; data = serialized collection);
+         *     invalid schema JSON maps to 400.
+         */
+        put: operations["updateGraphSchema"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -665,10 +694,35 @@ export interface paths {
         };
         /** Get a node by id. */
         get: operations["getNode"];
-        put?: never;
+        /**
+         * Replace a node.
+         * @description Full replacement: the body is the complete node input (its `id`
+         *     is overwritten by the path's `node_id`).
+         */
+        put: operations["updateNode"];
         post?: never;
         /** Delete a node by id. */
         delete: operations["deleteNode"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                node_id: components["parameters"]["NodeId"];
+            };
+            cookie?: never;
+        };
+        /** Get a node's neighbors. */
+        get: operations["getNodeNeighbors"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -693,6 +747,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/graphs/{graph_id}/edges/{edge_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                edge_id: components["parameters"]["EdgeId"];
+            };
+            cookie?: never;
+        };
+        /** Get an edge by id. */
+        get: operations["getEdge"];
+        /**
+         * Replace an edge.
+         * @description Full replacement: the body is the complete edge input (its `id`
+         *     is overwritten by the path's `edge_id`).
+         */
+        put: operations["updateEdge"];
+        post?: never;
+        /** Delete an edge by id. */
+        delete: operations["deleteEdge"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/graphs/{graph_id}/nodes/batch": {
         parameters: {
             query?: never;
@@ -706,8 +786,8 @@ export interface paths {
         put?: never;
         /**
          * Create multiple nodes in a single call.
-         * @description Batch counterpart to `createNode`. Use this on bulk-ingest paths
-         *     where individual round-trips would dominate latency.
+         * @description Per-item rejections ride `failed_count`/`errors[]` while
+         *     `results[]` carries what landed; the HTTP status stays 200.
          */
         post: operations["batchCreateNodes"];
         delete?: never;
@@ -729,7 +809,8 @@ export interface paths {
         put?: never;
         /**
          * Create multiple edges in a single call.
-         * @description Batch counterpart to `createEdge`.
+         * @description Per-item rejections ride `failed_count`/`errors[]` while
+         *     `results[]` carries what landed; the HTTP status stays 200.
          */
         post: operations["batchCreateEdges"];
         delete?: never;
@@ -752,6 +833,200 @@ export interface paths {
         /** Traverse a graph from a start node. */
         post: operations["traverseGraph"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/walk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * BFS walk from a start node.
+         * @description A traverse with the algorithm pinned to BFS (defaults:
+         *     max_depth 2, limit 100).
+         */
+        post: operations["walkGraph"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Single-step navigation (neighbors of one node).
+         * @description Returns the neighbors of `node_id` (optionally restricted to one
+         *     `edge_type`) in the traversal result shape.
+         */
+        post: operations["stepGraph"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/shortest-path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Shortest path between two nodes. */
+        post: operations["shortestPath"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute a graph query.
+         * @description Executes the query text through the port's JSON query path.
+         *     `language` (default `native`) and `timeout_ms` are accepted but
+         *     currently unused server-side.
+         */
+        post: operations["executeGraphQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/query/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query nodes by labels/properties.
+         * @description Paginated: `limit` (default 100) + `offset`, or a
+         *     `continuation_token` of the form `offset:<n>`.
+         */
+        post: operations["queryNodes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/query/edges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query edges by type/endpoints/properties.
+         * @description Paginated: `limit` (default 100) + `offset`, or a
+         *     `continuation_token` of the form `offset:<n>`. `edge_type`
+         *     defaults to the empty string (matches untyped edges).
+         */
+        post: operations["queryEdges"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        /** Get the graph's connected components. */
+        get: operations["getConnectedComponents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/cycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        /** Check whether the graph contains a cycle. */
+        get: operations["checkCycles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/constraints/unique": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a unique constraint on (label, property). */
+        post: operations["addUniqueConstraint"];
+        /** Remove a unique constraint on (label, property). */
+        delete: operations["removeUniqueConstraint"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2984,86 +3259,273 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        CreateGraphRequest: {
-            /** @description Unique identifier for the new graph collection. */
-            graph_id: string;
-            /** @description Optional human-readable name (defaults to graph_id). */
-            name?: string | null;
-            description?: string | null;
+        GraphErrorBody: {
+            /** @enum {string} */
+            code: "NOT_FOUND" | "ALREADY_EXISTS" | "INVALID_ARGUMENT" | "CONSTRAINT_VIOLATION" | "INTERNAL_ERROR" | "TIMEOUT" | "PERMISSION_DENIED";
+            message: string;
+            details?: unknown;
         };
         /**
-         * @description Server returns a `GraphResponse<T>` envelope around graph
-         *     collection metadata. The fields below are the common subset
-         *     SDKs rely on; extra server-side fields are passed through.
+         * @description The graph envelope in its error form — what every graph error
+         *     status actually carries on the wire ({success: false, error:
+         *     {code, message, details?}, metadata?}; `data` is absent.
+         */
+        GraphErrorResponse: {
+            success: boolean;
+            error: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphResponseMetadata: {
+            request_id?: string;
+            /** Format: uint64 */
+            execution_time_ms?: number;
+        };
+        GraphEmbedding: {
+            model_id: string;
+            model_version: string;
+            vector: number[];
+            /** Format: uint32 */
+            dimension: number;
+        };
+        CanonicalNode: {
+            id: string;
+            labels: string[];
+            properties: {
+                [key: string]: unknown;
+            };
+            embedding?: components["schemas"]["GraphEmbedding"];
+            created_at: string;
+            updated_at: string;
+        };
+        CanonicalEdge: {
+            id: string;
+            from_node_id: string;
+            to_node_id: string;
+            edge_type: string;
+            properties: {
+                [key: string]: unknown;
+            };
+            weight?: number;
+            created_at: string;
+            updated_at: string;
+        };
+        GraphNodeResponse: {
+            success: boolean;
+            data?: components["schemas"]["CanonicalNode"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphEdgeResponse: {
+            success: boolean;
+            data?: components["schemas"]["CanonicalEdge"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphNodeListResponse: {
+            success: boolean;
+            data?: components["schemas"]["CanonicalNode"][];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        /**
+         * @description Envelope around the serialized graph-collection object. The
+         *     payload is the port's collection record rendered as JSON — an
+         *     open object (the field set is the proto collection's, subject to
+         *     port evolution).
          */
         GraphCollectionResponse: {
-            graph_id?: string;
-            name?: string | null;
-            description?: string | null;
-            node_count?: number | null;
-            edge_count?: number | null;
-        } & {
-            [key: string]: unknown;
+            success: boolean;
+            data?: {
+                [key: string]: unknown;
+            };
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
         };
-        /**
-         * @description Server returns a `GraphResponse<Vec<...>>` envelope with `data`
-         *     containing the graph collections.
-         */
-        ListGraphsResponse: {
-            data?: components["schemas"]["GraphCollectionResponse"][];
-            success?: boolean;
-        } & {
-            [key: string]: unknown;
+        GraphCollectionListResponse: {
+            success: boolean;
+            data?: {
+                [key: string]: unknown;
+            }[];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
         };
-        /**
-         * @description 204 No Content on success with an empty `GraphResponse` envelope;
-         *     404 Not Found with an error envelope when the graph is missing.
-         */
-        DeleteGraphResponse: {
-            success?: boolean;
-        } & {
-            [key: string]: unknown;
+        GraphTraversalStats: {
+            /** Format: uint64 */
+            nodes_visited: number;
+            /** Format: uint64 */
+            edges_traversed: number;
+            /** Format: uint32 */
+            max_depth_reached: number;
+            /** Format: uint64 */
+            execution_time_ms?: number;
         };
-        /**
-         * @description Node payload nested inside `CreateNodeRequest.node`. Matches
-         *     `RestNodeInput` in proximadb-api's graph handler.
-         */
+        GraphTraversalData: {
+            nodes: components["schemas"]["CanonicalNode"][];
+            edges: components["schemas"]["CanonicalEdge"][];
+            paths?: string[][];
+            stats?: components["schemas"]["GraphTraversalStats"];
+        };
+        GraphTraversalResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphTraversalData"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphStats: {
+            /** Format: uint64 */
+            total_nodes: number;
+            /** Format: uint64 */
+            total_edges: number;
+            label_stats: unknown[];
+            edge_type_stats: unknown[];
+            /** Format: uint64 */
+            total_properties: number;
+            /** Format: uint64 */
+            memory_usage_bytes: number;
+            average_degree: number;
+            /** Format: uint32 */
+            max_degree: number;
+            /** Format: uint32 */
+            connected_components: number;
+        };
+        GraphStatsResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphStats"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphNodeBatchResults: {
+            /** Format: uint64 */
+            created_count: number;
+            /** Format: uint64 */
+            updated_count: number;
+            /** Format: uint64 */
+            failed_count: number;
+            results: components["schemas"]["CanonicalNode"][];
+            errors: unknown[];
+        };
+        GraphEdgeBatchResults: {
+            /** Format: uint64 */
+            created_count: number;
+            /** Format: uint64 */
+            updated_count: number;
+            /** Format: uint64 */
+            failed_count: number;
+            results: components["schemas"]["CanonicalEdge"][];
+            errors: unknown[];
+        };
+        GraphBatchNodesResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphNodeBatchResults"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphBatchEdgesResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphEdgeBatchResults"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphNodeQueryResults: {
+            items: components["schemas"]["CanonicalNode"][];
+            /** Format: uint64 */
+            total_count?: number;
+            has_more: boolean;
+            next_token?: string;
+        };
+        GraphEdgeQueryResults: {
+            items: components["schemas"]["CanonicalEdge"][];
+            /** Format: uint64 */
+            total_count?: number;
+            has_more: boolean;
+            next_token?: string;
+        };
+        GraphNodeQueryResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphNodeQueryResults"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphEdgeQueryResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphEdgeQueryResults"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphShortestPathData: {
+            path: string[];
+            total_weight?: number;
+            found: boolean;
+        };
+        GraphShortestPathResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphShortestPathData"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphQueryData: {
+            rows: unknown[];
+            /** Format: uint64 */
+            row_count: number;
+        };
+        GraphQueryResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphQueryData"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphComponentsData: {
+            components: string[][];
+        };
+        GraphComponentsResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphComponentsData"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphCyclesData: {
+            has_cycle: boolean;
+        };
+        GraphCyclesResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphCyclesData"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        GraphDdlData: {
+            success: boolean;
+        };
+        GraphDdlResponse: {
+            success: boolean;
+            data?: components["schemas"]["GraphDdlData"];
+            error?: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
+        CreateGraphRequest: {
+            graph_id: string;
+            name?: string;
+            description?: string;
+        };
+        UpdateGraphSchemaRequest: {
+            schema: {
+                [key: string]: unknown;
+            };
+        };
         NodeInput: {
             id: string;
             labels?: string[];
             properties?: {
                 [key: string]: unknown;
             };
-            embedding?: components["schemas"]["EmbeddingInput"];
+            embedding?: {
+                vector: number[];
+                version?: string;
+                model_id?: string;
+            };
         };
-        EmbeddingInput: {
-            vector: number[];
-            model_id?: string | null;
-            modality?: string | null;
-        };
-        /** @description Wrapped envelope: server expects `{"node": NodeInput}`. */
         CreateNodeRequest: {
             node: components["schemas"]["NodeInput"];
         };
-        NodeResponse: {
-            id: string;
-            labels?: string[] | null;
-            properties?: {
-                [key: string]: unknown;
-            } | null;
-        } & {
-            [key: string]: unknown;
-        };
-        DeleteNodeResponse: {
-            success?: boolean;
-            id?: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * @description Edge payload nested inside `CreateEdgeRequest.edge`. Matches
-         *     `RestEdgeInput` in proximadb-api's graph handler.
-         */
         EdgeInput: {
             id: string;
             from_node_id: string;
@@ -3072,86 +3534,113 @@ export interface components {
             properties?: {
                 [key: string]: unknown;
             };
-            /** Format: double */
-            weight?: number | null;
+            weight?: number;
         };
-        /** @description Wrapped envelope: server expects `{"edge": EdgeInput}`. */
         CreateEdgeRequest: {
             edge: components["schemas"]["EdgeInput"];
         };
-        EdgeResponse: {
-            id: string;
-            from_node_id?: string;
-            to_node_id?: string;
-            edge_type?: string | null;
-            properties?: {
-                [key: string]: unknown;
-            } | null;
-            /** Format: double */
-            weight?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * @description Flat shape (no wrapper). Matches `RestTraversalRequest` in
-         *     proximadb-api.
-         */
-        TraverseRequest: {
-            start_node_id: string;
-            /** @default 3 */
-            max_depth: number;
-            edge_types?: string[];
-            node_labels?: string[];
-            /** @description bfs | dfs | shortest_path */
-            algorithm?: string | null;
-            limit?: number | null;
-        };
-        TraverseResponse: {
-            nodes?: components["schemas"]["NodeResponse"][];
-            edges?: components["schemas"]["EdgeResponse"][];
-            paths?: string[][];
-        } & {
-            [key: string]: unknown;
-        };
-        GraphStatsResponse: {
-            node_count?: number;
-            edge_count?: number;
-            /** Format: double */
-            density?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description Body for `POST /api/v2/graphs/{id}/nodes/batch`. */
         BatchCreateNodesRequest: {
             nodes: components["schemas"]["NodeInput"][];
         };
-        /** @description Server returns a `GraphResponse<BatchResults<Node>>` envelope. */
-        BatchNodesResponse: {
-            success?: boolean;
-            data?: {
-                results?: components["schemas"]["NodeResponse"][];
-                count?: number;
-            } & {
-                [key: string]: unknown;
-            };
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description Body for `POST /api/v2/graphs/{id}/edges/batch`. */
         BatchCreateEdgesRequest: {
             edges: components["schemas"]["EdgeInput"][];
         };
-        /** @description Server returns a `GraphResponse<BatchResults<Edge>>` envelope. */
-        BatchEdgesResponse: {
-            success?: boolean;
-            data?: {
-                results?: components["schemas"]["EdgeResponse"][];
-                count?: number;
-            } & {
+        TraverseRequest: {
+            start_node_id: string;
+            /**
+             * Format: uint32
+             * @default 5
+             */
+            max_depth: number;
+            edge_types?: string[];
+            node_labels?: string[];
+            /** @default bfs */
+            algorithm: string;
+            /** Format: uint32 */
+            limit?: number | null;
+        };
+        WalkRequest: {
+            start_node_id: string;
+            /**
+             * Format: uint32
+             * @default 2
+             */
+            max_depth: number;
+            /**
+             * Format: uint32
+             * @default 100
+             */
+            limit: number;
+        };
+        WalkStepRequest: {
+            node_id: string;
+            edge_type?: string;
+            /**
+             * Format: uint32
+             * @description Accepted but currently unused server-side.
+             * @default 50
+             */
+            limit: number;
+        };
+        ShortestPathRequest: {
+            start_node_id: string;
+            target_node_id: string;
+            /** Format: uint32 */
+            max_depth?: number | null;
+            edge_types?: string[];
+            algorithm?: string;
+            /** Format: uint32 */
+            k?: number | null;
+        };
+        GraphNodeQuery: {
+            labels?: string[];
+            properties?: {
                 [key: string]: unknown;
             };
-        } & {
-            [key: string]: unknown;
+            /**
+             * Format: uint32
+             * @default 100
+             */
+            limit: number;
+            /** Format: uint32 */
+            offset?: number | null;
+            /** @description "offset:<n>" form; decodes to the offset. */
+            continuation_token?: string | null;
+        };
+        GraphEdgeQuery: {
+            /** @default  */
+            edge_type: string;
+            from_node_id?: string;
+            to_node_id?: string;
+            properties?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: uint32
+             * @default 100
+             */
+            limit: number;
+            /** Format: uint32 */
+            offset?: number | null;
+            /** @description "offset:<n>" form; decodes to the offset. */
+            continuation_token?: string | null;
+        };
+        UniqueConstraintRequest: {
+            label: string;
+            property: string;
+        };
+        GraphQueryRequest: {
+            query: string;
+            /**
+             * @description Accepted but currently unused server-side.
+             * @default native
+             */
+            language: string;
+            /**
+             * Format: uint32
+             * @description Accepted but currently unused server-side.
+             */
+            timeout_ms?: number | null;
         };
         /**
          * @description Body for `POST /api/v2/observability/namespaces`. Retention days
@@ -3972,10 +4461,50 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /**
+         * @description Invalid argument — the FULL graph envelope with success=false
+         *     and error.code INVALID_ARGUMENT (a genuine handler-emitted JSON
+         *     400 exists only on updateGraphSchema; axum extractor rejections
+         *     — malformed JSON, wrong content-type, missing required field —
+         *     are 400/415/422 with PLAIN-TEXT bodies and no envelope).
+         */
+        GraphBadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["GraphErrorResponse"];
+            };
+        };
+        /**
+         * @description Not found — the FULL graph envelope with success=false and
+         *     error.code NOT_FOUND.
+         */
+        GraphNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["GraphErrorResponse"];
+            };
+        };
+        /**
+         * @description Internal error — the FULL graph envelope with success=false and
+         *     error.code INTERNAL_ERROR.
+         */
+        GraphInternal: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["GraphErrorResponse"];
+            };
+        };
     };
     parameters: {
         GraphId: string;
         NodeId: string;
+        EdgeId: string;
     };
     requestBodies: never;
     headers: never;
@@ -5186,15 +5715,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Graph collection listing. */
+            /** @description Graph collection listing (envelope; data = array). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListGraphsResponse"];
+                    "application/json": components["schemas"]["GraphCollectionListResponse"];
                 };
             };
+            500: components["responses"]["GraphInternal"];
         };
     };
     createGraph: {
@@ -5213,8 +5743,8 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Graph collection metadata. */
-            200: {
+            /** @description Graph collection created (envelope; data = serialized collection). */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5222,7 +5752,8 @@ export interface operations {
                     "application/json": components["schemas"]["GraphCollectionResponse"];
                 };
             };
-            400: components["responses"]["BadRequest"];
+            400: components["responses"]["GraphBadRequest"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     getGraph: {
@@ -5239,7 +5770,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Graph collection metadata. */
+            /** @description Graph collection metadata (envelope; data = serialized collection). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5248,7 +5779,8 @@ export interface operations {
                     "application/json": components["schemas"]["GraphCollectionResponse"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     deleteGraph: {
@@ -5265,16 +5797,47 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deletion acknowledged. */
+            /** @description Graph collection deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    updateGraphSchema: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateGraphSchemaRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated collection (envelope). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeleteGraphResponse"];
+                    "application/json": components["schemas"]["GraphCollectionResponse"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     createNode: {
@@ -5295,17 +5858,18 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created node. */
-            200: {
+            /** @description Created node (envelope). */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NodeResponse"];
+                    "application/json": components["schemas"]["GraphNodeResponse"];
                 };
             };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     getNode: {
@@ -5323,16 +5887,50 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Node payload. */
+            /** @description Node payload (envelope). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NodeResponse"];
+                    "application/json": components["schemas"]["GraphNodeResponse"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    updateNode: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                node_id: components["parameters"]["NodeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NodeInput"];
+            };
+        };
+        responses: {
+            /** @description Updated node (envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphNodeResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     deleteNode: {
@@ -5350,16 +5948,45 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deletion acknowledged. */
+            /** @description Deleted node (envelope — the deleted node is echoed). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeleteNodeResponse"];
+                    "application/json": components["schemas"]["GraphNodeResponse"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    getNodeNeighbors: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                node_id: components["parameters"]["NodeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Neighbor nodes (envelope; data = node array). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphNodeListResponse"];
+                };
+            };
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     createEdge: {
@@ -5380,17 +6007,107 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created edge. */
+            /** @description Created edge (envelope). */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEdgeResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    getEdge: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                edge_id: components["parameters"]["EdgeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge payload (envelope). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeResponse"];
+                    "application/json": components["schemas"]["GraphEdgeResponse"];
                 };
             };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    updateEdge: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                edge_id: components["parameters"]["EdgeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeInput"];
+            };
+        };
+        responses: {
+            /** @description Updated edge (envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEdgeResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    deleteEdge: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+                edge_id: components["parameters"]["EdgeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted edge (envelope — the deleted edge is echoed). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEdgeResponse"];
+                };
+            };
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     batchCreateNodes: {
@@ -5411,17 +6128,18 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Batch result. */
+            /** @description Batch outcome (envelope). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BatchNodesResponse"];
+                    "application/json": components["schemas"]["GraphBatchNodesResponse"];
                 };
             };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     batchCreateEdges: {
@@ -5442,17 +6160,18 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Batch result. */
+            /** @description Batch outcome (envelope). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BatchEdgesResponse"];
+                    "application/json": components["schemas"]["GraphBatchEdgesResponse"];
                 };
             };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     traverseGraph: {
@@ -5473,16 +6192,328 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Traversal result. */
+            /** @description Traversal result (envelope). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TraverseResponse"];
+                    "application/json": components["schemas"]["GraphTraversalResponse"];
                 };
             };
-            400: components["responses"]["BadRequest"];
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    walkGraph: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WalkRequest"];
+            };
+        };
+        responses: {
+            /** @description Walk result (envelope; traversal shape). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphTraversalResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    stepGraph: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WalkStepRequest"];
+            };
+        };
+        responses: {
+            /** @description Step result (envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphTraversalResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    shortestPath: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShortestPathRequest"];
+            };
+        };
+        responses: {
+            /** @description Shortest-path result (envelope; found=false when unreachable). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphShortestPathResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    executeGraphQuery: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Query result (envelope; data carries rows and row_count). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphQueryResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    queryNodes: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphNodeQuery"];
+            };
+        };
+        responses: {
+            /** @description Matching nodes (envelope; QueryResults shape). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphNodeQueryResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    queryEdges: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphEdgeQuery"];
+            };
+        };
+        responses: {
+            /** @description Matching edges (envelope; QueryResults shape). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEdgeQueryResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    getConnectedComponents: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Components (envelope; data carries the node-id arrays). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphComponentsResponse"];
+                };
+            };
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    checkCycles: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cycle check (envelope; data carries has_cycle). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphCyclesResponse"];
+                };
+            };
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    addUniqueConstraint: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UniqueConstraintRequest"];
+            };
+        };
+        responses: {
+            /** @description DDL outcome (envelope; data carries success). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphDdlResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
+        };
+    };
+    removeUniqueConstraint: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                graph_id: components["parameters"]["GraphId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UniqueConstraintRequest"];
+            };
+        };
+        responses: {
+            /** @description DDL outcome (envelope; data carries success). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphDdlResponse"];
+                };
+            };
+            400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     getGraphStats: {
@@ -5499,7 +6530,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Graph statistics. */
+            /** @description Graph statistics (envelope; data = GraphStats). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5508,6 +6539,8 @@ export interface operations {
                     "application/json": components["schemas"]["GraphStatsResponse"];
                 };
             };
+            404: components["responses"]["GraphNotFound"];
+            500: components["responses"]["GraphInternal"];
         };
     };
     hybridSearch: {

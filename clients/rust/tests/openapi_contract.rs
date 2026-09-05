@@ -614,7 +614,10 @@ async fn list_graphs_matches_spec() {
             when.method(Method::GET).path("/api/v2/graphs");
             then.status(200)
                 .header("content-type", "application/json")
-                .json_body(json!({"graphs": []}));
+                // Wave-6 envelope truth: the handler returns
+                // {success, data} — the old flat {"graphs": [...]} shape
+                // never existed on the wire.
+                .json_body(json!({"success": true, "data": []}));
         })
         .await;
 

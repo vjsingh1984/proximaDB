@@ -55,12 +55,12 @@ from .apply_model_registry_mutation_request import ApplyModelRegistryMutationReq
 from .assignment_reason import AssignmentReason
 from .batch_create_edges_request import BatchCreateEdgesRequest
 from .batch_create_nodes_request import BatchCreateNodesRequest
-from .batch_edges_response import BatchEdgesResponse
-from .batch_edges_response_data import BatchEdgesResponseData
-from .batch_nodes_response import BatchNodesResponse
-from .batch_nodes_response_data import BatchNodesResponseData
 from .bulk_log_ingest_request import BulkLogIngestRequest
 from .bulk_metric_ingest_request import BulkMetricIngestRequest
+from .canonical_edge import CanonicalEdge
+from .canonical_edge_properties import CanonicalEdgeProperties
+from .canonical_node import CanonicalNode
+from .canonical_node_properties import CanonicalNodeProperties
 from .capabilities_response import CapabilitiesResponse
 from .capabilities_response_error_envelope import CapabilitiesResponseErrorEnvelope
 from .capabilities_response_limits import CapabilitiesResponseLimits
@@ -121,14 +121,9 @@ from .create_observability_namespace_response import (
     CreateObservabilityNamespaceResponse,
 )
 from .delete_collection_v2_response import DeleteCollectionV2Response
-from .delete_graph_response import DeleteGraphResponse
-from .delete_node_response import DeleteNodeResponse
 from .delete_record_v2_response import DeleteRecordV2Response
 from .edge_input import EdgeInput
 from .edge_input_properties import EdgeInputProperties
-from .edge_response import EdgeResponse
-from .edge_response_properties_type_0 import EdgeResponsePropertiesType0
-from .embedding_input import EmbeddingInput
 from .entity_dto import EntityDto
 from .entity_dto_flexible_metadata import EntityDtoFlexibleMetadata
 from .entity_embedding_input import EntityEmbeddingInput
@@ -145,8 +140,48 @@ from .fusion_hit import FusionHit
 from .fusion_search_request import FusionSearchRequest
 from .fusion_search_response import FusionSearchResponse
 from .fusion_stats_dto import FusionStatsDto
+from .graph_batch_edges_response import GraphBatchEdgesResponse
+from .graph_batch_nodes_response import GraphBatchNodesResponse
+from .graph_collection_list_response import GraphCollectionListResponse
+from .graph_collection_list_response_data_item import (
+    GraphCollectionListResponseDataItem,
+)
 from .graph_collection_response import GraphCollectionResponse
+from .graph_collection_response_data import GraphCollectionResponseData
+from .graph_components_data import GraphComponentsData
+from .graph_components_response import GraphComponentsResponse
+from .graph_cycles_data import GraphCyclesData
+from .graph_cycles_response import GraphCyclesResponse
+from .graph_ddl_data import GraphDdlData
+from .graph_ddl_response import GraphDdlResponse
+from .graph_edge_batch_results import GraphEdgeBatchResults
+from .graph_edge_query import GraphEdgeQuery
+from .graph_edge_query_properties import GraphEdgeQueryProperties
+from .graph_edge_query_response import GraphEdgeQueryResponse
+from .graph_edge_query_results import GraphEdgeQueryResults
+from .graph_edge_response import GraphEdgeResponse
+from .graph_embedding import GraphEmbedding
+from .graph_error_body import GraphErrorBody
+from .graph_error_body_code import GraphErrorBodyCode
+from .graph_error_response import GraphErrorResponse
+from .graph_node_batch_results import GraphNodeBatchResults
+from .graph_node_list_response import GraphNodeListResponse
+from .graph_node_query import GraphNodeQuery
+from .graph_node_query_properties import GraphNodeQueryProperties
+from .graph_node_query_response import GraphNodeQueryResponse
+from .graph_node_query_results import GraphNodeQueryResults
+from .graph_node_response import GraphNodeResponse
+from .graph_query_data import GraphQueryData
+from .graph_query_request import GraphQueryRequest
+from .graph_query_response import GraphQueryResponse
+from .graph_response_metadata import GraphResponseMetadata
+from .graph_shortest_path_data import GraphShortestPathData
+from .graph_shortest_path_response import GraphShortestPathResponse
+from .graph_stats import GraphStats
 from .graph_stats_response import GraphStatsResponse
+from .graph_traversal_data import GraphTraversalData
+from .graph_traversal_response import GraphTraversalResponse
+from .graph_traversal_stats import GraphTraversalStats
 from .health_response import HealthResponse
 from .hnsw_config_input import HnswConfigInput
 from .hnsw_config_output import HnswConfigOutput
@@ -176,7 +211,6 @@ from .ivf_config_input import IvfConfigInput
 from .ivf_config_output import IvfConfigOutput
 from .list_collections_v2_response import ListCollectionsV2Response
 from .list_document_collections_response_200 import ListDocumentCollectionsResponse200
-from .list_graphs_response import ListGraphsResponse
 from .list_model_registries_response import ListModelRegistriesResponse
 from .log_entry_input import LogEntryInput
 from .log_entry_input_fields import LogEntryInputFields
@@ -192,9 +226,8 @@ from .model_registry_record_response import ModelRegistryRecordResponse
 from .nl_translate_request import NlTranslateRequest
 from .nl_translate_result import NlTranslateResult
 from .node_input import NodeInput
+from .node_input_embedding import NodeInputEmbedding
 from .node_input_properties import NodeInputProperties
-from .node_response import NodeResponse
-from .node_response_properties_type_0 import NodeResponsePropertiesType0
 from .observability_ingest_response import ObservabilityIngestResponse
 from .pin_list_item import PinListItem
 from .pin_list_response import PinListResponse
@@ -247,6 +280,7 @@ from .schema_response import SchemaResponse
 from .search_entities_request import SearchEntitiesRequest
 from .search_entities_request_filters import SearchEntitiesRequestFilters
 from .search_entities_response import SearchEntitiesResponse
+from .shortest_path_request import ShortestPathRequest
 from .sql_request import SqlRequest
 from .sql_response import SqlResponse
 from .sql_response_rows_item import SqlResponseRowsItem
@@ -262,12 +296,14 @@ from .table_write_route_metadata_explanation import TableWriteRouteMetadataExpla
 from .text_field_input import TextFieldInput
 from .text_field_output import TextFieldOutput
 from .traverse_request import TraverseRequest
-from .traverse_response import TraverseResponse
 from .typed_filter import TypedFilter
 from .typed_search_request import TypedSearchRequest
 from .typed_search_response import TypedSearchResponse
 from .typed_search_result import TypedSearchResult
 from .typed_search_result_props import TypedSearchResultProps
+from .unique_constraint_request import UniqueConstraintRequest
+from .update_graph_schema_request import UpdateGraphSchemaRequest
+from .update_graph_schema_request_schema import UpdateGraphSchemaRequestSchema
 from .update_schema_request import UpdateSchemaRequest
 from .update_schema_response import UpdateSchemaResponse
 from .upsert_entity_request import UpsertEntityRequest
@@ -277,6 +313,8 @@ from .upsert_model_deployment_mutation import UpsertModelDeploymentMutation
 from .upsert_model_deployment_mutation_operation import (
     UpsertModelDeploymentMutationOperation,
 )
+from .walk_request import WalkRequest
+from .walk_step_request import WalkStepRequest
 
 __all__ = (
     "AbacAttributeBinding",
@@ -325,12 +363,12 @@ __all__ = (
     "AssignmentReason",
     "BatchCreateEdgesRequest",
     "BatchCreateNodesRequest",
-    "BatchEdgesResponse",
-    "BatchEdgesResponseData",
-    "BatchNodesResponse",
-    "BatchNodesResponseData",
     "BulkLogIngestRequest",
     "BulkMetricIngestRequest",
+    "CanonicalEdge",
+    "CanonicalEdgeProperties",
+    "CanonicalNode",
+    "CanonicalNodeProperties",
     "CapabilitiesResponse",
     "CapabilitiesResponseErrorEnvelope",
     "CapabilitiesResponseLimits",
@@ -377,14 +415,9 @@ __all__ = (
     "CreateObservabilityNamespaceRequest",
     "CreateObservabilityNamespaceResponse",
     "DeleteCollectionV2Response",
-    "DeleteGraphResponse",
-    "DeleteNodeResponse",
     "DeleteRecordV2Response",
     "EdgeInput",
     "EdgeInputProperties",
-    "EdgeResponse",
-    "EdgeResponsePropertiesType0",
-    "EmbeddingInput",
     "EntityDto",
     "EntityDtoFlexibleMetadata",
     "EntityEmbeddingInput",
@@ -401,8 +434,46 @@ __all__ = (
     "FusionSearchRequest",
     "FusionSearchResponse",
     "FusionStatsDto",
+    "GraphBatchEdgesResponse",
+    "GraphBatchNodesResponse",
+    "GraphCollectionListResponse",
+    "GraphCollectionListResponseDataItem",
     "GraphCollectionResponse",
+    "GraphCollectionResponseData",
+    "GraphComponentsData",
+    "GraphComponentsResponse",
+    "GraphCyclesData",
+    "GraphCyclesResponse",
+    "GraphDdlData",
+    "GraphDdlResponse",
+    "GraphEdgeBatchResults",
+    "GraphEdgeQuery",
+    "GraphEdgeQueryProperties",
+    "GraphEdgeQueryResponse",
+    "GraphEdgeQueryResults",
+    "GraphEdgeResponse",
+    "GraphEmbedding",
+    "GraphErrorBody",
+    "GraphErrorBodyCode",
+    "GraphErrorResponse",
+    "GraphNodeBatchResults",
+    "GraphNodeListResponse",
+    "GraphNodeQuery",
+    "GraphNodeQueryProperties",
+    "GraphNodeQueryResponse",
+    "GraphNodeQueryResults",
+    "GraphNodeResponse",
+    "GraphQueryData",
+    "GraphQueryRequest",
+    "GraphQueryResponse",
+    "GraphResponseMetadata",
+    "GraphShortestPathData",
+    "GraphShortestPathResponse",
+    "GraphStats",
     "GraphStatsResponse",
+    "GraphTraversalData",
+    "GraphTraversalResponse",
+    "GraphTraversalStats",
     "HealthResponse",
     "HnswConfigInput",
     "HnswConfigOutput",
@@ -432,7 +503,6 @@ __all__ = (
     "IvfConfigOutput",
     "ListCollectionsV2Response",
     "ListDocumentCollectionsResponse200",
-    "ListGraphsResponse",
     "ListModelRegistriesResponse",
     "LogEntryInput",
     "LogEntryInputFields",
@@ -448,9 +518,8 @@ __all__ = (
     "NlTranslateRequest",
     "NlTranslateResult",
     "NodeInput",
+    "NodeInputEmbedding",
     "NodeInputProperties",
-    "NodeResponse",
-    "NodeResponsePropertiesType0",
     "ObservabilityIngestResponse",
     "PinListItem",
     "PinListResponse",
@@ -499,6 +568,7 @@ __all__ = (
     "SearchEntitiesRequest",
     "SearchEntitiesRequestFilters",
     "SearchEntitiesResponse",
+    "ShortestPathRequest",
     "SqlRequest",
     "SqlResponse",
     "SqlResponseRowsItem",
@@ -514,12 +584,14 @@ __all__ = (
     "TextFieldInput",
     "TextFieldOutput",
     "TraverseRequest",
-    "TraverseResponse",
     "TypedFilter",
     "TypedSearchRequest",
     "TypedSearchResponse",
     "TypedSearchResult",
     "TypedSearchResultProps",
+    "UniqueConstraintRequest",
+    "UpdateGraphSchemaRequest",
+    "UpdateGraphSchemaRequestSchema",
     "UpdateSchemaRequest",
     "UpdateSchemaResponse",
     "UpsertEntityRequest",
@@ -527,4 +599,6 @@ __all__ = (
     "UpsertEntityResponse",
     "UpsertModelDeploymentMutation",
     "UpsertModelDeploymentMutationOperation",
+    "WalkRequest",
+    "WalkStepRequest",
 )

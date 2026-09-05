@@ -13,43 +13,29 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="DeleteGraphResponse")
+T = TypeVar("T", bound="GraphCollectionListResponseDataItem")
 
 
 @_attrs_define
-class DeleteGraphResponse:
-    """204 No Content on success with an empty `GraphResponse` envelope;
-    404 Not Found with an error envelope when the graph is missing.
+class GraphCollectionListResponseDataItem:
+    """ """
 
-        Attributes:
-            success (bool | Unset):
-    """
-
-    success: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        success = self.success
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if success is not UNSET:
-            field_dict["success"] = success
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        success = d.pop("success", UNSET)
+        graph_collection_list_response_data_item = cls()
 
-        delete_graph_response = cls(
-            success=success,
-        )
-
-        delete_graph_response.additional_properties = d
-        return delete_graph_response
+        graph_collection_list_response_data_item.additional_properties = d
+        return graph_collection_list_response_data_item
 
     @property
     def additional_keys(self) -> list[str]:

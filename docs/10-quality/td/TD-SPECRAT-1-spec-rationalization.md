@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1-4 landed (observability+nl, stub-rule fixes, ABAC, collections admin); wave 5 (catalog routing/explain) landing
+| Status | Waves 1-5 landed (observability+nl, stub-rule fixes, ABAC, collections admin, catalog routing/explain); wave 6 (graph surface) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -75,7 +75,7 @@ fabricated success):**
 * Waves 2+: area order per product priority (observability diagnostics,
   ABAC, collections admin, ...).
 
-== Wave 3: ABAC control-plane (this PR)
+== Wave 3: ABAC control-plane (landed)
 
 **Exposed (9 paths / 14 operations; spec 45 → 54):** the complete
 `/api/v2/abac/*` operator surface from
@@ -133,7 +133,7 @@ progressive/rank search. Legacy `/api/v1` is excluded (retiring per
 SUPPORTED_SURFACE); Iceberg-REST is excluded (an external standard
 protocol consumed directly by Spark/Trino — not our OpenAPI→SDK loop).
 
-== Wave 4: collections-admin operator surfaces (this PR)
+== Wave 4: collections-admin operator surfaces (landed)
 
 **Exposed (6 paths / 10 operations; spec 54 → 60):**
 
@@ -203,7 +203,7 @@ vocabularies (`PinTarget`, `AssignmentReason`, the internally-tagged
 `status` enums) — `test_collections_admin_surface_has_the_complete_operation_set`,
 matching the wave-3 precedent.
 
-== Wave 5: catalog routing/explain (this PR)
+== Wave 5: catalog routing/explain (landed)
 
 **Exposed (2 paths / 2 operations; spec 60 → 62):**
 
@@ -247,3 +247,46 @@ Rationalization notes:
   Delta/UC federation); needs its own census + rationalization wave.
 * `POST /api/v2/collections/{collection_id}/branches/{branch}/merge` —
   still deferred to the graph-analytics wave (wave-4 decision).
+
+== Wave 6: graph surface truth + gap exposure (this PR)
+
+**Pre-existing defect FIXED — the published graph surface modeled the
+wrong response shape.** Every `/api/v2/graphs/*` handler (api-crate
+`graph.rs`, mounted under `/api/v2`) returns the envelope
+`{success, data?, error?, metadata?}` with a SCREAMING_SNAKE_CASE error
+code — but the previously-published supplement schemas (NodeResponse,
+EdgeResponse, TraverseResponse, …) were FLAT, and NodeResponse also
+dropped `embedding`/`created_at`/`updated_at`. Every generated SDK's
+graph return model could not parse real server responses. Wave 6
+remodels the whole surface to the envelope (`Graph*Response` schemas
+with pinned property sets in the contract gate) with the complete
+`CanonicalNode`/`CanonicalEdge` payloads. Note: `fusion-search` and
+`impact-analysis` are utoipa-annotated in the root crate (drift-gated
+half) and were already correct.
+
+**Exposed (21 paths / 28 operations; spec 62 → 74):** the 9 existing
+supplement graph paths envelope-corrected + 12 new paths — schema (PUT),
+nodes/{id} PUT (updateNode was missing entirely), neighbors GET,
+edges/{id} GET/PUT/DELETE, walk, step, shortest-path, query +
+query/nodes + query/edges, components, cycles, constraints/unique
+POST+DELETE.
+
+Honesty notes: create-node/create-edge take a WRAPPED body
+(`{node: …}` / `{edge: …}`); update ops take the bare input with the
+path id overriding `id`; 201s on creates; delete-graph returns 204
+(the handler's success body is not transmitted on 204); per-item
+batch rejections ride `failed_count`/`errors[]` at HTTP 200;
+`continuation_token` is the `offset:<n>` protocol; graph-collection
+payloads are open objects (serialized port records); `language`/
+`timeout_ms` on query are accepted but unused server-side (dead
+params documented as such); error statuses carry the GRAPH envelope
+(`GraphErrorBody`), not the canonical error envelope; extractor
+rejections are plain text.
+
+**Deliberately NOT exposed — deferred:**
+
+* `/api/v2/graphs/{graph_id}/rag` — `not_implemented_handler` (honest
+  501); expose when the port lands.
+* graph branch-merge (wave-4 deferral; free-form response).
+* Legacy 308-redirect shims (`/api/v2/nodes|edges|stats`) — clients
+  must use the canonical graph-scoped paths.

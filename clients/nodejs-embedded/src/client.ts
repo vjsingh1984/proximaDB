@@ -558,7 +558,10 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    */
   async listGraphs(): Promise<GraphInfo[]> {
     const { data } = await this.gen.GET("/api/v2/graphs", {});
-    return ((data?.graphs ?? []) as unknown[]) as GraphInfo[];
+    // Wave-6 envelope truth: the wire body is {success, data?} — the
+    // collection array rides `data.data` (the old flat `.graphs` field
+    // never existed on the wire).
+    return ((data?.data ?? []) as unknown[]) as GraphInfo[];
   }
 
   // =========================================================================

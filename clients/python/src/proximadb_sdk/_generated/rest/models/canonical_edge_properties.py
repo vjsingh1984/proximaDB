@@ -13,11 +13,11 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="NodeResponsePropertiesType0")
+T = TypeVar("T", bound="CanonicalEdgeProperties")
 
 
 @_attrs_define
-class NodeResponsePropertiesType0:
+class CanonicalEdgeProperties:
     """ """
 
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -32,10 +32,10 @@ class NodeResponsePropertiesType0:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        node_response_properties_type_0 = cls()
+        canonical_edge_properties = cls()
 
-        node_response_properties_type_0.additional_properties = d
-        return node_response_properties_type_0
+        canonical_edge_properties.additional_properties = d
+        return canonical_edge_properties
 
     @property
     def additional_keys(self) -> list[str]:
