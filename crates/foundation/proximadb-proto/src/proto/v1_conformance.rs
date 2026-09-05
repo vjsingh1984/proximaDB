@@ -1519,18 +1519,26 @@ impl Comparer {
                 }
             }
 
-            if as_table.is_empty() && from_table.is_empty() {
-                // prost::Enumeration ALWAYS generates both name tables, so
-                // their joint absence is itself drift (a deleted impl block,
-                // or a scanner miss on a new codegen shape) — and the weak
-                // discriminant-multiset fallback would let a wire-NAME rename
-                // (the Polar/Polaris class) pass green. Fail loud instead of
-                // silently downgrading the check (round-7 finding).
+            // prost::Enumeration ALWAYS generates BOTH name tables: an empty
+            // table (joint or single) is drift — a deleted half-impl or a
+            // scanner miss — and the weak fallbacks would let a wire-name
+            // rename (the Polar/Polaris class) or a broken decode direction
+            // pass green (round-8 finding: one-sided absence slipped through).
+            if as_table.is_empty() || from_table.is_empty() {
+                // Fail loud naming the missing table(s).
                 self.record(
                     key,
-                    "enum has NEITHER as_str_name NOR from_str_name tables — prost always \
-                     generates both; their joint absence is drift (deleted impl or scanner \
-                     miss), not a comparable shape",
+                    format!(
+                        "enum name table(s) missing: as_str_name {}, from_str_name {} — \
+                         prost always generates both; absence is drift, not a comparable \
+                         shape",
+                        if as_table.is_empty() { "MISSING" } else { "ok" },
+                        if from_table.is_empty() {
+                            "MISSING"
+                        } else {
+                            "ok"
+                        },
+                    ),
                 );
                 continue;
             }
@@ -1542,7 +1550,7 @@ impl Comparer {
                     [(&from_table, "from_str_name"), (&as_table, "as_str_name")];
                 for (table, table_name) in checks {
                     if table.is_empty() {
-                        continue;
+                        continue; // already failed loud above
                     }
                     match table.get(wire.as_str()) {
                         None => self.record(
@@ -1586,8 +1594,8 @@ impl Comparer {
 // protoc driver + entry point
 // ---------------------------------------------------------------------------
 
-/// The one skip arm: a missing protoc degrades to SKIP only on developer
-/// machines. Under `REQUIRE_PROTOC=1` (set by CI's unit-test job) the same
+/// The disarm gate: any skip cause (missing protoc, absent repo root,
+/// unreadable proto tree) degrades to SKIP only on developer machines. Under `REQUIRE_PROTOC=1` (set by CI's unit-test job) the same
 /// condition FAILS, so the gate can never silently disarm where it is the
 /// only drift check — a skip and a pass stay distinguishable.
 fn skip_or_fail(cause: &str) -> Option<Vec<u8>> {

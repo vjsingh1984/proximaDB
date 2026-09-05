@@ -388,6 +388,10 @@ fn proxima_value_to_property_value(value: &ProximaValue) -> PropertyValue {
                 .collect(),
         })),
         ProximaValue::DenseVector(v) => Some(Value::VectorValue(v.clone())),
+        // Round 8: JSON(B) maps to canonical JSON text — the wildcard silently
+        // dropped it at this live projection seam (the round-7 fix landed in
+        // the dead sql_value_to_property_value twin).
+        ProximaValue::Json(v) | ProximaValue::Jsonb(v) => Some(Value::StringValue(v.to_string())),
         _ => None,
     };
     PropertyValue { value: inner }

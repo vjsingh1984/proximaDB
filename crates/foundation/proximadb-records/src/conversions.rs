@@ -47,10 +47,20 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
         Some(sql_value::Value::NumberValue(f)) => ProximaValue::Float64(*f),
         Some(sql_value::Value::BoolValue(b)) => ProximaValue::Boolean(*b),
         Some(sql_value::Value::Int64Value(i)) => ProximaValue::Int64(*i),
-        Some(sql_value::Value::BytesValue(b)) => match ProximaValue::from_jsonb_slice(b) {
-            Ok(v) => ProximaValue::Jsonb(v),
-            Err(_) => ProximaValue::Binary(b.clone()),
-        },
+        Some(sql_value::Value::BytesValue(b)) => {
+            // Round 8: strip the legacy magic prefix FIRST — feeding it to
+            // rmp-serde "succeeds" (0xff is a negative fixint; trailing bytes
+            // ignored) and silently replaces the document with Number(-1).
+            // This now matches search-types' decoder, and the magic constant
+            // is the shared data-model authority.
+            let payload = b
+                .strip_prefix(proximadb_data_model::JSONB_LEGACY_MAGIC)
+                .unwrap_or(b);
+            match ProximaValue::from_jsonb_slice(payload) {
+                Ok(v) => ProximaValue::Jsonb(v),
+                Err(_) => ProximaValue::Binary(b.clone()),
+            }
+        }
         // types.proto tag 9: JSONB by declaration — canonical decode-or-binary
         // via the shared helper.
         Some(sql_value::Value::JsonbValue(b)) => ProximaValue::from_jsonb_or_binary(b),
@@ -231,8 +241,7 @@ pub fn proxima_to_sql_value(value: &ProximaValue) -> SqlValue {
                 // magic-stripping decoder recovers it losslessly. Plain
                 // JSON-text under tag 9 would violate tag 9's MessagePack
                 // contract and silently change type on read.
-                const JSONB_MAGIC: &[u8] = b"\xff\xfeJSNB";
-                let mut bytes = JSONB_MAGIC.to_vec();
+                let mut bytes = proximadb_data_model::JSONB_LEGACY_MAGIC.to_vec();
                 bytes.extend_from_slice(v.to_string().as_bytes());
                 sql_value::Value::BytesValue(bytes)
             }

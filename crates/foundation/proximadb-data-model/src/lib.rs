@@ -683,6 +683,11 @@ pub enum ProximaValue {
     Null,
 }
 
+/// Magic prefix for the legacy tag-8 JSONB-tagged BytesValue encoding (the
+/// pre-tag-9 wire form). Single authority — writers and the magic-stripping
+/// reader both live here so the two crates can never disagree on the bytes.
+pub const JSONB_LEGACY_MAGIC: &[u8] = b"\xff\xfeJSNB";
+
 impl ProximaValue {
     /// Serialize a `serde_json::Value` to MessagePack bytes for `Jsonb`.
     pub fn to_jsonb_vec(val: &serde_json::Value) -> anyhow::Result<Vec<u8>> {

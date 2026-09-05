@@ -12,7 +12,7 @@ use std::sync::Arc;
 /// Convert a v1 SqlValue to the canonical ProximaValue.
 /// Magic prefix for JSONB-tagged BytesValue. Two bytes not valid in UTF-8
 /// so they will never appear at the start of raw binary data from users.
-const JSONB_MAGIC: &[u8] = b"\xff\xfeJSNB";
+const JSONB_MAGIC: &[u8] = proximadb_data_model::JSONB_LEGACY_MAGIC;
 
 /// Used at WAL/gRPC boundary deserialization so the rest of the system
 /// works entirely with ProximaValue.

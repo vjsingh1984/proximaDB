@@ -330,6 +330,35 @@ the follow-up PR, 3 deferred with rationale:**
   test-infra PR; (c) filter+group-by on the same JSONB field renders twice
   per log — measure-first before plumbing pre-rendered keys.
 
+**Round 8 (review of the round-7 PR, 2026-09-05) — 10 findings, all
+addressed in the same PR:**
+
+* Build-break (reproduced by the reviewer): the round-7 fail-loud guard
+  passed a `&str` where `record` takes `String` — invisible to
+  `cargo check`/`clippy --lib` because the module is `#[cfg(test)]`; CI's
+  unit lane would have gone red. Fixed, and the one-sided gap closed
+  properly: an empty name table (single OR joint) now fails loud. That
+  stricter check surfaced REAL drift — explain.v1's three enums
+  (QueryType/NodeType/ExplainFormat) never had `from_str_name` at all:
+  JSON/enum-name decoding of explain types has never worked. The mirror
+  gained the three impls.
+* Mixed-kind extrema reverted to the conservative kind-segregated form:
+  the lexicographic merge did not bound the column and made
+  `might_match_range` false-prune reachable; recording the JSONB extremum
+  (incomparable, never prunes) is the safe choice.
+* The graph fix moved to the LIVE seam (`proxima_value_to_property_value`
+  in adjacency_projection — the round-7 edit had landed in its
+  `#[allow(dead_code)]` twin): Json/Jsonb map to canonical JSON text
+  instead of `_ => None`.
+* `JSONB_LEGACY_MAGIC` is now a single data-model authority used by both
+  writers; the records-crate reader strips the magic prefix BEFORE
+  msgpack-decoding (feeding it raw succeeds as Number(-1) — the
+  recovers-losslessly claim was empirically false).
+* The dot-traversal is a two-phase walk (SqlObject segments by reference,
+  then the shared `json_get_path` for JSON(B) tails) — replacing the
+  three-cursor form whose invariants were hand-enforced, and unifying the
+  JSON walker this file previously maintained twice.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,
