@@ -578,6 +578,61 @@ def test_graph_surface_has_the_complete_operation_set(openapi_spec):
         assert schemas[schema_name]["required"] == required, schema_name
 
 
+def test_timeseries_surface_has_the_complete_operation_set(openapi_spec):
+    """TD-SPECRAT-1 wave 7: time-series (TD-TS-1) — 5 paths / 6 ops."""
+    expected_operations = {
+        "createTimeseriesCollection",
+        "listTimeseriesCollections",
+        "deleteTimeseriesCollection",
+        "ingestTimeseries",
+        "queryTimeseries",
+        "aggregateTimeseries",
+    }
+    ts_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/timeseries/")
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in ts_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(ts_paths) == 5
+    assert actual_operations == expected_operations
+
+    schemas = openapi_spec["components"]["schemas"]
+    expected_properties = {
+        "TsPoint": {"timestamp", "values", "tags"},
+        "TsCollectionConfig": {
+            "name",
+            "timestamp_column",
+            "value_columns",
+            "tag_columns",
+            "retention_ms",
+        },
+        "TsValueColumn": {"name", "unit", "aggregation"},
+        "TsIngestRequest": {"points"},
+        "TsIngestResponse": {"ingested"},
+        "TsQueryRequest": {"start_time", "end_time", "limit"},
+        "TsQueryResponse": {"points"},
+        "TsAggregateRequest": {"start_time", "end_time", "aggregation", "bucket_ms"},
+        "TsAggregateResponse": {"buckets"},
+        "TsCreateResponse": {"name"},
+        "TsListResponse": {"collections"},
+        "TsDeleteResponse": {"success"},
+    }
+    for schema_name, expected in expected_properties.items():
+        actual = set(schemas[schema_name]["properties"])
+        assert (
+            actual == expected
+        ), f"{schema_name} drifted: missing={expected - actual} extra={actual - expected}"
+    assert schemas["TsPoint"]["required"] == ["timestamp"]
+    assert schemas["TsCollectionConfig"]["required"] == ["name"]
+
+
 # ---------------------------------------------------------------------------
 # Capturing transport
 # ---------------------------------------------------------------------------

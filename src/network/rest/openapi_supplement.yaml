@@ -686,6 +686,142 @@ paths:
         "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
 
+  # TD-SPECRAT-1 wave 7 — time-series surface (TD-TS-1; handlers in
+  # src/network/rest/v2/timeseries.rs, mounted unconditionally in the v2
+  # router; backed by the process-global TimeSeriesService over the
+  # native TST engine — real, not stubs). UNLIKE the other supplement
+  # surfaces, these handlers consume TenantContext from the middleware —
+  # the optional X-Tenant-ID header IS consulted (per-tenant structural
+  # isolation: each tenant gets its own engine rooted at
+  # <data>/timeseries/<tenant>). Responses are FLAT (no envelope). All
+  # handler errors map to 500 with the canonical error envelope —
+  # including "collection not found" (not 404); extractor rejections are
+  # plain text. Aggregate buckets are free-form JSON (the aggregation
+  # result objects).
+  /api/v2/timeseries/collections:
+    post:
+      tags: [Timeseries]
+      operationId: createTimeseriesCollection
+      summary: Create a time-series collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TsCollectionConfig"
+      responses:
+        "200":
+          description: Created (echoes the tenant-clean name).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TsCreateResponse"
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      tags: [Timeseries]
+      operationId: listTimeseriesCollections
+      summary: List this tenant's time-series collections.
+      responses:
+        "200":
+          description: Tenant-scoped collection configs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TsListResponse"
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/timeseries/collections/{collection_id}:
+    parameters:
+      - name: collection_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [Timeseries]
+      operationId: deleteTimeseriesCollection
+      summary: Delete a time-series collection.
+      description: |
+        Always 200; `success` distinguishes an actual deletion from a
+        no-op (unknown collection).
+      responses:
+        "200":
+          description: Deletion outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TsDeleteResponse"
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/timeseries/collections/{collection_id}/ingest:
+    parameters:
+      - name: collection_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Timeseries]
+      operationId: ingestTimeseries
+      summary: Ingest time-series points.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TsIngestRequest"
+      responses:
+        "200":
+          description: Ingest count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TsIngestResponse"
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/timeseries/collections/{collection_id}/query:
+    parameters:
+      - name: collection_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Timeseries]
+      operationId: queryTimeseries
+      summary: Query points in a time range (epoch millis).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TsQueryRequest"
+      responses:
+        "200":
+          description: Matching points.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TsQueryResponse"
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/timeseries/collections/{collection_id}/aggregate:
+    parameters:
+      - name: collection_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Timeseries]
+      operationId: aggregateTimeseries
+      summary: Aggregate points into time buckets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TsAggregateRequest"
+      responses:
+        "200":
+          description: Aggregation buckets (free-form result objects).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TsAggregateResponse"
+        "500": { $ref: "#/components/responses/InternalError" }
   # ── Hybrid search (free-form passthrough). ──────────────────────────────
   /api/v2/hybrid/search:
     post:
@@ -3524,3 +3660,116 @@ components:
         required_guards:
           type: array
           items: { type: string }
+    TsValueColumn:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        unit: { type: string }
+        aggregation: { type: string }
+    TsCollectionConfig:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        timestamp_column:
+          type: string
+          default: timestamp
+        value_columns:
+          type: array
+          items: { $ref: "#/components/schemas/TsValueColumn" }
+        tag_columns:
+          type: array
+          items: { type: string }
+        retention_ms:
+          type: [integer, "null"]
+          format: int64
+    TsPoint:
+      type: object
+      required: [timestamp]
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Epoch milliseconds.
+        values:
+          type: object
+          additionalProperties: { type: number }
+        tags:
+          type: object
+          additionalProperties: { type: string }
+    TsCreateResponse:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+    TsListResponse:
+      type: object
+      required: [collections]
+      properties:
+        collections:
+          type: array
+          items: { $ref: "#/components/schemas/TsCollectionConfig" }
+    TsDeleteResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+    TsIngestRequest:
+      type: object
+      required: [points]
+      properties:
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/TsPoint" }
+    TsIngestResponse:
+      type: object
+      required: [ingested]
+      properties:
+        ingested:
+          type: integer
+          format: uint64
+    TsQueryRequest:
+      type: object
+      required: [start_time, end_time]
+      properties:
+        start_time:
+          type: integer
+          format: int64
+        end_time:
+          type: integer
+          format: int64
+        limit:
+          type: [integer, "null"]
+          format: uint64
+    TsQueryResponse:
+      type: object
+      required: [points]
+      properties:
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/TsPoint" }
+    TsAggregateRequest:
+      type: object
+      required: [start_time, end_time]
+      properties:
+        start_time:
+          type: integer
+          format: int64
+        end_time:
+          type: integer
+          format: int64
+        aggregation:
+          type: string
+          default: avg
+        bucket_ms:
+          type: integer
+          format: int64
+          default: 60000
+    TsAggregateResponse:
+      type: object
+      required: [buckets]
+      properties:
+        buckets:
+          type: array
+          items: {}

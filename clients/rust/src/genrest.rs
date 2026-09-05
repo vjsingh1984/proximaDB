@@ -14152,6 +14152,443 @@ pub mod types {
             Default::default()
         }
     }
+    ///`TsAggregateRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "end_time",
+    ///    "start_time"
+    ///  ],
+    ///  "properties": {
+    ///    "aggregation": {
+    ///      "default": "avg",
+    ///      "type": "string"
+    ///    },
+    ///    "bucket_ms": {
+    ///      "default": 60000,
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "end_time": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "start_time": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsAggregateRequest {
+        #[serde(default = "defaults::ts_aggregate_request_aggregation")]
+        pub aggregation: ::std::string::String,
+        #[serde(default = "defaults::default_u64::<i64, 60000>")]
+        pub bucket_ms: i64,
+        pub end_time: i64,
+        pub start_time: i64,
+    }
+    impl TsAggregateRequest {
+        pub fn builder() -> builder::TsAggregateRequest {
+            Default::default()
+        }
+    }
+    ///`TsAggregateResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "buckets"
+    ///  ],
+    ///  "properties": {
+    ///    "buckets": {
+    ///      "type": "array",
+    ///      "items": {}
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsAggregateResponse {
+        pub buckets: ::std::vec::Vec<::serde_json::Value>,
+    }
+    impl TsAggregateResponse {
+        pub fn builder() -> builder::TsAggregateResponse {
+            Default::default()
+        }
+    }
+    ///`TsCollectionConfig`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name"
+    ///  ],
+    ///  "properties": {
+    ///    "name": {
+    ///      "type": "string"
+    ///    },
+    ///    "retention_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    },
+    ///    "tag_columns": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "timestamp_column": {
+    ///      "default": "timestamp",
+    ///      "type": "string"
+    ///    },
+    ///    "value_columns": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/TsValueColumn"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsCollectionConfig {
+        pub name: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub retention_ms: ::std::option::Option<i64>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub tag_columns: ::std::vec::Vec<::std::string::String>,
+        #[serde(default = "defaults::ts_collection_config_timestamp_column")]
+        pub timestamp_column: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub value_columns: ::std::vec::Vec<TsValueColumn>,
+    }
+    impl TsCollectionConfig {
+        pub fn builder() -> builder::TsCollectionConfig {
+            Default::default()
+        }
+    }
+    ///`TsCreateResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name"
+    ///  ],
+    ///  "properties": {
+    ///    "name": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsCreateResponse {
+        pub name: ::std::string::String,
+    }
+    impl TsCreateResponse {
+        pub fn builder() -> builder::TsCreateResponse {
+            Default::default()
+        }
+    }
+    ///`TsDeleteResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsDeleteResponse {
+        pub success: bool,
+    }
+    impl TsDeleteResponse {
+        pub fn builder() -> builder::TsDeleteResponse {
+            Default::default()
+        }
+    }
+    ///`TsIngestRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "points"
+    ///  ],
+    ///  "properties": {
+    ///    "points": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/TsPoint"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsIngestRequest {
+        pub points: ::std::vec::Vec<TsPoint>,
+    }
+    impl TsIngestRequest {
+        pub fn builder() -> builder::TsIngestRequest {
+            Default::default()
+        }
+    }
+    ///`TsIngestResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "ingested"
+    ///  ],
+    ///  "properties": {
+    ///    "ingested": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsIngestResponse {
+        pub ingested: u64,
+    }
+    impl TsIngestResponse {
+        pub fn builder() -> builder::TsIngestResponse {
+            Default::default()
+        }
+    }
+    ///`TsListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collections"
+    ///  ],
+    ///  "properties": {
+    ///    "collections": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/TsCollectionConfig"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsListResponse {
+        pub collections: ::std::vec::Vec<TsCollectionConfig>,
+    }
+    impl TsListResponse {
+        pub fn builder() -> builder::TsListResponse {
+            Default::default()
+        }
+    }
+    ///`TsPoint`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "timestamp"
+    ///  ],
+    ///  "properties": {
+    ///    "tags": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "timestamp": {
+    ///      "description": "Epoch milliseconds.",
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "values": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "number"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsPoint {
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub tags: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        ///Epoch milliseconds.
+        pub timestamp: i64,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub values: ::std::collections::HashMap<::std::string::String, f64>,
+    }
+    impl TsPoint {
+        pub fn builder() -> builder::TsPoint {
+            Default::default()
+        }
+    }
+    ///`TsQueryRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "end_time",
+    ///    "start_time"
+    ///  ],
+    ///  "properties": {
+    ///    "end_time": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    },
+    ///    "limit": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "start_time": {
+    ///      "type": "integer",
+    ///      "format": "int64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsQueryRequest {
+        pub end_time: i64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub limit: ::std::option::Option<u64>,
+        pub start_time: i64,
+    }
+    impl TsQueryRequest {
+        pub fn builder() -> builder::TsQueryRequest {
+            Default::default()
+        }
+    }
+    ///`TsQueryResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "points"
+    ///  ],
+    ///  "properties": {
+    ///    "points": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/TsPoint"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsQueryResponse {
+        pub points: ::std::vec::Vec<TsPoint>,
+    }
+    impl TsQueryResponse {
+        pub fn builder() -> builder::TsQueryResponse {
+            Default::default()
+        }
+    }
+    ///`TsValueColumn`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name"
+    ///  ],
+    ///  "properties": {
+    ///    "aggregation": {
+    ///      "type": "string"
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    },
+    ///    "unit": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TsValueColumn {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub aggregation: ::std::option::Option<::std::string::String>,
+        pub name: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub unit: ::std::option::Option<::std::string::String>,
+    }
+    impl TsValueColumn {
+        pub fn builder() -> builder::TsValueColumn {
+            Default::default()
+        }
+    }
     /// A typed filter for search operations
     ///
     /// Supports various comparison operators with type-safe values.
@@ -32037,6 +32474,688 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct TsAggregateRequest {
+            aggregation: ::std::result::Result<::std::string::String, ::std::string::String>,
+            bucket_ms: ::std::result::Result<i64, ::std::string::String>,
+            end_time: ::std::result::Result<i64, ::std::string::String>,
+            start_time: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsAggregateRequest {
+            fn default() -> Self {
+                Self {
+                    aggregation: Ok(super::defaults::ts_aggregate_request_aggregation()),
+                    bucket_ms: Ok(super::defaults::default_u64::<i64, 60000>()),
+                    end_time: Err("no value supplied for end_time".to_string()),
+                    start_time: Err("no value supplied for start_time".to_string()),
+                }
+            }
+        }
+        impl TsAggregateRequest {
+            pub fn aggregation<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.aggregation = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for aggregation: {e}"));
+                self
+            }
+            pub fn bucket_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.bucket_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for bucket_ms: {e}"));
+                self
+            }
+            pub fn end_time<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.end_time = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for end_time: {e}"));
+                self
+            }
+            pub fn start_time<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.start_time = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for start_time: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsAggregateRequest> for super::TsAggregateRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsAggregateRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    aggregation: value.aggregation?,
+                    bucket_ms: value.bucket_ms?,
+                    end_time: value.end_time?,
+                    start_time: value.start_time?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsAggregateRequest> for TsAggregateRequest {
+            fn from(value: super::TsAggregateRequest) -> Self {
+                Self {
+                    aggregation: Ok(value.aggregation),
+                    bucket_ms: Ok(value.bucket_ms),
+                    end_time: Ok(value.end_time),
+                    start_time: Ok(value.start_time),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsAggregateResponse {
+            buckets:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsAggregateResponse {
+            fn default() -> Self {
+                Self {
+                    buckets: Err("no value supplied for buckets".to_string()),
+                }
+            }
+        }
+        impl TsAggregateResponse {
+            pub fn buckets<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.buckets = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for buckets: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsAggregateResponse> for super::TsAggregateResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsAggregateResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    buckets: value.buckets?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsAggregateResponse> for TsAggregateResponse {
+            fn from(value: super::TsAggregateResponse) -> Self {
+                Self {
+                    buckets: Ok(value.buckets),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsCollectionConfig {
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+            retention_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            tag_columns: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            timestamp_column: ::std::result::Result<::std::string::String, ::std::string::String>,
+            value_columns:
+                ::std::result::Result<::std::vec::Vec<super::TsValueColumn>, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsCollectionConfig {
+            fn default() -> Self {
+                Self {
+                    name: Err("no value supplied for name".to_string()),
+                    retention_ms: Ok(Default::default()),
+                    tag_columns: Ok(Default::default()),
+                    timestamp_column: Ok(super::defaults::ts_collection_config_timestamp_column()),
+                    value_columns: Ok(Default::default()),
+                }
+            }
+        }
+        impl TsCollectionConfig {
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn retention_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.retention_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for retention_ms: {e}"));
+                self
+            }
+            pub fn tag_columns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tag_columns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tag_columns: {e}"));
+                self
+            }
+            pub fn timestamp_column<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.timestamp_column = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for timestamp_column: {e}")
+                });
+                self
+            }
+            pub fn value_columns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::TsValueColumn>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.value_columns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for value_columns: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsCollectionConfig> for super::TsCollectionConfig {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsCollectionConfig,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    name: value.name?,
+                    retention_ms: value.retention_ms?,
+                    tag_columns: value.tag_columns?,
+                    timestamp_column: value.timestamp_column?,
+                    value_columns: value.value_columns?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsCollectionConfig> for TsCollectionConfig {
+            fn from(value: super::TsCollectionConfig) -> Self {
+                Self {
+                    name: Ok(value.name),
+                    retention_ms: Ok(value.retention_ms),
+                    tag_columns: Ok(value.tag_columns),
+                    timestamp_column: Ok(value.timestamp_column),
+                    value_columns: Ok(value.value_columns),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsCreateResponse {
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsCreateResponse {
+            fn default() -> Self {
+                Self {
+                    name: Err("no value supplied for name".to_string()),
+                }
+            }
+        }
+        impl TsCreateResponse {
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsCreateResponse> for super::TsCreateResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsCreateResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self { name: value.name? })
+            }
+        }
+        impl ::std::convert::From<super::TsCreateResponse> for TsCreateResponse {
+            fn from(value: super::TsCreateResponse) -> Self {
+                Self {
+                    name: Ok(value.name),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsDeleteResponse {
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsDeleteResponse {
+            fn default() -> Self {
+                Self {
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl TsDeleteResponse {
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsDeleteResponse> for super::TsDeleteResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsDeleteResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsDeleteResponse> for TsDeleteResponse {
+            fn from(value: super::TsDeleteResponse) -> Self {
+                Self {
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsIngestRequest {
+            points: ::std::result::Result<::std::vec::Vec<super::TsPoint>, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsIngestRequest {
+            fn default() -> Self {
+                Self {
+                    points: Err("no value supplied for points".to_string()),
+                }
+            }
+        }
+        impl TsIngestRequest {
+            pub fn points<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::TsPoint>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.points = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for points: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsIngestRequest> for super::TsIngestRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsIngestRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    points: value.points?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsIngestRequest> for TsIngestRequest {
+            fn from(value: super::TsIngestRequest) -> Self {
+                Self {
+                    points: Ok(value.points),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsIngestResponse {
+            ingested: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsIngestResponse {
+            fn default() -> Self {
+                Self {
+                    ingested: Err("no value supplied for ingested".to_string()),
+                }
+            }
+        }
+        impl TsIngestResponse {
+            pub fn ingested<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ingested = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for ingested: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsIngestResponse> for super::TsIngestResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsIngestResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    ingested: value.ingested?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsIngestResponse> for TsIngestResponse {
+            fn from(value: super::TsIngestResponse) -> Self {
+                Self {
+                    ingested: Ok(value.ingested),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsListResponse {
+            collections: ::std::result::Result<
+                ::std::vec::Vec<super::TsCollectionConfig>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for TsListResponse {
+            fn default() -> Self {
+                Self {
+                    collections: Err("no value supplied for collections".to_string()),
+                }
+            }
+        }
+        impl TsListResponse {
+            pub fn collections<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::TsCollectionConfig>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collections = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collections: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsListResponse> for super::TsListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collections: value.collections?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsListResponse> for TsListResponse {
+            fn from(value: super::TsListResponse) -> Self {
+                Self {
+                    collections: Ok(value.collections),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsPoint {
+            tags: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            timestamp: ::std::result::Result<i64, ::std::string::String>,
+            values: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, f64>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for TsPoint {
+            fn default() -> Self {
+                Self {
+                    tags: Ok(Default::default()),
+                    timestamp: Err("no value supplied for timestamp".to_string()),
+                    values: Ok(Default::default()),
+                }
+            }
+        }
+        impl TsPoint {
+            pub fn tags<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tags = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tags: {e}"));
+                self
+            }
+            pub fn timestamp<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.timestamp = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for timestamp: {e}"));
+                self
+            }
+            pub fn values<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::collections::HashMap<::std::string::String, f64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.values = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for values: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsPoint> for super::TsPoint {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsPoint,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    tags: value.tags?,
+                    timestamp: value.timestamp?,
+                    values: value.values?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsPoint> for TsPoint {
+            fn from(value: super::TsPoint) -> Self {
+                Self {
+                    tags: Ok(value.tags),
+                    timestamp: Ok(value.timestamp),
+                    values: Ok(value.values),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsQueryRequest {
+            end_time: ::std::result::Result<i64, ::std::string::String>,
+            limit: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            start_time: ::std::result::Result<i64, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsQueryRequest {
+            fn default() -> Self {
+                Self {
+                    end_time: Err("no value supplied for end_time".to_string()),
+                    limit: Ok(Default::default()),
+                    start_time: Err("no value supplied for start_time".to_string()),
+                }
+            }
+        }
+        impl TsQueryRequest {
+            pub fn end_time<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.end_time = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for end_time: {e}"));
+                self
+            }
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn start_time<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.start_time = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for start_time: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsQueryRequest> for super::TsQueryRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsQueryRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    end_time: value.end_time?,
+                    limit: value.limit?,
+                    start_time: value.start_time?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsQueryRequest> for TsQueryRequest {
+            fn from(value: super::TsQueryRequest) -> Self {
+                Self {
+                    end_time: Ok(value.end_time),
+                    limit: Ok(value.limit),
+                    start_time: Ok(value.start_time),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsQueryResponse {
+            points: ::std::result::Result<::std::vec::Vec<super::TsPoint>, ::std::string::String>,
+        }
+        impl ::std::default::Default for TsQueryResponse {
+            fn default() -> Self {
+                Self {
+                    points: Err("no value supplied for points".to_string()),
+                }
+            }
+        }
+        impl TsQueryResponse {
+            pub fn points<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::TsPoint>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.points = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for points: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsQueryResponse> for super::TsQueryResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsQueryResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    points: value.points?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsQueryResponse> for TsQueryResponse {
+            fn from(value: super::TsQueryResponse) -> Self {
+                Self {
+                    points: Ok(value.points),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TsValueColumn {
+            aggregation: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+            unit: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for TsValueColumn {
+            fn default() -> Self {
+                Self {
+                    aggregation: Ok(Default::default()),
+                    name: Err("no value supplied for name".to_string()),
+                    unit: Ok(Default::default()),
+                }
+            }
+        }
+        impl TsValueColumn {
+            pub fn aggregation<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.aggregation = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for aggregation: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn unit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.unit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for unit: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TsValueColumn> for super::TsValueColumn {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TsValueColumn,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    aggregation: value.aggregation?,
+                    name: value.name?,
+                    unit: value.unit?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TsValueColumn> for TsValueColumn {
+            fn from(value: super::TsValueColumn) -> Self {
+                Self {
+                    aggregation: Ok(value.aggregation),
+                    name: Ok(value.name),
+                    unit: Ok(value.unit),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct TypedFilter {
             field: ::std::result::Result<::std::string::String, ::std::string::String>,
             op: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -33125,6 +34244,12 @@ pub mod types {
         }
         pub(super) fn traverse_request_algorithm() -> ::std::string::String {
             "bfs".to_string()
+        }
+        pub(super) fn ts_aggregate_request_aggregation() -> ::std::string::String {
+            "avg".to_string()
+        }
+        pub(super) fn ts_collection_config_timestamp_column() -> ::std::string::String {
+            "timestamp".to_string()
         }
     }
 }
@@ -35377,6 +36502,116 @@ impl Client {
     /// ```
     pub fn execute_sql(&self) -> builder::ExecuteSql<'_> {
         builder::ExecuteSql::new(self)
+    }
+    /// List this tenant's time-series collections
+    ///
+    /// Sends a `GET` request to `/api/v2/timeseries/collections`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_timeseries_collections()
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_timeseries_collections(&self) -> builder::ListTimeseriesCollections<'_> {
+        builder::ListTimeseriesCollections::new(self)
+    }
+    /// Create a time-series collection
+    ///
+    /// Sends a `POST` request to `/api/v2/timeseries/collections`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.create_timeseries_collection()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn create_timeseries_collection(&self) -> builder::CreateTimeseriesCollection<'_> {
+        builder::CreateTimeseriesCollection::new(self)
+    }
+    /// Delete a time-series collection
+    ///
+    /// Always 200; `success` distinguishes an actual deletion from a
+    /// no-op (unknown collection).
+    ///
+    ///
+    /// Sends a `DELETE` request to `/api/v2/timeseries/collections/{collection_id}`
+    ///
+    /// Arguments:
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_timeseries_collection()
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_timeseries_collection(&self) -> builder::DeleteTimeseriesCollection<'_> {
+        builder::DeleteTimeseriesCollection::new(self)
+    }
+    /// Aggregate points into time buckets
+    ///
+    /// Sends a `POST` request to `/api/v2/timeseries/collections/{collection_id}/aggregate`
+    ///
+    /// Arguments:
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.aggregate_timeseries()
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn aggregate_timeseries(&self) -> builder::AggregateTimeseries<'_> {
+        builder::AggregateTimeseries::new(self)
+    }
+    /// Ingest time-series points
+    ///
+    /// Sends a `POST` request to `/api/v2/timeseries/collections/{collection_id}/ingest`
+    ///
+    /// Arguments:
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.ingest_timeseries()
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn ingest_timeseries(&self) -> builder::IngestTimeseries<'_> {
+        builder::IngestTimeseries::new(self)
+    }
+    /// Query points in a time range (epoch millis)
+    ///
+    /// Sends a `POST` request to `/api/v2/timeseries/collections/{collection_id}/query`
+    ///
+    /// Arguments:
+    /// - `collection_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.query_timeseries()
+    /// .collection_id(collection_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn query_timeseries(&self) -> builder::QueryTimeseries<'_> {
+        builder::QueryTimeseries::new(self)
     }
     /// Get server health
     ///
@@ -45273,6 +46508,587 @@ pub mod builder {
                 409u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::list_timeseries_collections`]
+    ///
+    /// [`Client::list_timeseries_collections`]: super::Client::list_timeseries_collections
+    #[derive(Debug, Clone)]
+    pub struct ListTimeseriesCollections<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListTimeseriesCollections<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/timeseries/collections`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::TsListResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                x_tenant_id,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/timeseries/collections", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_timeseries_collections",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::create_timeseries_collection`]
+    ///
+    /// [`Client::create_timeseries_collection`]: super::Client::create_timeseries_collection
+    #[derive(Debug, Clone)]
+    pub struct CreateTimeseriesCollection<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::TsCollectionConfig, String>,
+    }
+    impl<'a> CreateTimeseriesCollection<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::TsCollectionConfig>,
+            <V as std::convert::TryInto<types::TsCollectionConfig>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `TsCollectionConfig` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::TsCollectionConfig,
+                ) -> types::builder::TsCollectionConfig,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/timeseries/collections`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::TsCreateResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::TsCollectionConfig::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/timeseries/collections", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "create_timeseries_collection",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_timeseries_collection`]
+    ///
+    /// [`Client::delete_timeseries_collection`]: super::Client::delete_timeseries_collection
+    #[derive(Debug, Clone)]
+    pub struct DeleteTimeseriesCollection<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeleteTimeseriesCollection<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/timeseries/collections/{collection_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::TsDeleteResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection_id,
+                x_tenant_id,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/timeseries/collections/{}",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_timeseries_collection",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::aggregate_timeseries`]
+    ///
+    /// [`Client::aggregate_timeseries`]: super::Client::aggregate_timeseries
+    #[derive(Debug, Clone)]
+    pub struct AggregateTimeseries<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::TsAggregateRequest, String>,
+    }
+    impl<'a> AggregateTimeseries<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::TsAggregateRequest>,
+            <V as std::convert::TryInto<types::TsAggregateRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `TsAggregateRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::TsAggregateRequest,
+                ) -> types::builder::TsAggregateRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/timeseries/collections/{collection_id}/aggregate`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::TsAggregateResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::TsAggregateRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/timeseries/collections/{}/aggregate",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "aggregate_timeseries",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::ingest_timeseries`]
+    ///
+    /// [`Client::ingest_timeseries`]: super::Client::ingest_timeseries
+    #[derive(Debug, Clone)]
+    pub struct IngestTimeseries<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::TsIngestRequest, String>,
+    }
+    impl<'a> IngestTimeseries<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::TsIngestRequest>,
+            <V as std::convert::TryInto<types::TsIngestRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `TsIngestRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::TsIngestRequest) -> types::builder::TsIngestRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/timeseries/collections/{collection_id}/ingest`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::TsIngestResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::TsIngestRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/timeseries/collections/{}/ingest",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "ingest_timeseries",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::query_timeseries`]
+    ///
+    /// [`Client::query_timeseries`]: super::Client::query_timeseries
+    #[derive(Debug, Clone)]
+    pub struct QueryTimeseries<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::TsQueryRequest, String>,
+    }
+    impl<'a> QueryTimeseries<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::TsQueryRequest>,
+            <V as std::convert::TryInto<types::TsQueryRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `TsQueryRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::TsQueryRequest) -> types::builder::TsQueryRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/timeseries/collections/{collection_id}/query`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::TsQueryResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::TsQueryRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/timeseries/collections/{}/query",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "query_timeseries",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),

@@ -1051,6 +1051,104 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/timeseries/collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List this tenant's time-series collections. */
+        get: operations["listTimeseriesCollections"];
+        put?: never;
+        /** Create a time-series collection. */
+        post: operations["createTimeseriesCollection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/timeseries/collections/{collection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a time-series collection.
+         * @description Always 200; `success` distinguishes an actual deletion from a
+         *     no-op (unknown collection).
+         */
+        delete: operations["deleteTimeseriesCollection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/timeseries/collections/{collection_id}/ingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest time-series points. */
+        post: operations["ingestTimeseries"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/timeseries/collections/{collection_id}/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query points in a time range (epoch millis). */
+        post: operations["queryTimeseries"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/timeseries/collections/{collection_id}/aggregate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Aggregate points into time buckets. */
+        post: operations["aggregateTimeseries"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/hybrid/search": {
         parameters: {
             query?: never;
@@ -4344,6 +4442,76 @@ export interface components {
             reason: string;
             required_guards: string[];
         };
+        TsValueColumn: {
+            name: string;
+            unit?: string;
+            aggregation?: string;
+        };
+        TsCollectionConfig: {
+            name: string;
+            /** @default timestamp */
+            timestamp_column: string;
+            value_columns?: components["schemas"]["TsValueColumn"][];
+            tag_columns?: string[];
+            /** Format: int64 */
+            retention_ms?: number | null;
+        };
+        TsPoint: {
+            /**
+             * Format: int64
+             * @description Epoch milliseconds.
+             */
+            timestamp: number;
+            values?: {
+                [key: string]: number;
+            };
+            tags?: {
+                [key: string]: string;
+            };
+        };
+        TsCreateResponse: {
+            name: string;
+        };
+        TsListResponse: {
+            collections: components["schemas"]["TsCollectionConfig"][];
+        };
+        TsDeleteResponse: {
+            success: boolean;
+        };
+        TsIngestRequest: {
+            points: components["schemas"]["TsPoint"][];
+        };
+        TsIngestResponse: {
+            /** Format: uint64 */
+            ingested: number;
+        };
+        TsQueryRequest: {
+            /** Format: int64 */
+            start_time: number;
+            /** Format: int64 */
+            end_time: number;
+            /** Format: uint64 */
+            limit?: number | null;
+        };
+        TsQueryResponse: {
+            points: components["schemas"]["TsPoint"][];
+        };
+        TsAggregateRequest: {
+            /** Format: int64 */
+            start_time: number;
+            /** Format: int64 */
+            end_time: number;
+            /** @default avg */
+            aggregation: string;
+            /**
+             * Format: int64
+             * @default 60000
+             */
+            bucket_ms: number;
+        };
+        TsAggregateResponse: {
+            buckets: unknown[];
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -6541,6 +6709,174 @@ export interface operations {
             };
             404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
+        };
+    };
+    listTimeseriesCollections: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tenant-scoped collection configs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TsListResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTimeseriesCollection: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TsCollectionConfig"];
+            };
+        };
+        responses: {
+            /** @description Created (echoes the tenant-clean name). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TsCreateResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteTimeseriesCollection: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TsDeleteResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    ingestTimeseries: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TsIngestRequest"];
+            };
+        };
+        responses: {
+            /** @description Ingest count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TsIngestResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    queryTimeseries: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TsQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Matching points. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TsQueryResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    aggregateTimeseries: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TsAggregateRequest"];
+            };
+        };
+        responses: {
+            /** @description Aggregation buckets (free-form result objects). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TsAggregateResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
         };
     };
     hybridSearch: {

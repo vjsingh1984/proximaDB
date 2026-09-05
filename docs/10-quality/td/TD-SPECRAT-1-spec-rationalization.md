@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1-5 landed (observability+nl, stub-rule fixes, ABAC, collections admin, catalog routing/explain); wave 6 (graph surface) landing
+| Status | Waves 1-6 landed (observability+nl, stub-rule fixes, ABAC, collections admin, catalog routing/explain, graph surface); wave 7 (timeseries) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -248,7 +248,7 @@ Rationalization notes:
 * `POST /api/v2/collections/{collection_id}/branches/{branch}/merge` —
   still deferred to the graph-analytics wave (wave-4 decision).
 
-== Wave 6: graph surface truth + gap exposure (this PR)
+== Wave 6: graph surface truth + gap exposure (landed)
 
 **Pre-existing defect FIXED — the published graph surface modeled the
 wrong response shape.** Every `/api/v2/graphs/*` handler (api-crate
@@ -290,3 +290,30 @@ rejections are plain text.
 * graph branch-merge (wave-4 deferral; free-form response).
 * Legacy 308-redirect shims (`/api/v2/nodes|edges|stats`) — clients
   must use the canonical graph-scoped paths.
+
+== Wave 7: time-series surface (this PR)
+
+**Exposed (5 paths / 6 operations; spec 74 → 79):** the complete
+`/api/v2/timeseries/collections*` surface (TD-TS-1; handlers in
+`src/network/rest/v2/timeseries.rs`, mounted unconditionally; backed by
+the process-global `TimeSeriesService` over the native TST engine —
+real, not stubs): create/list/delete collection, ingest, query,
+aggregate.
+
+Rationalization notes:
+
+* **Tenant-bearing, unlike waves 3-6:** these handlers consume
+  `TenantContext` from the middleware — the optional `X-Tenant-ID`
+  header IS consulted (per-tenant structural isolation: one engine per
+  tenant at `<data>/timeseries/<tenant>`; the collection name stays
+  tenant-clean). The document-wide injected-header note is accurate
+  here.
+* **Flat responses, no envelope** — the handler bodies are the wire
+  bodies (`{ingested}`, `{points}`, `{buckets}`, …).
+* **Error posture documented honestly:** every handler error maps to
+  500 with the canonical envelope — including "collection not found"
+  (there is no 404 on this surface); a missing global service is also a
+  500. `aggregate` buckets are free-form JSON objects.
+* The surface deliberately matches the contract the Python SDK's
+  `rest_adapter` already consumes (its field reads align with the flat
+  wire shapes — verified no facade fallout this time).
