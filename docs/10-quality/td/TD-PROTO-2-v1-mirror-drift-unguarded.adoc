@@ -359,6 +359,16 @@ addressed in the same PR:**
   three-cursor form whose invariants were hand-enforced, and unifying the
   JSON walker this file previously maintained twice.
 
+**Round 9 (partial — review agent rate-limited mid-run, 2026-09-05) —
+1 empirically-confirmed finding, fixed:**
+
+* The round-8 records-reader fix stripped the legacy magic but then
+  msgpack-decoded the remaining bytes — the legacy payload after the magic
+  is JSON TEXT (search-types' decoder had this right). Short payloads
+  "decoded" as garbage numbers (`123` → Number(123)); documents degraded
+  to Binary. The reader now decodes magic-stripped bytes with
+  serde_json; only magic-free bytes take the MessagePack path.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,
