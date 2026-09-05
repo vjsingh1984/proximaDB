@@ -716,7 +716,15 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
         // Round 11: JSON(B) as canonical JSON text — the wildcard silently
         // dropped the property at this sibling of the adjacency seam the
         // round-8 fix closed.
-        Some(Value::JsonValue(json)) => Some(GraphValue::StringValue(json.clone())),
+        Some(Value::JsonValue(json)) => {
+            // Round 13: the literal "null" document is the property model's
+            // null form (round-12 rule at this second write seam).
+            if json == "null" {
+                None
+            } else {
+                Some(GraphValue::StringValue(json.clone()))
+            }
+        }
         _ => return None, // Arrays / maps are not supported as scalar node props.
     };
 

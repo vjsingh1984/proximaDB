@@ -449,6 +449,31 @@ addressed in the same PR:**
   (b) the canonical-JSON-text-as-StringValue policy is hand-encoded at two
   sibling graph seams — rides with the shared-converter consolidation.
 
+**Round 13 (2026-09-05) — 7 findings: 6 fixed, 1 tracked:**
+
+* Correctness (SQL three-valued logic): the round-12 null resolution let
+  null-valued fields leak into range results (`rank < 10` admitted them
+  while an absent field was excluded). Ordering comparisons now return
+  false when either side is null; `= null` keeps matching (the pinned
+  JSON-consistent choice for explicit null literals — documented in the
+  test). Pinned by `null_valued_field_satisfies_no_range_predicate`.
+* The third sibling seam: entity_to_node's direct-property loop
+  wildcard-dropped JSON(B)/object/array flexible-metadata fields, making
+  them unfilterable (matches_metadata_filter reads only direct
+  properties). They now lower to canonical JSON text — with the literal
+  `null` document mapping to the property model's null form (the round-12
+  rule applied at this seam too).
+* The v2 gRPC write seam: `json_value: "null"` no longer becomes the
+  string "null" (same rule).
+* The unset-oneof-is-null rule now lives in one wrapper
+  (`sql_value_to_json`) at the top level instead of being re-derived by
+  hand at four depths.
+* Cleanup: duplicate disarm-contract comment removed; (tracked, unchanged)
+  the Jsonb read-rendering round-trip asymmetry at the graph property
+  seam (StringValue loses the JSON typing on read-modify-write) — needs a
+  typed property or marker scheme, folded into the JSON-text-policy
+  consolidation.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

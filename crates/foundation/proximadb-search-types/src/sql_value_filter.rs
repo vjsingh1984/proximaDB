@@ -82,10 +82,7 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
             // Round 12: a top-level unset oneof is the SAME wire form of null
             // as the nested one the round-11 fix handles — `a = null` must
             // match, not drop the row.
-            return Some(match sql_value.value.as_ref() {
-                Some(inner) => sql_val_to_json(inner),
-                None => serde_json::Value::Null,
-            });
+            return Some(sql_value_to_json(sql_value));
         }
         // Dot traversal for JSON(B) roots — mirrors `resolve_proxima_value`
         // so the SqlValue and ProximaTree paths agree for nested fields:
@@ -97,6 +94,8 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
         let (head, tail) = field.split_once('.')?;
         let mut segments = tail.split('.');
         let mut current = metadata.get(head)?.value.as_ref()?;
+        // (a null ROOT is handled by the wrapper when the whole field is
+        // requested; a null HEAD with remaining segments is terminal below.)
         for segment in segments.by_ref() {
             match current {
                 SqlVal::ObjectValue(obj) => {
@@ -166,6 +165,16 @@ pub fn json_get_path<'a>(
 /// metadata path shares the canonical operator semantics (the seam compares on
 /// `serde_json::Value`). Numbers stay numeric (so `compare_json_numbers` keeps
 /// integer precision); bytes become a JSON array of byte values.
+/// Lower a whole `SqlValue` (including its unset-oneof null wire form) to
+/// JSON. Single authority for "unset oneof == JSON null" — rounds 11/12 were
+/// each this rule drifting by depth; do not re-derive it per call site.
+fn sql_value_to_json(sql: &SqlValue) -> serde_json::Value {
+    match sql.value.as_ref() {
+        Some(inner) => sql_val_to_json(inner),
+        None => serde_json::Value::Null,
+    }
+}
+
 fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
     match value {
         SqlVal::StringValue(s) => serde_json::Value::String(s.clone()),
@@ -371,10 +380,26 @@ pub fn compare_json_op(
     match operator {
         ComparisonOperator::Equals => json_eq(json_val, value),
         ComparisonOperator::NotEquals => !json_eq(json_val, value),
-        ComparisonOperator::LessThan => compare_json_lt(json_val, value),
-        ComparisonOperator::LessThanOrEqual => compare_json_lte(json_val, value),
-        ComparisonOperator::GreaterThan => compare_json_gt(json_val, value),
-        ComparisonOperator::GreaterThanOrEqual => compare_json_gte(json_val, value),
+        ComparisonOperator::LessThan => {
+            // SQL: NULL is unordered — a null-valued field
+            // satisfies no range predicate (round 13).
+            !json_val.is_null() && !value.is_null() && compare_json_lt(json_val, value)
+        }
+        ComparisonOperator::LessThanOrEqual => {
+            // SQL: NULL is unordered — a null-valued field
+            // satisfies no range predicate (round 13).
+            !json_val.is_null() && !value.is_null() && compare_json_lte(json_val, value)
+        }
+        ComparisonOperator::GreaterThan => {
+            // SQL: NULL is unordered — a null-valued field
+            // satisfies no range predicate (round 13).
+            !json_val.is_null() && !value.is_null() && compare_json_gt(json_val, value)
+        }
+        ComparisonOperator::GreaterThanOrEqual => {
+            // SQL: NULL is unordered — a null-valued field
+            // satisfies no range predicate (round 13).
+            !json_val.is_null() && !value.is_null() && compare_json_gte(json_val, value)
+        }
         ComparisonOperator::In => match json_val {
             // Array-valued prop (e.g. `member_oids`): match when
             // the prop set intersects the query list.
@@ -794,6 +819,34 @@ mod tests {
             sql_val_to_json(&SqlVal::JsonbValue(vec![0xc1])),
             serde_json::Value::String("c1".to_string())
         );
+    }
+
+    #[test]
+    fn null_valued_field_satisfies_no_range_predicate() {
+        // Round 13 (SQL three-valued logic): a null-valued field must not
+        // leak into range results while an absent field does not.
+        let mut metadata = HashMap::new();
+        metadata.insert("rank".to_string(), SqlValue { value: None });
+        let lt = FilterExpression::Comparison {
+            field: "rank".to_string(),
+            operator: ComparisonOperator::LessThan,
+            value: json!(10),
+        };
+        assert!(!evaluate_filter(&lt, &metadata));
+        let gte = FilterExpression::Comparison {
+            field: "rank".to_string(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: json!(0),
+        };
+        assert!(!evaluate_filter(&gte, &metadata));
+        // Equality with an explicit null literal still matches (pinned in
+        // round 12) — the JSON-consistent choice, documented here.
+        let eq = FilterExpression::Comparison {
+            field: "rank".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(null),
+        };
+        assert!(evaluate_filter(&eq, &metadata));
     }
 
     #[test]

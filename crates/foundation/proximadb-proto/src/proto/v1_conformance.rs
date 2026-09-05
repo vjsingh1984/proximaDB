@@ -1595,10 +1595,7 @@ impl Comparer {
 /// condition FAILS, so the gate can never silently disarm where it is the
 /// only drift check — a skip and a pass stay distinguishable.
 fn skip_or_fail(cause: &str) -> Option<Vec<u8>> {
-    // CI's unit lane sets REQUIRE_PROTOC=1: there, ANY disarm cause (missing
-    // protoc, absent repo root, unreadable proto tree) FAILS so the gate
-    // cannot silently return green exactly when what it guards has moved
-    // (round-7 finding). Developer machines keep the graceful skip.
+    // See the doc comment above for the disarm causes and contract.
     if std::env::var_os("REQUIRE_PROTOC").is_some() {
         panic!(
             "TD-PROTO-2: the conformance gate is REQUIRED here (REQUIRE_PROTOC=1) \

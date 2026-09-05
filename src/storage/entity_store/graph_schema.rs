@@ -47,6 +47,17 @@ const EMBEDDINGS_KEY: &str = "__embeddings";
 /// Maps Entity to Node and vice versa
 pub struct EntityNodeMapper;
 
+/// JSON text becomes a StringValue property — except the literal `null`
+/// document, which is the property model's null form (round-12 rule at this
+/// third seam).
+fn json_text_property(text: &str) -> Option<property_value::Value> {
+    if text == "null" {
+        None
+    } else {
+        Some(property_value::Value::StringValue(text.to_string()))
+    }
+}
+
 impl EntityNodeMapper {
     /// Convert SKS Entity to Orion Node
     ///
@@ -99,7 +110,26 @@ impl EntityNodeMapper {
                         sql_value::Value::BoolValue(b) => {
                             Some(property_value::Value::BoolValue(*b))
                         }
-                        _ => None, // Skip unsupported types
+                        // Round 13: JSON(B)/array/object flexible-metadata
+                        // fields lower to canonical JSON text — the wildcard
+                        // made them unfilterable (matches_metadata_filter
+                        // reads only direct properties, never the blob).
+                        sql_value::Value::JsonbValue(bytes) => {
+                            let text =
+                                proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(
+                                    bytes,
+                                );
+                            json_text_property(&text)
+                        }
+                        sql_value::Value::ObjectValue(obj) => {
+                            let text = serde_json::to_string(obj).unwrap_or_default();
+                            json_text_property(&text)
+                        }
+                        sql_value::Value::ArrayValue(arr) => {
+                            let text = serde_json::to_string(arr).unwrap_or_default();
+                            json_text_property(&text)
+                        }
+                        _ => None, // bytes and nulls stay blob-only
                     };
                     if let Some(pv) = prop_value {
                         properties.insert(key.clone(), PropertyValue { value: Some(pv) });
