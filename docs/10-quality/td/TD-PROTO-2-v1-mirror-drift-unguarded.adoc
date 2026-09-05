@@ -369,6 +369,30 @@ addressed in the same PR:**
   to Binary. The reader now decodes magic-stripped bytes with
   serde_json; only magic-free bytes take the MessagePack path.
 
+**Round 10 (2026-09-05) — 6 findings, all fixed:**
+
+* **Correctness** (6/8 angles + reviewer trace): the two-phase dot-traversal
+  returned a scalar PARENT's value for a dotted field (`user.name` over
+  `{"user": "admin"}` resolved to "admin") — admitting rows on
+  `user.name = "admin"` and flipping IS NULL semantics on the GA engine
+  filter paths (helix, swift, compiled-filter). The mid-path non-object arm
+  now returns None (the leaf case is the post-loop match); pinned by
+  `dotted_field_on_a_scalar_parent_never_resolves`.
+* The live graph seam dropped `ProximaValue::Map` via the wildcard one line
+  below the new Json/Jsonb arm while the structurally identical Struct
+  mapped to ObjectValue — Map now joins the Struct arm.
+* Deleted the dead `sql_value_to_property_value` /
+  `property_value_to_sql_value` twins in graph_schema (the round-7 trap —
+  re-armed by parity-editing instead of deleting).
+* `json_get_path` takes an iterator (`once(segment).chain(segments)`,
+  `tail.split('.')`) — zero allocations on the per-record hot path where
+  both call sites previously collected Vecs.
+* Guard: removed the now-unreachable empty-table `continue` and its stale
+  PRESENT-table comment (absence fails loud above).
+* Not re-fixed (tracked, per the standing consolidation disposition): the
+  legacy magic+JSON-text codec body is still line-copied between records
+  and search-types — it rides with the single-authority consolidation.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

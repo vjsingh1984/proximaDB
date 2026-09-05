@@ -324,64 +324,6 @@ impl RelationEdgeMapper {
 // Helper Functions: SqlValue ↔ PropertyValue Conversion
 // ============================================================================
 
-#[allow(dead_code)]
-fn sql_value_to_property_value(sql_value: &SqlValue) -> Result<PropertyValue> {
-    let value = match &sql_value.value {
-        Some(sql_value::Value::StringValue(s)) => {
-            Some(property_value::Value::StringValue(s.clone()))
-        }
-        Some(sql_value::Value::NumberValue(n)) => Some(property_value::Value::DoubleValue(*n)),
-        Some(sql_value::Value::BoolValue(b)) => Some(property_value::Value::BoolValue(*b)),
-        Some(sql_value::Value::Int64Value(i)) => Some(property_value::Value::IntValue(*i)),
-        Some(sql_value::Value::BytesValue(bytes)) => {
-            Some(property_value::Value::BytesValue(bytes.clone()))
-        }
-        // Round 7: decode to canonical JSON text like the array/object arms —
-        // raw MessagePack bytes would render as AqlValue::Null at the AQL
-        // graph seam (from_slice fails on the map header), the silent-drop
-        // class eradicated everywhere else.
-        Some(sql_value::Value::JsonbValue(bytes)) => {
-            let text = proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(bytes);
-            Some(property_value::Value::StringValue(text))
-        }
-        Some(sql_value::Value::NullValue(_)) => None,
-        // For complex types (arrays, objects), serialize to JSON string for now
-        Some(sql_value::Value::ArrayValue(arr)) => {
-            let json = serde_json::to_string(arr).context("Failed to serialize array")?;
-            Some(property_value::Value::StringValue(json))
-        }
-        Some(sql_value::Value::ObjectValue(obj)) => {
-            let json = serde_json::to_string(obj).context("Failed to serialize object")?;
-            Some(property_value::Value::StringValue(json))
-        }
-        None => None,
-    };
-
-    Ok(PropertyValue { value })
-}
-
-#[allow(dead_code)]
-fn property_value_to_sql_value(prop_value: &PropertyValue) -> Result<SqlValue> {
-    let value = match &prop_value.value {
-        Some(property_value::Value::StringValue(s)) => {
-            Some(sql_value::Value::StringValue(s.clone()))
-        }
-        Some(property_value::Value::IntValue(i)) => Some(sql_value::Value::Int64Value(*i)),
-        Some(property_value::Value::DoubleValue(d)) => Some(sql_value::Value::NumberValue(*d)),
-        Some(property_value::Value::BoolValue(b)) => Some(sql_value::Value::BoolValue(*b)),
-        Some(property_value::Value::BytesValue(bytes)) => {
-            Some(sql_value::Value::BytesValue(bytes.clone()))
-        }
-        // For now, treat complex types as null (will improve in future)
-        Some(property_value::Value::ArrayValue(_)) => Some(sql_value::Value::NullValue(0)),
-        Some(property_value::Value::ObjectValue(_)) => Some(sql_value::Value::NullValue(0)),
-        Some(property_value::Value::VectorValue(_)) => Some(sql_value::Value::NullValue(0)),
-        None => Some(sql_value::Value::NullValue(0)),
-    };
-
-    Ok(SqlValue { value })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

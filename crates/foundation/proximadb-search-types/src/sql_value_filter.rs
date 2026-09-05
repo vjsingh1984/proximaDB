@@ -102,18 +102,15 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
                     let root = ProximaValue::jsonb_to_json_lossy(bytes);
                     // `segment` was consumed from the iterator but not yet
                     // applied — it leads the JSON-side path.
-                    let mut path = vec![segment];
-                    path.extend(segments);
-                    return json_get_path(&root, &path).cloned();
+                    return json_get_path(&root, std::iter::once(segment).chain(segments)).cloned();
                 }
-                // A scalar mid-path can only be valid as the leaf itself.
-                other => {
-                    return if segments.next().is_none() {
-                        Some(sql_val_to_json(other))
-                    } else {
-                        None
-                    };
-                }
+                // A non-object mid-path cannot be traversed further —
+                // `segment` was consumed as a lookup key and found nothing
+                // object-shaped behind it. Returning the PARENT's value here
+                // (round-10 finding) admitted rows on `user.name = <user's
+                // own value>` and flipped IS NULL semantics; the legitimate
+                // leaf case is the post-loop match.
+                _ => return None,
             }
         }
         // Path ended on an ObjectValue node: convert that leaf.
@@ -129,12 +126,12 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
 /// (round 8: it was maintained twice in this file).
 fn json_get_path<'a>(
     root: &'a serde_json::Value,
-    segments: &[&str],
+    segments: impl Iterator<Item = &'a str>,
 ) -> Option<&'a serde_json::Value> {
     let mut current = root;
     for segment in segments {
         current = match current {
-            serde_json::Value::Object(object) => object.get(*segment)?,
+            serde_json::Value::Object(object) => object.get(segment)?,
             _ => return None,
         };
     }
@@ -558,7 +555,7 @@ fn resolve_proxima_value<'a>(props: &'a ProximaTree, field: &str) -> Option<Cow<
         | ProximaTreeNode::Value(ProximaValue::Jsonb(value)) => value,
         _ => return None,
     };
-    json_get_path(root, &tail.split('.').collect::<Vec<_>>())
+    json_get_path(root, tail.split('.'))
         .map(|value| Cow::Owned(proximadb_records::conversions::json_to_proxima(value)))
 }
 
@@ -784,6 +781,34 @@ mod tests {
             sql_val_to_json(&SqlVal::JsonbValue(vec![0xc1])),
             serde_json::Value::String("c1".to_string())
         );
+    }
+
+    #[test]
+    fn dotted_field_on_a_scalar_parent_never_resolves() {
+        // Round 10: the traversal once returned the scalar PARENT's value
+        // for `user.name` over {"user": "admin"}, admitting rows on
+        // `user.name = "admin"` and flipping IS NULL semantics.
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "user".to_string(),
+            make_sql_value(SqlVal::StringValue("admin".to_string())),
+        );
+        let filter = FilterExpression::Comparison {
+            field: "user.name".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!("admin"),
+        };
+        assert!(!evaluate_filter(&filter, &metadata));
+
+        let null_test = FilterExpression::Comparison {
+            field: "user.name".to_string(),
+            operator: ComparisonOperator::IsNull,
+            value: json!(null),
+        };
+        // The field cannot resolve — SQL semantics treat an absent field as
+        // NULL (the strict evaluator's is_none_or; the round-10 bug returned
+        // the parent's non-null value and flipped this to false).
+        assert!(evaluate_filter(&null_test, &metadata));
     }
 
     #[test]

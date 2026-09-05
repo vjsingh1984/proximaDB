@@ -1543,15 +1543,11 @@ impl Comparer {
                 continue;
             }
             for (wire, number) in dvalues {
-                // Each PRESENT table must cover the value independently —
-                // accepting either table would let a missing from_str_name
-                // arm hide behind a complete as_str_name (one-sided drift).
+                // Each table must cover the value independently (absence of a
+                // whole table already failed loud above).
                 let checks: [(&BTreeMap<&str, i32>, &str); 2] =
                     [(&from_table, "from_str_name"), (&as_table, "as_str_name")];
                 for (table, table_name) in checks {
-                    if table.is_empty() {
-                        continue; // already failed loud above
-                    }
                     match table.get(wire.as_str()) {
                         None => self.record(
                             key,

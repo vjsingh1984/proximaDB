@@ -381,12 +381,14 @@ fn proxima_value_to_property_value(value: &ProximaValue) -> PropertyValue {
         ProximaValue::Array(items) => Some(Value::ArrayValue(PropertyArray {
             values: items.iter().map(proxima_value_to_property_value).collect(),
         })),
-        ProximaValue::Struct(fields) => Some(Value::ObjectValue(PropertyObject {
-            fields: fields
-                .iter()
-                .map(|(key, child)| (key.clone(), proxima_value_to_property_value(child)))
-                .collect(),
-        })),
+        ProximaValue::Struct(fields) | ProximaValue::Map(fields) => {
+            Some(Value::ObjectValue(PropertyObject {
+                fields: fields
+                    .iter()
+                    .map(|(key, child)| (key.clone(), proxima_value_to_property_value(child)))
+                    .collect(),
+            }))
+        }
         ProximaValue::DenseVector(v) => Some(Value::VectorValue(v.clone())),
         // Round 8: JSON(B) maps to canonical JSON text — the wildcard silently
         // dropped it at this live projection seam (the round-7 fix landed in
