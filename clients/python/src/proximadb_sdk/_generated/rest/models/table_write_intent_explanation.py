@@ -26,6 +26,7 @@ class TableWriteIntentExplanation:
         isolation (str):
         projection_freshness (str):
         requires_row_level_semantics (bool):
+        batch_local_constraints_sufficient (bool):
         tenant_id (None | str | Unset):
         actor (None | str | Unset):
         idempotency_key (None | str | Unset):
@@ -40,6 +41,7 @@ class TableWriteIntentExplanation:
     isolation: str
     projection_freshness: str
     requires_row_level_semantics: bool
+    batch_local_constraints_sufficient: bool
     tenant_id: None | str | Unset = UNSET
     actor: None | str | Unset = UNSET
     idempotency_key: None | str | Unset = UNSET
@@ -60,6 +62,8 @@ class TableWriteIntentExplanation:
         projection_freshness = self.projection_freshness
 
         requires_row_level_semantics = self.requires_row_level_semantics
+
+        batch_local_constraints_sufficient = self.batch_local_constraints_sufficient
 
         tenant_id: None | str | Unset
         if isinstance(self.tenant_id, Unset):
@@ -107,6 +111,7 @@ class TableWriteIntentExplanation:
                 "isolation": isolation,
                 "projection_freshness": projection_freshness,
                 "requires_row_level_semantics": requires_row_level_semantics,
+                "batch_local_constraints_sufficient": batch_local_constraints_sufficient,
             }
         )
         if tenant_id is not UNSET:
@@ -138,6 +143,8 @@ class TableWriteIntentExplanation:
         projection_freshness = d.pop("projection_freshness")
 
         requires_row_level_semantics = d.pop("requires_row_level_semantics")
+
+        batch_local_constraints_sufficient = d.pop("batch_local_constraints_sufficient")
 
         def _parse_tenant_id(data: object) -> None | str | Unset:
             if data is None:
@@ -202,6 +209,7 @@ class TableWriteIntentExplanation:
             isolation=isolation,
             projection_freshness=projection_freshness,
             requires_row_level_semantics=requires_row_level_semantics,
+            batch_local_constraints_sufficient=batch_local_constraints_sufficient,
             tenant_id=tenant_id,
             actor=actor,
             idempotency_key=idempotency_key,

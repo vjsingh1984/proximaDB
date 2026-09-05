@@ -94,6 +94,10 @@ def sync_detailed(
     paths, estimated cost and data movement, required guards, and
     the write intent summary. Nothing is written.
     Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+    Extractor rejections (malformed JSON body, duplicate query
+    params) bypass the JSON error envelope and return axum's
+    plain-text 400/415/422 bodies — the typed envelope below covers
+    handler-emitted errors only.
     The optional `X-Tenant-ID` header is not consulted — tenant
     context, if any, rides the body's `tenant_id`.
 
@@ -146,6 +150,10 @@ def sync(
     paths, estimated cost and data movement, required guards, and
     the write intent summary. Nothing is written.
     Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+    Extractor rejections (malformed JSON body, duplicate query
+    params) bypass the JSON error envelope and return axum's
+    plain-text 400/415/422 bodies — the typed envelope below covers
+    handler-emitted errors only.
     The optional `X-Tenant-ID` header is not consulted — tenant
     context, if any, rides the body's `tenant_id`.
 
@@ -193,6 +201,10 @@ async def asyncio_detailed(
     paths, estimated cost and data movement, required guards, and
     the write intent summary. Nothing is written.
     Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+    Extractor rejections (malformed JSON body, duplicate query
+    params) bypass the JSON error envelope and return axum's
+    plain-text 400/415/422 bodies — the typed envelope below covers
+    handler-emitted errors only.
     The optional `X-Tenant-ID` header is not consulted — tenant
     context, if any, rides the body's `tenant_id`.
 
@@ -243,6 +255,10 @@ async def asyncio(
     paths, estimated cost and data movement, required guards, and
     the write intent summary. Nothing is written.
     Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+    Extractor rejections (malformed JSON body, duplicate query
+    params) bypass the JSON error envelope and return axum's
+    plain-text 400/415/422 bodies — the typed envelope below covers
+    handler-emitted errors only.
     The optional `X-Tenant-ID` header is not consulted — tenant
     context, if any, rides the body's `tenant_id`.
 

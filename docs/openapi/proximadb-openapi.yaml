@@ -3040,13 +3040,20 @@ paths:
         values are strings.
         The optional `X-Tenant-ID` header is not consulted by this
         handler (the introspection projection is cluster-scope).
+        The filter dispatch is LEXICAL over the composed SQL text, so a
+        `table_name` containing SQL fragments (e.g. ` from
+        xcatalog.namespaces`) can be misread as a different view — do
+        not treat this endpoint as a structured query interface
+        (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+        case-insensitively; a name containing a single quote silently
+        truncates the filter at the quote.
       parameters:
       - name: table_name
         in: query
         required: false
         schema:
           type: string
-        description: Filter to one table (exact name match).
+        description: Filter to one table (case-insensitive name match).
       - name: X-Tenant-ID
         in: header
         required: false
@@ -3076,6 +3083,10 @@ paths:
         paths, estimated cost and data movement, required guards, and
         the write intent summary. Nothing is written.
         Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+        Extractor rejections (malformed JSON body, duplicate query
+        params) bypass the JSON error envelope and return axum's
+        plain-text 400/415/422 bodies — the typed envelope below covers
+        handler-emitted errors only.
         The optional `X-Tenant-ID` header is not consulted — tenant
         context, if any, rides the body's `tenant_id`.
       requestBody:
@@ -7129,6 +7140,7 @@ components:
       - isolation
       - projection_freshness
       - requires_row_level_semantics
+      - batch_local_constraints_sufficient
       properties:
         target_table:
           type: string
@@ -7169,6 +7181,8 @@ components:
           format: uint64
         requires_row_level_semantics:
           type: boolean
+        batch_local_constraints_sufficient:
+          type: boolean
     TableWriteRejectedLaneExplanation:
       type: object
       required:
@@ -7204,6 +7218,7 @@ components:
       type: object
       required:
       - estimate_source
+      - stats_freshness
       properties:
         source_rows:
           type:
@@ -7262,6 +7277,13 @@ components:
           - integer
           - 'null'
           format: uint64
+        freshness_sla_ms:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        stats_freshness:
+          type: string
     TableWriteRouteMetadataExplanation:
       type: object
       required:
@@ -7271,6 +7293,7 @@ components:
       - projection_metadata
       - policy_boundary
       - constraint_enforcement
+      - constraint_gaps
       properties:
         authority_mode:
           type: string
@@ -7310,6 +7333,10 @@ components:
           type: string
         constraint_enforcement:
           type: string
+        constraint_gaps:
+          type: array
+          items:
+            type: string
     ProjectionRouteMetadataExplanation:
       type: object
       required:
@@ -7320,6 +7347,8 @@ components:
       - freshness
       - freshness_state
       - rebuildable
+      - lossy
+      - support_status
       properties:
         name:
           type: string
@@ -7353,6 +7382,14 @@ components:
           - string
           - 'null'
         policy_boundary:
+          type:
+          - string
+          - 'null'
+        lossy:
+          type: boolean
+        support_status:
+          type: string
+        benchmark_gate:
           type:
           - string
           - 'null'

@@ -1541,6 +1541,13 @@ export interface paths {
          *     values are strings.
          *     The optional `X-Tenant-ID` header is not consulted by this
          *     handler (the introspection projection is cluster-scope).
+         *     The filter dispatch is LEXICAL over the composed SQL text, so a
+         *     `table_name` containing SQL fragments (e.g. ` from
+         *     xcatalog.namespaces`) can be misread as a different view — do
+         *     not treat this endpoint as a structured query interface
+         *     (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+         *     case-insensitively; a name containing a single quote silently
+         *     truncates the filter at the quote.
          */
         get: operations["getCatalogTableRouting"];
         put?: never;
@@ -1569,6 +1576,10 @@ export interface paths {
          *     paths, estimated cost and data movement, required guards, and
          *     the write intent summary. Nothing is written.
          *     Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+         *     Extractor rejections (malformed JSON body, duplicate query
+         *     params) bypass the JSON error envelope and return axum's
+         *     plain-text 400/415/422 bodies — the typed envelope below covers
+         *     handler-emitted errors only.
          *     The optional `X-Tenant-ID` header is not consulted — tenant
          *     context, if any, rides the body's `tenant_id`.
          */
@@ -3755,6 +3766,7 @@ export interface components {
             /** Format: uint64 */
             estimated_bytes?: number | null;
             requires_row_level_semantics: boolean;
+            batch_local_constraints_sufficient: boolean;
         };
         TableWriteRejectedLaneExplanation: {
             lane: string;
@@ -3793,6 +3805,9 @@ export interface components {
             source_stats_age_ms?: number | null;
             /** Format: uint64 */
             target_stats_age_ms?: number | null;
+            /** Format: uint64 */
+            freshness_sla_ms?: number | null;
+            stats_freshness: string;
         };
         TableWriteRouteMetadataExplanation: {
             authority_mode: string;
@@ -3807,6 +3822,7 @@ export interface components {
             projection_metadata: components["schemas"]["ProjectionRouteMetadataExplanation"][];
             policy_boundary: string;
             constraint_enforcement: string;
+            constraint_gaps: string[];
         };
         ProjectionRouteMetadataExplanation: {
             name: string;
@@ -3822,6 +3838,9 @@ export interface components {
             rebuildable: boolean;
             invalidation_policy?: string | null;
             policy_boundary?: string | null;
+            lossy: boolean;
+            support_status: string;
+            benchmark_gate?: string | null;
         };
         TableWriteCandidateExplanation: {
             backend: string;
@@ -6703,7 +6722,7 @@ export interface operations {
     getCatalogTableRouting: {
         parameters: {
             query?: {
-                /** @description Filter to one table (exact name match). */
+                /** @description Filter to one table (case-insensitive name match). */
                 table_name?: string;
             };
             header?: {

@@ -2125,11 +2125,13 @@ type ProbeResponse struct {
 
 // ProjectionRouteMetadataExplanation defines model for ProjectionRouteMetadataExplanation.
 type ProjectionRouteMetadataExplanation struct {
+	BenchmarkGate        *string `json:"benchmark_gate,omitempty"`
 	Freshness            string  `json:"freshness"`
 	FreshnessState       string  `json:"freshness_state"`
 	InvalidationPolicy   *string `json:"invalidation_policy,omitempty"`
 	Kind                 string  `json:"kind"`
 	LastIncludedPosition *string `json:"last_included_position,omitempty"`
+	Lossy                bool    `json:"lossy"`
 	MaxLagMs             *int64  `json:"max_lag_ms,omitempty"`
 	Name                 string  `json:"name"`
 	PhysicalFormat       string  `json:"physical_format"`
@@ -2137,6 +2139,7 @@ type ProjectionRouteMetadataExplanation struct {
 	RebuildSource        string  `json:"rebuild_source"`
 	Rebuildable          bool    `json:"rebuildable"`
 	SourceRange          *string `json:"source_range,omitempty"`
+	SupportStatus        string  `json:"support_status"`
 }
 
 // ProximaRecordInput Input format for ProximaRecord (JSON-friendly)
@@ -2463,10 +2466,12 @@ type TableWriteDataMovementExplanation struct {
 	EstimatedReadBytes     *uint64 `json:"estimated_read_bytes,omitempty"`
 	EstimatedRewriteBytes  *uint64 `json:"estimated_rewrite_bytes,omitempty"`
 	EstimatedWriteBytes    *uint64 `json:"estimated_write_bytes,omitempty"`
+	FreshnessSlaMs         *uint64 `json:"freshness_sla_ms,omitempty"`
 	SourceBytes            *uint64 `json:"source_bytes,omitempty"`
 	SourceLastAnalyzedMs   *int64  `json:"source_last_analyzed_ms,omitempty"`
 	SourceRows             *uint64 `json:"source_rows,omitempty"`
 	SourceStatsAgeMs       *uint64 `json:"source_stats_age_ms,omitempty"`
+	StatsFreshness         string  `json:"stats_freshness"`
 	TargetBytesBeforeWrite *uint64 `json:"target_bytes_before_write,omitempty"`
 	TargetLastAnalyzedMs   *int64  `json:"target_last_analyzed_ms,omitempty"`
 	TargetRowsBeforeWrite  *uint64 `json:"target_rows_before_write,omitempty"`
@@ -2503,18 +2508,19 @@ type TableWriteExplainRequest struct {
 
 // TableWriteIntentExplanation defines model for TableWriteIntentExplanation.
 type TableWriteIntentExplanation struct {
-	Actor                     *string `json:"actor,omitempty"`
-	CatalogSchemaVersion      *uint64 `json:"catalog_schema_version,omitempty"`
-	Durability                string  `json:"durability"`
-	EstimatedBytes            *uint64 `json:"estimated_bytes,omitempty"`
-	IdempotencyKey            *string `json:"idempotency_key,omitempty"`
-	Isolation                 string  `json:"isolation"`
-	OperationKind             string  `json:"operation_kind"`
-	ProjectionFreshness       string  `json:"projection_freshness"`
-	RequiresRowLevelSemantics bool    `json:"requires_row_level_semantics"`
-	RowCountHint              *uint64 `json:"row_count_hint,omitempty"`
-	TargetTable               string  `json:"target_table"`
-	TenantId                  *string `json:"tenant_id,omitempty"`
+	Actor                           *string `json:"actor,omitempty"`
+	BatchLocalConstraintsSufficient bool    `json:"batch_local_constraints_sufficient"`
+	CatalogSchemaVersion            *uint64 `json:"catalog_schema_version,omitempty"`
+	Durability                      string  `json:"durability"`
+	EstimatedBytes                  *uint64 `json:"estimated_bytes,omitempty"`
+	IdempotencyKey                  *string `json:"idempotency_key,omitempty"`
+	Isolation                       string  `json:"isolation"`
+	OperationKind                   string  `json:"operation_kind"`
+	ProjectionFreshness             string  `json:"projection_freshness"`
+	RequiresRowLevelSemantics       bool    `json:"requires_row_level_semantics"`
+	RowCountHint                    *uint64 `json:"row_count_hint,omitempty"`
+	TargetTable                     string  `json:"target_table"`
+	TenantId                        *string `json:"tenant_id,omitempty"`
 }
 
 // TableWriteRejectedLaneExplanation defines model for TableWriteRejectedLaneExplanation.
@@ -2562,6 +2568,7 @@ type TableWriteRouteExplanation struct {
 type TableWriteRouteMetadataExplanation struct {
 	AuthorityMode            string                               `json:"authority_mode"`
 	ConstraintEnforcement    string                               `json:"constraint_enforcement"`
+	ConstraintGaps           []string                             `json:"constraint_gaps"`
 	FreshnessSla             *string                              `json:"freshness_sla,omitempty"`
 	IsolationProfile         *string                              `json:"isolation_profile,omitempty"`
 	Partitioning             *string                              `json:"partitioning,omitempty"`
@@ -3021,7 +3028,7 @@ type PutTenantPostureParams struct {
 
 // GetCatalogTableRoutingParams defines parameters for GetCatalogTableRouting.
 type GetCatalogTableRoutingParams struct {
-	// TableName Filter to one table (exact name match).
+	// TableName Filter to one table (case-insensitive name match).
 	TableName *string `form:"table_name,omitempty" json:"table_name,omitempty"`
 
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
@@ -5882,6 +5889,13 @@ type ClientInterface interface {
 	// values are strings.
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler (the introspection projection is cluster-scope).
+	// The filter dispatch is LEXICAL over the composed SQL text, so a
+	// `table_name` containing SQL fragments (e.g. ` from
+	// xcatalog.namespaces`) can be misread as a different view — do
+	// not treat this endpoint as a structured query interface
+	// (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+	// case-insensitively; a name containing a single quote silently
+	// truncates the filter at the quote.
 	//
 	// Corresponds with GET /api/v2/catalog/table-routing (the `GetCatalogTableRouting` operationId).
 	GetCatalogTableRouting(ctx context.Context, params *GetCatalogTableRoutingParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5895,6 +5909,10 @@ type ClientInterface interface {
 	// paths, estimated cost and data movement, required guards, and
 	// the write intent summary. Nothing is written.
 	// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+	// Extractor rejections (malformed JSON body, duplicate query
+	// params) bypass the JSON error envelope and return axum's
+	// plain-text 400/415/422 bodies — the typed envelope below covers
+	// handler-emitted errors only.
 	// The optional `X-Tenant-ID` header is not consulted — tenant
 	// context, if any, rides the body's `tenant_id`.
 	//
@@ -5912,6 +5930,10 @@ type ClientInterface interface {
 	// paths, estimated cost and data movement, required guards, and
 	// the write intent summary. Nothing is written.
 	// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+	// Extractor rejections (malformed JSON body, duplicate query
+	// params) bypass the JSON error envelope and return axum's
+	// plain-text 400/415/422 bodies — the typed envelope below covers
+	// handler-emitted errors only.
 	// The optional `X-Tenant-ID` header is not consulted — tenant
 	// context, if any, rides the body's `tenant_id`.
 	//
@@ -7461,6 +7483,13 @@ func (c *Client) PutTenantPosture(ctx context.Context, tenant string, params *Pu
 // values are strings.
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler (the introspection projection is cluster-scope).
+// The filter dispatch is LEXICAL over the composed SQL text, so a
+// `table_name` containing SQL fragments (e.g. ` from
+// xcatalog.namespaces`) can be misread as a different view — do
+// not treat this endpoint as a structured query interface
+// (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+// case-insensitively; a name containing a single quote silently
+// truncates the filter at the quote.
 //
 // Corresponds with GET /api/v2/catalog/table-routing (the `GetCatalogTableRouting` operationId).
 func (c *Client) GetCatalogTableRouting(ctx context.Context, params *GetCatalogTableRoutingParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7484,6 +7513,10 @@ func (c *Client) GetCatalogTableRouting(ctx context.Context, params *GetCatalogT
 // paths, estimated cost and data movement, required guards, and
 // the write intent summary. Nothing is written.
 // Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+// Extractor rejections (malformed JSON body, duplicate query
+// params) bypass the JSON error envelope and return axum's
+// plain-text 400/415/422 bodies — the typed envelope below covers
+// handler-emitted errors only.
 // The optional `X-Tenant-ID` header is not consulted — tenant
 // context, if any, rides the body's `tenant_id`.
 //
@@ -7511,6 +7544,10 @@ func (c *Client) ExplainTableWriteRouteWithBody(ctx context.Context, params *Exp
 // paths, estimated cost and data movement, required guards, and
 // the write intent summary. Nothing is written.
 // Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+// Extractor rejections (malformed JSON body, duplicate query
+// params) bypass the JSON error envelope and return axum's
+// plain-text 400/415/422 bodies — the typed envelope below covers
+// handler-emitted errors only.
 // The optional `X-Tenant-ID` header is not consulted — tenant
 // context, if any, rides the body's `tenant_id`.
 //
@@ -14512,6 +14549,13 @@ type ClientWithResponsesInterface interface {
 	// values are strings.
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler (the introspection projection is cluster-scope).
+	// The filter dispatch is LEXICAL over the composed SQL text, so a
+	// `table_name` containing SQL fragments (e.g. ` from
+	// xcatalog.namespaces`) can be misread as a different view — do
+	// not treat this endpoint as a structured query interface
+	// (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+	// case-insensitively; a name containing a single quote silently
+	// truncates the filter at the quote.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -14527,6 +14571,10 @@ type ClientWithResponsesInterface interface {
 	// paths, estimated cost and data movement, required guards, and
 	// the write intent summary. Nothing is written.
 	// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+	// Extractor rejections (malformed JSON body, duplicate query
+	// params) bypass the JSON error envelope and return axum's
+	// plain-text 400/415/422 bodies — the typed envelope below covers
+	// handler-emitted errors only.
 	// The optional `X-Tenant-ID` header is not consulted — tenant
 	// context, if any, rides the body's `tenant_id`.
 	//
@@ -14544,6 +14592,10 @@ type ClientWithResponsesInterface interface {
 	// paths, estimated cost and data movement, required guards, and
 	// the write intent summary. Nothing is written.
 	// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+	// Extractor rejections (malformed JSON body, duplicate query
+	// params) bypass the JSON error envelope and return axum's
+	// plain-text 400/415/422 bodies — the typed envelope below covers
+	// handler-emitted errors only.
 	// The optional `X-Tenant-ID` header is not consulted — tenant
 	// context, if any, rides the body's `tenant_id`.
 	//
@@ -20429,6 +20481,13 @@ func (c *ClientWithResponses) PutTenantPostureWithResponse(ctx context.Context, 
 // values are strings.
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler (the introspection projection is cluster-scope).
+// The filter dispatch is LEXICAL over the composed SQL text, so a
+// `table_name` containing SQL fragments (e.g. ` from
+// xcatalog.namespaces`) can be misread as a different view — do
+// not treat this endpoint as a structured query interface
+// (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+// case-insensitively; a name containing a single quote silently
+// truncates the filter at the quote.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -20450,6 +20509,10 @@ func (c *ClientWithResponses) GetCatalogTableRoutingWithResponse(ctx context.Con
 // paths, estimated cost and data movement, required guards, and
 // the write intent summary. Nothing is written.
 // Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+// Extractor rejections (malformed JSON body, duplicate query
+// params) bypass the JSON error envelope and return axum's
+// plain-text 400/415/422 bodies — the typed envelope below covers
+// handler-emitted errors only.
 // The optional `X-Tenant-ID` header is not consulted — tenant
 // context, if any, rides the body's `tenant_id`.
 //
@@ -20473,6 +20536,10 @@ func (c *ClientWithResponses) ExplainTableWriteRouteWithBodyWithResponse(ctx con
 // paths, estimated cost and data movement, required guards, and
 // the write intent summary. Nothing is written.
 // Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+// Extractor rejections (malformed JSON body, duplicate query
+// params) bypass the JSON error envelope and return axum's
+// plain-text 400/415/422 bodies — the typed envelope below covers
+// handler-emitted errors only.
 // The optional `X-Tenant-ID` header is not consulted — tenant
 // context, if any, rides the body's `tenant_id`.
 //

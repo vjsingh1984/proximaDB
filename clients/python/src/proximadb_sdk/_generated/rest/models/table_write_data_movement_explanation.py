@@ -21,6 +21,7 @@ class TableWriteDataMovementExplanation:
     """
     Attributes:
         estimate_source (str):
+        stats_freshness (str):
         source_rows (int | None | Unset):
         source_bytes (int | None | Unset):
         target_rows_before_write (int | None | Unset):
@@ -32,9 +33,11 @@ class TableWriteDataMovementExplanation:
         target_last_analyzed_ms (int | None | Unset):
         source_stats_age_ms (int | None | Unset):
         target_stats_age_ms (int | None | Unset):
+        freshness_sla_ms (int | None | Unset):
     """
 
     estimate_source: str
+    stats_freshness: str
     source_rows: int | None | Unset = UNSET
     source_bytes: int | None | Unset = UNSET
     target_rows_before_write: int | None | Unset = UNSET
@@ -46,10 +49,13 @@ class TableWriteDataMovementExplanation:
     target_last_analyzed_ms: int | None | Unset = UNSET
     source_stats_age_ms: int | None | Unset = UNSET
     target_stats_age_ms: int | None | Unset = UNSET
+    freshness_sla_ms: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         estimate_source = self.estimate_source
+
+        stats_freshness = self.stats_freshness
 
         source_rows: int | None | Unset
         if isinstance(self.source_rows, Unset):
@@ -117,11 +123,18 @@ class TableWriteDataMovementExplanation:
         else:
             target_stats_age_ms = self.target_stats_age_ms
 
+        freshness_sla_ms: int | None | Unset
+        if isinstance(self.freshness_sla_ms, Unset):
+            freshness_sla_ms = UNSET
+        else:
+            freshness_sla_ms = self.freshness_sla_ms
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "estimate_source": estimate_source,
+                "stats_freshness": stats_freshness,
             }
         )
         if source_rows is not UNSET:
@@ -146,6 +159,8 @@ class TableWriteDataMovementExplanation:
             field_dict["source_stats_age_ms"] = source_stats_age_ms
         if target_stats_age_ms is not UNSET:
             field_dict["target_stats_age_ms"] = target_stats_age_ms
+        if freshness_sla_ms is not UNSET:
+            field_dict["freshness_sla_ms"] = freshness_sla_ms
 
         return field_dict
 
@@ -153,6 +168,8 @@ class TableWriteDataMovementExplanation:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         estimate_source = d.pop("estimate_source")
+
+        stats_freshness = d.pop("stats_freshness")
 
         def _parse_source_rows(data: object) -> int | None | Unset:
             if data is None:
@@ -271,8 +288,18 @@ class TableWriteDataMovementExplanation:
             d.pop("target_stats_age_ms", UNSET)
         )
 
+        def _parse_freshness_sla_ms(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        freshness_sla_ms = _parse_freshness_sla_ms(d.pop("freshness_sla_ms", UNSET))
+
         table_write_data_movement_explanation = cls(
             estimate_source=estimate_source,
+            stats_freshness=stats_freshness,
             source_rows=source_rows,
             source_bytes=source_bytes,
             target_rows_before_write=target_rows_before_write,
@@ -284,6 +311,7 @@ class TableWriteDataMovementExplanation:
             target_last_analyzed_ms=target_last_analyzed_ms,
             source_stats_age_ms=source_stats_age_ms,
             target_stats_age_ms=target_stats_age_ms,
+            freshness_sla_ms=freshness_sla_ms,
         )
 
         table_write_data_movement_explanation.additional_properties = d

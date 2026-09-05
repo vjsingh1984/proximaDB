@@ -215,8 +215,14 @@ matching the wave-3 precedent.
   the DML write planner in explain-only mode (nothing is written) —
   selected backend + access method, write lane (+ rejected lanes with
   reasons), candidate/rejected paths, estimated cost + data movement,
-  required guards, write intent. 14 schemas model the full
-  `TableWriteRouteExplanation` tree.
+  required guards, write intent. 11 new schemas (the 9-schema
+  `TableWriteRouteExplanation` tree + the request + the introspection
+  result; plus the shared `InternalError` response entry) model the
+  **complete** tree — round-1 adversarial review caught 7 dropped
+  fields (5 on every response: `stats_freshness`, `constraint_gaps`,
+  `lossy`, `support_status`, `batch_local_constraints_sufficient`, plus
+  optional `benchmark_gate`/`freshness_sla_ms`) and the ratchet now
+  pins every response property set.
 
 Rationalization notes:
 

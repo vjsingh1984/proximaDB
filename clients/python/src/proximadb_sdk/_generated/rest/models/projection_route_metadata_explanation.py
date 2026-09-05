@@ -27,11 +27,14 @@ class ProjectionRouteMetadataExplanation:
         freshness (str):
         freshness_state (str):
         rebuildable (bool):
+        lossy (bool):
+        support_status (str):
         max_lag_ms (int | None | Unset):
         source_range (None | str | Unset):
         last_included_position (None | str | Unset):
         invalidation_policy (None | str | Unset):
         policy_boundary (None | str | Unset):
+        benchmark_gate (None | str | Unset):
     """
 
     name: str
@@ -41,11 +44,14 @@ class ProjectionRouteMetadataExplanation:
     freshness: str
     freshness_state: str
     rebuildable: bool
+    lossy: bool
+    support_status: str
     max_lag_ms: int | None | Unset = UNSET
     source_range: None | str | Unset = UNSET
     last_included_position: None | str | Unset = UNSET
     invalidation_policy: None | str | Unset = UNSET
     policy_boundary: None | str | Unset = UNSET
+    benchmark_gate: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +68,10 @@ class ProjectionRouteMetadataExplanation:
         freshness_state = self.freshness_state
 
         rebuildable = self.rebuildable
+
+        lossy = self.lossy
+
+        support_status = self.support_status
 
         max_lag_ms: int | None | Unset
         if isinstance(self.max_lag_ms, Unset):
@@ -93,6 +103,12 @@ class ProjectionRouteMetadataExplanation:
         else:
             policy_boundary = self.policy_boundary
 
+        benchmark_gate: None | str | Unset
+        if isinstance(self.benchmark_gate, Unset):
+            benchmark_gate = UNSET
+        else:
+            benchmark_gate = self.benchmark_gate
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -104,6 +120,8 @@ class ProjectionRouteMetadataExplanation:
                 "freshness": freshness,
                 "freshness_state": freshness_state,
                 "rebuildable": rebuildable,
+                "lossy": lossy,
+                "support_status": support_status,
             }
         )
         if max_lag_ms is not UNSET:
@@ -116,6 +134,8 @@ class ProjectionRouteMetadataExplanation:
             field_dict["invalidation_policy"] = invalidation_policy
         if policy_boundary is not UNSET:
             field_dict["policy_boundary"] = policy_boundary
+        if benchmark_gate is not UNSET:
+            field_dict["benchmark_gate"] = benchmark_gate
 
         return field_dict
 
@@ -135,6 +155,10 @@ class ProjectionRouteMetadataExplanation:
         freshness_state = d.pop("freshness_state")
 
         rebuildable = d.pop("rebuildable")
+
+        lossy = d.pop("lossy")
+
+        support_status = d.pop("support_status")
 
         def _parse_max_lag_ms(data: object) -> int | None | Unset:
             if data is None:
@@ -185,6 +209,15 @@ class ProjectionRouteMetadataExplanation:
 
         policy_boundary = _parse_policy_boundary(d.pop("policy_boundary", UNSET))
 
+        def _parse_benchmark_gate(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        benchmark_gate = _parse_benchmark_gate(d.pop("benchmark_gate", UNSET))
+
         projection_route_metadata_explanation = cls(
             name=name,
             kind=kind,
@@ -193,11 +226,14 @@ class ProjectionRouteMetadataExplanation:
             freshness=freshness,
             freshness_state=freshness_state,
             rebuildable=rebuildable,
+            lossy=lossy,
+            support_status=support_status,
             max_lag_ms=max_lag_ms,
             source_range=source_range,
             last_included_position=last_included_position,
             invalidation_policy=invalidation_policy,
             policy_boundary=policy_boundary,
+            benchmark_gate=benchmark_gate,
         )
 
         projection_route_metadata_explanation.additional_properties = d

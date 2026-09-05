@@ -32,6 +32,7 @@ class TableWriteRouteMetadataExplanation:
         projection_metadata (list[ProjectionRouteMetadataExplanation]):
         policy_boundary (str):
         constraint_enforcement (str):
+        constraint_gaps (list[str]):
         primary_format (None | str | Unset):
         preferred_compute_route (None | str | Unset):
         partitioning (None | str | Unset):
@@ -46,6 +47,7 @@ class TableWriteRouteMetadataExplanation:
     projection_metadata: list[ProjectionRouteMetadataExplanation]
     policy_boundary: str
     constraint_enforcement: str
+    constraint_gaps: list[str]
     primary_format: None | str | Unset = UNSET
     preferred_compute_route: None | str | Unset = UNSET
     partitioning: None | str | Unset = UNSET
@@ -73,6 +75,8 @@ class TableWriteRouteMetadataExplanation:
         policy_boundary = self.policy_boundary
 
         constraint_enforcement = self.constraint_enforcement
+
+        constraint_gaps = self.constraint_gaps
 
         primary_format: None | str | Unset
         if isinstance(self.primary_format, Unset):
@@ -120,6 +124,7 @@ class TableWriteRouteMetadataExplanation:
                 "projection_metadata": projection_metadata,
                 "policy_boundary": policy_boundary,
                 "constraint_enforcement": constraint_enforcement,
+                "constraint_gaps": constraint_gaps,
             }
         )
         if primary_format is not UNSET:
@@ -162,6 +167,8 @@ class TableWriteRouteMetadataExplanation:
         policy_boundary = d.pop("policy_boundary")
 
         constraint_enforcement = d.pop("constraint_enforcement")
+
+        constraint_gaps = cast(list[str], d.pop("constraint_gaps"))
 
         def _parse_primary_format(data: object) -> None | str | Unset:
             if data is None:
@@ -228,6 +235,7 @@ class TableWriteRouteMetadataExplanation:
             projection_metadata=projection_metadata,
             policy_boundary=policy_boundary,
             constraint_enforcement=constraint_enforcement,
+            constraint_gaps=constraint_gaps,
             primary_format=primary_format,
             preferred_compute_route=preferred_compute_route,
             partitioning=partitioning,

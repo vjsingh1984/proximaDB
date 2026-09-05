@@ -84,6 +84,13 @@ def sync_detailed(
     values are strings.
     The optional `X-Tenant-ID` header is not consulted by this
     handler (the introspection projection is cluster-scope).
+    The filter dispatch is LEXICAL over the composed SQL text, so a
+    `table_name` containing SQL fragments (e.g. ` from
+    xcatalog.namespaces`) can be misread as a different view — do
+    not treat this endpoint as a structured query interface
+    (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+    case-insensitively; a name containing a single quote silently
+    truncates the filter at the quote.
 
     Args:
         table_name (str | Unset):
@@ -122,6 +129,13 @@ def sync(
     values are strings.
     The optional `X-Tenant-ID` header is not consulted by this
     handler (the introspection projection is cluster-scope).
+    The filter dispatch is LEXICAL over the composed SQL text, so a
+    `table_name` containing SQL fragments (e.g. ` from
+    xcatalog.namespaces`) can be misread as a different view — do
+    not treat this endpoint as a structured query interface
+    (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+    case-insensitively; a name containing a single quote silently
+    truncates the filter at the quote.
 
     Args:
         table_name (str | Unset):
@@ -155,6 +169,13 @@ async def asyncio_detailed(
     values are strings.
     The optional `X-Tenant-ID` header is not consulted by this
     handler (the introspection projection is cluster-scope).
+    The filter dispatch is LEXICAL over the composed SQL text, so a
+    `table_name` containing SQL fragments (e.g. ` from
+    xcatalog.namespaces`) can be misread as a different view — do
+    not treat this endpoint as a structured query interface
+    (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+    case-insensitively; a name containing a single quote silently
+    truncates the filter at the quote.
 
     Args:
         table_name (str | Unset):
@@ -191,6 +212,13 @@ async def asyncio(
     values are strings.
     The optional `X-Tenant-ID` header is not consulted by this
     handler (the introspection projection is cluster-scope).
+    The filter dispatch is LEXICAL over the composed SQL text, so a
+    `table_name` containing SQL fragments (e.g. ` from
+    xcatalog.namespaces`) can be misread as a different view — do
+    not treat this endpoint as a structured query interface
+    (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+    case-insensitively; a name containing a single quote silently
+    truncates the filter at the quote.
 
     Args:
         table_name (str | Unset):

@@ -9444,12 +9444,20 @@ pub mod types {
     ///    "freshness",
     ///    "freshness_state",
     ///    "kind",
+    ///    "lossy",
     ///    "name",
     ///    "physical_format",
     ///    "rebuild_source",
-    ///    "rebuildable"
+    ///    "rebuildable",
+    ///    "support_status"
     ///  ],
     ///  "properties": {
+    ///    "benchmark_gate": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
     ///    "freshness": {
     ///      "type": "string"
     ///    },
@@ -9470,6 +9478,9 @@ pub mod types {
     ///        "string",
     ///        "null"
     ///      ]
+    ///    },
+    ///    "lossy": {
+    ///      "type": "boolean"
     ///    },
     ///    "max_lag_ms": {
     ///      "type": [
@@ -9501,6 +9512,9 @@ pub mod types {
     ///        "string",
     ///        "null"
     ///      ]
+    ///    },
+    ///    "support_status": {
+    ///      "type": "string"
     ///    }
     ///  }
     ///}
@@ -9508,6 +9522,8 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct ProjectionRouteMetadataExplanation {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub benchmark_gate: ::std::option::Option<::std::string::String>,
         pub freshness: ::std::string::String,
         pub freshness_state: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -9515,6 +9531,7 @@ pub mod types {
         pub kind: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub last_included_position: ::std::option::Option<::std::string::String>,
+        pub lossy: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub max_lag_ms: ::std::option::Option<i64>,
         pub name: ::std::string::String,
@@ -9525,6 +9542,7 @@ pub mod types {
         pub rebuildable: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub source_range: ::std::option::Option<::std::string::String>,
+        pub support_status: ::std::string::String,
     }
     impl ProjectionRouteMetadataExplanation {
         pub fn builder() -> builder::ProjectionRouteMetadataExplanation {
@@ -11060,7 +11078,8 @@ pub mod types {
     ///{
     ///  "type": "object",
     ///  "required": [
-    ///    "estimate_source"
+    ///    "estimate_source",
+    ///    "stats_freshness"
     ///  ],
     ///  "properties": {
     ///    "estimate_source": {
@@ -11081,6 +11100,13 @@ pub mod types {
     ///      "format": "uint64"
     ///    },
     ///    "estimated_write_bytes": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "freshness_sla_ms": {
     ///      "type": [
     ///        "integer",
     ///        "null"
@@ -11114,6 +11140,9 @@ pub mod types {
     ///        "null"
     ///      ],
     ///      "format": "uint64"
+    ///    },
+    ///    "stats_freshness": {
+    ///      "type": "string"
     ///    },
     ///    "target_bytes_before_write": {
     ///      "type": [
@@ -11157,6 +11186,8 @@ pub mod types {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub estimated_write_bytes: ::std::option::Option<u64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub freshness_sla_ms: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub source_bytes: ::std::option::Option<u64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub source_last_analyzed_ms: ::std::option::Option<i64>,
@@ -11164,6 +11195,7 @@ pub mod types {
         pub source_rows: ::std::option::Option<u64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub source_stats_age_ms: ::std::option::Option<u64>,
+        pub stats_freshness: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub target_bytes_before_write: ::std::option::Option<u64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -11326,6 +11358,7 @@ pub mod types {
     ///{
     ///  "type": "object",
     ///  "required": [
+    ///    "batch_local_constraints_sufficient",
     ///    "durability",
     ///    "isolation",
     ///    "operation_kind",
@@ -11339,6 +11372,9 @@ pub mod types {
     ///        "string",
     ///        "null"
     ///      ]
+    ///    },
+    ///    "batch_local_constraints_sufficient": {
+    ///      "type": "boolean"
     ///    },
     ///    "catalog_schema_version": {
     ///      "type": [
@@ -11399,6 +11435,7 @@ pub mod types {
     pub struct TableWriteIntentExplanation {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub actor: ::std::option::Option<::std::string::String>,
+        pub batch_local_constraints_sufficient: bool,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub catalog_schema_version: ::std::option::Option<u64>,
         pub durability: ::std::string::String,
@@ -11647,6 +11684,7 @@ pub mod types {
     ///  "required": [
     ///    "authority_mode",
     ///    "constraint_enforcement",
+    ///    "constraint_gaps",
     ///    "policy_boundary",
     ///    "projection_metadata",
     ///    "storage_specialization",
@@ -11658,6 +11696,12 @@ pub mod types {
     ///    },
     ///    "constraint_enforcement": {
     ///      "type": "string"
+    ///    },
+    ///    "constraint_gaps": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
     ///    },
     ///    "freshness_sla": {
     ///      "type": [
@@ -11718,6 +11762,7 @@ pub mod types {
     pub struct TableWriteRouteMetadataExplanation {
         pub authority_mode: ::std::string::String,
         pub constraint_enforcement: ::std::string::String,
+        pub constraint_gaps: ::std::vec::Vec<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub freshness_sla: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -22902,6 +22947,10 @@ pub mod types {
         }
         #[derive(Clone, Debug)]
         pub struct ProjectionRouteMetadataExplanation {
+            benchmark_gate: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
             freshness: ::std::result::Result<::std::string::String, ::std::string::String>,
             freshness_state: ::std::result::Result<::std::string::String, ::std::string::String>,
             invalidation_policy: ::std::result::Result<
@@ -22913,6 +22962,7 @@ pub mod types {
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
             >,
+            lossy: ::std::result::Result<bool, ::std::string::String>,
             max_lag_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
             name: ::std::result::Result<::std::string::String, ::std::string::String>,
             physical_format: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -22926,15 +22976,18 @@ pub mod types {
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
             >,
+            support_status: ::std::result::Result<::std::string::String, ::std::string::String>,
         }
         impl ::std::default::Default for ProjectionRouteMetadataExplanation {
             fn default() -> Self {
                 Self {
+                    benchmark_gate: Ok(Default::default()),
                     freshness: Err("no value supplied for freshness".to_string()),
                     freshness_state: Err("no value supplied for freshness_state".to_string()),
                     invalidation_policy: Ok(Default::default()),
                     kind: Err("no value supplied for kind".to_string()),
                     last_included_position: Ok(Default::default()),
+                    lossy: Err("no value supplied for lossy".to_string()),
                     max_lag_ms: Ok(Default::default()),
                     name: Err("no value supplied for name".to_string()),
                     physical_format: Err("no value supplied for physical_format".to_string()),
@@ -22942,10 +22995,21 @@ pub mod types {
                     rebuild_source: Err("no value supplied for rebuild_source".to_string()),
                     rebuildable: Err("no value supplied for rebuildable".to_string()),
                     source_range: Ok(Default::default()),
+                    support_status: Err("no value supplied for support_status".to_string()),
                 }
             }
         }
         impl ProjectionRouteMetadataExplanation {
+            pub fn benchmark_gate<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.benchmark_gate = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for benchmark_gate: {e}")
+                });
+                self
+            }
             pub fn freshness<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::string::String>,
@@ -22994,6 +23058,16 @@ pub mod types {
                 self.last_included_position = value.try_into().map_err(|e| {
                     format!("error converting supplied value for last_included_position: {e}")
                 });
+                self
+            }
+            pub fn lossy<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.lossy = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for lossy: {e}"));
                 self
             }
             pub fn max_lag_ms<T>(mut self, value: T) -> Self
@@ -23066,6 +23140,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for source_range: {e}"));
                 self
             }
+            pub fn support_status<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.support_status = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for support_status: {e}")
+                });
+                self
+            }
         }
         impl ::std::convert::TryFrom<ProjectionRouteMetadataExplanation>
             for super::ProjectionRouteMetadataExplanation
@@ -23075,11 +23159,13 @@ pub mod types {
                 value: ProjectionRouteMetadataExplanation,
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
+                    benchmark_gate: value.benchmark_gate?,
                     freshness: value.freshness?,
                     freshness_state: value.freshness_state?,
                     invalidation_policy: value.invalidation_policy?,
                     kind: value.kind?,
                     last_included_position: value.last_included_position?,
+                    lossy: value.lossy?,
                     max_lag_ms: value.max_lag_ms?,
                     name: value.name?,
                     physical_format: value.physical_format?,
@@ -23087,6 +23173,7 @@ pub mod types {
                     rebuild_source: value.rebuild_source?,
                     rebuildable: value.rebuildable?,
                     source_range: value.source_range?,
+                    support_status: value.support_status?,
                 })
             }
         }
@@ -23095,11 +23182,13 @@ pub mod types {
         {
             fn from(value: super::ProjectionRouteMetadataExplanation) -> Self {
                 Self {
+                    benchmark_gate: Ok(value.benchmark_gate),
                     freshness: Ok(value.freshness),
                     freshness_state: Ok(value.freshness_state),
                     invalidation_policy: Ok(value.invalidation_policy),
                     kind: Ok(value.kind),
                     last_included_position: Ok(value.last_included_position),
+                    lossy: Ok(value.lossy),
                     max_lag_ms: Ok(value.max_lag_ms),
                     name: Ok(value.name),
                     physical_format: Ok(value.physical_format),
@@ -23107,6 +23196,7 @@ pub mod types {
                     rebuild_source: Ok(value.rebuild_source),
                     rebuildable: Ok(value.rebuildable),
                     source_range: Ok(value.source_range),
+                    support_status: Ok(value.support_status),
                 }
             }
         }
@@ -25027,12 +25117,15 @@ pub mod types {
                 ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             estimated_write_bytes:
                 ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            freshness_sla_ms:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             source_bytes: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             source_last_analyzed_ms:
                 ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
             source_rows: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             source_stats_age_ms:
                 ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            stats_freshness: ::std::result::Result<::std::string::String, ::std::string::String>,
             target_bytes_before_write:
                 ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             target_last_analyzed_ms:
@@ -25049,10 +25142,12 @@ pub mod types {
                     estimated_read_bytes: Ok(Default::default()),
                     estimated_rewrite_bytes: Ok(Default::default()),
                     estimated_write_bytes: Ok(Default::default()),
+                    freshness_sla_ms: Ok(Default::default()),
                     source_bytes: Ok(Default::default()),
                     source_last_analyzed_ms: Ok(Default::default()),
                     source_rows: Ok(Default::default()),
                     source_stats_age_ms: Ok(Default::default()),
+                    stats_freshness: Err("no value supplied for stats_freshness".to_string()),
                     target_bytes_before_write: Ok(Default::default()),
                     target_last_analyzed_ms: Ok(Default::default()),
                     target_rows_before_write: Ok(Default::default()),
@@ -25101,6 +25196,16 @@ pub mod types {
                 });
                 self
             }
+            pub fn freshness_sla_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.freshness_sla_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for freshness_sla_ms: {e}")
+                });
+                self
+            }
             pub fn source_bytes<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<u64>>,
@@ -25138,6 +25243,16 @@ pub mod types {
             {
                 self.source_stats_age_ms = value.try_into().map_err(|e| {
                     format!("error converting supplied value for source_stats_age_ms: {e}")
+                });
+                self
+            }
+            pub fn stats_freshness<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.stats_freshness = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for stats_freshness: {e}")
                 });
                 self
             }
@@ -25194,10 +25309,12 @@ pub mod types {
                     estimated_read_bytes: value.estimated_read_bytes?,
                     estimated_rewrite_bytes: value.estimated_rewrite_bytes?,
                     estimated_write_bytes: value.estimated_write_bytes?,
+                    freshness_sla_ms: value.freshness_sla_ms?,
                     source_bytes: value.source_bytes?,
                     source_last_analyzed_ms: value.source_last_analyzed_ms?,
                     source_rows: value.source_rows?,
                     source_stats_age_ms: value.source_stats_age_ms?,
+                    stats_freshness: value.stats_freshness?,
                     target_bytes_before_write: value.target_bytes_before_write?,
                     target_last_analyzed_ms: value.target_last_analyzed_ms?,
                     target_rows_before_write: value.target_rows_before_write?,
@@ -25214,10 +25331,12 @@ pub mod types {
                     estimated_read_bytes: Ok(value.estimated_read_bytes),
                     estimated_rewrite_bytes: Ok(value.estimated_rewrite_bytes),
                     estimated_write_bytes: Ok(value.estimated_write_bytes),
+                    freshness_sla_ms: Ok(value.freshness_sla_ms),
                     source_bytes: Ok(value.source_bytes),
                     source_last_analyzed_ms: Ok(value.source_last_analyzed_ms),
                     source_rows: Ok(value.source_rows),
                     source_stats_age_ms: Ok(value.source_stats_age_ms),
+                    stats_freshness: Ok(value.stats_freshness),
                     target_bytes_before_write: Ok(value.target_bytes_before_write),
                     target_last_analyzed_ms: Ok(value.target_last_analyzed_ms),
                     target_rows_before_write: Ok(value.target_rows_before_write),
@@ -25473,6 +25592,7 @@ pub mod types {
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
             >,
+            batch_local_constraints_sufficient: ::std::result::Result<bool, ::std::string::String>,
             catalog_schema_version:
                 ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
             durability: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -25499,6 +25619,9 @@ pub mod types {
             fn default() -> Self {
                 Self {
                     actor: Ok(Default::default()),
+                    batch_local_constraints_sufficient: Err(
+                        "no value supplied for batch_local_constraints_sufficient".to_string(),
+                    ),
                     catalog_schema_version: Ok(Default::default()),
                     durability: Err("no value supplied for durability".to_string()),
                     estimated_bytes: Ok(Default::default()),
@@ -25526,6 +25649,20 @@ pub mod types {
                 self.actor = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for actor: {e}"));
+                self
+            }
+            pub fn batch_local_constraints_sufficient<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.batch_local_constraints_sufficient = value
+                    .try_into()
+                    .map_err(|e| {
+                        format!(
+                            "error converting supplied value for batch_local_constraints_sufficient: {e}"
+                        )
+                    });
                 self
             }
             pub fn catalog_schema_version<T>(mut self, value: T) -> Self
@@ -25646,6 +25783,7 @@ pub mod types {
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
                     actor: value.actor?,
+                    batch_local_constraints_sufficient: value.batch_local_constraints_sufficient?,
                     catalog_schema_version: value.catalog_schema_version?,
                     durability: value.durability?,
                     estimated_bytes: value.estimated_bytes?,
@@ -25664,6 +25802,7 @@ pub mod types {
             fn from(value: super::TableWriteIntentExplanation) -> Self {
                 Self {
                     actor: Ok(value.actor),
+                    batch_local_constraints_sufficient: Ok(value.batch_local_constraints_sufficient),
                     catalog_schema_version: Ok(value.catalog_schema_version),
                     durability: Ok(value.durability),
                     estimated_bytes: Ok(value.estimated_bytes),
@@ -26158,6 +26297,10 @@ pub mod types {
             authority_mode: ::std::result::Result<::std::string::String, ::std::string::String>,
             constraint_enforcement:
                 ::std::result::Result<::std::string::String, ::std::string::String>,
+            constraint_gaps: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
             freshness_sla: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
@@ -26198,6 +26341,7 @@ pub mod types {
                     constraint_enforcement: Err(
                         "no value supplied for constraint_enforcement".to_string()
                     ),
+                    constraint_gaps: Err("no value supplied for constraint_gaps".to_string()),
                     freshness_sla: Ok(Default::default()),
                     isolation_profile: Ok(Default::default()),
                     partitioning: Ok(Default::default()),
@@ -26233,6 +26377,16 @@ pub mod types {
             {
                 self.constraint_enforcement = value.try_into().map_err(|e| {
                     format!("error converting supplied value for constraint_enforcement: {e}")
+                });
+                self
+            }
+            pub fn constraint_gaps<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.constraint_gaps = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for constraint_gaps: {e}")
                 });
                 self
             }
@@ -26349,6 +26503,7 @@ pub mod types {
                 Ok(Self {
                     authority_mode: value.authority_mode?,
                     constraint_enforcement: value.constraint_enforcement?,
+                    constraint_gaps: value.constraint_gaps?,
                     freshness_sla: value.freshness_sla?,
                     isolation_profile: value.isolation_profile?,
                     partitioning: value.partitioning?,
@@ -26369,6 +26524,7 @@ pub mod types {
                 Self {
                     authority_mode: Ok(value.authority_mode),
                     constraint_enforcement: Ok(value.constraint_enforcement),
+                    constraint_gaps: Ok(value.constraint_gaps),
                     freshness_sla: Ok(value.freshness_sla),
                     isolation_profile: Ok(value.isolation_profile),
                     partitioning: Ok(value.partitioning),
@@ -28009,12 +28165,19 @@ impl Client {
     /// values are strings.
     /// The optional `X-Tenant-ID` header is not consulted by this
     /// handler (the introspection projection is cluster-scope).
+    /// The filter dispatch is LEXICAL over the composed SQL text, so a
+    /// `table_name` containing SQL fragments (e.g. ` from
+    /// xcatalog.namespaces`) can be misread as a different view — do
+    /// not treat this endpoint as a structured query interface
+    /// (TD-SPECRAT-3 tracks the structured-filter fix). Names match
+    /// case-insensitively; a name containing a single quote silently
+    /// truncates the filter at the quote.
     ///
     ///
     /// Sends a `GET` request to `/api/v2/catalog/table-routing`
     ///
     /// Arguments:
-    /// - `table_name`: Filter to one table (exact name match).
+    /// - `table_name`: Filter to one table (case-insensitive name match).
     /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
     /// let response = client.get_catalog_table_routing()
@@ -28035,6 +28198,10 @@ impl Client {
     /// paths, estimated cost and data movement, required guards, and
     /// the write intent summary. Nothing is written.
     /// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+    /// Extractor rejections (malformed JSON body, duplicate query
+    /// params) bypass the JSON error envelope and return axum's
+    /// plain-text 400/415/422 bodies — the typed envelope below covers
+    /// handler-emitted errors only.
     /// The optional `X-Tenant-ID` header is not consulted — tenant
     /// context, if any, rides the body's `tenant_id`.
     ///
