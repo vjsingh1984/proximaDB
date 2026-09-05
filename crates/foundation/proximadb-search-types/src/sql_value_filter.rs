@@ -445,6 +445,9 @@ pub fn compare_json_op(
             .is_some_and(|(haystack, suffix)| haystack.ends_with(suffix)),
         ComparisonOperator::Between => value.as_array().is_some_and(|bounds| {
             bounds.len() == 2
+                && !json_val.is_null()
+                && !bounds[0].is_null()
+                && !bounds[1].is_null()
                 && compare_json_gte(json_val, &bounds[0])
                 && compare_json_lte(json_val, &bounds[1])
         }),
@@ -847,6 +850,17 @@ mod tests {
             value: json!(null),
         };
         assert!(evaluate_filter(&eq, &metadata));
+
+        metadata.insert("rank".to_string(), make_sql_value(SqlVal::Int64Value(5)));
+        let between_null_bound = FilterExpression::Comparison {
+            field: "rank".to_string(),
+            operator: ComparisonOperator::Between,
+            value: json!([null, 10]),
+        };
+        assert!(
+            !evaluate_filter(&between_null_bound, &metadata),
+            "BETWEEN is a range predicate and a null bound is unordered"
+        );
     }
 
     #[test]

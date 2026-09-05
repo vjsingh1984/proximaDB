@@ -716,13 +716,15 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
         // Round 11: JSON(B) as canonical JSON text — the wildcard silently
         // dropped the property at this sibling of the adjacency seam the
         // round-8 fix closed.
-        Some(Value::JsonValue(json)) => {
-            // Round 13: the literal "null" document is the property model's
-            // null form (round-12 rule at this second write seam).
-            if json == "null" {
-                None
-            } else {
-                Some(GraphValue::StringValue(json.clone()))
+        Some(Value::JsonValue(_)) => {
+            // Parse through the canonical v2 boundary adapter so equivalent
+            // JSON spellings (including whitespace around null) have one
+            // semantic representation and malformed JSON is not persisted as
+            // an apparently valid string property.
+            match proximadb_records::proto_v2::typed_value_to_proxima(tv).ok()? {
+                ProximaValue::Json(serde_json::Value::Null) => None,
+                ProximaValue::Json(json) => Some(GraphValue::StringValue(json.to_string())),
+                _ => return None,
             }
         }
         _ => return None, // Arrays / maps are not supported as scalar node props.
@@ -797,6 +799,26 @@ mod tests {
             Some(Value::TextValue(s)) => assert_eq!(s, "test"),
             other => panic!("expected TextValue, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn json_null_property_is_parsed_not_compared_as_raw_text() {
+        use pv2::typed_value::Value;
+
+        let null = pv2::TypedValue {
+            declared_type: 0,
+            value: Some(Value::JsonValue(" \n null \t".to_string())),
+        };
+        assert_eq!(
+            typed_value_to_property_value(&null),
+            Some(PropertyValue { value: None })
+        );
+
+        let invalid = pv2::TypedValue {
+            declared_type: 0,
+            value: Some(Value::JsonValue("not-json".to_string())),
+        };
+        assert_eq!(typed_value_to_property_value(&invalid), None);
     }
 
     #[test]

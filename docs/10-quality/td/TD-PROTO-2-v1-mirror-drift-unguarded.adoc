@@ -474,6 +474,22 @@ addressed in the same PR:**
   typed property or marker scheme, folded into the JSON-text-policy
   consolidation.
 
+**Round 14 (2026-09-05) — 4 findings, all fixed:**
+
+* `EntityNodeMapper` serialized `SqlObject`/`SqlArray` protobuf wrappers,
+  producing strings such as `{"fields":{"rank":{"int64_value":7}}}`
+  instead of the natural document `{"rank":7}`. The compatibility input
+  now lowers through `SqlValue -> ProximaValue` before JSON projection.
+* The same mapper's JSON-null helper returned `None`, but its caller treated
+  that as "skip this field" rather than an unset `PropertyValue` oneof.
+  JSON null is now retained as a present null property.
+* The v2 entity seam compared raw JSON text to the exact spelling `"null"`;
+  valid whitespace-equivalent nulls became strings and malformed JSON was
+  accepted. It now parses through `typed_value_to_proxima` first.
+* The null ordering guard covered four comparison operators but omitted
+  `BETWEEN`; a null bound could therefore act as an open lower bound.
+  `BETWEEN` now rejects null fields and either null bound.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,
