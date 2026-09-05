@@ -336,8 +336,17 @@ impl ProximaClient {
     #[cfg(feature = "client")]
     pub async fn list_graphs(&self) -> Result<Vec<GraphInfo>> {
         let url = format!("{}/api/v2/graphs", self.inner.config.url);
-        let response: ListGraphsResponse = self.get(&url).await?;
-        Ok(response.graphs)
+        let envelope: GraphListEnvelope = self.get(&url).await?;
+        Ok(envelope
+            .data
+            .into_iter()
+            .map(|g| GraphInfo {
+                name: g.name.or(g.graph_id).unwrap_or_default(),
+                node_count: g.node_count.unwrap_or(0),
+                edge_count: g.edge_count.unwrap_or(0),
+                description: g.description,
+            })
+            .collect())
     }
 
     /// List all collections
@@ -619,9 +628,28 @@ pub struct GraphInfo {
     pub description: Option<String>,
 }
 
+/// The wave-6 envelope truth: `GET /api/v2/graphs` returns
+/// `{success, data: [...]}` (the old flat `{graphs: [...]}` shape never
+/// existed on the wire — the pre-wave-6 published spec was wrong).
 #[derive(Debug, Deserialize)]
-struct ListGraphsResponse {
-    graphs: Vec<GraphInfo>,
+struct GraphListEnvelope {
+    data: Vec<GraphRawInfo>,
+}
+
+/// One serialized graph-collection record (open field set; the facade
+/// lowers it best-effort into [`GraphInfo`]).
+#[derive(Debug, Deserialize)]
+struct GraphRawInfo {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    graph_id: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    node_count: Option<u64>,
+    #[serde(default)]
+    edge_count: Option<u64>,
 }
 
 /// Liveness / readiness probe payload.
@@ -1011,15 +1039,26 @@ mod tests {
         assert_eq!(collections.collections.len(), 1);
         assert_eq!(collections.collections[0].name, "items");
 
-        let graphs: ListGraphsResponse = serde_json::from_value(json!({
-            "graphs": [
+        let graphs: GraphListEnvelope = serde_json::from_value(json!({
+            "success": true,
+            "data": [
                 {"name": "kg", "node_count": 2, "edge_count": 1}
             ]
         }))
         .unwrap();
-        assert_eq!(graphs.graphs.len(), 1);
-        assert_eq!(graphs.graphs[0].name, "kg");
-        assert_eq!(graphs.graphs[0].node_count, 2);
-        assert_eq!(graphs.graphs[0].edge_count, 1);
+        let lowered: Vec<GraphInfo> = graphs
+            .data
+            .into_iter()
+            .map(|g| GraphInfo {
+                name: g.name.or(g.graph_id).unwrap_or_default(),
+                node_count: g.node_count.unwrap_or(0),
+                edge_count: g.edge_count.unwrap_or(0),
+                description: g.description,
+            })
+            .collect();
+        assert_eq!(lowered.len(), 1);
+        assert_eq!(lowered[0].name, "kg");
+        assert_eq!(lowered[0].node_count, 2);
+        assert_eq!(lowered[0].edge_count, 1);
     }
 }
