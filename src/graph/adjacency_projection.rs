@@ -680,6 +680,10 @@ mod tests {
                 ProximaTreeNode::Value(ProximaValue::Jsonb(document.clone())),
             ),
             (
+                "deleted_value".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Jsonb(serde_json::Value::Null)),
+            ),
+            (
                 "attributes".to_string(),
                 ProximaTreeNode::Value(ProximaValue::Map(HashMap::from([(
                     "rank".to_string(),
@@ -704,6 +708,11 @@ mod tests {
                     fields: HashMap::from([("rank".to_string(), prop_int(7))]),
                 })),
             })
+        );
+        assert_eq!(
+            restored.properties.get("deleted_value"),
+            Some(&PropertyValue { value: None }),
+            "JSON null must remain the graph property model's null form"
         );
     }
 
