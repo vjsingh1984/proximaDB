@@ -230,6 +230,49 @@ def test_collections_admin_surface_has_the_complete_operation_set(openapi_spec):
     ]
 
 
+def test_catalog_routing_surface_has_the_complete_operation_set(openapi_spec):
+    """TD-SPECRAT-1 wave 5: catalog table-routing + table-write explain."""
+    catalog_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/catalog/")
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in catalog_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(catalog_paths) == 2
+    assert actual_operations == {"getCatalogTableRouting", "explainTableWriteRoute"}
+
+    # The explain request carries the source XOR rule and the alias
+    # vocabularies as strings (not enums) — the required/optional split
+    # must match the Rust handler exactly.
+    schemas = openapi_spec["components"]["schemas"]
+    explain = schemas["TableWriteExplainRequest"]
+    assert explain["required"] == ["target_table"]
+    for optional_field in (
+        "source_table",
+        "source_sql",
+        "write_mode",
+        "distribution",
+        "target_columns",
+        "tenant_id",
+        "actor",
+        "idempotency_key",
+        "row_count_hint",
+        "estimated_bytes",
+        "requires_row_level_semantics",
+        "batch_local_constraints_sufficient",
+    ):
+        assert optional_field in explain["properties"], optional_field
+    # The introspection result is table-shaped, all strings.
+    intro = schemas["CatalogIntrospectionResult"]
+    assert intro["required"] == ["columns", "column_types", "rows"]
+
+
 # ---------------------------------------------------------------------------
 # Capturing transport
 # ---------------------------------------------------------------------------

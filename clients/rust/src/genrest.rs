@@ -3087,6 +3087,57 @@ pub mod types {
             Default::default()
         }
     }
+    /// Table-shaped catalog metadata (the projection pgwire/SQL clients
+    /// see). Every cell value is a string.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Table-shaped catalog metadata (the projection pgwire/SQL clients\nsee). Every cell value is a string.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "column_types",
+    ///    "columns",
+    ///    "rows"
+    ///  ],
+    ///  "properties": {
+    ///    "column_types": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "columns": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "rows": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "array",
+    ///        "items": {
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CatalogIntrospectionResult {
+        pub column_types: ::std::vec::Vec<::std::string::String>,
+        pub columns: ::std::vec::Vec<::std::string::String>,
+        pub rows: ::std::vec::Vec<::std::vec::Vec<::std::string::String>>,
+    }
+    impl CatalogIntrospectionResult {
+        pub fn builder() -> builder::CatalogIntrospectionResult {
+            Default::default()
+        }
+    }
     ///Digest-pinned input consumed by the execution that produced a model.
     ///
     /// <details><summary>JSON schema</summary>
@@ -9382,6 +9433,104 @@ pub mod types {
             Default::default()
         }
     }
+    ///`ProjectionRouteMetadataExplanation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "freshness",
+    ///    "freshness_state",
+    ///    "kind",
+    ///    "name",
+    ///    "physical_format",
+    ///    "rebuild_source",
+    ///    "rebuildable"
+    ///  ],
+    ///  "properties": {
+    ///    "freshness": {
+    ///      "type": "string"
+    ///    },
+    ///    "freshness_state": {
+    ///      "type": "string"
+    ///    },
+    ///    "invalidation_policy": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "kind": {
+    ///      "type": "string"
+    ///    },
+    ///    "last_included_position": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "max_lag_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    },
+    ///    "physical_format": {
+    ///      "type": "string"
+    ///    },
+    ///    "policy_boundary": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "rebuild_source": {
+    ///      "type": "string"
+    ///    },
+    ///    "rebuildable": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "source_range": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ProjectionRouteMetadataExplanation {
+        pub freshness: ::std::string::String,
+        pub freshness_state: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub invalidation_policy: ::std::option::Option<::std::string::String>,
+        pub kind: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub last_included_position: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub max_lag_ms: ::std::option::Option<i64>,
+        pub name: ::std::string::String,
+        pub physical_format: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub policy_boundary: ::std::option::Option<::std::string::String>,
+        pub rebuild_source: ::std::string::String,
+        pub rebuildable: bool,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_range: ::std::option::Option<::std::string::String>,
+    }
+    impl ProjectionRouteMetadataExplanation {
+        pub fn builder() -> builder::ProjectionRouteMetadataExplanation {
+            Default::default()
+        }
+    }
     /// Input format for ProximaRecord (JSON-friendly)
     ///
     /// This is the JSON-serializable input format for ProximaRecord.
@@ -10795,6 +10944,799 @@ pub mod types {
     }
     impl SqlResponse {
         pub fn builder() -> builder::SqlResponse {
+            Default::default()
+        }
+    }
+    ///`TableWriteCandidateExplanation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "access_method",
+    ///    "backend",
+    ///    "estimated_cost",
+    ///    "pushdown",
+    ///    "required_guards"
+    ///  ],
+    ///  "properties": {
+    ///    "access_method": {
+    ///      "type": "string"
+    ///    },
+    ///    "backend": {
+    ///      "type": "string"
+    ///    },
+    ///    "estimated_cost": {
+    ///      "$ref": "#/components/schemas/TableWriteCostExplanation"
+    ///    },
+    ///    "pushdown": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "required_guards": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteCandidateExplanation {
+        pub access_method: ::std::string::String,
+        pub backend: ::std::string::String,
+        pub estimated_cost: TableWriteCostExplanation,
+        pub pushdown: ::std::vec::Vec<::std::string::String>,
+        pub required_guards: ::std::vec::Vec<::std::string::String>,
+    }
+    impl TableWriteCandidateExplanation {
+        pub fn builder() -> builder::TableWriteCandidateExplanation {
+            Default::default()
+        }
+    }
+    ///`TableWriteCostExplanation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "reason",
+    ///    "relative_cost"
+    ///  ],
+    ///  "properties": {
+    ///    "bytes": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "reason": {
+    ///      "type": "string"
+    ///    },
+    ///    "relative_cost": {
+    ///      "description": "Relative cost (unitless planner estimate).",
+    ///      "type": "number"
+    ///    },
+    ///    "rows": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteCostExplanation {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub bytes: ::std::option::Option<u64>,
+        pub reason: ::std::string::String,
+        ///Relative cost (unitless planner estimate).
+        pub relative_cost: f64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rows: ::std::option::Option<u64>,
+    }
+    impl TableWriteCostExplanation {
+        pub fn builder() -> builder::TableWriteCostExplanation {
+            Default::default()
+        }
+    }
+    ///`TableWriteDataMovementExplanation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "estimate_source"
+    ///  ],
+    ///  "properties": {
+    ///    "estimate_source": {
+    ///      "type": "string"
+    ///    },
+    ///    "estimated_read_bytes": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "estimated_rewrite_bytes": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "estimated_write_bytes": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "source_bytes": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "source_last_analyzed_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    },
+    ///    "source_rows": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "source_stats_age_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "target_bytes_before_write": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "target_last_analyzed_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int64"
+    ///    },
+    ///    "target_rows_before_write": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "target_stats_age_ms": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteDataMovementExplanation {
+        pub estimate_source: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub estimated_read_bytes: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub estimated_rewrite_bytes: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub estimated_write_bytes: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_bytes: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_last_analyzed_ms: ::std::option::Option<i64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_rows: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_stats_age_ms: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub target_bytes_before_write: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub target_last_analyzed_ms: ::std::option::Option<i64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub target_rows_before_write: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub target_stats_age_ms: ::std::option::Option<u64>,
+    }
+    impl TableWriteDataMovementExplanation {
+        pub fn builder() -> builder::TableWriteDataMovementExplanation {
+            Default::default()
+        }
+    }
+    /// Body for `POST /api/v2/catalog/table-write/explain`. Provide
+    /// EITHER `source_table` OR `source_sql` — both, or neither, is a
+    /// 400. `write_mode` (default `append`) accepts, case-insensitive:
+    /// append | insert | insert_only | insert-only | upsert | overwrite
+    /// | insert_overwrite | insert-overwrite | overwrite_table |
+    /// overwrite-table | merge. `distribution` (default `auto`) accepts:
+    /// auto | local | local_only | local-only | pseudo |
+    /// pseudo_distributed | pseudo-distributed | distributed. Upsert/
+    /// merge imply upsert conflict policy; everything else errors on
+    /// conflict.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Body for `POST /api/v2/catalog/table-write/explain`. Provide\nEITHER `source_table` OR `source_sql` — both, or neither, is a\n400. `write_mode` (default `append`) accepts, case-insensitive:\nappend | insert | insert_only | insert-only | upsert | overwrite\n| insert_overwrite | insert-overwrite | overwrite_table |\noverwrite-table | merge. `distribution` (default `auto`) accepts:\nauto | local | local_only | local-only | pseudo |\npseudo_distributed | pseudo-distributed | distributed. Upsert/\nmerge imply upsert conflict policy; everything else errors on\nconflict.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "target_table"
+    ///  ],
+    ///  "properties": {
+    ///    "actor": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "batch_local_constraints_sufficient": {
+    ///      "type": [
+    ///        "boolean",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "distribution": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "estimated_bytes": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "idempotency_key": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "requires_row_level_semantics": {
+    ///      "type": [
+    ///        "boolean",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "row_count_hint": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "source_sql": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "source_table": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "target_columns": {
+    ///      "type": [
+    ///        "array",
+    ///        "null"
+    ///      ],
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "target_table": {
+    ///      "description": "Dotted name (`[namespace.]…table`); last segment is the table.",
+    ///      "type": "string"
+    ///    },
+    ///    "tenant_id": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "write_mode": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteExplainRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub actor: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub batch_local_constraints_sufficient: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub distribution: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub estimated_bytes: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub idempotency_key: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub requires_row_level_semantics: ::std::option::Option<bool>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub row_count_hint: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_sql: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_table: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub target_columns: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+        ///Dotted name (`[namespace.]…table`); last segment is the table.
+        pub target_table: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub tenant_id: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub write_mode: ::std::option::Option<::std::string::String>,
+    }
+    impl TableWriteExplainRequest {
+        pub fn builder() -> builder::TableWriteExplainRequest {
+            Default::default()
+        }
+    }
+    ///`TableWriteIntentExplanation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "durability",
+    ///    "isolation",
+    ///    "operation_kind",
+    ///    "projection_freshness",
+    ///    "requires_row_level_semantics",
+    ///    "target_table"
+    ///  ],
+    ///  "properties": {
+    ///    "actor": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "catalog_schema_version": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "durability": {
+    ///      "type": "string"
+    ///    },
+    ///    "estimated_bytes": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "idempotency_key": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "isolation": {
+    ///      "type": "string"
+    ///    },
+    ///    "operation_kind": {
+    ///      "type": "string"
+    ///    },
+    ///    "projection_freshness": {
+    ///      "type": "string"
+    ///    },
+    ///    "requires_row_level_semantics": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "row_count_hint": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "target_table": {
+    ///      "type": "string"
+    ///    },
+    ///    "tenant_id": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteIntentExplanation {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub actor: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub catalog_schema_version: ::std::option::Option<u64>,
+        pub durability: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub estimated_bytes: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub idempotency_key: ::std::option::Option<::std::string::String>,
+        pub isolation: ::std::string::String,
+        pub operation_kind: ::std::string::String,
+        pub projection_freshness: ::std::string::String,
+        pub requires_row_level_semantics: bool,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub row_count_hint: ::std::option::Option<u64>,
+        pub target_table: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub tenant_id: ::std::option::Option<::std::string::String>,
+    }
+    impl TableWriteIntentExplanation {
+        pub fn builder() -> builder::TableWriteIntentExplanation {
+            Default::default()
+        }
+    }
+    ///`TableWriteRejectedLaneExplanation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "lane",
+    ///    "reason"
+    ///  ],
+    ///  "properties": {
+    ///    "lane": {
+    ///      "type": "string"
+    ///    },
+    ///    "reason": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteRejectedLaneExplanation {
+        pub lane: ::std::string::String,
+        pub reason: ::std::string::String,
+    }
+    impl TableWriteRejectedLaneExplanation {
+        pub fn builder() -> builder::TableWriteRejectedLaneExplanation {
+            Default::default()
+        }
+    }
+    ///`TableWriteRejectedPathExplanation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "access_method",
+    ///    "backend",
+    ///    "reason",
+    ///    "required_guards"
+    ///  ],
+    ///  "properties": {
+    ///    "access_method": {
+    ///      "type": "string"
+    ///    },
+    ///    "backend": {
+    ///      "type": "string"
+    ///    },
+    ///    "reason": {
+    ///      "type": "string"
+    ///    },
+    ///    "required_guards": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteRejectedPathExplanation {
+        pub access_method: ::std::string::String,
+        pub backend: ::std::string::String,
+        pub reason: ::std::string::String,
+        pub required_guards: ::std::vec::Vec<::std::string::String>,
+    }
+    impl TableWriteRejectedPathExplanation {
+        pub fn builder() -> builder::TableWriteRejectedPathExplanation {
+            Default::default()
+        }
+    }
+    /// The full DML write-planner route decision (explain-only; nothing
+    /// was written). `write_mode`/`distribution` echo the resolved
+    /// canonical enum names (PascalCase, e.g. `Append`,
+    /// `PseudoDistributed`). `execution_*` fields appear only for
+    /// EXPLAIN ANALYZE (never set by this REST explain path).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "The full DML write-planner route decision (explain-only; nothing\nwas written). `write_mode`/`distribution` echo the resolved\ncanonical enum names (PascalCase, e.g. `Append`,\n`PseudoDistributed`). `execution_*` fields appear only for\nEXPLAIN ANALYZE (never set by this REST explain path).\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "candidate_paths",
+    ///    "data_movement",
+    ///    "distribution",
+    ///    "estimated_cost",
+    ///    "rejected_paths",
+    ///    "rejected_write_lanes",
+    ///    "required_guards",
+    ///    "route_metadata",
+    ///    "selected_access_method",
+    ///    "selected_backend",
+    ///    "source",
+    ///    "target_table",
+    ///    "write_intent",
+    ///    "write_lane",
+    ///    "write_lane_reason",
+    ///    "write_lane_required_guards",
+    ///    "write_mode"
+    ///  ],
+    ///  "properties": {
+    ///    "candidate_paths": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/TableWriteCandidateExplanation"
+    ///      }
+    ///    },
+    ///    "data_movement": {
+    ///      "$ref": "#/components/schemas/TableWriteDataMovementExplanation"
+    ///    },
+    ///    "distribution": {
+    ///      "type": "string"
+    ///    },
+    ///    "estimated_cost": {
+    ///      "$ref": "#/components/schemas/TableWriteCostExplanation"
+    ///    },
+    ///    "execution_elapsed_us": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "execution_rows_written": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "rejected_paths": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/TableWriteRejectedPathExplanation"
+    ///      }
+    ///    },
+    ///    "rejected_write_lanes": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/TableWriteRejectedLaneExplanation"
+    ///      }
+    ///    },
+    ///    "required_guards": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "route_metadata": {
+    ///      "$ref": "#/components/schemas/TableWriteRouteMetadataExplanation"
+    ///    },
+    ///    "selected_access_method": {
+    ///      "type": "string"
+    ///    },
+    ///    "selected_backend": {
+    ///      "type": "string"
+    ///    },
+    ///    "source": {
+    ///      "type": "string"
+    ///    },
+    ///    "target_table": {
+    ///      "type": "string"
+    ///    },
+    ///    "write_intent": {
+    ///      "$ref": "#/components/schemas/TableWriteIntentExplanation"
+    ///    },
+    ///    "write_lane": {
+    ///      "type": "string"
+    ///    },
+    ///    "write_lane_reason": {
+    ///      "type": "string"
+    ///    },
+    ///    "write_lane_required_guards": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "write_mode": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteRouteExplanation {
+        pub candidate_paths: ::std::vec::Vec<TableWriteCandidateExplanation>,
+        pub data_movement: TableWriteDataMovementExplanation,
+        pub distribution: ::std::string::String,
+        pub estimated_cost: TableWriteCostExplanation,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub execution_elapsed_us: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub execution_rows_written: ::std::option::Option<u64>,
+        pub rejected_paths: ::std::vec::Vec<TableWriteRejectedPathExplanation>,
+        pub rejected_write_lanes: ::std::vec::Vec<TableWriteRejectedLaneExplanation>,
+        pub required_guards: ::std::vec::Vec<::std::string::String>,
+        pub route_metadata: TableWriteRouteMetadataExplanation,
+        pub selected_access_method: ::std::string::String,
+        pub selected_backend: ::std::string::String,
+        pub source: ::std::string::String,
+        pub target_table: ::std::string::String,
+        pub write_intent: TableWriteIntentExplanation,
+        pub write_lane: ::std::string::String,
+        pub write_lane_reason: ::std::string::String,
+        pub write_lane_required_guards: ::std::vec::Vec<::std::string::String>,
+        pub write_mode: ::std::string::String,
+    }
+    impl TableWriteRouteExplanation {
+        pub fn builder() -> builder::TableWriteRouteExplanation {
+            Default::default()
+        }
+    }
+    ///`TableWriteRouteMetadataExplanation`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "authority_mode",
+    ///    "constraint_enforcement",
+    ///    "policy_boundary",
+    ///    "projection_metadata",
+    ///    "storage_specialization",
+    ///    "workload_profile"
+    ///  ],
+    ///  "properties": {
+    ///    "authority_mode": {
+    ///      "type": "string"
+    ///    },
+    ///    "constraint_enforcement": {
+    ///      "type": "string"
+    ///    },
+    ///    "freshness_sla": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "isolation_profile": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "partitioning": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "policy_boundary": {
+    ///      "type": "string"
+    ///    },
+    ///    "preferred_compute_route": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "primary_format": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "projection_freshness_state": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "projection_metadata": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/ProjectionRouteMetadataExplanation"
+    ///      }
+    ///    },
+    ///    "storage_specialization": {
+    ///      "type": "string"
+    ///    },
+    ///    "workload_profile": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct TableWriteRouteMetadataExplanation {
+        pub authority_mode: ::std::string::String,
+        pub constraint_enforcement: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub freshness_sla: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub isolation_profile: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub partitioning: ::std::option::Option<::std::string::String>,
+        pub policy_boundary: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub preferred_compute_route: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub primary_format: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub projection_freshness_state: ::std::option::Option<::std::string::String>,
+        pub projection_metadata: ::std::vec::Vec<ProjectionRouteMetadataExplanation>,
+        pub storage_specialization: ::std::string::String,
+        pub workload_profile: ::std::string::String,
+    }
+    impl TableWriteRouteMetadataExplanation {
+        pub fn builder() -> builder::TableWriteRouteMetadataExplanation {
             Default::default()
         }
     }
@@ -14908,6 +15850,83 @@ pub mod types {
                     evidence_id: Ok(value.evidence_id),
                     metrics: Ok(value.metrics),
                     version: Ok(value.version),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CatalogIntrospectionResult {
+            column_types: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            columns: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            rows: ::std::result::Result<
+                ::std::vec::Vec<::std::vec::Vec<::std::string::String>>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for CatalogIntrospectionResult {
+            fn default() -> Self {
+                Self {
+                    column_types: Err("no value supplied for column_types".to_string()),
+                    columns: Err("no value supplied for columns".to_string()),
+                    rows: Err("no value supplied for rows".to_string()),
+                }
+            }
+        }
+        impl CatalogIntrospectionResult {
+            pub fn column_types<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.column_types = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for column_types: {e}"));
+                self
+            }
+            pub fn columns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.columns = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for columns: {e}"));
+                self
+            }
+            pub fn rows<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::vec::Vec<::std::string::String>>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rows = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rows: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CatalogIntrospectionResult> for super::CatalogIntrospectionResult {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CatalogIntrospectionResult,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    column_types: value.column_types?,
+                    columns: value.columns?,
+                    rows: value.rows?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CatalogIntrospectionResult> for CatalogIntrospectionResult {
+            fn from(value: super::CatalogIntrospectionResult) -> Self {
+                Self {
+                    column_types: Ok(value.column_types),
+                    columns: Ok(value.columns),
+                    rows: Ok(value.rows),
                 }
             }
         }
@@ -21882,6 +22901,216 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct ProjectionRouteMetadataExplanation {
+            freshness: ::std::result::Result<::std::string::String, ::std::string::String>,
+            freshness_state: ::std::result::Result<::std::string::String, ::std::string::String>,
+            invalidation_policy: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            kind: ::std::result::Result<::std::string::String, ::std::string::String>,
+            last_included_position: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            max_lag_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+            physical_format: ::std::result::Result<::std::string::String, ::std::string::String>,
+            policy_boundary: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            rebuild_source: ::std::result::Result<::std::string::String, ::std::string::String>,
+            rebuildable: ::std::result::Result<bool, ::std::string::String>,
+            source_range: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for ProjectionRouteMetadataExplanation {
+            fn default() -> Self {
+                Self {
+                    freshness: Err("no value supplied for freshness".to_string()),
+                    freshness_state: Err("no value supplied for freshness_state".to_string()),
+                    invalidation_policy: Ok(Default::default()),
+                    kind: Err("no value supplied for kind".to_string()),
+                    last_included_position: Ok(Default::default()),
+                    max_lag_ms: Ok(Default::default()),
+                    name: Err("no value supplied for name".to_string()),
+                    physical_format: Err("no value supplied for physical_format".to_string()),
+                    policy_boundary: Ok(Default::default()),
+                    rebuild_source: Err("no value supplied for rebuild_source".to_string()),
+                    rebuildable: Err("no value supplied for rebuildable".to_string()),
+                    source_range: Ok(Default::default()),
+                }
+            }
+        }
+        impl ProjectionRouteMetadataExplanation {
+            pub fn freshness<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.freshness = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for freshness: {e}"));
+                self
+            }
+            pub fn freshness_state<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.freshness_state = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for freshness_state: {e}")
+                });
+                self
+            }
+            pub fn invalidation_policy<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.invalidation_policy = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for invalidation_policy: {e}")
+                });
+                self
+            }
+            pub fn kind<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.kind = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for kind: {e}"));
+                self
+            }
+            pub fn last_included_position<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.last_included_position = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for last_included_position: {e}")
+                });
+                self
+            }
+            pub fn max_lag_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_lag_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for max_lag_ms: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn physical_format<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.physical_format = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for physical_format: {e}")
+                });
+                self
+            }
+            pub fn policy_boundary<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.policy_boundary = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for policy_boundary: {e}")
+                });
+                self
+            }
+            pub fn rebuild_source<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rebuild_source = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for rebuild_source: {e}")
+                });
+                self
+            }
+            pub fn rebuildable<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rebuildable = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rebuildable: {e}"));
+                self
+            }
+            pub fn source_range<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_range = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source_range: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ProjectionRouteMetadataExplanation>
+            for super::ProjectionRouteMetadataExplanation
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ProjectionRouteMetadataExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    freshness: value.freshness?,
+                    freshness_state: value.freshness_state?,
+                    invalidation_policy: value.invalidation_policy?,
+                    kind: value.kind?,
+                    last_included_position: value.last_included_position?,
+                    max_lag_ms: value.max_lag_ms?,
+                    name: value.name?,
+                    physical_format: value.physical_format?,
+                    policy_boundary: value.policy_boundary?,
+                    rebuild_source: value.rebuild_source?,
+                    rebuildable: value.rebuildable?,
+                    source_range: value.source_range?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ProjectionRouteMetadataExplanation>
+            for ProjectionRouteMetadataExplanation
+        {
+            fn from(value: super::ProjectionRouteMetadataExplanation) -> Self {
+                Self {
+                    freshness: Ok(value.freshness),
+                    freshness_state: Ok(value.freshness_state),
+                    invalidation_policy: Ok(value.invalidation_policy),
+                    kind: Ok(value.kind),
+                    last_included_position: Ok(value.last_included_position),
+                    max_lag_ms: Ok(value.max_lag_ms),
+                    name: Ok(value.name),
+                    physical_format: Ok(value.physical_format),
+                    policy_boundary: Ok(value.policy_boundary),
+                    rebuild_source: Ok(value.rebuild_source),
+                    rebuildable: Ok(value.rebuildable),
+                    source_range: Ok(value.source_range),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct ProximaRecordInput {
             id: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
@@ -23601,6 +24830,1559 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct TableWriteCandidateExplanation {
+            access_method: ::std::result::Result<::std::string::String, ::std::string::String>,
+            backend: ::std::result::Result<::std::string::String, ::std::string::String>,
+            estimated_cost:
+                ::std::result::Result<super::TableWriteCostExplanation, ::std::string::String>,
+            pushdown: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            required_guards: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for TableWriteCandidateExplanation {
+            fn default() -> Self {
+                Self {
+                    access_method: Err("no value supplied for access_method".to_string()),
+                    backend: Err("no value supplied for backend".to_string()),
+                    estimated_cost: Err("no value supplied for estimated_cost".to_string()),
+                    pushdown: Err("no value supplied for pushdown".to_string()),
+                    required_guards: Err("no value supplied for required_guards".to_string()),
+                }
+            }
+        }
+        impl TableWriteCandidateExplanation {
+            pub fn access_method<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.access_method = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for access_method: {e}"));
+                self
+            }
+            pub fn backend<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.backend = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for backend: {e}"));
+                self
+            }
+            pub fn estimated_cost<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::TableWriteCostExplanation>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.estimated_cost = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for estimated_cost: {e}")
+                });
+                self
+            }
+            pub fn pushdown<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.pushdown = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for pushdown: {e}"));
+                self
+            }
+            pub fn required_guards<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.required_guards = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for required_guards: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteCandidateExplanation>
+            for super::TableWriteCandidateExplanation
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteCandidateExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    access_method: value.access_method?,
+                    backend: value.backend?,
+                    estimated_cost: value.estimated_cost?,
+                    pushdown: value.pushdown?,
+                    required_guards: value.required_guards?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteCandidateExplanation>
+            for TableWriteCandidateExplanation
+        {
+            fn from(value: super::TableWriteCandidateExplanation) -> Self {
+                Self {
+                    access_method: Ok(value.access_method),
+                    backend: Ok(value.backend),
+                    estimated_cost: Ok(value.estimated_cost),
+                    pushdown: Ok(value.pushdown),
+                    required_guards: Ok(value.required_guards),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TableWriteCostExplanation {
+            bytes: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            reason: ::std::result::Result<::std::string::String, ::std::string::String>,
+            relative_cost: ::std::result::Result<f64, ::std::string::String>,
+            rows: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for TableWriteCostExplanation {
+            fn default() -> Self {
+                Self {
+                    bytes: Ok(Default::default()),
+                    reason: Err("no value supplied for reason".to_string()),
+                    relative_cost: Err("no value supplied for relative_cost".to_string()),
+                    rows: Ok(Default::default()),
+                }
+            }
+        }
+        impl TableWriteCostExplanation {
+            pub fn bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.bytes = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for bytes: {e}"));
+                self
+            }
+            pub fn reason<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.reason = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for reason: {e}"));
+                self
+            }
+            pub fn relative_cost<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.relative_cost = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for relative_cost: {e}"));
+                self
+            }
+            pub fn rows<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rows = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rows: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteCostExplanation> for super::TableWriteCostExplanation {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteCostExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    bytes: value.bytes?,
+                    reason: value.reason?,
+                    relative_cost: value.relative_cost?,
+                    rows: value.rows?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteCostExplanation> for TableWriteCostExplanation {
+            fn from(value: super::TableWriteCostExplanation) -> Self {
+                Self {
+                    bytes: Ok(value.bytes),
+                    reason: Ok(value.reason),
+                    relative_cost: Ok(value.relative_cost),
+                    rows: Ok(value.rows),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TableWriteDataMovementExplanation {
+            estimate_source: ::std::result::Result<::std::string::String, ::std::string::String>,
+            estimated_read_bytes:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            estimated_rewrite_bytes:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            estimated_write_bytes:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            source_bytes: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            source_last_analyzed_ms:
+                ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            source_rows: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            source_stats_age_ms:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            target_bytes_before_write:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            target_last_analyzed_ms:
+                ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            target_rows_before_write:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            target_stats_age_ms:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for TableWriteDataMovementExplanation {
+            fn default() -> Self {
+                Self {
+                    estimate_source: Err("no value supplied for estimate_source".to_string()),
+                    estimated_read_bytes: Ok(Default::default()),
+                    estimated_rewrite_bytes: Ok(Default::default()),
+                    estimated_write_bytes: Ok(Default::default()),
+                    source_bytes: Ok(Default::default()),
+                    source_last_analyzed_ms: Ok(Default::default()),
+                    source_rows: Ok(Default::default()),
+                    source_stats_age_ms: Ok(Default::default()),
+                    target_bytes_before_write: Ok(Default::default()),
+                    target_last_analyzed_ms: Ok(Default::default()),
+                    target_rows_before_write: Ok(Default::default()),
+                    target_stats_age_ms: Ok(Default::default()),
+                }
+            }
+        }
+        impl TableWriteDataMovementExplanation {
+            pub fn estimate_source<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.estimate_source = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for estimate_source: {e}")
+                });
+                self
+            }
+            pub fn estimated_read_bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.estimated_read_bytes = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for estimated_read_bytes: {e}")
+                });
+                self
+            }
+            pub fn estimated_rewrite_bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.estimated_rewrite_bytes = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for estimated_rewrite_bytes: {e}")
+                });
+                self
+            }
+            pub fn estimated_write_bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.estimated_write_bytes = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for estimated_write_bytes: {e}")
+                });
+                self
+            }
+            pub fn source_bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_bytes = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source_bytes: {e}"));
+                self
+            }
+            pub fn source_last_analyzed_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_last_analyzed_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for source_last_analyzed_ms: {e}")
+                });
+                self
+            }
+            pub fn source_rows<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_rows = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source_rows: {e}"));
+                self
+            }
+            pub fn source_stats_age_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_stats_age_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for source_stats_age_ms: {e}")
+                });
+                self
+            }
+            pub fn target_bytes_before_write<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_bytes_before_write = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for target_bytes_before_write: {e}")
+                });
+                self
+            }
+            pub fn target_last_analyzed_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_last_analyzed_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for target_last_analyzed_ms: {e}")
+                });
+                self
+            }
+            pub fn target_rows_before_write<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_rows_before_write = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for target_rows_before_write: {e}")
+                });
+                self
+            }
+            pub fn target_stats_age_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_stats_age_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for target_stats_age_ms: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteDataMovementExplanation>
+            for super::TableWriteDataMovementExplanation
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteDataMovementExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    estimate_source: value.estimate_source?,
+                    estimated_read_bytes: value.estimated_read_bytes?,
+                    estimated_rewrite_bytes: value.estimated_rewrite_bytes?,
+                    estimated_write_bytes: value.estimated_write_bytes?,
+                    source_bytes: value.source_bytes?,
+                    source_last_analyzed_ms: value.source_last_analyzed_ms?,
+                    source_rows: value.source_rows?,
+                    source_stats_age_ms: value.source_stats_age_ms?,
+                    target_bytes_before_write: value.target_bytes_before_write?,
+                    target_last_analyzed_ms: value.target_last_analyzed_ms?,
+                    target_rows_before_write: value.target_rows_before_write?,
+                    target_stats_age_ms: value.target_stats_age_ms?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteDataMovementExplanation>
+            for TableWriteDataMovementExplanation
+        {
+            fn from(value: super::TableWriteDataMovementExplanation) -> Self {
+                Self {
+                    estimate_source: Ok(value.estimate_source),
+                    estimated_read_bytes: Ok(value.estimated_read_bytes),
+                    estimated_rewrite_bytes: Ok(value.estimated_rewrite_bytes),
+                    estimated_write_bytes: Ok(value.estimated_write_bytes),
+                    source_bytes: Ok(value.source_bytes),
+                    source_last_analyzed_ms: Ok(value.source_last_analyzed_ms),
+                    source_rows: Ok(value.source_rows),
+                    source_stats_age_ms: Ok(value.source_stats_age_ms),
+                    target_bytes_before_write: Ok(value.target_bytes_before_write),
+                    target_last_analyzed_ms: Ok(value.target_last_analyzed_ms),
+                    target_rows_before_write: Ok(value.target_rows_before_write),
+                    target_stats_age_ms: Ok(value.target_stats_age_ms),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TableWriteExplainRequest {
+            actor: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            batch_local_constraints_sufficient:
+                ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            distribution: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            estimated_bytes:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            idempotency_key: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            requires_row_level_semantics:
+                ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            row_count_hint:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            source_sql: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            source_table: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            target_columns: ::std::result::Result<
+                ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+                ::std::string::String,
+            >,
+            target_table: ::std::result::Result<::std::string::String, ::std::string::String>,
+            tenant_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            write_mode: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for TableWriteExplainRequest {
+            fn default() -> Self {
+                Self {
+                    actor: Ok(Default::default()),
+                    batch_local_constraints_sufficient: Ok(Default::default()),
+                    distribution: Ok(Default::default()),
+                    estimated_bytes: Ok(Default::default()),
+                    idempotency_key: Ok(Default::default()),
+                    requires_row_level_semantics: Ok(Default::default()),
+                    row_count_hint: Ok(Default::default()),
+                    source_sql: Ok(Default::default()),
+                    source_table: Ok(Default::default()),
+                    target_columns: Ok(Default::default()),
+                    target_table: Err("no value supplied for target_table".to_string()),
+                    tenant_id: Ok(Default::default()),
+                    write_mode: Ok(Default::default()),
+                }
+            }
+        }
+        impl TableWriteExplainRequest {
+            pub fn actor<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.actor = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for actor: {e}"));
+                self
+            }
+            pub fn batch_local_constraints_sufficient<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.batch_local_constraints_sufficient = value
+                    .try_into()
+                    .map_err(|e| {
+                        format!(
+                            "error converting supplied value for batch_local_constraints_sufficient: {e}"
+                        )
+                    });
+                self
+            }
+            pub fn distribution<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.distribution = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for distribution: {e}"));
+                self
+            }
+            pub fn estimated_bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.estimated_bytes = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for estimated_bytes: {e}")
+                });
+                self
+            }
+            pub fn idempotency_key<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.idempotency_key = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for idempotency_key: {e}")
+                });
+                self
+            }
+            pub fn requires_row_level_semantics<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.requires_row_level_semantics = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for requires_row_level_semantics: {e}")
+                });
+                self
+            }
+            pub fn row_count_hint<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.row_count_hint = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for row_count_hint: {e}")
+                });
+                self
+            }
+            pub fn source_sql<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_sql = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source_sql: {e}"));
+                self
+            }
+            pub fn source_table<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_table = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source_table: {e}"));
+                self
+            }
+            pub fn target_columns<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_columns = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for target_columns: {e}")
+                });
+                self
+            }
+            pub fn target_table<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_table = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for target_table: {e}"));
+                self
+            }
+            pub fn tenant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant_id: {e}"));
+                self
+            }
+            pub fn write_mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.write_mode = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for write_mode: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteExplainRequest> for super::TableWriteExplainRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteExplainRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    actor: value.actor?,
+                    batch_local_constraints_sufficient: value.batch_local_constraints_sufficient?,
+                    distribution: value.distribution?,
+                    estimated_bytes: value.estimated_bytes?,
+                    idempotency_key: value.idempotency_key?,
+                    requires_row_level_semantics: value.requires_row_level_semantics?,
+                    row_count_hint: value.row_count_hint?,
+                    source_sql: value.source_sql?,
+                    source_table: value.source_table?,
+                    target_columns: value.target_columns?,
+                    target_table: value.target_table?,
+                    tenant_id: value.tenant_id?,
+                    write_mode: value.write_mode?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteExplainRequest> for TableWriteExplainRequest {
+            fn from(value: super::TableWriteExplainRequest) -> Self {
+                Self {
+                    actor: Ok(value.actor),
+                    batch_local_constraints_sufficient: Ok(value.batch_local_constraints_sufficient),
+                    distribution: Ok(value.distribution),
+                    estimated_bytes: Ok(value.estimated_bytes),
+                    idempotency_key: Ok(value.idempotency_key),
+                    requires_row_level_semantics: Ok(value.requires_row_level_semantics),
+                    row_count_hint: Ok(value.row_count_hint),
+                    source_sql: Ok(value.source_sql),
+                    source_table: Ok(value.source_table),
+                    target_columns: Ok(value.target_columns),
+                    target_table: Ok(value.target_table),
+                    tenant_id: Ok(value.tenant_id),
+                    write_mode: Ok(value.write_mode),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TableWriteIntentExplanation {
+            actor: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            catalog_schema_version:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            durability: ::std::result::Result<::std::string::String, ::std::string::String>,
+            estimated_bytes:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            idempotency_key: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            isolation: ::std::result::Result<::std::string::String, ::std::string::String>,
+            operation_kind: ::std::result::Result<::std::string::String, ::std::string::String>,
+            projection_freshness:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
+            requires_row_level_semantics: ::std::result::Result<bool, ::std::string::String>,
+            row_count_hint:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            target_table: ::std::result::Result<::std::string::String, ::std::string::String>,
+            tenant_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for TableWriteIntentExplanation {
+            fn default() -> Self {
+                Self {
+                    actor: Ok(Default::default()),
+                    catalog_schema_version: Ok(Default::default()),
+                    durability: Err("no value supplied for durability".to_string()),
+                    estimated_bytes: Ok(Default::default()),
+                    idempotency_key: Ok(Default::default()),
+                    isolation: Err("no value supplied for isolation".to_string()),
+                    operation_kind: Err("no value supplied for operation_kind".to_string()),
+                    projection_freshness: Err(
+                        "no value supplied for projection_freshness".to_string()
+                    ),
+                    requires_row_level_semantics: Err(
+                        "no value supplied for requires_row_level_semantics".to_string(),
+                    ),
+                    row_count_hint: Ok(Default::default()),
+                    target_table: Err("no value supplied for target_table".to_string()),
+                    tenant_id: Ok(Default::default()),
+                }
+            }
+        }
+        impl TableWriteIntentExplanation {
+            pub fn actor<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.actor = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for actor: {e}"));
+                self
+            }
+            pub fn catalog_schema_version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.catalog_schema_version = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for catalog_schema_version: {e}")
+                });
+                self
+            }
+            pub fn durability<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.durability = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for durability: {e}"));
+                self
+            }
+            pub fn estimated_bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.estimated_bytes = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for estimated_bytes: {e}")
+                });
+                self
+            }
+            pub fn idempotency_key<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.idempotency_key = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for idempotency_key: {e}")
+                });
+                self
+            }
+            pub fn isolation<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.isolation = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for isolation: {e}"));
+                self
+            }
+            pub fn operation_kind<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.operation_kind = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for operation_kind: {e}")
+                });
+                self
+            }
+            pub fn projection_freshness<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.projection_freshness = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for projection_freshness: {e}")
+                });
+                self
+            }
+            pub fn requires_row_level_semantics<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.requires_row_level_semantics = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for requires_row_level_semantics: {e}")
+                });
+                self
+            }
+            pub fn row_count_hint<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.row_count_hint = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for row_count_hint: {e}")
+                });
+                self
+            }
+            pub fn target_table<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_table = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for target_table: {e}"));
+                self
+            }
+            pub fn tenant_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.tenant_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for tenant_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteIntentExplanation> for super::TableWriteIntentExplanation {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteIntentExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    actor: value.actor?,
+                    catalog_schema_version: value.catalog_schema_version?,
+                    durability: value.durability?,
+                    estimated_bytes: value.estimated_bytes?,
+                    idempotency_key: value.idempotency_key?,
+                    isolation: value.isolation?,
+                    operation_kind: value.operation_kind?,
+                    projection_freshness: value.projection_freshness?,
+                    requires_row_level_semantics: value.requires_row_level_semantics?,
+                    row_count_hint: value.row_count_hint?,
+                    target_table: value.target_table?,
+                    tenant_id: value.tenant_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteIntentExplanation> for TableWriteIntentExplanation {
+            fn from(value: super::TableWriteIntentExplanation) -> Self {
+                Self {
+                    actor: Ok(value.actor),
+                    catalog_schema_version: Ok(value.catalog_schema_version),
+                    durability: Ok(value.durability),
+                    estimated_bytes: Ok(value.estimated_bytes),
+                    idempotency_key: Ok(value.idempotency_key),
+                    isolation: Ok(value.isolation),
+                    operation_kind: Ok(value.operation_kind),
+                    projection_freshness: Ok(value.projection_freshness),
+                    requires_row_level_semantics: Ok(value.requires_row_level_semantics),
+                    row_count_hint: Ok(value.row_count_hint),
+                    target_table: Ok(value.target_table),
+                    tenant_id: Ok(value.tenant_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TableWriteRejectedLaneExplanation {
+            lane: ::std::result::Result<::std::string::String, ::std::string::String>,
+            reason: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for TableWriteRejectedLaneExplanation {
+            fn default() -> Self {
+                Self {
+                    lane: Err("no value supplied for lane".to_string()),
+                    reason: Err("no value supplied for reason".to_string()),
+                }
+            }
+        }
+        impl TableWriteRejectedLaneExplanation {
+            pub fn lane<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.lane = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for lane: {e}"));
+                self
+            }
+            pub fn reason<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.reason = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for reason: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteRejectedLaneExplanation>
+            for super::TableWriteRejectedLaneExplanation
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteRejectedLaneExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    lane: value.lane?,
+                    reason: value.reason?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteRejectedLaneExplanation>
+            for TableWriteRejectedLaneExplanation
+        {
+            fn from(value: super::TableWriteRejectedLaneExplanation) -> Self {
+                Self {
+                    lane: Ok(value.lane),
+                    reason: Ok(value.reason),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TableWriteRejectedPathExplanation {
+            access_method: ::std::result::Result<::std::string::String, ::std::string::String>,
+            backend: ::std::result::Result<::std::string::String, ::std::string::String>,
+            reason: ::std::result::Result<::std::string::String, ::std::string::String>,
+            required_guards: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for TableWriteRejectedPathExplanation {
+            fn default() -> Self {
+                Self {
+                    access_method: Err("no value supplied for access_method".to_string()),
+                    backend: Err("no value supplied for backend".to_string()),
+                    reason: Err("no value supplied for reason".to_string()),
+                    required_guards: Err("no value supplied for required_guards".to_string()),
+                }
+            }
+        }
+        impl TableWriteRejectedPathExplanation {
+            pub fn access_method<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.access_method = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for access_method: {e}"));
+                self
+            }
+            pub fn backend<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.backend = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for backend: {e}"));
+                self
+            }
+            pub fn reason<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.reason = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for reason: {e}"));
+                self
+            }
+            pub fn required_guards<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.required_guards = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for required_guards: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteRejectedPathExplanation>
+            for super::TableWriteRejectedPathExplanation
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteRejectedPathExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    access_method: value.access_method?,
+                    backend: value.backend?,
+                    reason: value.reason?,
+                    required_guards: value.required_guards?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteRejectedPathExplanation>
+            for TableWriteRejectedPathExplanation
+        {
+            fn from(value: super::TableWriteRejectedPathExplanation) -> Self {
+                Self {
+                    access_method: Ok(value.access_method),
+                    backend: Ok(value.backend),
+                    reason: Ok(value.reason),
+                    required_guards: Ok(value.required_guards),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TableWriteRouteExplanation {
+            candidate_paths: ::std::result::Result<
+                ::std::vec::Vec<super::TableWriteCandidateExplanation>,
+                ::std::string::String,
+            >,
+            data_movement: ::std::result::Result<
+                super::TableWriteDataMovementExplanation,
+                ::std::string::String,
+            >,
+            distribution: ::std::result::Result<::std::string::String, ::std::string::String>,
+            estimated_cost:
+                ::std::result::Result<super::TableWriteCostExplanation, ::std::string::String>,
+            execution_elapsed_us:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            execution_rows_written:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            rejected_paths: ::std::result::Result<
+                ::std::vec::Vec<super::TableWriteRejectedPathExplanation>,
+                ::std::string::String,
+            >,
+            rejected_write_lanes: ::std::result::Result<
+                ::std::vec::Vec<super::TableWriteRejectedLaneExplanation>,
+                ::std::string::String,
+            >,
+            required_guards: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            route_metadata: ::std::result::Result<
+                super::TableWriteRouteMetadataExplanation,
+                ::std::string::String,
+            >,
+            selected_access_method:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
+            selected_backend: ::std::result::Result<::std::string::String, ::std::string::String>,
+            source: ::std::result::Result<::std::string::String, ::std::string::String>,
+            target_table: ::std::result::Result<::std::string::String, ::std::string::String>,
+            write_intent:
+                ::std::result::Result<super::TableWriteIntentExplanation, ::std::string::String>,
+            write_lane: ::std::result::Result<::std::string::String, ::std::string::String>,
+            write_lane_reason: ::std::result::Result<::std::string::String, ::std::string::String>,
+            write_lane_required_guards: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            write_mode: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for TableWriteRouteExplanation {
+            fn default() -> Self {
+                Self {
+                    candidate_paths: Err("no value supplied for candidate_paths".to_string()),
+                    data_movement: Err("no value supplied for data_movement".to_string()),
+                    distribution: Err("no value supplied for distribution".to_string()),
+                    estimated_cost: Err("no value supplied for estimated_cost".to_string()),
+                    execution_elapsed_us: Ok(Default::default()),
+                    execution_rows_written: Ok(Default::default()),
+                    rejected_paths: Err("no value supplied for rejected_paths".to_string()),
+                    rejected_write_lanes: Err(
+                        "no value supplied for rejected_write_lanes".to_string()
+                    ),
+                    required_guards: Err("no value supplied for required_guards".to_string()),
+                    route_metadata: Err("no value supplied for route_metadata".to_string()),
+                    selected_access_method: Err(
+                        "no value supplied for selected_access_method".to_string()
+                    ),
+                    selected_backend: Err("no value supplied for selected_backend".to_string()),
+                    source: Err("no value supplied for source".to_string()),
+                    target_table: Err("no value supplied for target_table".to_string()),
+                    write_intent: Err("no value supplied for write_intent".to_string()),
+                    write_lane: Err("no value supplied for write_lane".to_string()),
+                    write_lane_reason: Err("no value supplied for write_lane_reason".to_string()),
+                    write_lane_required_guards: Err(
+                        "no value supplied for write_lane_required_guards".to_string(),
+                    ),
+                    write_mode: Err("no value supplied for write_mode".to_string()),
+                }
+            }
+        }
+        impl TableWriteRouteExplanation {
+            pub fn candidate_paths<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::TableWriteCandidateExplanation>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.candidate_paths = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for candidate_paths: {e}")
+                });
+                self
+            }
+            pub fn data_movement<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::TableWriteDataMovementExplanation>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data_movement = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data_movement: {e}"));
+                self
+            }
+            pub fn distribution<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.distribution = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for distribution: {e}"));
+                self
+            }
+            pub fn estimated_cost<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::TableWriteCostExplanation>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.estimated_cost = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for estimated_cost: {e}")
+                });
+                self
+            }
+            pub fn execution_elapsed_us<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.execution_elapsed_us = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for execution_elapsed_us: {e}")
+                });
+                self
+            }
+            pub fn execution_rows_written<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.execution_rows_written = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for execution_rows_written: {e}")
+                });
+                self
+            }
+            pub fn rejected_paths<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::vec::Vec<super::TableWriteRejectedPathExplanation>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rejected_paths = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for rejected_paths: {e}")
+                });
+                self
+            }
+            pub fn rejected_write_lanes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::vec::Vec<super::TableWriteRejectedLaneExplanation>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rejected_write_lanes = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for rejected_write_lanes: {e}")
+                });
+                self
+            }
+            pub fn required_guards<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.required_guards = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for required_guards: {e}")
+                });
+                self
+            }
+            pub fn route_metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::TableWriteRouteMetadataExplanation>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.route_metadata = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for route_metadata: {e}")
+                });
+                self
+            }
+            pub fn selected_access_method<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.selected_access_method = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for selected_access_method: {e}")
+                });
+                self
+            }
+            pub fn selected_backend<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.selected_backend = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for selected_backend: {e}")
+                });
+                self
+            }
+            pub fn source<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source: {e}"));
+                self
+            }
+            pub fn target_table<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_table = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for target_table: {e}"));
+                self
+            }
+            pub fn write_intent<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::TableWriteIntentExplanation>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.write_intent = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for write_intent: {e}"));
+                self
+            }
+            pub fn write_lane<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.write_lane = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for write_lane: {e}"));
+                self
+            }
+            pub fn write_lane_reason<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.write_lane_reason = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for write_lane_reason: {e}")
+                });
+                self
+            }
+            pub fn write_lane_required_guards<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.write_lane_required_guards = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for write_lane_required_guards: {e}")
+                });
+                self
+            }
+            pub fn write_mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.write_mode = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for write_mode: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteRouteExplanation> for super::TableWriteRouteExplanation {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteRouteExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    candidate_paths: value.candidate_paths?,
+                    data_movement: value.data_movement?,
+                    distribution: value.distribution?,
+                    estimated_cost: value.estimated_cost?,
+                    execution_elapsed_us: value.execution_elapsed_us?,
+                    execution_rows_written: value.execution_rows_written?,
+                    rejected_paths: value.rejected_paths?,
+                    rejected_write_lanes: value.rejected_write_lanes?,
+                    required_guards: value.required_guards?,
+                    route_metadata: value.route_metadata?,
+                    selected_access_method: value.selected_access_method?,
+                    selected_backend: value.selected_backend?,
+                    source: value.source?,
+                    target_table: value.target_table?,
+                    write_intent: value.write_intent?,
+                    write_lane: value.write_lane?,
+                    write_lane_reason: value.write_lane_reason?,
+                    write_lane_required_guards: value.write_lane_required_guards?,
+                    write_mode: value.write_mode?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteRouteExplanation> for TableWriteRouteExplanation {
+            fn from(value: super::TableWriteRouteExplanation) -> Self {
+                Self {
+                    candidate_paths: Ok(value.candidate_paths),
+                    data_movement: Ok(value.data_movement),
+                    distribution: Ok(value.distribution),
+                    estimated_cost: Ok(value.estimated_cost),
+                    execution_elapsed_us: Ok(value.execution_elapsed_us),
+                    execution_rows_written: Ok(value.execution_rows_written),
+                    rejected_paths: Ok(value.rejected_paths),
+                    rejected_write_lanes: Ok(value.rejected_write_lanes),
+                    required_guards: Ok(value.required_guards),
+                    route_metadata: Ok(value.route_metadata),
+                    selected_access_method: Ok(value.selected_access_method),
+                    selected_backend: Ok(value.selected_backend),
+                    source: Ok(value.source),
+                    target_table: Ok(value.target_table),
+                    write_intent: Ok(value.write_intent),
+                    write_lane: Ok(value.write_lane),
+                    write_lane_reason: Ok(value.write_lane_reason),
+                    write_lane_required_guards: Ok(value.write_lane_required_guards),
+                    write_mode: Ok(value.write_mode),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct TableWriteRouteMetadataExplanation {
+            authority_mode: ::std::result::Result<::std::string::String, ::std::string::String>,
+            constraint_enforcement:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
+            freshness_sla: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            isolation_profile: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            partitioning: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            policy_boundary: ::std::result::Result<::std::string::String, ::std::string::String>,
+            preferred_compute_route: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            primary_format: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            projection_freshness_state: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            projection_metadata: ::std::result::Result<
+                ::std::vec::Vec<super::ProjectionRouteMetadataExplanation>,
+                ::std::string::String,
+            >,
+            storage_specialization:
+                ::std::result::Result<::std::string::String, ::std::string::String>,
+            workload_profile: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for TableWriteRouteMetadataExplanation {
+            fn default() -> Self {
+                Self {
+                    authority_mode: Err("no value supplied for authority_mode".to_string()),
+                    constraint_enforcement: Err(
+                        "no value supplied for constraint_enforcement".to_string()
+                    ),
+                    freshness_sla: Ok(Default::default()),
+                    isolation_profile: Ok(Default::default()),
+                    partitioning: Ok(Default::default()),
+                    policy_boundary: Err("no value supplied for policy_boundary".to_string()),
+                    preferred_compute_route: Ok(Default::default()),
+                    primary_format: Ok(Default::default()),
+                    projection_freshness_state: Ok(Default::default()),
+                    projection_metadata: Err(
+                        "no value supplied for projection_metadata".to_string()
+                    ),
+                    storage_specialization: Err(
+                        "no value supplied for storage_specialization".to_string()
+                    ),
+                    workload_profile: Err("no value supplied for workload_profile".to_string()),
+                }
+            }
+        }
+        impl TableWriteRouteMetadataExplanation {
+            pub fn authority_mode<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.authority_mode = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for authority_mode: {e}")
+                });
+                self
+            }
+            pub fn constraint_enforcement<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.constraint_enforcement = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for constraint_enforcement: {e}")
+                });
+                self
+            }
+            pub fn freshness_sla<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.freshness_sla = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for freshness_sla: {e}"));
+                self
+            }
+            pub fn isolation_profile<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.isolation_profile = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for isolation_profile: {e}")
+                });
+                self
+            }
+            pub fn partitioning<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.partitioning = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for partitioning: {e}"));
+                self
+            }
+            pub fn policy_boundary<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.policy_boundary = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for policy_boundary: {e}")
+                });
+                self
+            }
+            pub fn preferred_compute_route<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.preferred_compute_route = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for preferred_compute_route: {e}")
+                });
+                self
+            }
+            pub fn primary_format<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.primary_format = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for primary_format: {e}")
+                });
+                self
+            }
+            pub fn projection_freshness_state<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.projection_freshness_state = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for projection_freshness_state: {e}")
+                });
+                self
+            }
+            pub fn projection_metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::vec::Vec<super::ProjectionRouteMetadataExplanation>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.projection_metadata = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for projection_metadata: {e}")
+                });
+                self
+            }
+            pub fn storage_specialization<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.storage_specialization = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for storage_specialization: {e}")
+                });
+                self
+            }
+            pub fn workload_profile<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.workload_profile = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for workload_profile: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<TableWriteRouteMetadataExplanation>
+            for super::TableWriteRouteMetadataExplanation
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: TableWriteRouteMetadataExplanation,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    authority_mode: value.authority_mode?,
+                    constraint_enforcement: value.constraint_enforcement?,
+                    freshness_sla: value.freshness_sla?,
+                    isolation_profile: value.isolation_profile?,
+                    partitioning: value.partitioning?,
+                    policy_boundary: value.policy_boundary?,
+                    preferred_compute_route: value.preferred_compute_route?,
+                    primary_format: value.primary_format?,
+                    projection_freshness_state: value.projection_freshness_state?,
+                    projection_metadata: value.projection_metadata?,
+                    storage_specialization: value.storage_specialization?,
+                    workload_profile: value.workload_profile?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::TableWriteRouteMetadataExplanation>
+            for TableWriteRouteMetadataExplanation
+        {
+            fn from(value: super::TableWriteRouteMetadataExplanation) -> Self {
+                Self {
+                    authority_mode: Ok(value.authority_mode),
+                    constraint_enforcement: Ok(value.constraint_enforcement),
+                    freshness_sla: Ok(value.freshness_sla),
+                    isolation_profile: Ok(value.isolation_profile),
+                    partitioning: Ok(value.partitioning),
+                    policy_boundary: Ok(value.policy_boundary),
+                    preferred_compute_route: Ok(value.preferred_compute_route),
+                    primary_format: Ok(value.primary_format),
+                    projection_freshness_state: Ok(value.projection_freshness_state),
+                    projection_metadata: Ok(value.projection_metadata),
+                    storage_specialization: Ok(value.storage_specialization),
+                    workload_profile: Ok(value.workload_profile),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct TextFieldInput {
             content: ::std::result::Result<::std::string::String, ::std::string::String>,
             name: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -25219,6 +28001,58 @@ impl Client {
     /// ```
     pub fn put_tenant_posture(&self) -> builder::PutTenantPosture<'_> {
         builder::PutTenantPosture::new(self)
+    }
+    /// Table-level xCatalog routing metadata
+    ///
+    /// Serves `information_schema.table_routing` as a table-shaped
+    /// result — the same projection pgwire/SQL clients see. All cell
+    /// values are strings.
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler (the introspection projection is cluster-scope).
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/catalog/table-routing`
+    ///
+    /// Arguments:
+    /// - `table_name`: Filter to one table (exact name match).
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_catalog_table_routing()
+    /// .table_name(table_name)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_catalog_table_routing(&self) -> builder::GetCatalogTableRouting<'_> {
+        builder::GetCatalogTableRouting::new(self)
+    }
+    /// Explain table-write route selection WITHOUT executing
+    ///
+    /// Runs the DML write planner in explain-only mode: resolves the
+    /// target (and source) tables, plans the copy/write, and returns
+    /// the full route decision — selected backend + access method,
+    /// write lane (+ rejected lanes with reasons), candidate/rejected
+    /// paths, estimated cost and data movement, required guards, and
+    /// the write intent summary. Nothing is written.
+    /// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+    /// The optional `X-Tenant-ID` header is not consulted — tenant
+    /// context, if any, rides the body's `tenant_id`.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/catalog/table-write/explain`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.explain_table_write_route()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn explain_table_write_route(&self) -> builder::ExplainTableWriteRoute<'_> {
+        builder::ExplainTableWriteRoute::new(self)
     }
     /// List collections
     ///
@@ -28208,6 +31042,198 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 503u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_catalog_table_routing`]
+    ///
+    /// [`Client::get_catalog_table_routing`]: super::Client::get_catalog_table_routing
+    #[derive(Debug, Clone)]
+    pub struct GetCatalogTableRouting<'a> {
+        client: &'a super::Client,
+        table_name: Result<Option<::std::string::String>, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetCatalogTableRouting<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                table_name: Ok(None),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn table_name<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.table_name = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for table_name failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/catalog/table-routing`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::CatalogIntrospectionResult>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                table_name,
+                x_tenant_id,
+            } = self;
+            let table_name = table_name.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/catalog/table-routing", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .query(&progenitor_client::QueryParam::new(
+                    "table_name",
+                    &table_name,
+                ))
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_catalog_table_routing",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::explain_table_write_route`]
+    ///
+    /// [`Client::explain_table_write_route`]: super::Client::explain_table_write_route
+    #[derive(Debug, Clone)]
+    pub struct ExplainTableWriteRoute<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::TableWriteExplainRequest, String>,
+    }
+    impl<'a> ExplainTableWriteRoute<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::TableWriteExplainRequest>,
+            <V as std::convert::TryInto<types::TableWriteExplainRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `TableWriteExplainRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::TableWriteExplainRequest,
+                ) -> types::builder::TableWriteExplainRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/catalog/table-write/explain`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::TableWriteRouteExplanation>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::TableWriteExplainRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/catalog/table-write/explain", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "explain_table_write_route",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

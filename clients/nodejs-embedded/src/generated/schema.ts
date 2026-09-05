@@ -1527,6 +1527,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/catalog/table-routing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Table-level xCatalog routing metadata.
+         * @description Serves `information_schema.table_routing` as a table-shaped
+         *     result — the same projection pgwire/SQL clients see. All cell
+         *     values are strings.
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler (the introspection projection is cluster-scope).
+         */
+        get: operations["getCatalogTableRouting"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/catalog/table-write/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explain table-write route selection WITHOUT executing.
+         * @description Runs the DML write planner in explain-only mode: resolves the
+         *     target (and source) tables, plans the copy/write, and returns
+         *     the full route decision — selected backend + access method,
+         *     write lane (+ rejected lanes with reasons), candidate/rejected
+         *     paths, estimated cost and data movement, required guards, and
+         *     the write intent summary. Nothing is written.
+         *     Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+         *     The optional `X-Tenant-ID` header is not consulted — tenant
+         *     context, if any, rides the body's `tenant_id`.
+         */
+        post: operations["explainTableWriteRoute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3618,6 +3670,172 @@ export interface components {
             message: string;
             code: number;
         };
+        /**
+         * @description Table-shaped catalog metadata (the projection pgwire/SQL clients
+         *     see). Every cell value is a string.
+         */
+        CatalogIntrospectionResult: {
+            columns: string[];
+            column_types: string[];
+            rows: string[][];
+        };
+        /**
+         * @description Body for `POST /api/v2/catalog/table-write/explain`. Provide
+         *     EITHER `source_table` OR `source_sql` — both, or neither, is a
+         *     400. `write_mode` (default `append`) accepts, case-insensitive:
+         *     append | insert | insert_only | insert-only | upsert | overwrite
+         *     | insert_overwrite | insert-overwrite | overwrite_table |
+         *     overwrite-table | merge. `distribution` (default `auto`) accepts:
+         *     auto | local | local_only | local-only | pseudo |
+         *     pseudo_distributed | pseudo-distributed | distributed. Upsert/
+         *     merge imply upsert conflict policy; everything else errors on
+         *     conflict.
+         */
+        TableWriteExplainRequest: {
+            /** @description Dotted name (`[namespace.]…table`); last segment is the table. */
+            target_table: string;
+            source_table?: string | null;
+            source_sql?: string | null;
+            write_mode?: string | null;
+            distribution?: string | null;
+            target_columns?: string[] | null;
+            tenant_id?: string | null;
+            actor?: string | null;
+            idempotency_key?: string | null;
+            /** Format: uint64 */
+            row_count_hint?: number | null;
+            /** Format: uint64 */
+            estimated_bytes?: number | null;
+            requires_row_level_semantics?: boolean | null;
+            batch_local_constraints_sufficient?: boolean | null;
+        };
+        /**
+         * @description The full DML write-planner route decision (explain-only; nothing
+         *     was written). `write_mode`/`distribution` echo the resolved
+         *     canonical enum names (PascalCase, e.g. `Append`,
+         *     `PseudoDistributed`). `execution_*` fields appear only for
+         *     EXPLAIN ANALYZE (never set by this REST explain path).
+         */
+        TableWriteRouteExplanation: {
+            target_table: string;
+            source: string;
+            write_mode: string;
+            distribution: string;
+            write_intent: components["schemas"]["TableWriteIntentExplanation"];
+            write_lane: string;
+            write_lane_reason: string;
+            write_lane_required_guards: string[];
+            rejected_write_lanes: components["schemas"]["TableWriteRejectedLaneExplanation"][];
+            selected_backend: string;
+            selected_access_method: string;
+            estimated_cost: components["schemas"]["TableWriteCostExplanation"];
+            data_movement: components["schemas"]["TableWriteDataMovementExplanation"];
+            required_guards: string[];
+            route_metadata: components["schemas"]["TableWriteRouteMetadataExplanation"];
+            candidate_paths: components["schemas"]["TableWriteCandidateExplanation"][];
+            rejected_paths: components["schemas"]["TableWriteRejectedPathExplanation"][];
+            /** Format: uint64 */
+            execution_elapsed_us?: number;
+            /** Format: uint64 */
+            execution_rows_written?: number;
+        };
+        TableWriteIntentExplanation: {
+            target_table: string;
+            operation_kind: string;
+            durability: string;
+            isolation: string;
+            projection_freshness: string;
+            tenant_id?: string | null;
+            actor?: string | null;
+            idempotency_key?: string | null;
+            /** Format: uint64 */
+            catalog_schema_version?: number | null;
+            /** Format: uint64 */
+            row_count_hint?: number | null;
+            /** Format: uint64 */
+            estimated_bytes?: number | null;
+            requires_row_level_semantics: boolean;
+        };
+        TableWriteRejectedLaneExplanation: {
+            lane: string;
+            reason: string;
+        };
+        TableWriteCostExplanation: {
+            /** Format: uint64 */
+            rows?: number | null;
+            /** Format: uint64 */
+            bytes?: number | null;
+            /** @description Relative cost (unitless planner estimate). */
+            relative_cost: number;
+            reason: string;
+        };
+        TableWriteDataMovementExplanation: {
+            /** Format: uint64 */
+            source_rows?: number | null;
+            /** Format: uint64 */
+            source_bytes?: number | null;
+            /** Format: uint64 */
+            target_rows_before_write?: number | null;
+            /** Format: uint64 */
+            target_bytes_before_write?: number | null;
+            /** Format: uint64 */
+            estimated_read_bytes?: number | null;
+            /** Format: uint64 */
+            estimated_write_bytes?: number | null;
+            /** Format: uint64 */
+            estimated_rewrite_bytes?: number | null;
+            estimate_source: string;
+            /** Format: int64 */
+            source_last_analyzed_ms?: number | null;
+            /** Format: int64 */
+            target_last_analyzed_ms?: number | null;
+            /** Format: uint64 */
+            source_stats_age_ms?: number | null;
+            /** Format: uint64 */
+            target_stats_age_ms?: number | null;
+        };
+        TableWriteRouteMetadataExplanation: {
+            authority_mode: string;
+            workload_profile: string;
+            storage_specialization: string;
+            primary_format?: string | null;
+            preferred_compute_route?: string | null;
+            partitioning?: string | null;
+            isolation_profile?: string | null;
+            freshness_sla?: string | null;
+            projection_freshness_state?: string | null;
+            projection_metadata: components["schemas"]["ProjectionRouteMetadataExplanation"][];
+            policy_boundary: string;
+            constraint_enforcement: string;
+        };
+        ProjectionRouteMetadataExplanation: {
+            name: string;
+            kind: string;
+            physical_format: string;
+            rebuild_source: string;
+            freshness: string;
+            freshness_state: string;
+            /** Format: int64 */
+            max_lag_ms?: number | null;
+            source_range?: string | null;
+            last_included_position?: string | null;
+            rebuildable: boolean;
+            invalidation_policy?: string | null;
+            policy_boundary?: string | null;
+        };
+        TableWriteCandidateExplanation: {
+            backend: string;
+            access_method: string;
+            estimated_cost: components["schemas"]["TableWriteCostExplanation"];
+            required_guards: string[];
+            pushdown: string[];
+        };
+        TableWriteRejectedPathExplanation: {
+            backend: string;
+            access_method: string;
+            reason: string;
+            required_guards: string[];
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -3724,6 +3942,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["PrimaryPodOperatorErrorResponse"];
+            };
+        };
+        /** @description Internal server error (canonical error envelope). */
+        InternalError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
             };
         };
     };
@@ -6471,6 +6698,63 @@ export interface operations {
             };
             401: components["responses"]["PodUnauthorized"];
             403: components["responses"]["PodForbidden"];
+        };
+    };
+    getCatalogTableRouting: {
+        parameters: {
+            query?: {
+                /** @description Filter to one table (exact name match). */
+                table_name?: string;
+            };
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Routing rows (columns/column_types/rows, all strings). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogIntrospectionResult"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    explainTableWriteRoute: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TableWriteExplainRequest"];
+            };
+        };
+        responses: {
+            /** @description The route explanation (no write executed). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableWriteRouteExplanation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
 }

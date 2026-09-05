@@ -1005,6 +1005,14 @@ type CatalogEvaluationEvidence struct {
 	Version       int64              `json:"version"`
 }
 
+// CatalogIntrospectionResult Table-shaped catalog metadata (the projection pgwire/SQL clients
+// see). Every cell value is a string.
+type CatalogIntrospectionResult struct {
+	ColumnTypes []string   `json:"column_types"`
+	Columns     []string   `json:"columns"`
+	Rows        [][]string `json:"rows"`
+}
+
 // CatalogLineageInput Digest-pinned input consumed by the execution that produced a model.
 type CatalogLineageInput struct {
 	Digest string                  `json:"digest"`
@@ -2115,6 +2123,22 @@ type ProbeResponse struct {
 	Status string `json:"status"`
 }
 
+// ProjectionRouteMetadataExplanation defines model for ProjectionRouteMetadataExplanation.
+type ProjectionRouteMetadataExplanation struct {
+	Freshness            string  `json:"freshness"`
+	FreshnessState       string  `json:"freshness_state"`
+	InvalidationPolicy   *string `json:"invalidation_policy,omitempty"`
+	Kind                 string  `json:"kind"`
+	LastIncludedPosition *string `json:"last_included_position,omitempty"`
+	MaxLagMs             *int64  `json:"max_lag_ms,omitempty"`
+	Name                 string  `json:"name"`
+	PhysicalFormat       string  `json:"physical_format"`
+	PolicyBoundary       *string `json:"policy_boundary,omitempty"`
+	RebuildSource        string  `json:"rebuild_source"`
+	Rebuildable          bool    `json:"rebuildable"`
+	SourceRange          *string `json:"source_range,omitempty"`
+}
+
 // ProximaRecordInput Input format for ProximaRecord (JSON-friendly)
 //
 // This is the JSON-serializable input format for ProximaRecord.
@@ -2412,6 +2436,142 @@ type SqlResponse struct {
 	Rows            []map[string]interface{} `json:"rows"`
 	RowsReturned    int64                    `json:"rows_returned"`
 	RowsScanned     int64                    `json:"rows_scanned"`
+}
+
+// TableWriteCandidateExplanation defines model for TableWriteCandidateExplanation.
+type TableWriteCandidateExplanation struct {
+	AccessMethod   string                    `json:"access_method"`
+	Backend        string                    `json:"backend"`
+	EstimatedCost  TableWriteCostExplanation `json:"estimated_cost"`
+	Pushdown       []string                  `json:"pushdown"`
+	RequiredGuards []string                  `json:"required_guards"`
+}
+
+// TableWriteCostExplanation defines model for TableWriteCostExplanation.
+type TableWriteCostExplanation struct {
+	Bytes  *uint64 `json:"bytes,omitempty"`
+	Reason string  `json:"reason"`
+
+	// RelativeCost Relative cost (unitless planner estimate).
+	RelativeCost float32 `json:"relative_cost"`
+	Rows         *uint64 `json:"rows,omitempty"`
+}
+
+// TableWriteDataMovementExplanation defines model for TableWriteDataMovementExplanation.
+type TableWriteDataMovementExplanation struct {
+	EstimateSource         string  `json:"estimate_source"`
+	EstimatedReadBytes     *uint64 `json:"estimated_read_bytes,omitempty"`
+	EstimatedRewriteBytes  *uint64 `json:"estimated_rewrite_bytes,omitempty"`
+	EstimatedWriteBytes    *uint64 `json:"estimated_write_bytes,omitempty"`
+	SourceBytes            *uint64 `json:"source_bytes,omitempty"`
+	SourceLastAnalyzedMs   *int64  `json:"source_last_analyzed_ms,omitempty"`
+	SourceRows             *uint64 `json:"source_rows,omitempty"`
+	SourceStatsAgeMs       *uint64 `json:"source_stats_age_ms,omitempty"`
+	TargetBytesBeforeWrite *uint64 `json:"target_bytes_before_write,omitempty"`
+	TargetLastAnalyzedMs   *int64  `json:"target_last_analyzed_ms,omitempty"`
+	TargetRowsBeforeWrite  *uint64 `json:"target_rows_before_write,omitempty"`
+	TargetStatsAgeMs       *uint64 `json:"target_stats_age_ms,omitempty"`
+}
+
+// TableWriteExplainRequest Body for `POST /api/v2/catalog/table-write/explain`. Provide
+// EITHER `source_table` OR `source_sql` — both, or neither, is a
+// 400. `write_mode` (default `append`) accepts, case-insensitive:
+// append | insert | insert_only | insert-only | upsert | overwrite
+// | insert_overwrite | insert-overwrite | overwrite_table |
+// overwrite-table | merge. `distribution` (default `auto`) accepts:
+// auto | local | local_only | local-only | pseudo |
+// pseudo_distributed | pseudo-distributed | distributed. Upsert/
+// merge imply upsert conflict policy; everything else errors on
+// conflict.
+type TableWriteExplainRequest struct {
+	Actor                           *string   `json:"actor,omitempty"`
+	BatchLocalConstraintsSufficient *bool     `json:"batch_local_constraints_sufficient,omitempty"`
+	Distribution                    *string   `json:"distribution,omitempty"`
+	EstimatedBytes                  *uint64   `json:"estimated_bytes,omitempty"`
+	IdempotencyKey                  *string   `json:"idempotency_key,omitempty"`
+	RequiresRowLevelSemantics       *bool     `json:"requires_row_level_semantics,omitempty"`
+	RowCountHint                    *uint64   `json:"row_count_hint,omitempty"`
+	SourceSql                       *string   `json:"source_sql,omitempty"`
+	SourceTable                     *string   `json:"source_table,omitempty"`
+	TargetColumns                   *[]string `json:"target_columns,omitempty"`
+
+	// TargetTable Dotted name (`[namespace.]…table`); last segment is the table.
+	TargetTable string  `json:"target_table"`
+	TenantId    *string `json:"tenant_id,omitempty"`
+	WriteMode   *string `json:"write_mode,omitempty"`
+}
+
+// TableWriteIntentExplanation defines model for TableWriteIntentExplanation.
+type TableWriteIntentExplanation struct {
+	Actor                     *string `json:"actor,omitempty"`
+	CatalogSchemaVersion      *uint64 `json:"catalog_schema_version,omitempty"`
+	Durability                string  `json:"durability"`
+	EstimatedBytes            *uint64 `json:"estimated_bytes,omitempty"`
+	IdempotencyKey            *string `json:"idempotency_key,omitempty"`
+	Isolation                 string  `json:"isolation"`
+	OperationKind             string  `json:"operation_kind"`
+	ProjectionFreshness       string  `json:"projection_freshness"`
+	RequiresRowLevelSemantics bool    `json:"requires_row_level_semantics"`
+	RowCountHint              *uint64 `json:"row_count_hint,omitempty"`
+	TargetTable               string  `json:"target_table"`
+	TenantId                  *string `json:"tenant_id,omitempty"`
+}
+
+// TableWriteRejectedLaneExplanation defines model for TableWriteRejectedLaneExplanation.
+type TableWriteRejectedLaneExplanation struct {
+	Lane   string `json:"lane"`
+	Reason string `json:"reason"`
+}
+
+// TableWriteRejectedPathExplanation defines model for TableWriteRejectedPathExplanation.
+type TableWriteRejectedPathExplanation struct {
+	AccessMethod   string   `json:"access_method"`
+	Backend        string   `json:"backend"`
+	Reason         string   `json:"reason"`
+	RequiredGuards []string `json:"required_guards"`
+}
+
+// TableWriteRouteExplanation The full DML write-planner route decision (explain-only; nothing
+// was written). `write_mode`/`distribution` echo the resolved
+// canonical enum names (PascalCase, e.g. `Append`,
+// `PseudoDistributed`). `execution_*` fields appear only for
+// EXPLAIN ANALYZE (never set by this REST explain path).
+type TableWriteRouteExplanation struct {
+	CandidatePaths          []TableWriteCandidateExplanation    `json:"candidate_paths"`
+	DataMovement            TableWriteDataMovementExplanation   `json:"data_movement"`
+	Distribution            string                              `json:"distribution"`
+	EstimatedCost           TableWriteCostExplanation           `json:"estimated_cost"`
+	ExecutionElapsedUs      *uint64                             `json:"execution_elapsed_us,omitempty"`
+	ExecutionRowsWritten    *uint64                             `json:"execution_rows_written,omitempty"`
+	RejectedPaths           []TableWriteRejectedPathExplanation `json:"rejected_paths"`
+	RejectedWriteLanes      []TableWriteRejectedLaneExplanation `json:"rejected_write_lanes"`
+	RequiredGuards          []string                            `json:"required_guards"`
+	RouteMetadata           TableWriteRouteMetadataExplanation  `json:"route_metadata"`
+	SelectedAccessMethod    string                              `json:"selected_access_method"`
+	SelectedBackend         string                              `json:"selected_backend"`
+	Source                  string                              `json:"source"`
+	TargetTable             string                              `json:"target_table"`
+	WriteIntent             TableWriteIntentExplanation         `json:"write_intent"`
+	WriteLane               string                              `json:"write_lane"`
+	WriteLaneReason         string                              `json:"write_lane_reason"`
+	WriteLaneRequiredGuards []string                            `json:"write_lane_required_guards"`
+	WriteMode               string                              `json:"write_mode"`
+}
+
+// TableWriteRouteMetadataExplanation defines model for TableWriteRouteMetadataExplanation.
+type TableWriteRouteMetadataExplanation struct {
+	AuthorityMode            string                               `json:"authority_mode"`
+	ConstraintEnforcement    string                               `json:"constraint_enforcement"`
+	FreshnessSla             *string                              `json:"freshness_sla,omitempty"`
+	IsolationProfile         *string                              `json:"isolation_profile,omitempty"`
+	Partitioning             *string                              `json:"partitioning,omitempty"`
+	PolicyBoundary           string                               `json:"policy_boundary"`
+	PreferredComputeRoute    *string                              `json:"preferred_compute_route,omitempty"`
+	PrimaryFormat            *string                              `json:"primary_format,omitempty"`
+	ProjectionFreshnessState *string                              `json:"projection_freshness_state,omitempty"`
+	ProjectionMetadata       []ProjectionRouteMetadataExplanation `json:"projection_metadata"`
+	StorageSpecialization    string                               `json:"storage_specialization"`
+	WorkloadProfile          string                               `json:"workload_profile"`
 }
 
 // TextFieldInput Input format for TEXT fields
@@ -2734,6 +2894,13 @@ type AbacUnavailable = AbacOperatorErrorResponse
 // bug reports.
 type BadRequest = ErrorResponse
 
+// InternalError Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
+//
+// `request_id` (also returned in the `X-Request-ID` response header) is present
+// whenever the request passed through the request-id middleware; quote it in
+// bug reports.
+type InternalError = ErrorResponse
+
 // NotFound Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 //
 // `request_id` (also returned in the `X-Request-ID` response header) is present
@@ -2848,6 +3015,21 @@ type GetTenantPostureParams struct {
 
 // PutTenantPostureParams defines parameters for PutTenantPosture.
 type PutTenantPostureParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetCatalogTableRoutingParams defines parameters for GetCatalogTableRouting.
+type GetCatalogTableRoutingParams struct {
+	// TableName Filter to one table (exact name match).
+	TableName *string `form:"table_name,omitempty" json:"table_name,omitempty"`
+
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExplainTableWriteRouteParams defines parameters for ExplainTableWriteRoute.
+type ExplainTableWriteRouteParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
@@ -3296,6 +3478,9 @@ type PutPredicateObjectJSONRequestBody = AbacFilterExpression
 
 // PutTenantPostureJSONRequestBody defines body for PutTenantPosture for application/json ContentType.
 type PutTenantPostureJSONRequestBody = AbacPutTenantPostureRequest
+
+// ExplainTableWriteRouteJSONRequestBody defines body for ExplainTableWriteRoute for application/json ContentType.
+type ExplainTableWriteRouteJSONRequestBody = TableWriteExplainRequest
 
 // CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
 type CreateCollectionJSONRequestBody = CreateCollectionV2Request
@@ -5690,6 +5875,51 @@ type ClientInterface interface {
 	// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
 	PutTenantPosture(ctx context.Context, tenant string, params *PutTenantPostureParams, body PutTenantPostureJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetCatalogTableRouting Table-level xCatalog routing metadata.
+	//
+	// Serves `information_schema.table_routing` as a table-shaped
+	// result — the same projection pgwire/SQL clients see. All cell
+	// values are strings.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the introspection projection is cluster-scope).
+	//
+	// Corresponds with GET /api/v2/catalog/table-routing (the `GetCatalogTableRouting` operationId).
+	GetCatalogTableRouting(ctx context.Context, params *GetCatalogTableRoutingParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExplainTableWriteRouteWithBody Explain table-write route selection WITHOUT executing.
+	//
+	// Runs the DML write planner in explain-only mode: resolves the
+	// target (and source) tables, plans the copy/write, and returns
+	// the full route decision — selected backend + access method,
+	// write lane (+ rejected lanes with reasons), candidate/rejected
+	// paths, estimated cost and data movement, required guards, and
+	// the write intent summary. Nothing is written.
+	// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+	// The optional `X-Tenant-ID` header is not consulted — tenant
+	// context, if any, rides the body's `tenant_id`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/catalog/table-write/explain (the `ExplainTableWriteRoute` operationId).
+	ExplainTableWriteRouteWithBody(ctx context.Context, params *ExplainTableWriteRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExplainTableWriteRoute Explain table-write route selection WITHOUT executing.
+	//
+	// Runs the DML write planner in explain-only mode: resolves the
+	// target (and source) tables, plans the copy/write, and returns
+	// the full route decision — selected backend + access method,
+	// write lane (+ rejected lanes with reasons), candidate/rejected
+	// paths, estimated cost and data movement, required guards, and
+	// the write intent summary. Nothing is written.
+	// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+	// The optional `X-Tenant-ID` header is not consulted — tenant
+	// context, if any, rides the body's `tenant_id`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/catalog/table-write/explain (the `ExplainTableWriteRoute` operationId).
+	ExplainTableWriteRoute(ctx context.Context, params *ExplainTableWriteRouteParams, body ExplainTableWriteRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListCollections List collections.
 	//
 	// List all collections with pagination.
@@ -7214,6 +7444,81 @@ func (c *Client) PutTenantPostureWithBody(ctx context.Context, tenant string, pa
 // Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
 func (c *Client) PutTenantPosture(ctx context.Context, tenant string, params *PutTenantPostureParams, body PutTenantPostureJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutTenantPostureRequest(c.Server, tenant, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCatalogTableRouting Table-level xCatalog routing metadata.
+//
+// Serves `information_schema.table_routing` as a table-shaped
+// result — the same projection pgwire/SQL clients see. All cell
+// values are strings.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the introspection projection is cluster-scope).
+//
+// Corresponds with GET /api/v2/catalog/table-routing (the `GetCatalogTableRouting` operationId).
+func (c *Client) GetCatalogTableRouting(ctx context.Context, params *GetCatalogTableRoutingParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCatalogTableRoutingRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExplainTableWriteRouteWithBody Explain table-write route selection WITHOUT executing.
+//
+// Runs the DML write planner in explain-only mode: resolves the
+// target (and source) tables, plans the copy/write, and returns
+// the full route decision — selected backend + access method,
+// write lane (+ rejected lanes with reasons), candidate/rejected
+// paths, estimated cost and data movement, required guards, and
+// the write intent summary. Nothing is written.
+// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+// The optional `X-Tenant-ID` header is not consulted — tenant
+// context, if any, rides the body's `tenant_id`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/catalog/table-write/explain (the `ExplainTableWriteRoute` operationId).
+func (c *Client) ExplainTableWriteRouteWithBody(ctx context.Context, params *ExplainTableWriteRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExplainTableWriteRouteRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExplainTableWriteRoute Explain table-write route selection WITHOUT executing.
+//
+// Runs the DML write planner in explain-only mode: resolves the
+// target (and source) tables, plans the copy/write, and returns
+// the full route decision — selected backend + access method,
+// write lane (+ rejected lanes with reasons), candidate/rejected
+// paths, estimated cost and data movement, required guards, and
+// the write intent summary. Nothing is written.
+// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+// The optional `X-Tenant-ID` header is not consulted — tenant
+// context, if any, rides the body's `tenant_id`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/catalog/table-write/explain (the `ExplainTableWriteRoute` operationId).
+func (c *Client) ExplainTableWriteRoute(ctx context.Context, params *ExplainTableWriteRouteParams, body ExplainTableWriteRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExplainTableWriteRouteRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10089,6 +10394,130 @@ func NewPutTenantPostureRequestWithBody(server string, tenant string, params *Pu
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetCatalogTableRoutingRequest constructs an http.Request for the GetCatalogTableRouting method
+func NewGetCatalogTableRoutingRequest(server string, params *GetCatalogTableRoutingParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/catalog/table-routing")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.TableName != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "table_name", *params.TableName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewExplainTableWriteRouteRequest calls the generic ExplainTableWriteRoute builder with application/json body
+func NewExplainTableWriteRouteRequest(server string, params *ExplainTableWriteRouteParams, body ExplainTableWriteRouteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExplainTableWriteRouteRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewExplainTableWriteRouteRequestWithBody constructs an http.Request for the ExplainTableWriteRoute method, with any body, and a specified content type
+func NewExplainTableWriteRouteRequestWithBody(server string, params *ExplainTableWriteRouteParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/catalog/table-write/explain")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -14076,6 +14505,53 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /api/v2/abac/tenant-posture/{tenant} (the `PutTenantPosture` operationId).
 	PutTenantPostureWithResponse(ctx context.Context, tenant string, params *PutTenantPostureParams, body PutTenantPostureJSONRequestBody, reqEditors ...RequestEditorFn) (*PutTenantPostureHTTPResp, error)
 
+	// GetCatalogTableRoutingWithResponse Table-level xCatalog routing metadata.
+	//
+	// Serves `information_schema.table_routing` as a table-shaped
+	// result — the same projection pgwire/SQL clients see. All cell
+	// values are strings.
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler (the introspection projection is cluster-scope).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/catalog/table-routing (the `GetCatalogTableRouting` operationId).
+	GetCatalogTableRoutingWithResponse(ctx context.Context, params *GetCatalogTableRoutingParams, reqEditors ...RequestEditorFn) (*GetCatalogTableRoutingHTTPResp, error)
+
+	// ExplainTableWriteRouteWithBodyWithResponse Explain table-write route selection WITHOUT executing.
+	//
+	// Runs the DML write planner in explain-only mode: resolves the
+	// target (and source) tables, plans the copy/write, and returns
+	// the full route decision — selected backend + access method,
+	// write lane (+ rejected lanes with reasons), candidate/rejected
+	// paths, estimated cost and data movement, required guards, and
+	// the write intent summary. Nothing is written.
+	// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+	// The optional `X-Tenant-ID` header is not consulted — tenant
+	// context, if any, rides the body's `tenant_id`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/catalog/table-write/explain (the `ExplainTableWriteRoute` operationId).
+	ExplainTableWriteRouteWithBodyWithResponse(ctx context.Context, params *ExplainTableWriteRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainTableWriteRouteHTTPResp, error)
+
+	// ExplainTableWriteRouteWithResponse Explain table-write route selection WITHOUT executing.
+	//
+	// Runs the DML write planner in explain-only mode: resolves the
+	// target (and source) tables, plans the copy/write, and returns
+	// the full route decision — selected backend + access method,
+	// write lane (+ rejected lanes with reasons), candidate/rejected
+	// paths, estimated cost and data movement, required guards, and
+	// the write intent summary. Nothing is written.
+	// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+	// The optional `X-Tenant-ID` header is not consulted — tenant
+	// context, if any, rides the body's `tenant_id`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/catalog/table-write/explain (the `ExplainTableWriteRoute` operationId).
+	ExplainTableWriteRouteWithResponse(ctx context.Context, params *ExplainTableWriteRouteParams, body ExplainTableWriteRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainTableWriteRouteHTTPResp, error)
+
 	// ListCollectionsWithResponse List collections.
 	//
 	// List all collections with pagination.
@@ -16197,6 +16673,116 @@ func (r PutTenantPostureHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PutTenantPostureHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCatalogTableRoutingHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CatalogIntrospectionResult
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCatalogTableRoutingHTTPResp) GetJSON200() *CatalogIntrospectionResult {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCatalogTableRoutingHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCatalogTableRoutingHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCatalogTableRoutingHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCatalogTableRoutingHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCatalogTableRoutingHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExplainTableWriteRouteHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TableWriteRouteExplanation
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExplainTableWriteRouteHTTPResp) GetJSON200() *TableWriteRouteExplanation {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExplainTableWriteRouteHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ExplainTableWriteRouteHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExplainTableWriteRouteHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ExplainTableWriteRouteHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExplainTableWriteRouteHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExplainTableWriteRouteHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExplainTableWriteRouteHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -19836,6 +20422,71 @@ func (c *ClientWithResponses) PutTenantPostureWithResponse(ctx context.Context, 
 	return ParsePutTenantPostureHTTPResp(rsp)
 }
 
+// GetCatalogTableRoutingWithResponse Table-level xCatalog routing metadata.
+//
+// Serves `information_schema.table_routing` as a table-shaped
+// result — the same projection pgwire/SQL clients see. All cell
+// values are strings.
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler (the introspection projection is cluster-scope).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/catalog/table-routing (the `GetCatalogTableRouting` operationId).
+func (c *ClientWithResponses) GetCatalogTableRoutingWithResponse(ctx context.Context, params *GetCatalogTableRoutingParams, reqEditors ...RequestEditorFn) (*GetCatalogTableRoutingHTTPResp, error) {
+	rsp, err := c.GetCatalogTableRouting(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCatalogTableRoutingHTTPResp(rsp)
+}
+
+// ExplainTableWriteRouteWithBodyWithResponse Explain table-write route selection WITHOUT executing.
+//
+// Runs the DML write planner in explain-only mode: resolves the
+// target (and source) tables, plans the copy/write, and returns
+// the full route decision — selected backend + access method,
+// write lane (+ rejected lanes with reasons), candidate/rejected
+// paths, estimated cost and data movement, required guards, and
+// the write intent summary. Nothing is written.
+// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+// The optional `X-Tenant-ID` header is not consulted — tenant
+// context, if any, rides the body's `tenant_id`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/catalog/table-write/explain (the `ExplainTableWriteRoute` operationId).
+func (c *ClientWithResponses) ExplainTableWriteRouteWithBodyWithResponse(ctx context.Context, params *ExplainTableWriteRouteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainTableWriteRouteHTTPResp, error) {
+	rsp, err := c.ExplainTableWriteRouteWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExplainTableWriteRouteHTTPResp(rsp)
+}
+
+// ExplainTableWriteRouteWithResponse Explain table-write route selection WITHOUT executing.
+//
+// Runs the DML write planner in explain-only mode: resolves the
+// target (and source) tables, plans the copy/write, and returns
+// the full route decision — selected backend + access method,
+// write lane (+ rejected lanes with reasons), candidate/rejected
+// paths, estimated cost and data movement, required guards, and
+// the write intent summary. Nothing is written.
+// Provide EITHER `source_table` OR `source_sql` (400 otherwise).
+// The optional `X-Tenant-ID` header is not consulted — tenant
+// context, if any, rides the body's `tenant_id`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/catalog/table-write/explain (the `ExplainTableWriteRoute` operationId).
+func (c *ClientWithResponses) ExplainTableWriteRouteWithResponse(ctx context.Context, params *ExplainTableWriteRouteParams, body ExplainTableWriteRouteJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainTableWriteRouteHTTPResp, error) {
+	rsp, err := c.ExplainTableWriteRoute(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExplainTableWriteRouteHTTPResp(rsp)
+}
+
 // ListCollectionsWithResponse List collections.
 //
 // List all collections with pagination.
@@ -22346,6 +22997,86 @@ func ParsePutTenantPostureHTTPResp(rsp *http.Response) (*PutTenantPostureHTTPRes
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCatalogTableRoutingHTTPResp parses an HTTP response from a GetCatalogTableRoutingWithResponse call
+func ParseGetCatalogTableRoutingHTTPResp(rsp *http.Response) (*GetCatalogTableRoutingHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCatalogTableRoutingHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CatalogIntrospectionResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExplainTableWriteRouteHTTPResp parses an HTTP response from a ExplainTableWriteRouteWithResponse call
+func ParseExplainTableWriteRouteHTTPResp(rsp *http.Response) (*ExplainTableWriteRouteHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExplainTableWriteRouteHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TableWriteRouteExplanation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
