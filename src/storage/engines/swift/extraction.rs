@@ -173,11 +173,9 @@ impl VectorExtractor for SwiftExtractor {
                             )
                         })
                         .collect();
-                    if json_map.is_empty() {
-                        None
-                    } else {
-                        Some(serde_json::Value::Object(json_map))
-                    }
+                    // (Non-empty by the outer guard; the converter always
+                    // yields a value per key — the old filter_map could drop.)
+                    Some(serde_json::Value::Object(json_map))
                 } else {
                     None
                 };

@@ -726,8 +726,15 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
                 Ok(parsed) => match parsed {
                     serde_json::Value::Null => None,
                     serde_json::Value::String(inner) => Some(GraphValue::StringValue(inner)),
-                    other => Some(GraphValue::StringValue(other.to_string())),
+                    other => Some(GraphValue::StringValue(
+                        crate::storage::entity_store::graph_schema::canonical_json_string(&other),
+                    )),
                 },
+                // Round 18: malformed JSON yields None (property SKIPPED —
+                // no present value-less property stored, which the round-17
+                // arm silently created). Full write-rejection parity with the
+                // sibling services' typed_value_to_proxima needs a Result
+                // signature threaded through upsert — tracked in TD-PROTO-2.
                 Err(_) => None,
             }
         }

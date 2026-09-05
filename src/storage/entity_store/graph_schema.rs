@@ -54,7 +54,7 @@ pub struct EntityNodeMapper;
 /// orders so exact-string property comparisons are write-order-independent
 /// (serde_json's preserve_order is active via utoipa; unsorted
 /// serialization is not canonical).
-fn canonical_json_string(value: &serde_json::Value) -> String {
+pub(crate) fn canonical_json_string(value: &serde_json::Value) -> String {
     fn sort_rec(v: &serde_json::Value) -> serde_json::Value {
         match v {
             serde_json::Value::Object(map) => {

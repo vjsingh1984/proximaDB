@@ -398,7 +398,11 @@ fn proxima_value_to_property_value(value: &ProximaValue) -> PropertyValue {
             // as the string "null" would flip null-equality to string
             // equality at graph filters (round 12).
             serde_json::Value::Null => None,
-            other => Some(Value::StringValue(other.to_string())),
+            // Sorted-key canonical text — unsorted varies with
+            // preserve_order/insertion order across write seams (round 18).
+            other => Some(Value::StringValue(
+                crate::storage::entity_store::graph_schema::canonical_json_string(other),
+            )),
         },
         _ => None,
     };

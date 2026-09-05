@@ -592,6 +592,32 @@ inherent:**
   one rule collapsed to one); the centralizing comment now states the
   actual carve-out table.
 
+**Round 18 (2026-09-05) — 10 findings: 5 fixed, 5 tracked:**
+
+* Fixed: NOT over a null-field value comparison now denies (SQL
+  NOT(UNKNOWN)=UNKNOWN; the two-valued flip admitted null rows — a
+  regression vs develop). Direct Comparison children only; deeper
+  nestings keep the flip (double negation cancels; documented).
+* Fixed: the v2 seam's malformed-JSON arm no longer stores a present
+  value-less property (silent content destruction with an OK response) —
+  the property is skipped; full write-rejection parity needs a Result
+  signature threaded through upsert (tracked).
+* Fixed: sorted-key canonical text applied at the remaining two
+  JSON-to-StringValue seams (adjacency_projection, entity_service) —
+  equal documents materialize as equal property text regardless of
+  write path.
+* Fixed: unreachable null-test arms' comment corrected; dead is_empty
+  branches in helix/swift extraction dropped.
+* Tracked: evaluate_filter_proxima_strict decides IS NULL on the raw
+  ProximaValue (Jsonb(Null) answers false there, true elsewhere —
+  pre-existing; needs null normalization at the records boundary);
+  corrupt JSONB nested inside ObjectValue renders quoted-hex while
+  top-level is dropped (corrupt-input only); the executor delegation
+  clones per field per row (owned-input entry point pending);
+  canonical_json_string is one of three recursive key-sorts (one home
+  pending); In with a null list element admits an array-field holding
+  null (pre-existing, benign-direction, permissive path only).
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

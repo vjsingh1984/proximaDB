@@ -395,8 +395,9 @@ pub fn compare_json_op(
         return false;
     }
     match operator {
-        // Null tests returned above; the wildcard keeps the match total if
-        // operators are ever added.
+        // Unreachable — null tests return above; kept for exhaustiveness so
+        // a future operator fails compilation here rather than silently
+        // falling through.
         ComparisonOperator::IsNull | ComparisonOperator::IsNotNull => false,
         ComparisonOperator::Equals => json_eq(json_val, value),
         ComparisonOperator::NotEquals => !json_eq(json_val, value),
@@ -502,7 +503,27 @@ where
     match expr {
         FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter_resolved(e, resolve)),
         FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter_resolved(e, resolve)),
-        FilterExpression::Not(e) => !evaluate_filter_resolved(e, resolve),
+        FilterExpression::Not(e) => {
+            // SQL 3VL: NOT(UNKNOWN) = UNKNOWN ⇒ deny. The two-valued flip
+            // would ADMIT null-field rows whose inner comparison denied
+            // (round 18 regression vs develop). A direct Comparison child
+            // resolving to null with a value operator is exactly UNKNOWN;
+            // deeper nestings fall through to the flip (double negation
+            // cancels; documented limitation).
+            if let FilterExpression::Comparison {
+                field, operator, ..
+            } = &**e
+                && !matches!(
+                    operator,
+                    ComparisonOperator::IsNull | ComparisonOperator::IsNotNull
+                )
+                && resolve(field).is_some_and(|v| v.is_null())
+            {
+                false
+            } else {
+                !evaluate_filter_resolved(e, resolve)
+            }
+        }
         FilterExpression::Comparison {
             field,
             operator,
