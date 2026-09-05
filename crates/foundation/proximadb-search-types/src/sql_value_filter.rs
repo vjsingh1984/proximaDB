@@ -100,17 +100,15 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
                     // JSON null leaf, not a dead end (round 11: the old
                     // `?` silently dropped rows on `a.b.c = null`).
                     match obj.fields.get(segment) {
-                        Some(child) if child.value.is_some() => {
-                            current = child.value.as_ref().expect("checked");
-                        }
-                        Some(_) => {
-                            let last = segments.next().is_none();
-                            return if last {
-                                Some(serde_json::Value::Null)
-                            } else {
-                                None
-                            };
-                        }
+                        Some(child) => match child.value.as_ref() {
+                            Some(value) => current = value,
+                            None => {
+                                return segments
+                                    .next()
+                                    .is_none()
+                                    .then_some(serde_json::Value::Null);
+                            }
+                        },
                         None => return None,
                     }
                 }
@@ -867,6 +865,27 @@ mod tests {
         // NULL (the strict evaluator's is_none_or; the round-10 bug returned
         // the parent's non-null value and flipped this to false).
         assert!(evaluate_filter(&null_test, &metadata));
+
+        metadata.insert(
+            "payload".to_string(),
+            make_sql_value(SqlVal::ObjectValue(
+                proximadb_proto::proximadb_v1::SqlObject {
+                    fields: HashMap::from([(
+                        "rank".to_string(),
+                        make_sql_value(SqlVal::Int64Value(7)),
+                    )]),
+                },
+            )),
+        );
+        let nested = FilterExpression::Comparison {
+            field: "payload.rank.extra".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(7),
+        };
+        assert!(
+            !evaluate_filter(&nested, &metadata),
+            "a nested scalar cannot satisfy a remaining path segment"
+        );
     }
 
     #[test]

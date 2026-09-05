@@ -517,6 +517,30 @@ mod tests {
     }
 
     #[test]
+    fn mixed_jsonb_and_scalar_stats_do_not_false_prune() {
+        let jsonb = SqlValue {
+            value: Some(SqlVal::JsonbValue(
+                proximadb_data_model::ProximaValue::to_jsonb_vec(&serde_json::json!({"rank": 1}))
+                    .expect("encode JSONB test value"),
+            )),
+        };
+        let docs = vec![
+            (
+                "scalar".to_string(),
+                make_doc(vec![("mixed", make_sql_int(10))]),
+            ),
+            ("jsonb".to_string(), make_doc(vec![("mixed", jsonb)])),
+        ];
+        let block = DocumentBlock::from_documents(docs, &["mixed".to_string()], false)
+            .expect("build mixed-kind block");
+
+        assert!(
+            block.might_match_range("mixed", None, Some(&make_sql_int(5))),
+            "an incomparable JSONB value must keep mixed-kind pruning conservative"
+        );
+    }
+
+    #[test]
     fn test_data_serialized() {
         let docs = vec![(
             "d1".to_string(),

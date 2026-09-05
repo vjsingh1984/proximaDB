@@ -345,7 +345,8 @@ addressed in the same PR:**
 * Mixed-kind extrema reverted to the conservative kind-segregated form:
   the lexicographic merge did not bound the column and made
   `might_match_range` false-prune reachable; recording the JSONB extremum
-  (incomparable, never prunes) is the safe choice.
+  (incomparable, never prunes) is the safe choice. A mixed-kind regression
+  pins the no-false-prune behavior.
 * The graph fix moved to the LIVE seam (`proxima_value_to_property_value`
   in adjacency_projection — the round-7 edit had landed in its
   `#[allow(dead_code)]` twin): Json/Jsonb map to canonical JSON text
@@ -367,7 +368,9 @@ addressed in the same PR:**
   is JSON TEXT (search-types' decoder had this right). Short payloads
   "decoded" as garbage numbers (`123` → Number(123)); documents degraded
   to Binary. The reader now decodes magic-stripped bytes with
-  serde_json; only magic-free bytes take the MessagePack path.
+  serde_json; only magic-free bytes take the MessagePack path. Regression
+  tests pin both a structured document and the malformed-payload binary
+  fallback.
 
 **Round 10 (2026-09-05) — 6 findings, all fixed:**
 
@@ -377,10 +380,12 @@ addressed in the same PR:**
   `user.name = "admin"` and flipping IS NULL semantics on the GA engine
   filter paths (helix, swift, compiled-filter). The mid-path non-object arm
   now returns None (the leaf case is the post-loop match); pinned by
-  `dotted_field_on_a_scalar_parent_never_resolves`.
+  `dotted_field_on_a_scalar_parent_never_resolves` for both root and nested
+  scalar parents.
 * The live graph seam dropped `ProximaValue::Map` via the wildcard one line
   below the new Json/Jsonb arm while the structurally identical Struct
-  mapped to ObjectValue — Map now joins the Struct arm.
+  mapped to ObjectValue — Map now joins the Struct arm, with a direct test
+  covering both Map and Jsonb projection.
 * Deleted the dead `sql_value_to_property_value` /
   `property_value_to_sql_value` twins in graph_schema (the round-7 trap —
   re-armed by parity-editing instead of deleting).
@@ -393,7 +398,7 @@ addressed in the same PR:**
   legacy magic+JSON-text codec body is still line-copied between records
   and search-types — it rides with the single-authority consolidation.
 
-**Round 11 (2026-09-05) — 6 findings, all addressed:**
+**Round 11 (2026-09-05) — 7 findings, all addressed:**
 
 * Correctness: a nested field stored as `SqlValue{value: None}` (the wire
   form of a nested null) became unresolvable by the two-phase traversal —
@@ -413,6 +418,9 @@ addressed in the same PR:**
   reintroduce the round-7 false-prune.
 * The `JSONB_LEGACY_MAGIC` and records comments now say precisely what is
   shared (the magic bytes) and what is not (the codec bodies, tracked).
+* The nested-null traversal no longer uses `.expect("checked")`; the
+  production panic-policy applies even when a preceding guard proves the
+  option is present, so the branch now matches `Option` explicitly.
 * Tracked (unchanged disposition): the root-crate SqlValue→JSON helper's
   home (arrow_conversion) is unreachable from extracted crates; the
   foundation-level anchor (proximadb-records) is the consolidation target.

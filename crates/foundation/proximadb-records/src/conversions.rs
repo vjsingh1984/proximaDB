@@ -721,6 +721,33 @@ mod tests {
     }
 
     #[test]
+    fn legacy_magic_json_text_decodes_to_jsonb() {
+        let original = serde_json::json!({"memory": {"type": "fact"}, "rank": 7});
+        let mut bytes = proximadb_data_model::JSONB_LEGACY_MAGIC.to_vec();
+        bytes.extend_from_slice(original.to_string().as_bytes());
+        let sql = SqlValue {
+            value: Some(sql_value::Value::BytesValue(bytes)),
+        };
+
+        assert_eq!(
+            sql_value_to_proxima(&sql),
+            ProximaValue::Jsonb(original),
+            "the legacy magic payload is JSON text, not MessagePack"
+        );
+    }
+
+    #[test]
+    fn invalid_legacy_magic_payload_stays_binary() {
+        let mut bytes = proximadb_data_model::JSONB_LEGACY_MAGIC.to_vec();
+        bytes.extend_from_slice(b"{not-json");
+        let sql = SqlValue {
+            value: Some(sql_value::Value::BytesValue(bytes.clone())),
+        };
+
+        assert_eq!(sql_value_to_proxima(&sql), ProximaValue::Binary(bytes));
+    }
+
+    #[test]
     fn sql_value_conversion_covers_binary_bool_array_and_object_shapes() {
         let binary = SqlValue {
             value: Some(sql_value::Value::BytesValue(vec![0xc1])),

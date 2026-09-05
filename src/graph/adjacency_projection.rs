@@ -666,6 +666,42 @@ mod tests {
     }
 
     #[test]
+    fn canonical_map_and_json_properties_project_without_loss() {
+        let document = serde_json::json!({"memory": {"type": "fact"}, "rank": 7});
+        let properties = ProximaTree::from([
+            (
+                "profile".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Jsonb(document.clone())),
+            ),
+            (
+                "attributes".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Map(HashMap::from([(
+                    "rank".to_string(),
+                    ProximaValue::Int64(7),
+                )]))),
+            ),
+        ]);
+        let record = CanonicalNode::new("g1", "n1", "Person", properties).into_proxima_record();
+
+        let restored = node_from_canonical_record(&record).expect("canonical node record");
+
+        assert_eq!(
+            restored.properties.get("profile"),
+            Some(&PropertyValue {
+                value: Some(property_value::Value::StringValue(document.to_string())),
+            })
+        );
+        assert_eq!(
+            restored.properties.get("attributes"),
+            Some(&PropertyValue {
+                value: Some(property_value::Value::ObjectValue(PropertyObject {
+                    fields: HashMap::from([("rank".to_string(), prop_int(7))]),
+                })),
+            })
+        );
+    }
+
+    #[test]
     fn edge_round_trips_through_canonical_record() {
         // TD-168: endpoints are recovered by reversing the canonical node oid;
         // `weight` is not persisted by the projection, so the original must omit
