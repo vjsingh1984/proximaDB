@@ -53,10 +53,17 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
             // ignored) and silently replaces the document with Number(-1).
             // This now matches search-types' decoder, and the magic constant
             // is the shared data-model authority.
-            let payload = b
-                .strip_prefix(proximadb_data_model::JSONB_LEGACY_MAGIC)
-                .unwrap_or(b);
-            match ProximaValue::from_jsonb_slice(payload) {
+            // The legacy payload after the magic is JSON TEXT (matching
+            // search-types' decoder) — round 8 mistakenly msgpack-decoded it,
+            // which "succeeds" on short payloads as a garbage number and
+            // mangles documents into Binary (round-9 empirical finding).
+            if let Some(payload) = b.strip_prefix(proximadb_data_model::JSONB_LEGACY_MAGIC) {
+                match serde_json::from_slice(payload) {
+                    Ok(v) => return ProximaValue::Jsonb(v),
+                    Err(_) => return ProximaValue::Binary(b.clone()),
+                }
+            }
+            match ProximaValue::from_jsonb_slice(b) {
                 Ok(v) => ProximaValue::Jsonb(v),
                 Err(_) => ProximaValue::Binary(b.clone()),
             }
