@@ -382,8 +382,18 @@ pub fn compare_json_op(
             ComparisonOperator::IsNotNull => !json_val.is_null(),
             ComparisonOperator::Equals => json_val.is_null(),
             ComparisonOperator::NotEquals => !json_val.is_null(),
-            ComparisonOperator::NotIn => true,
+            // Exclude-nulls idiom, consistent with NotEquals (round 16: was
+            // `true`, admitting null rows — code, comment, and ledger
+            // disagreed).
+            ComparisonOperator::NotIn => !json_val.is_null(),
             ComparisonOperator::In => false,
+            // Array-membership of null keeps develop's structural semantics
+            // (round 16: the catch-all silently dropped rows with null
+            // elements from `tags contains null` results).
+            ComparisonOperator::Contains => match json_val {
+                serde_json::Value::Array(items) => items.iter().any(|i| i.is_null()),
+                _ => false,
+            },
             _ => false,
         };
     }
@@ -459,8 +469,9 @@ pub fn compare_json_op(
             .zip(value.as_str())
             .is_some_and(|(haystack, suffix)| haystack.ends_with(suffix)),
         ComparisonOperator::Between => value.as_array().is_some_and(|bounds| {
+            // (A null FIELD never reaches here — the centralized guards
+            // above return first; the bounds checks are the live ones.)
             bounds.len() == 2
-                && !json_val.is_null()
                 && !bounds[0].is_null()
                 && !bounds[1].is_null()
                 && compare_json_gte(json_val, &bounds[0])

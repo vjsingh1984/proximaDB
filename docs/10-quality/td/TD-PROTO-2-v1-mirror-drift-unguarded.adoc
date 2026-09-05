@@ -548,6 +548,23 @@ inherent:**
   path's property map would need an Option<Value> shape change; tracked
   with the typed-property consolidation.
 
+**Round 16 (2026-09-05) — 6 findings, all fixed:**
+
+* Contains-null regression: the null-literal guard's catch-all denied
+  `tags contains null` (develop matched null array elements
+  structurally). A Contains carve-out restores array-membership-of-null.
+* NotIn-with-null-literal now excludes null rows (was `true` — code,
+  comment, and ledger disagreed; now consistent with NotEquals).
+* The executor's entire SqlValue lowering delegates to the canonical
+  converter (8 hand-copied arms had a nesting-dependent divergence:
+  top-level legacy magic bytes stayed Binary while nested ones were
+  sniffed).
+* HELIX/SWIFT extraction delegates to the shared converter — their
+  private helpers rendered bytes as hex and arrays/objects as
+  placeholder strings, drifting per-surface; the dead helpers deleted.
+* The Between arm's dead `!json_val.is_null()` conjunct dropped (the
+  centralized guards return first; a comment now says so).
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

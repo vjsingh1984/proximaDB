@@ -159,14 +159,18 @@ impl VectorExtractor for SwiftExtractor {
 
                 // Handle metadata - convert HashMap<String, SqlValue> to JSON Value
                 let metadata = if !record.metadata.is_empty() {
-                    // Round 14: an unset oneof is the wire null — kept as a
-                    // JSON null entry, not dropped (null accounting per seam).
+                    // Round 16: delegate to the shared converter — the
+                    // private helper rendered bytes as hex and arrays/objects
+                    // as placeholder strings, drifting per-surface. Unset
+                    // oneofs lower to JSON null (same semantics, one home).
                     let json_map: serde_json::Map<String, serde_json::Value> = record
                         .metadata
                         .into_iter()
                         .map(|(k, v)| {
-                            let jv = sql_value_to_json(&v).unwrap_or(serde_json::Value::Null);
-                            (k, jv)
+                            (
+                                k,
+                                crate::storage::formats::arrow_conversion::sql_value_to_json(&v),
+                            )
                         })
                         .collect();
                     if json_map.is_empty() {
@@ -256,28 +260,6 @@ impl VectorExtractor for SwiftExtractor {
     fn engine_type(&self) -> StorageEngineType {
         StorageEngineType::SWIFT
     }
-}
-
-/// Helper function to convert SqlValue to JSON Value
-fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<serde_json::Value> {
-    use crate::proto::proximadb_v1::sql_value::Value;
-
-    value.value.as_ref().map(|v| match v {
-        Value::NullValue(_) => serde_json::Value::Null,
-        Value::BoolValue(b) => serde_json::Value::Bool(*b),
-        Value::Int64Value(i) => serde_json::Value::Number((*i).into()),
-        Value::NumberValue(f) => serde_json::Number::from_f64(*f)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number),
-        Value::StringValue(s) => serde_json::Value::String(s.clone()),
-        Value::BytesValue(b) => {
-            // Encode bytes as hex string (simpler, no external dependency)
-            let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
-            serde_json::Value::String(hex)
-        }
-        Value::JsonbValue(b) => proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b),
-        Value::ArrayValue(_) => serde_json::Value::String("[array]".to_string()),
-        Value::ObjectValue(_) => serde_json::Value::String("[object]".to_string()),
-    })
 }
 
 // Unit tests are minimal since actual extraction is tested in integration tests.

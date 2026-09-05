@@ -50,49 +50,13 @@ pub fn proto_results_to_vector_records(
                     .into_iter()
                     .map(|(k, v)| {
                         use proximadb_records::ProximaTreeNode;
-                        let node = match v.value {
-                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                                ProximaTreeNode::Value(ProximaValue::String(s))
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
-                                ProximaTreeNode::Value(ProximaValue::Float64(f))
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                                ProximaTreeNode::Value(ProximaValue::Int64(i))
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                                ProximaTreeNode::Value(ProximaValue::Boolean(b))
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::JsonbValue(b)) => {
-                                // TD-PROTO-2: canonical MessagePack decode —
-                                // the wildcard collapsed JSONB metadata to an
-                                // empty string, silently corrupting results.
-                                ProximaTreeNode::Value(
-                                    proximadb_data_model::ProximaValue::from_jsonb_or_binary(&b),
-                                )
-                            }
-                            // Round 14: nulls and opaque bytes were collapsed
-                            // to String("") — nulls stay null, bytes stay
-                            // binary; objects/arrays lower canonically.
-                            Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
-                                ProximaTreeNode::Value(ProximaValue::Null)
-                            }
-                            None => ProximaTreeNode::Value(ProximaValue::Null),
-                            Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                                ProximaTreeNode::Value(ProximaValue::Binary(b))
-                            }
-                            // Round 15: objects and arrays lower via the
-                            // canonical converter (was a hand-rolled
-                            // JSON round-trip that dropped null children,
-                            // re-typed bytes, and degraded floats; arrays
-                            // hit the wildcard and became String("")).
-                            Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_))
-                            | Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
-                                ProximaTreeNode::Value(
-                                    proximadb_records::conversions::sql_value_to_proxima(&v),
-                                )
-                            }
-                        };
+                        // Round 16: delegate the whole lowering to the
+                        // canonical converter — 8 hand-copied arms diverged
+                        // (top-level legacy magic bytes stayed Binary while
+                        // nested ones were sniffed; nesting-dependent types).
+                        let node = ProximaTreeNode::Value(
+                            proximadb_records::conversions::sql_value_to_proxima(&v),
+                        );
                         (k, node)
                     })
                     .collect(),
