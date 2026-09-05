@@ -2876,6 +2876,84 @@ type TraverseRequest struct {
 	StartNodeId string    `json:"start_node_id"`
 }
 
+// TsAggregateRequest defines model for TsAggregateRequest.
+type TsAggregateRequest struct {
+	Aggregation *string `json:"aggregation,omitempty"`
+	BucketMs    *int64  `json:"bucket_ms,omitempty"`
+	EndTime     int64   `json:"end_time"`
+	StartTime   int64   `json:"start_time"`
+}
+
+// TsAggregateResponse defines model for TsAggregateResponse.
+type TsAggregateResponse struct {
+	Buckets []interface{} `json:"buckets"`
+}
+
+// TsCollectionConfig defines model for TsCollectionConfig.
+type TsCollectionConfig struct {
+	Name            string           `json:"name"`
+	RetentionMs     *int64           `json:"retention_ms,omitempty"`
+	TagColumns      *[]string        `json:"tag_columns,omitempty"`
+	TimestampColumn *string          `json:"timestamp_column,omitempty"`
+	ValueColumns    *[]TsValueColumn `json:"value_columns,omitempty"`
+}
+
+// TsCreateResponse defines model for TsCreateResponse.
+type TsCreateResponse struct {
+	Name string `json:"name"`
+}
+
+// TsDeleteResponse defines model for TsDeleteResponse.
+type TsDeleteResponse struct {
+	Success bool `json:"success"`
+}
+
+// TsIngestRequest defines model for TsIngestRequest.
+type TsIngestRequest struct {
+	Points []TsPoint `json:"points"`
+}
+
+// TsIngestResponse defines model for TsIngestResponse.
+type TsIngestResponse struct {
+	Ingested uint64 `json:"ingested"`
+}
+
+// TsListResponse defines model for TsListResponse.
+type TsListResponse struct {
+	Collections []TsCollectionConfig `json:"collections"`
+}
+
+// TsPoint defines model for TsPoint.
+type TsPoint struct {
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// Timestamp Epoch milliseconds.
+	Timestamp int64               `json:"timestamp"`
+	Values    *map[string]float64 `json:"values,omitempty"`
+}
+
+// TsQueryRequest defines model for TsQueryRequest.
+type TsQueryRequest struct {
+	EndTime   int64   `json:"end_time"`
+	Limit     *uint64 `json:"limit,omitempty"`
+	StartTime int64   `json:"start_time"`
+}
+
+// TsQueryResponse defines model for TsQueryResponse.
+type TsQueryResponse struct {
+	Points []TsPoint `json:"points"`
+}
+
+// TsValueColumn defines model for TsValueColumn.
+type TsValueColumn struct {
+	// Aggregation Serialized as an explicit null when unset.
+	Aggregation *string `json:"aggregation,omitempty"`
+	Name        string  `json:"name"`
+
+	// Unit Serialized as an explicit null when unset.
+	Unit *string `json:"unit,omitempty"`
+}
+
 // TypedFilter A typed filter for search operations
 //
 // Supports various comparison operators with type-safe values.
@@ -3834,6 +3912,42 @@ type ExecuteSqlParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// ListTimeseriesCollectionsParams defines parameters for ListTimeseriesCollections.
+type ListTimeseriesCollectionsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CreateTimeseriesCollectionParams defines parameters for CreateTimeseriesCollection.
+type CreateTimeseriesCollectionParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteTimeseriesCollectionParams defines parameters for DeleteTimeseriesCollection.
+type DeleteTimeseriesCollectionParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// AggregateTimeseriesParams defines parameters for AggregateTimeseries.
+type AggregateTimeseriesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// IngestTimeseriesParams defines parameters for IngestTimeseries.
+type IngestTimeseriesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// QueryTimeseriesParams defines parameters for QueryTimeseries.
+type QueryTimeseriesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // GetHealthParams defines parameters for GetHealth.
 type GetHealthParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
@@ -4010,6 +4124,18 @@ type ExplainQueryJSONRequestBody = ExplainQueryRequest
 
 // ExecuteSqlJSONRequestBody defines body for ExecuteSql for application/json ContentType.
 type ExecuteSqlJSONRequestBody = SqlRequest
+
+// CreateTimeseriesCollectionJSONRequestBody defines body for CreateTimeseriesCollection for application/json ContentType.
+type CreateTimeseriesCollectionJSONRequestBody = TsCollectionConfig
+
+// AggregateTimeseriesJSONRequestBody defines body for AggregateTimeseries for application/json ContentType.
+type AggregateTimeseriesJSONRequestBody = TsAggregateRequest
+
+// IngestTimeseriesJSONRequestBody defines body for IngestTimeseries for application/json ContentType.
+type IngestTimeseriesJSONRequestBody = TsIngestRequest
+
+// QueryTimeseriesJSONRequestBody defines body for QueryTimeseries for application/json ContentType.
+type QueryTimeseriesJSONRequestBody = TsQueryRequest
 
 // Getter for additional properties for CapabilitiesResponse. Returns the specified
 // element and whether it was found
@@ -6546,6 +6672,75 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v2/sql (the `ExecuteSql` operationId).
 	ExecuteSql(ctx context.Context, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTimeseriesCollections List this tenant's time-series collections.
+	//
+	// Corresponds with GET /api/v2/timeseries/collections (the `ListTimeseriesCollections` operationId).
+	ListTimeseriesCollections(ctx context.Context, params *ListTimeseriesCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateTimeseriesCollectionWithBody Create a time-series collection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/timeseries/collections (the `CreateTimeseriesCollection` operationId).
+	CreateTimeseriesCollectionWithBody(ctx context.Context, params *CreateTimeseriesCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateTimeseriesCollection Create a time-series collection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/timeseries/collections (the `CreateTimeseriesCollection` operationId).
+	CreateTimeseriesCollection(ctx context.Context, params *CreateTimeseriesCollectionParams, body CreateTimeseriesCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteTimeseriesCollection Delete a time-series collection.
+	//
+	// Always 200; `success` distinguishes an actual deletion from a
+	// no-op (unknown collection).
+	//
+	// Corresponds with DELETE /api/v2/timeseries/collections/{collection_id} (the `DeleteTimeseriesCollection` operationId).
+	DeleteTimeseriesCollection(ctx context.Context, collectionId string, params *DeleteTimeseriesCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AggregateTimeseriesWithBody Aggregate points into time buckets.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/aggregate (the `AggregateTimeseries` operationId).
+	AggregateTimeseriesWithBody(ctx context.Context, collectionId string, params *AggregateTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AggregateTimeseries Aggregate points into time buckets.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/aggregate (the `AggregateTimeseries` operationId).
+	AggregateTimeseries(ctx context.Context, collectionId string, params *AggregateTimeseriesParams, body AggregateTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestTimeseriesWithBody Ingest time-series points.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/ingest (the `IngestTimeseries` operationId).
+	IngestTimeseriesWithBody(ctx context.Context, collectionId string, params *IngestTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IngestTimeseries Ingest time-series points.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/ingest (the `IngestTimeseries` operationId).
+	IngestTimeseries(ctx context.Context, collectionId string, params *IngestTimeseriesParams, body IngestTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryTimeseriesWithBody Query points in a time range (epoch millis).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
+	QueryTimeseriesWithBody(ctx context.Context, collectionId string, params *QueryTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryTimeseries Query points in a time range (epoch millis).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
+	QueryTimeseries(ctx context.Context, collectionId string, params *QueryTimeseriesParams, body QueryTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Get server health.
 	//
@@ -9651,6 +9846,175 @@ func (c *Client) ExecuteSqlWithBody(ctx context.Context, params *ExecuteSqlParam
 // Corresponds with POST /api/v2/sql (the `ExecuteSql` operationId).
 func (c *Client) ExecuteSql(ctx context.Context, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExecuteSqlRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListTimeseriesCollections List this tenant's time-series collections.
+//
+// Corresponds with GET /api/v2/timeseries/collections (the `ListTimeseriesCollections` operationId).
+func (c *Client) ListTimeseriesCollections(ctx context.Context, params *ListTimeseriesCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTimeseriesCollectionsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateTimeseriesCollectionWithBody Create a time-series collection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/timeseries/collections (the `CreateTimeseriesCollection` operationId).
+func (c *Client) CreateTimeseriesCollectionWithBody(ctx context.Context, params *CreateTimeseriesCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateTimeseriesCollectionRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateTimeseriesCollection Create a time-series collection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/timeseries/collections (the `CreateTimeseriesCollection` operationId).
+func (c *Client) CreateTimeseriesCollection(ctx context.Context, params *CreateTimeseriesCollectionParams, body CreateTimeseriesCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateTimeseriesCollectionRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteTimeseriesCollection Delete a time-series collection.
+//
+// Always 200; `success` distinguishes an actual deletion from a
+// no-op (unknown collection).
+//
+// Corresponds with DELETE /api/v2/timeseries/collections/{collection_id} (the `DeleteTimeseriesCollection` operationId).
+func (c *Client) DeleteTimeseriesCollection(ctx context.Context, collectionId string, params *DeleteTimeseriesCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteTimeseriesCollectionRequest(c.Server, collectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AggregateTimeseriesWithBody Aggregate points into time buckets.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/aggregate (the `AggregateTimeseries` operationId).
+func (c *Client) AggregateTimeseriesWithBody(ctx context.Context, collectionId string, params *AggregateTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAggregateTimeseriesRequestWithBody(c.Server, collectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AggregateTimeseries Aggregate points into time buckets.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/aggregate (the `AggregateTimeseries` operationId).
+func (c *Client) AggregateTimeseries(ctx context.Context, collectionId string, params *AggregateTimeseriesParams, body AggregateTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAggregateTimeseriesRequest(c.Server, collectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestTimeseriesWithBody Ingest time-series points.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/ingest (the `IngestTimeseries` operationId).
+func (c *Client) IngestTimeseriesWithBody(ctx context.Context, collectionId string, params *IngestTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestTimeseriesRequestWithBody(c.Server, collectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IngestTimeseries Ingest time-series points.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/ingest (the `IngestTimeseries` operationId).
+func (c *Client) IngestTimeseries(ctx context.Context, collectionId string, params *IngestTimeseriesParams, body IngestTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestTimeseriesRequest(c.Server, collectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryTimeseriesWithBody Query points in a time range (epoch millis).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
+func (c *Client) QueryTimeseriesWithBody(ctx context.Context, collectionId string, params *QueryTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryTimeseriesRequestWithBody(c.Server, collectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryTimeseries Query points in a time range (epoch millis).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
+func (c *Client) QueryTimeseries(ctx context.Context, collectionId string, params *QueryTimeseriesParams, body QueryTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryTimeseriesRequest(c.Server, collectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15111,6 +15475,338 @@ func NewExecuteSqlRequestWithBody(server string, params *ExecuteSqlParams, conte
 	return req, nil
 }
 
+// NewListTimeseriesCollectionsRequest constructs an http.Request for the ListTimeseriesCollections method
+func NewListTimeseriesCollectionsRequest(server string, params *ListTimeseriesCollectionsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/timeseries/collections")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewCreateTimeseriesCollectionRequest calls the generic CreateTimeseriesCollection builder with application/json body
+func NewCreateTimeseriesCollectionRequest(server string, params *CreateTimeseriesCollectionParams, body CreateTimeseriesCollectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateTimeseriesCollectionRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateTimeseriesCollectionRequestWithBody constructs an http.Request for the CreateTimeseriesCollection method, with any body, and a specified content type
+func NewCreateTimeseriesCollectionRequestWithBody(server string, params *CreateTimeseriesCollectionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/timeseries/collections")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteTimeseriesCollectionRequest constructs an http.Request for the DeleteTimeseriesCollection method
+func NewDeleteTimeseriesCollectionRequest(server string, collectionId string, params *DeleteTimeseriesCollectionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/timeseries/collections/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewAggregateTimeseriesRequest calls the generic AggregateTimeseries builder with application/json body
+func NewAggregateTimeseriesRequest(server string, collectionId string, params *AggregateTimeseriesParams, body AggregateTimeseriesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAggregateTimeseriesRequestWithBody(server, collectionId, params, "application/json", bodyReader)
+}
+
+// NewAggregateTimeseriesRequestWithBody constructs an http.Request for the AggregateTimeseries method, with any body, and a specified content type
+func NewAggregateTimeseriesRequestWithBody(server string, collectionId string, params *AggregateTimeseriesParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/timeseries/collections/%s/aggregate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewIngestTimeseriesRequest calls the generic IngestTimeseries builder with application/json body
+func NewIngestTimeseriesRequest(server string, collectionId string, params *IngestTimeseriesParams, body IngestTimeseriesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIngestTimeseriesRequestWithBody(server, collectionId, params, "application/json", bodyReader)
+}
+
+// NewIngestTimeseriesRequestWithBody constructs an http.Request for the IngestTimeseries method, with any body, and a specified content type
+func NewIngestTimeseriesRequestWithBody(server string, collectionId string, params *IngestTimeseriesParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/timeseries/collections/%s/ingest", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewQueryTimeseriesRequest calls the generic QueryTimeseries builder with application/json body
+func NewQueryTimeseriesRequest(server string, collectionId string, params *QueryTimeseriesParams, body QueryTimeseriesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewQueryTimeseriesRequestWithBody(server, collectionId, params, "application/json", bodyReader)
+}
+
+// NewQueryTimeseriesRequestWithBody constructs an http.Request for the QueryTimeseries method, with any body, and a specified content type
+func NewQueryTimeseriesRequestWithBody(server string, collectionId string, params *QueryTimeseriesParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection_id", collectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/timeseries/collections/%s/query", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string, params *GetHealthParams) (*http.Request, error) {
 	var err error
@@ -16992,6 +17688,79 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/sql (the `ExecuteSql` operationId).
 	ExecuteSqlWithResponse(ctx context.Context, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteSqlHTTPResp, error)
+
+	// ListTimeseriesCollectionsWithResponse List this tenant's time-series collections.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/timeseries/collections (the `ListTimeseriesCollections` operationId).
+	ListTimeseriesCollectionsWithResponse(ctx context.Context, params *ListTimeseriesCollectionsParams, reqEditors ...RequestEditorFn) (*ListTimeseriesCollectionsHTTPResp, error)
+
+	// CreateTimeseriesCollectionWithBodyWithResponse Create a time-series collection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/timeseries/collections (the `CreateTimeseriesCollection` operationId).
+	CreateTimeseriesCollectionWithBodyWithResponse(ctx context.Context, params *CreateTimeseriesCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTimeseriesCollectionHTTPResp, error)
+
+	// CreateTimeseriesCollectionWithResponse Create a time-series collection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/timeseries/collections (the `CreateTimeseriesCollection` operationId).
+	CreateTimeseriesCollectionWithResponse(ctx context.Context, params *CreateTimeseriesCollectionParams, body CreateTimeseriesCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTimeseriesCollectionHTTPResp, error)
+
+	// DeleteTimeseriesCollectionWithResponse Delete a time-series collection.
+	//
+	// Always 200; `success` distinguishes an actual deletion from a
+	// no-op (unknown collection).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/timeseries/collections/{collection_id} (the `DeleteTimeseriesCollection` operationId).
+	DeleteTimeseriesCollectionWithResponse(ctx context.Context, collectionId string, params *DeleteTimeseriesCollectionParams, reqEditors ...RequestEditorFn) (*DeleteTimeseriesCollectionHTTPResp, error)
+
+	// AggregateTimeseriesWithBodyWithResponse Aggregate points into time buckets.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/aggregate (the `AggregateTimeseries` operationId).
+	AggregateTimeseriesWithBodyWithResponse(ctx context.Context, collectionId string, params *AggregateTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AggregateTimeseriesHTTPResp, error)
+
+	// AggregateTimeseriesWithResponse Aggregate points into time buckets.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/aggregate (the `AggregateTimeseries` operationId).
+	AggregateTimeseriesWithResponse(ctx context.Context, collectionId string, params *AggregateTimeseriesParams, body AggregateTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*AggregateTimeseriesHTTPResp, error)
+
+	// IngestTimeseriesWithBodyWithResponse Ingest time-series points.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/ingest (the `IngestTimeseries` operationId).
+	IngestTimeseriesWithBodyWithResponse(ctx context.Context, collectionId string, params *IngestTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestTimeseriesHTTPResp, error)
+
+	// IngestTimeseriesWithResponse Ingest time-series points.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/ingest (the `IngestTimeseries` operationId).
+	IngestTimeseriesWithResponse(ctx context.Context, collectionId string, params *IngestTimeseriesParams, body IngestTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestTimeseriesHTTPResp, error)
+
+	// QueryTimeseriesWithBodyWithResponse Query points in a time range (epoch millis).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
+	QueryTimeseriesWithBodyWithResponse(ctx context.Context, collectionId string, params *QueryTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryTimeseriesHTTPResp, error)
+
+	// QueryTimeseriesWithResponse Query points in a time range (epoch millis).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
+	QueryTimeseriesWithResponse(ctx context.Context, collectionId string, params *QueryTimeseriesParams, body QueryTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryTimeseriesHTTPResp, error)
 
 	// GetHealthWithResponse Get server health.
 	//
@@ -22268,6 +23037,294 @@ func (r ExecuteSqlHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListTimeseriesCollectionsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TsListResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListTimeseriesCollectionsHTTPResp) GetJSON200() *TsListResponse {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListTimeseriesCollectionsHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListTimeseriesCollectionsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListTimeseriesCollectionsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListTimeseriesCollectionsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListTimeseriesCollectionsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateTimeseriesCollectionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TsCreateResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateTimeseriesCollectionHTTPResp) GetJSON200() *TsCreateResponse {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateTimeseriesCollectionHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateTimeseriesCollectionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateTimeseriesCollectionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateTimeseriesCollectionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateTimeseriesCollectionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteTimeseriesCollectionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TsDeleteResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteTimeseriesCollectionHTTPResp) GetJSON200() *TsDeleteResponse {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteTimeseriesCollectionHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteTimeseriesCollectionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteTimeseriesCollectionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteTimeseriesCollectionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteTimeseriesCollectionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AggregateTimeseriesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TsAggregateResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AggregateTimeseriesHTTPResp) GetJSON200() *TsAggregateResponse {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AggregateTimeseriesHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AggregateTimeseriesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AggregateTimeseriesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AggregateTimeseriesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AggregateTimeseriesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IngestTimeseriesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TsIngestResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IngestTimeseriesHTTPResp) GetJSON200() *TsIngestResponse {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r IngestTimeseriesHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r IngestTimeseriesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IngestTimeseriesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IngestTimeseriesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IngestTimeseriesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type QueryTimeseriesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TsQueryResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r QueryTimeseriesHTTPResp) GetJSON200() *TsQueryResponse {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r QueryTimeseriesHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r QueryTimeseriesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r QueryTimeseriesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r QueryTimeseriesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r QueryTimeseriesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24989,6 +26046,139 @@ func (c *ClientWithResponses) ExecuteSqlWithResponse(ctx context.Context, params
 		return nil, err
 	}
 	return ParseExecuteSqlHTTPResp(rsp)
+}
+
+// ListTimeseriesCollectionsWithResponse List this tenant's time-series collections.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/timeseries/collections (the `ListTimeseriesCollections` operationId).
+func (c *ClientWithResponses) ListTimeseriesCollectionsWithResponse(ctx context.Context, params *ListTimeseriesCollectionsParams, reqEditors ...RequestEditorFn) (*ListTimeseriesCollectionsHTTPResp, error) {
+	rsp, err := c.ListTimeseriesCollections(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTimeseriesCollectionsHTTPResp(rsp)
+}
+
+// CreateTimeseriesCollectionWithBodyWithResponse Create a time-series collection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/timeseries/collections (the `CreateTimeseriesCollection` operationId).
+func (c *ClientWithResponses) CreateTimeseriesCollectionWithBodyWithResponse(ctx context.Context, params *CreateTimeseriesCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTimeseriesCollectionHTTPResp, error) {
+	rsp, err := c.CreateTimeseriesCollectionWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateTimeseriesCollectionHTTPResp(rsp)
+}
+
+// CreateTimeseriesCollectionWithResponse Create a time-series collection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/timeseries/collections (the `CreateTimeseriesCollection` operationId).
+func (c *ClientWithResponses) CreateTimeseriesCollectionWithResponse(ctx context.Context, params *CreateTimeseriesCollectionParams, body CreateTimeseriesCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTimeseriesCollectionHTTPResp, error) {
+	rsp, err := c.CreateTimeseriesCollection(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateTimeseriesCollectionHTTPResp(rsp)
+}
+
+// DeleteTimeseriesCollectionWithResponse Delete a time-series collection.
+//
+// Always 200; `success` distinguishes an actual deletion from a
+// no-op (unknown collection).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/timeseries/collections/{collection_id} (the `DeleteTimeseriesCollection` operationId).
+func (c *ClientWithResponses) DeleteTimeseriesCollectionWithResponse(ctx context.Context, collectionId string, params *DeleteTimeseriesCollectionParams, reqEditors ...RequestEditorFn) (*DeleteTimeseriesCollectionHTTPResp, error) {
+	rsp, err := c.DeleteTimeseriesCollection(ctx, collectionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteTimeseriesCollectionHTTPResp(rsp)
+}
+
+// AggregateTimeseriesWithBodyWithResponse Aggregate points into time buckets.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/aggregate (the `AggregateTimeseries` operationId).
+func (c *ClientWithResponses) AggregateTimeseriesWithBodyWithResponse(ctx context.Context, collectionId string, params *AggregateTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AggregateTimeseriesHTTPResp, error) {
+	rsp, err := c.AggregateTimeseriesWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAggregateTimeseriesHTTPResp(rsp)
+}
+
+// AggregateTimeseriesWithResponse Aggregate points into time buckets.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/aggregate (the `AggregateTimeseries` operationId).
+func (c *ClientWithResponses) AggregateTimeseriesWithResponse(ctx context.Context, collectionId string, params *AggregateTimeseriesParams, body AggregateTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*AggregateTimeseriesHTTPResp, error) {
+	rsp, err := c.AggregateTimeseries(ctx, collectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAggregateTimeseriesHTTPResp(rsp)
+}
+
+// IngestTimeseriesWithBodyWithResponse Ingest time-series points.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/ingest (the `IngestTimeseries` operationId).
+func (c *ClientWithResponses) IngestTimeseriesWithBodyWithResponse(ctx context.Context, collectionId string, params *IngestTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestTimeseriesHTTPResp, error) {
+	rsp, err := c.IngestTimeseriesWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestTimeseriesHTTPResp(rsp)
+}
+
+// IngestTimeseriesWithResponse Ingest time-series points.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/ingest (the `IngestTimeseries` operationId).
+func (c *ClientWithResponses) IngestTimeseriesWithResponse(ctx context.Context, collectionId string, params *IngestTimeseriesParams, body IngestTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestTimeseriesHTTPResp, error) {
+	rsp, err := c.IngestTimeseries(ctx, collectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestTimeseriesHTTPResp(rsp)
+}
+
+// QueryTimeseriesWithBodyWithResponse Query points in a time range (epoch millis).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
+func (c *ClientWithResponses) QueryTimeseriesWithBodyWithResponse(ctx context.Context, collectionId string, params *QueryTimeseriesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryTimeseriesHTTPResp, error) {
+	rsp, err := c.QueryTimeseriesWithBody(ctx, collectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryTimeseriesHTTPResp(rsp)
+}
+
+// QueryTimeseriesWithResponse Query points in a time range (epoch millis).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
+func (c *ClientWithResponses) QueryTimeseriesWithResponse(ctx context.Context, collectionId string, params *QueryTimeseriesParams, body QueryTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryTimeseriesHTTPResp, error) {
+	rsp, err := c.QueryTimeseries(ctx, collectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryTimeseriesHTTPResp(rsp)
 }
 
 // GetHealthWithResponse Get server health.
@@ -28860,6 +30050,204 @@ func ParseExecuteSqlHTTPResp(rsp *http.Response) (*ExecuteSqlHTTPResp, error) {
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListTimeseriesCollectionsHTTPResp parses an HTTP response from a ListTimeseriesCollectionsWithResponse call
+func ParseListTimeseriesCollectionsHTTPResp(rsp *http.Response) (*ListTimeseriesCollectionsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListTimeseriesCollectionsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TsListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateTimeseriesCollectionHTTPResp parses an HTTP response from a CreateTimeseriesCollectionWithResponse call
+func ParseCreateTimeseriesCollectionHTTPResp(rsp *http.Response) (*CreateTimeseriesCollectionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateTimeseriesCollectionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TsCreateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteTimeseriesCollectionHTTPResp parses an HTTP response from a DeleteTimeseriesCollectionWithResponse call
+func ParseDeleteTimeseriesCollectionHTTPResp(rsp *http.Response) (*DeleteTimeseriesCollectionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteTimeseriesCollectionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TsDeleteResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAggregateTimeseriesHTTPResp parses an HTTP response from a AggregateTimeseriesWithResponse call
+func ParseAggregateTimeseriesHTTPResp(rsp *http.Response) (*AggregateTimeseriesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AggregateTimeseriesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TsAggregateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIngestTimeseriesHTTPResp parses an HTTP response from a IngestTimeseriesWithResponse call
+func ParseIngestTimeseriesHTTPResp(rsp *http.Response) (*IngestTimeseriesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IngestTimeseriesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TsIngestResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseQueryTimeseriesHTTPResp parses an HTTP response from a QueryTimeseriesWithResponse call
+func ParseQueryTimeseriesHTTPResp(rsp *http.Response) (*QueryTimeseriesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &QueryTimeseriesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TsQueryResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

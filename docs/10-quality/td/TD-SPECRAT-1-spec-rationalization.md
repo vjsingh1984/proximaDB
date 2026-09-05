@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1-5 landed (observability+nl, stub-rule fixes, ABAC, collections admin, catalog routing/explain); wave 6 (graph surface) landing
+| Status | Waves 1-6 landed (observability+nl, stub-rule fixes, ABAC, collections admin, catalog routing/explain, graph surface); wave 7 (timeseries) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -248,7 +248,7 @@ Rationalization notes:
 * `POST /api/v2/collections/{collection_id}/branches/{branch}/merge` —
   still deferred to the graph-analytics wave (wave-4 decision).
 
-== Wave 6: graph surface truth + gap exposure (this PR)
+== Wave 6: graph surface truth + gap exposure (landed)
 
 **Pre-existing defect FIXED — the published graph surface modeled the
 wrong response shape.** Every `/api/v2/graphs/*` handler (api-crate
@@ -290,3 +290,35 @@ rejections are plain text.
 * graph branch-merge (wave-4 deferral; free-form response).
 * Legacy 308-redirect shims (`/api/v2/nodes|edges|stats`) — clients
   must use the canonical graph-scoped paths.
+
+== Wave 7: time-series surface (this PR)
+
+**Exposed (5 paths / 6 operations; spec 74 → 79):** the complete
+`/api/v2/timeseries/collections*` surface (TD-TS-1; handlers in
+`src/network/rest/v2/timeseries.rs`, mounted unconditionally; backed by
+the process-global `TimeSeriesService` over the native TST engine —
+real, not stubs): create/list/delete collection, ingest, query,
+aggregate.
+
+Rationalization notes:
+
+* **Tenant-bearing, unlike waves 3-6:** these handlers consume
+  `TenantContext` from the middleware — the optional `X-Tenant-ID`
+  header IS consulted (per-tenant structural isolation: one engine per
+  tenant at `<data>/timeseries/<tenant>`; the collection name stays
+  tenant-clean). The document-wide injected-header note is accurate
+  here.
+* **Flat responses, no envelope** — the handler bodies are the wire
+  bodies (`{ingested}`, `{points}`, `{buckets}`, …).
+* **Error posture documented honestly:** handler errors map to 500
+  with the canonical envelope (no 404 exists on this surface); an
+  UNKNOWN collection is not an error — query/aggregate return 200
+  empty, delete returns 200 `success:false`. A missing global service
+  is a 500. `aggregate` buckets are free-form JSON objects.
+* **Python facade divergence recorded (round-1 review):** the
+  hand-written `timeseries.py` facade sends ISO-8601 STRING timestamps
+  where the handler requires epoch-millis i64 (axum 422; the facade
+  then silently falls back to local storage), sends aggregation fields
+  to `/query` (serde drops them — never worked), and never calls
+  `/aggregate`. Pre-existing, not introduced here — the published spec
+  is what makes the divergence visible; the facade fix is a follow-up.
