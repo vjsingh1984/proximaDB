@@ -1651,14 +1651,13 @@ impl FederatedExecutor {
             // the wildcard silently dropped/zeroed federated vector rows
             // whose path crossed a JSONB field.
             sql_value::Value::JsonbValue(bytes) => {
+                // Round 11: delegate to the shared walker (was a verbatim
+                // third copy of the object.get walk).
                 let doc = proximadb_data_model::ProximaValue::jsonb_to_json_lossy(bytes);
-                let mut current = &doc;
-                for segment in path {
-                    current = match current {
-                        serde_json::Value::Object(object) => object.get(segment)?,
-                        _ => return None,
-                    };
-                }
+                let current = proximadb_search_types::sql_value_filter::json_get_path(
+                    &doc,
+                    path.iter().map(String::as_str),
+                )?;
                 Self::json_to_vector(current)
             }
             _ => None,

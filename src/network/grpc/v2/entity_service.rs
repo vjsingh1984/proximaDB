@@ -713,6 +713,10 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
             Some(GraphValue::BytesValue(u.clone()))
         }
         Some(Value::IsNull(_)) => return None,
+        // Round 11: JSON(B) as canonical JSON text — the wildcard silently
+        // dropped the property at this sibling of the adjacency seam the
+        // round-8 fix closed.
+        Some(Value::JsonValue(json)) => Some(GraphValue::StringValue(json.clone())),
         _ => return None, // Arrays / maps are not supported as scalar node props.
     };
 

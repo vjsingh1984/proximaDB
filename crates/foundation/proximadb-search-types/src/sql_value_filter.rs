@@ -94,7 +94,25 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
         for segment in segments.by_ref() {
             match current {
                 SqlVal::ObjectValue(obj) => {
-                    current = obj.fields.get(segment)?.value.as_ref()?;
+                    // A present key with an unset oneof IS the wire form of a
+                    // nested null (search-types' writer emits SqlValue{value:
+                    // None} for ProximaValue::Null children) — treat it as a
+                    // JSON null leaf, not a dead end (round 11: the old
+                    // `?` silently dropped rows on `a.b.c = null`).
+                    match obj.fields.get(segment) {
+                        Some(child) if child.value.is_some() => {
+                            current = child.value.as_ref().expect("checked");
+                        }
+                        Some(_) => {
+                            let last = segments.next().is_none();
+                            return if last {
+                                Some(serde_json::Value::Null)
+                            } else {
+                                None
+                            };
+                        }
+                        None => return None,
+                    }
                 }
                 // Canonical JSONB decodes once and continues as JSON; legacy
                 // tag-8 bytes stay opaque (pre-PR behavior).
@@ -124,7 +142,7 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
 /// Walk dotted path segments through a JSON document by reference — the
 /// single walker shared by the SqlValue and ProximaTree dot-traversals
 /// (round 8: it was maintained twice in this file).
-fn json_get_path<'a>(
+pub fn json_get_path<'a>(
     root: &'a serde_json::Value,
     segments: impl Iterator<Item = &'a str>,
 ) -> Option<&'a serde_json::Value> {
@@ -138,13 +156,17 @@ fn json_get_path<'a>(
     Some(current)
 }
 
-/// Flatten a proto `SqlObject` to JSON for dot traversal.
+/// Flatten a proto `SqlObject` to JSON for dot traversal. Keys whose oneof
+/// is unset (the wire form of a nested null) serialize as JSON null — the
+/// pre-round-7 behavior that `a.b = {"c": null}` comparisons rely on.
 fn obj_to_json(obj: &proximadb_proto::proximadb_v1::SqlObject) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (k, v) in &obj.fields {
-        if let Some(inner) = v.value.as_ref() {
-            map.insert(k.clone(), sql_val_to_json(inner));
-        }
+        let json = match v.value.as_ref() {
+            Some(inner) => sql_val_to_json(inner),
+            None => serde_json::Value::Null,
+        };
+        map.insert(k.clone(), json);
     }
     serde_json::Value::Object(map)
 }
@@ -781,6 +803,42 @@ mod tests {
             sql_val_to_json(&SqlVal::JsonbValue(vec![0xc1])),
             serde_json::Value::String("c1".to_string())
         );
+    }
+
+    #[test]
+    fn none_valued_child_resolves_to_json_null() {
+        // Round 11: {"a": {"b": {"c": null}}} — the writer emits
+        // SqlValue{value: None} for the nested null; `a.b.c = null` and
+        // `a.b = {"c": null}` must both match as they did pre-rewrite.
+        let mut c_leaf = HashMap::new();
+        c_leaf.insert("c".to_string(), SqlValue { value: None });
+        let mut a_root = HashMap::new();
+        a_root.insert(
+            "b".to_string(),
+            make_sql_value(SqlVal::ObjectValue(
+                proximadb_proto::proximadb_v1::SqlObject { fields: c_leaf },
+            )),
+        );
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "a".to_string(),
+            make_sql_value(SqlVal::ObjectValue(
+                proximadb_proto::proximadb_v1::SqlObject { fields: a_root },
+            )),
+        );
+        let eq_null = FilterExpression::Comparison {
+            field: "a.b.c".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(null),
+        };
+        assert!(evaluate_filter(&eq_null, &metadata));
+
+        let obj_eq = FilterExpression::Comparison {
+            field: "a".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!({"b": {"c": null}}),
+        };
+        assert!(evaluate_filter(&obj_eq, &metadata));
     }
 
     #[test]

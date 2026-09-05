@@ -51,8 +51,10 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
             // Round 8: strip the legacy magic prefix FIRST — feeding it to
             // rmp-serde "succeeds" (0xff is a negative fixint; trailing bytes
             // ignored) and silently replaces the document with Number(-1).
-            // This now matches search-types' decoder, and the magic constant
-            // is the shared data-model authority.
+            // This matches search-types' decoder for magic-prefixed bytes
+            // (magic + JSON text); only the magic BYTES are shared via the
+            // data-model const — the codec bodies remain line-copies pending
+            // the tracked consolidation.
             // The legacy payload after the magic is JSON TEXT (matching
             // search-types' decoder) — round 8 mistakenly msgpack-decoded it,
             // which "succeeds" on short payloads as a garbage number and

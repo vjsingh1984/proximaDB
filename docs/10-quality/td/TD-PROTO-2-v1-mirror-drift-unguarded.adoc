@@ -393,6 +393,30 @@ addressed in the same PR:**
   legacy magic+JSON-text codec body is still line-copied between records
   and search-types — it rides with the single-authority consolidation.
 
+**Round 11 (2026-09-05) — 6 findings, all addressed:**
+
+* Correctness: a nested field stored as `SqlValue{value: None}` (the wire
+  form of a nested null) became unresolvable by the two-phase traversal —
+  `a.b.c = null` silently dropped rows where the develop-era path matched.
+  A present key with an unset oneof now resolves as a JSON null leaf, and
+  `obj_to_json` includes None-valued children as null (restoring
+  `a = {"b": {"c": null}}` equality). Pinned by
+  `none_valued_child_resolves_to_json_null`.
+* The v2 gRPC entity seam (`typed_value_to_property_value`) gained the
+  `JsonValue` arm — the wildcard was still silently dropping JSON
+  properties one file over from the round-8 fix.
+* `json_get_path` is pub and the federated JSONB vector-path arm
+  delegates to it (was a verbatim third copy of the walk).
+* The mixed-column scalar min/max branch is guarded by
+  `else if jsonb_min.is_none()` — the JSONB extremum wins by design, so
+  the scalar stores were dead work inviting a future "fix" that would
+  reintroduce the round-7 false-prune.
+* The `JSONB_LEGACY_MAGIC` and records comments now say precisely what is
+  shared (the magic bytes) and what is not (the codec bodies, tracked).
+* Tracked (unchanged disposition): the root-crate SqlValue→JSON helper's
+  home (arrow_conversion) is unreachable from extracted crates; the
+  foundation-level anchor (proximadb-records) is the consolidation target.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

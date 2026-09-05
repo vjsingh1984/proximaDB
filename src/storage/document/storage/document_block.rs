@@ -124,8 +124,10 @@ impl DocumentBlock {
                             Some((mv, mk)) if mk >= key => (mv, mk),
                             Some(_) => (value.clone(), key),
                         });
-                    } else {
-                        // Update min/max
+                    } else if jsonb_min.is_none() {
+                        // Update min/max — skipped for mixed columns: the
+                        // JSONB extremum post-loop wins by design (incomparable
+                        // ⇒ never prunes), so these stores would be dead work.
                         stats.min_value =
                             Some(stats.min_value.take().map_or_else(
                                 || value.clone(),

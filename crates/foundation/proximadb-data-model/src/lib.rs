@@ -684,8 +684,9 @@ pub enum ProximaValue {
 }
 
 /// Magic prefix for the legacy tag-8 JSONB-tagged BytesValue encoding (the
-/// pre-tag-9 wire form). Single authority — writers and the magic-stripping
-/// reader both live here so the two crates can never disagree on the bytes.
+/// pre-tag-9 wire form). Only the magic BYTES are centralized here — the
+/// encode/decode bodies still live in records and search-types (tracked
+/// consolidation; they must agree on the shape: magic + JSON text).
 pub const JSONB_LEGACY_MAGIC: &[u8] = b"\xff\xfeJSNB";
 
 impl ProximaValue {
