@@ -565,6 +565,33 @@ inherent:**
 * The Between arm's dead `!json_val.is_null()` conjunct dropped (the
   centralized guards return first; a comment now says so).
 
+**Round 17 (2026-09-05) — 10 findings, all fixed:**
+
+* Non-canonical key order: SqlObject.fields is a HashMap and serde_json's
+  preserve_order is active (utoipa), so the graph-schema object/array
+  property text varied per write — exact-string property filters flaked.
+  Serialization now sorts keys recursively (canonical_json_string), and
+  the arm uses the same shared converter the six delegated sites use (was
+  the competing search-types twin — two-authority drift).
+* The Jsonb arm rejects undecodable bytes (property dropped, develop's
+  behavior) instead of storing quoted-hex junk.
+* The v2 seam parses strictly and unwraps JSON string documents (a
+  valid-JSON string stores its inner text, not a double-quoted spelling;
+  malformed JSON is rejected, matching the sibling services'
+  typed_value_to_proxima contract).
+* The type-strict/security path routes null LITERALS through the
+  centralized idioms before its class gate (Null is its own comparable
+  class, so `!= null` deny-all'd on the RLS walkers while returning
+  exclude-nulls everywhere else).
+* parse_from_str_arm tolerates the qualified EnumName::Variant spelling
+  (a correct arm parsed as an empty table and tripped the fail-loud
+  guard).
+* DocumentBlock::is_null recognizes the unset-oneof null wire form
+  (null-count/selectivity and extrema exclusion).
+* Null tests hoisted above the null-value guards (three encodings of
+  one rule collapsed to one); the centralizing comment now states the
+  actual carve-out table.
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

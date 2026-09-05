@@ -366,47 +366,38 @@ pub fn compare_json_op(
     json_val: &serde_json::Value,
     value: &serde_json::Value,
 ) -> bool {
-    // SQL three-valued logic, centralized (round 14): a null on EITHER side
-    // makes every comparison false, with exactly two carve-outs —
-    // `field IS NULL` / `IS NOT NULL` (they speak about null by design) and
-    // the pinned JSON-consistent `field = null` (both sides null ⇒ true).
-    // Subsumes the round-13 per-arm range guards (which missed Between) and
-    // closes the !=/NOT-IN null admission.
-    // A null LITERAL is only meaningful to Equals (= null), IS NULL, and
-    // IS NOT NULL. For NotEquals/NotIn it is the Mongo-style "exclude nulls"
-    // idiom (`!= null` admits non-null rows) — not an SQL three-valued trap.
-    // A null FIELD satisfies no value comparison (round 14).
+    // Null tests are total — decided once, here (round 17: they were
+    // previously decided in these guards AND again in the main match, three
+    // encodings of one rule).
+    match operator {
+        ComparisonOperator::IsNull => return json_val.is_null(),
+        ComparisonOperator::IsNotNull => return !json_val.is_null(),
+        _ => {}
+    }
+    // Null LITERAL semantics: `= null` matches a null field (pinned);
+    // `!= null` / NOT IN(null) are the Mongo-style exclude-nulls idiom
+    // (admit non-null rows — the live REST neq path); In(null) is false;
+    // Contains null matches arrays holding a null element (develop's
+    // structural semantics). Everything else with a null literal: false.
     if value.is_null() {
         return match operator {
-            ComparisonOperator::IsNull => json_val.is_null(),
-            ComparisonOperator::IsNotNull => !json_val.is_null(),
             ComparisonOperator::Equals => json_val.is_null(),
-            ComparisonOperator::NotEquals => !json_val.is_null(),
-            // Exclude-nulls idiom, consistent with NotEquals (round 16: was
-            // `true`, admitting null rows — code, comment, and ledger
-            // disagreed).
-            ComparisonOperator::NotIn => !json_val.is_null(),
+            ComparisonOperator::NotEquals | ComparisonOperator::NotIn => !json_val.is_null(),
             ComparisonOperator::In => false,
-            // Array-membership of null keeps develop's structural semantics
-            // (round 16: the catch-all silently dropped rows with null
-            // elements from `tags contains null` results).
-            ComparisonOperator::Contains => match json_val {
-                serde_json::Value::Array(items) => items.iter().any(|i| i.is_null()),
-                _ => false,
-            },
+            ComparisonOperator::Contains => {
+                matches!(json_val, serde_json::Value::Array(items) if items.iter().any(|i| i.is_null()))
+            }
             _ => false,
         };
     }
+    // Null FIELD with a non-null literal: no value comparison matches.
     if json_val.is_null() {
-        return match operator {
-            ComparisonOperator::IsNull => true,
-            ComparisonOperator::IsNotNull => false,
-            // pinned JSON-consistent carve-out
-            ComparisonOperator::Equals => false,
-            _ => false,
-        };
+        return false;
     }
     match operator {
+        // Null tests returned above; the wildcard keeps the match total if
+        // operators are ever added.
+        ComparisonOperator::IsNull | ComparisonOperator::IsNotNull => false,
         ComparisonOperator::Equals => json_eq(json_val, value),
         ComparisonOperator::NotEquals => !json_eq(json_val, value),
         ComparisonOperator::LessThan => compare_json_lt(json_val, value),
@@ -480,8 +471,6 @@ pub fn compare_json_op(
         // Null tests on a value that the resolver already produced: present and
         // JSON-null ⇒ null. Field *absence* is handled in `evaluate_filter_resolved`
         // (absent ⇒ IS NULL), which is the only place that can observe absence.
-        ComparisonOperator::IsNull => json_val.is_null(),
-        ComparisonOperator::IsNotNull => !json_val.is_null(),
         // Full SQL LIKE: `%` = any run, `_` = exactly one char, anywhere in the
         // pattern. Shared with every evaluator via `json_comparison`.
         ComparisonOperator::Like => {
@@ -1601,6 +1590,16 @@ pub fn compare_json_op_type_strict(
     value: &serde_json::Value,
 ) -> Option<bool> {
     use crate::json_comparison::comparable_class;
+
+    // Null literals: the class gate below would make every null literal
+    // cross-class (Null is its own class) and deny BEFORE the centralized
+    // null-literal idioms apply — a security predicate using the documented
+    // `!= null` exclude-nulls idiom would silently match zero rows. Route
+    // null literals through compare_json_op first (round 17); the null
+    // FIELD case still falls through to the class gate as deny.
+    if value.is_null() {
+        return Some(compare_json_op(operator, json_val, value));
+    }
 
     let same_class =
         |other: &serde_json::Value| comparable_class(json_val) == comparable_class(other);

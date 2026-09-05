@@ -717,15 +717,18 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
         // dropped the property at this sibling of the adjacency seam the
         // round-8 fix closed.
         Some(Value::JsonValue(json)) => {
-            // Round 14: null detection is PARSE-based — raw text equality
-            // misses non-canonical spellings (" null" is valid JSON).
+            // Round 17: mirror the sibling services (document/record route
+            // TypedValue through typed_value_to_proxima, which REJECTS
+            // malformed JSON). Parse strictly: a valid JSON document becomes
+            // its canonical text; malformed input is rejected (no silent
+            // raw-string spellings that differ per service).
             match serde_json::from_str::<serde_json::Value>(json) {
-                Ok(serde_json::Value::Null) => None,
-                Ok(other) => Some(GraphValue::StringValue(other.to_string())),
-                // Not parseable JSON text: keep the raw string verbatim —
-                // wrapping it in Value::String and re-serializing would add
-                // JSON quoting the filter can never match (round 15).
-                Err(_) => Some(GraphValue::StringValue(json.clone())),
+                Ok(parsed) => match parsed {
+                    serde_json::Value::Null => None,
+                    serde_json::Value::String(inner) => Some(GraphValue::StringValue(inner)),
+                    other => Some(GraphValue::StringValue(other.to_string())),
+                },
+                Err(_) => None,
             }
         }
         _ => return None, // Arrays / maps are not supported as scalar node props.

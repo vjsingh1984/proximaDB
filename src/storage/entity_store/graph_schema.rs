@@ -50,6 +50,25 @@ pub struct EntityNodeMapper;
 /// JSON text becomes a StringValue property — except the literal `null`
 /// document, which is the property model's null form (round-12 rule at this
 /// third seam).
+/// Serialize with SORTED object keys — stable across HashMap iteration
+/// orders so exact-string property comparisons are write-order-independent
+/// (serde_json's preserve_order is active via utoipa; unsorted
+/// serialization is not canonical).
+fn canonical_json_string(value: &serde_json::Value) -> String {
+    fn sort_rec(v: &serde_json::Value) -> serde_json::Value {
+        match v {
+            serde_json::Value::Object(map) => {
+                let mut entries: Vec<(String, serde_json::Value)> =
+                    map.iter().map(|(k, v)| (k.clone(), sort_rec(v))).collect();
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                entries.into_iter().collect()
+            }
+            _ => v.clone(),
+        }
+    }
+    sort_rec(value).to_string()
+}
+
 fn json_text_property(text: &str) -> Option<property_value::Value> {
     if text == "null" {
         None
@@ -115,20 +134,26 @@ impl EntityNodeMapper {
                         // made them unfilterable (matches_metadata_filter
                         // reads only direct properties, never the blob).
                         sql_value::Value::JsonbValue(bytes) => {
-                            let text =
-                                proximadb_data_model::ProximaValue::jsonb_to_json_string_lossy(
-                                    bytes,
-                                );
-                            json_text_property(&text)
+                            // Undecodable bytes would render as quoted-hex
+                            // junk — drop the property instead (develop's
+                            // behavior for corrupt input).
+                            match proximadb_data_model::ProximaValue::from_jsonb_slice(bytes) {
+                                Ok(json) => json_text_property(&canonical_json_string(&json)),
+                                Err(_) => None,
+                            }
                         }
-                        // Canonical JSON lowering (NOT serde_json::to_string on
-                        // the prost struct — that emits the proto serde
-                        // envelope {"fields":{…}}, unmatchable by filters and
-                        // divergent from the JSONB arm's rendering).
+                        // Canonical JSON lowering: the shared root-crate
+                        // converter (NOT serde_json::to_string on the prost
+                        // struct — that emits the proto envelope — and NOT the
+                        // search-types twin, which renders bytes differently),
+                        // then SORTED to a stable key order: SqlObject.fields
+                        // is a HashMap, so unsorted text varies per write and
+                        // exact-string property filters would flake (round 17).
                         sql_value::Value::ObjectValue(_) | sql_value::Value::ArrayValue(_) => {
-                            let json =
-                                proximadb_search_types::sql_value_filter::sql_val_to_json(value);
-                            json_text_property(&json.to_string())
+                            let json = crate::storage::formats::arrow_conversion::sql_value_to_json(
+                                sql_value,
+                            );
+                            json_text_property(&canonical_json_string(&json))
                         }
                         _ => None, // bytes and nulls stay blob-only
                     };

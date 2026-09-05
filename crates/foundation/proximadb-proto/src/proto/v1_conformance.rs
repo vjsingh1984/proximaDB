@@ -387,16 +387,25 @@ fn parse_enum_value(line: &str) -> Option<(String, i32)> {
 }
 
 fn parse_from_str_arm(line: &str) -> Option<(String, String)> {
-    // "WIRE_NAME" => Some(Self::Variant),
+    // "WIRE_NAME" => Some(Self::Variant), — also tolerates the qualified
+    // EnumName::Variant spelling its as_str_name twin accepts (round 17: a
+    // correctly-written qualified arm parsed as an empty table and tripped
+    // the fail-loud guard on a correct mirror).
     if !line.contains("\" =>") {
         return None; // `_ => None,` and friends
     }
     let (wire, rest) = line.split_once("=>")?;
     let wire = wire.trim().trim_matches('"');
+    let rest = rest.trim();
     let variant = rest
-        .trim()
-        .trim_start_matches("Some(Self::")
-        .trim_end_matches("),");
+        .strip_prefix("Some(")
+        .and_then(|inner| inner.strip_suffix("),").or_else(|| inner.strip_suffix(')')))
+        .map(|path| {
+            // Self::Variant or EnumName::Variant — the VARIANT is the last
+            // segment either way.
+            path.rsplit("::").next().unwrap_or_default()
+        })
+        .unwrap_or("");
     if wire.is_empty()
         || variant.is_empty()
         || variant.contains(|c: char| !c.is_alphanumeric() && c != '_')

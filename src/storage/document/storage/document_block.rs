@@ -298,10 +298,15 @@ impl DocumentBlock {
 
     /// Check if a value is null
     fn is_null(value: &SqlValue) -> bool {
+        // Round 17: an unset oneof is the wire form of null too — without
+        // it, a null at an indexed path was neither null-counted nor
+        // excluded from the scalar extrema branch (and compare_values'
+        // wildcard made it stick as both extrema, permanently disabling
+        // range pruning for the block).
         matches!(
             &value.value,
             Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_))
-        )
+        ) || value.value.is_none()
     }
 
     /// Compare two values, returning -1, 0, or 1
