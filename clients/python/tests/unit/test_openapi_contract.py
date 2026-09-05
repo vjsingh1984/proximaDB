@@ -508,6 +508,75 @@ def test_graph_surface_has_the_complete_operation_set(openapi_spec):
         "PERMISSION_DENIED",
     ]
 
+    # Error statuses carry the FULL envelope (success=false + error),
+    # not the bare error body — pin the error-response component shape
+    # (round-1 review: the bare-body form made generated SDKs KeyError
+    # on real 404/500s).
+    for error_component in ("GraphBadRequest", "GraphNotFound", "GraphInternal"):
+        ref = openapi_spec["components"]["responses"][error_component]["content"][
+            "application/json"
+        ]["schema"]["$ref"]
+        assert ref == "#/components/schemas/GraphErrorResponse", error_component
+    err = schemas["GraphErrorResponse"]
+    assert set(err["properties"]) == {"success", "error", "metadata"}
+    assert err["required"] == ["success", "error"]
+
+    # Edge-side payloads + the remaining data payloads (round-1 gap).
+    expected_payloads.update(
+        {
+            "GraphEdgeBatchResults": {
+                "created_count",
+                "updated_count",
+                "failed_count",
+                "results",
+                "errors",
+            },
+            "GraphEdgeQueryResults": {"items", "total_count", "has_more", "next_token"},
+            "GraphDdlData": {"success"},
+            "GraphCyclesData": {"has_cycle"},
+            "GraphComponentsData": {"components"},
+            "GraphQueryData": {"rows", "row_count"},
+            "GraphEmbedding": {"model_id", "model_version", "vector", "dimension"},
+            "GraphTraversalStats": {
+                "nodes_visited",
+                "edges_traversed",
+                "max_depth_reached",
+                "execution_time_ms",
+            },
+        }
+    )
+    for schema_name, expected in expected_payloads.items():
+        actual = set(schemas[schema_name]["properties"])
+        assert (
+            actual == expected
+        ), f"{schema_name} drifted: missing={expected - actual} extra={actual - expected}"
+
+    # Required lists pinned for the always-serialized payloads.
+    for schema_name, required in {
+        "CanonicalNode": ["id", "labels", "properties", "created_at", "updated_at"],
+        "CanonicalEdge": [
+            "id",
+            "from_node_id",
+            "to_node_id",
+            "edge_type",
+            "properties",
+            "created_at",
+            "updated_at",
+        ],
+        "GraphStats": [
+            "total_nodes",
+            "total_edges",
+            "label_stats",
+            "edge_type_stats",
+            "total_properties",
+            "memory_usage_bytes",
+            "average_degree",
+            "max_degree",
+            "connected_components",
+        ],
+    }.items():
+        assert schemas[schema_name]["required"] == required, schema_name
+
 
 # ---------------------------------------------------------------------------
 # Capturing transport

@@ -3265,6 +3265,16 @@ export interface components {
             message: string;
             details?: unknown;
         };
+        /**
+         * @description The graph envelope in its error form — what every graph error
+         *     status actually carries on the wire ({success: false, error:
+         *     {code, message, details?}, metadata?}; `data` is absent.
+         */
+        GraphErrorResponse: {
+            success: boolean;
+            error: components["schemas"]["GraphErrorBody"];
+            metadata?: components["schemas"]["GraphResponseMetadata"];
+        };
         GraphResponseMetadata: {
             request_id?: string;
             /** Format: uint64 */
@@ -4452,39 +4462,42 @@ export interface components {
             };
         };
         /**
-         * @description Invalid argument (graph envelope error body, success=false,
-         *     code INVALID_ARGUMENT).
+         * @description Invalid argument — the FULL graph envelope with success=false
+         *     and error.code INVALID_ARGUMENT (a genuine handler-emitted JSON
+         *     400 exists only on updateGraphSchema; axum extractor rejections
+         *     — malformed JSON, wrong content-type, missing required field —
+         *     are 400/415/422 with PLAIN-TEXT bodies and no envelope).
          */
         GraphBadRequest: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["GraphErrorBody"];
+                "application/json": components["schemas"]["GraphErrorResponse"];
             };
         };
         /**
-         * @description Not found (graph envelope error body, success=false, code
-         *     NOT_FOUND).
+         * @description Not found — the FULL graph envelope with success=false and
+         *     error.code NOT_FOUND.
          */
         GraphNotFound: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["GraphErrorBody"];
+                "application/json": components["schemas"]["GraphErrorResponse"];
             };
         };
         /**
-         * @description Internal error (graph envelope error body, success=false, code
-         *     INTERNAL_ERROR).
+         * @description Internal error — the FULL graph envelope with success=false and
+         *     error.code INTERNAL_ERROR.
          */
         GraphInternal: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["GraphErrorBody"];
+                "application/json": components["schemas"]["GraphErrorResponse"];
             };
         };
     };
@@ -6125,6 +6138,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6156,6 +6170,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6315,6 +6330,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6346,6 +6362,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6377,6 +6394,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6403,6 +6421,7 @@ export interface operations {
                     "application/json": components["schemas"]["GraphComponentsResponse"];
                 };
             };
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6429,6 +6448,7 @@ export interface operations {
                     "application/json": components["schemas"]["GraphCyclesResponse"];
                 };
             };
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6460,6 +6480,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6491,6 +6512,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["GraphBadRequest"];
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };
@@ -6517,6 +6539,7 @@ export interface operations {
                     "application/json": components["schemas"]["GraphStatsResponse"];
                 };
             };
+            404: components["responses"]["GraphNotFound"];
             500: components["responses"]["GraphInternal"];
         };
     };

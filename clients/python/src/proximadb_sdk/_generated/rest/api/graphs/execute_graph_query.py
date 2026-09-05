@@ -11,7 +11,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.graph_error_body import GraphErrorBody
+from ...models.graph_error_response import GraphErrorResponse
 from ...models.graph_query_request import GraphQueryRequest
 from ...models.graph_query_response import GraphQueryResponse
 from ...types import UNSET, Response, Unset
@@ -44,19 +44,24 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> GraphErrorBody | GraphQueryResponse | None:
+) -> GraphErrorResponse | GraphQueryResponse | None:
     if response.status_code == 200:
         response_200 = GraphQueryResponse.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 400:
-        response_400 = GraphErrorBody.from_dict(response.json())
+        response_400 = GraphErrorResponse.from_dict(response.json())
 
         return response_400
 
+    if response.status_code == 404:
+        response_404 = GraphErrorResponse.from_dict(response.json())
+
+        return response_404
+
     if response.status_code == 500:
-        response_500 = GraphErrorBody.from_dict(response.json())
+        response_500 = GraphErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -68,7 +73,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[GraphErrorBody | GraphQueryResponse]:
+) -> Response[GraphErrorResponse | GraphQueryResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -83,7 +88,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: GraphQueryRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[GraphErrorBody | GraphQueryResponse]:
+) -> Response[GraphErrorResponse | GraphQueryResponse]:
     """Execute a graph query.
 
      Executes the query text through the port's JSON query path.
@@ -100,7 +105,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GraphErrorBody | GraphQueryResponse]
+        Response[GraphErrorResponse | GraphQueryResponse]
     """
 
     kwargs = _get_kwargs(
@@ -122,7 +127,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: GraphQueryRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> GraphErrorBody | GraphQueryResponse | None:
+) -> GraphErrorResponse | GraphQueryResponse | None:
     """Execute a graph query.
 
      Executes the query text through the port's JSON query path.
@@ -139,7 +144,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GraphErrorBody | GraphQueryResponse
+        GraphErrorResponse | GraphQueryResponse
     """
 
     return sync_detailed(
@@ -156,7 +161,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: GraphQueryRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[GraphErrorBody | GraphQueryResponse]:
+) -> Response[GraphErrorResponse | GraphQueryResponse]:
     """Execute a graph query.
 
      Executes the query text through the port's JSON query path.
@@ -173,7 +178,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GraphErrorBody | GraphQueryResponse]
+        Response[GraphErrorResponse | GraphQueryResponse]
     """
 
     kwargs = _get_kwargs(
@@ -193,7 +198,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: GraphQueryRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> GraphErrorBody | GraphQueryResponse | None:
+) -> GraphErrorResponse | GraphQueryResponse | None:
     """Execute a graph query.
 
      Executes the query text through the port's JSON query path.
@@ -210,7 +215,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GraphErrorBody | GraphQueryResponse
+        GraphErrorResponse | GraphQueryResponse
     """
 
     return (

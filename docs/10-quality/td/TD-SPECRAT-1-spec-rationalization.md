@@ -264,8 +264,8 @@ with pinned property sets in the contract gate) with the complete
 `impact-analysis` are utoipa-annotated in the root crate (drift-gated
 half) and were already correct.
 
-**Exposed (21 paths / 28 operations; spec 62 → 74):** the 11 existing
-graph paths envelope-corrected + 10 gap paths — schema (PUT),
+**Exposed (21 paths / 28 operations; spec 62 → 74):** the 9 existing
+supplement graph paths envelope-corrected + 12 new paths — schema (PUT),
 nodes/{id} PUT (updateNode was missing entirely), neighbors GET,
 edges/{id} GET/PUT/DELETE, walk, step, shortest-path, query +
 query/nodes + query/edges, components, cycles, constraints/unique

@@ -7592,6 +7592,46 @@ pub mod types {
             value.parse()
         }
     }
+    /// The graph envelope in its error form — what every graph error
+    /// status actually carries on the wire ({success: false, error:
+    /// {code, message, details?}, metadata?}; `data` is absent.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "The graph envelope in its error form — what every graph error\nstatus actually carries on the wire ({success: false, error:\n{code, message, details?}, metadata?}; `data` is absent.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "error",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphErrorResponse {
+        pub error: GraphErrorBody,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphErrorResponse {
+        pub fn builder() -> builder::GraphErrorResponse {
+            Default::default()
+        }
+    }
     ///`GraphNodeBatchResults`
     ///
     /// <details><summary>JSON schema</summary>
@@ -22919,6 +22959,77 @@ pub mod types {
                     code: Ok(value.code),
                     details: Ok(value.details),
                     message: Ok(value.message),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphErrorResponse {
+            error: ::std::result::Result<super::GraphErrorBody, ::std::string::String>,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphErrorResponse {
+            fn default() -> Self {
+                Self {
+                    error: Err("no value supplied for error".to_string()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphErrorResponse {
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::GraphErrorBody>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphErrorResponse> for super::GraphErrorResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphErrorResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphErrorResponse> for GraphErrorResponse {
+            fn from(value: super::GraphErrorResponse) -> Self {
+                Self {
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
                 }
             }
         }
@@ -39590,8 +39701,10 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphCollectionListResponse>, Error<types::GraphErrorBody>>
-        {
+        ) -> Result<
+            ResponseValue<types::GraphCollectionListResponse>,
+            Error<types::GraphErrorResponse>,
+        > {
             let Self {
                 client,
                 x_tenant_id,
@@ -39681,7 +39794,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -39769,7 +39882,7 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -39856,7 +39969,7 @@ pub mod builder {
             self
         }
         ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}`
-        pub async fn send(self) -> Result<ResponseValue<()>, Error<types::GraphErrorBody>> {
+        pub async fn send(self) -> Result<ResponseValue<()>, Error<types::GraphErrorResponse>> {
             let Self {
                 client,
                 graph_id,
@@ -39944,7 +40057,7 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/components`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphComponentsResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphComponentsResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -39985,6 +40098,9 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -40054,7 +40170,8 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/constraints/unique`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphDdlResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphDdlResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -40102,6 +40219,9 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -40173,7 +40293,8 @@ pub mod builder {
         ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/constraints/unique`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphDdlResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphDdlResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -40223,6 +40344,9 @@ pub mod builder {
                 400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -40268,7 +40392,7 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/cycles`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphCyclesResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphCyclesResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -40309,6 +40433,9 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -40376,7 +40503,8 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/edges`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -40496,7 +40624,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/edges/batch`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphBatchEdgesResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphBatchEdgesResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -40545,6 +40673,9 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -40603,7 +40734,8 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -40725,7 +40857,8 @@ pub mod builder {
         ///Sends a `PUT` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -40835,7 +40968,8 @@ pub mod builder {
         ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -41182,7 +41316,8 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -41302,7 +41437,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes/batch`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphBatchNodesResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphBatchNodesResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -41351,6 +41486,9 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -41409,7 +41547,8 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -41531,7 +41670,8 @@ pub mod builder {
         ///Sends a `PUT` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -41641,7 +41781,8 @@ pub mod builder {
         ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorBody>> {
+        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorResponse>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -41743,7 +41884,7 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphNodeListResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphNodeListResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -41857,7 +41998,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/query`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphQueryResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphQueryResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -41904,6 +42045,9 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -41971,7 +42115,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/query/edges`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphEdgeQueryResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphEdgeQueryResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -42018,6 +42162,9 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -42085,7 +42232,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/query/nodes`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphNodeQueryResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphNodeQueryResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -42132,6 +42279,9 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -42203,7 +42353,7 @@ pub mod builder {
         ///Sends a `PUT` request to `/api/v2/graphs/{graph_id}/schema`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -42324,7 +42474,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/shortest-path`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphShortestPathResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphShortestPathResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -42421,7 +42571,7 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/stats`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphStatsResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphStatsResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -42462,6 +42612,9 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -42527,7 +42680,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/step`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -42644,7 +42797,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/traverse`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,
@@ -42761,7 +42914,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/walk`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorBody>>
+        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorResponse>>
         {
             let Self {
                 client,

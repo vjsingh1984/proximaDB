@@ -1706,6 +1706,8 @@ paths:
                 $ref: '#/components/schemas/GraphBatchNodesResponse'
         '400':
           $ref: '#/components/responses/GraphBadRequest'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -1741,6 +1743,8 @@ paths:
                 $ref: '#/components/schemas/GraphBatchEdgesResponse'
         '400':
           $ref: '#/components/responses/GraphBadRequest'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -1919,6 +1923,8 @@ paths:
                 $ref: '#/components/schemas/GraphQueryResponse'
         '400':
           $ref: '#/components/responses/GraphBadRequest'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -1954,6 +1960,8 @@ paths:
                 $ref: '#/components/schemas/GraphNodeQueryResponse'
         '400':
           $ref: '#/components/responses/GraphBadRequest'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -1990,6 +1998,8 @@ paths:
                 $ref: '#/components/schemas/GraphEdgeQueryResponse'
         '400':
           $ref: '#/components/responses/GraphBadRequest'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -2014,6 +2024,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GraphComponentsResponse'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -2038,6 +2050,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GraphCyclesResponse'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -2070,6 +2084,8 @@ paths:
                 $ref: '#/components/schemas/GraphDdlResponse'
         '400':
           $ref: '#/components/responses/GraphBadRequest'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -2099,6 +2115,8 @@ paths:
                 $ref: '#/components/schemas/GraphDdlResponse'
         '400':
           $ref: '#/components/responses/GraphBadRequest'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -2123,6 +2141,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GraphStatsResponse'
+        '404':
+          $ref: '#/components/responses/GraphNotFound'
         '500':
           $ref: '#/components/responses/GraphInternal'
       parameters:
@@ -6196,6 +6216,22 @@ components:
         message:
           type: string
         details: {}
+    GraphErrorResponse:
+      type: object
+      required:
+      - success
+      - error
+      description: |
+        The graph envelope in its error form — what every graph error
+        status actually carries on the wire ({success: false, error:
+        {code, message, details?}, metadata?}; `data` is absent.
+      properties:
+        success:
+          type: boolean
+        error:
+          $ref: '#/components/schemas/GraphErrorBody'
+        metadata:
+          $ref: '#/components/schemas/GraphResponseMetadata'
     GraphResponseMetadata:
       type: object
       properties:
@@ -8554,28 +8590,31 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     GraphBadRequest:
       description: |
-        Invalid argument (graph envelope error body, success=false,
-        code INVALID_ARGUMENT).
+        Invalid argument — the FULL graph envelope with success=false
+        and error.code INVALID_ARGUMENT (a genuine handler-emitted JSON
+        400 exists only on updateGraphSchema; axum extractor rejections
+        — malformed JSON, wrong content-type, missing required field —
+        are 400/415/422 with PLAIN-TEXT bodies and no envelope).
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/GraphErrorBody'
+            $ref: '#/components/schemas/GraphErrorResponse'
     GraphNotFound:
       description: |
-        Not found (graph envelope error body, success=false, code
-        NOT_FOUND).
+        Not found — the FULL graph envelope with success=false and
+        error.code NOT_FOUND.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/GraphErrorBody'
+            $ref: '#/components/schemas/GraphErrorResponse'
     GraphInternal:
       description: |
-        Internal error (graph envelope error body, success=false, code
-        INTERNAL_ERROR).
+        Internal error — the FULL graph envelope with success=false and
+        error.code INTERNAL_ERROR.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/GraphErrorBody'
+            $ref: '#/components/schemas/GraphErrorResponse'
 tags:
 - name: Collections
   description: Collection lifecycle.

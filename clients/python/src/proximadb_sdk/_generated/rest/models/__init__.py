@@ -163,6 +163,7 @@ from .graph_edge_response import GraphEdgeResponse
 from .graph_embedding import GraphEmbedding
 from .graph_error_body import GraphErrorBody
 from .graph_error_body_code import GraphErrorBodyCode
+from .graph_error_response import GraphErrorResponse
 from .graph_node_batch_results import GraphNodeBatchResults
 from .graph_node_list_response import GraphNodeListResponse
 from .graph_node_query import GraphNodeQuery
@@ -454,6 +455,7 @@ __all__ = (
     "GraphEmbedding",
     "GraphErrorBody",
     "GraphErrorBodyCode",
+    "GraphErrorResponse",
     "GraphNodeBatchResults",
     "GraphNodeListResponse",
     "GraphNodeQuery",

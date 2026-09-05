@@ -1711,6 +1711,15 @@ type GraphErrorBody struct {
 // GraphErrorBodyCode defines model for GraphErrorBody.Code.
 type GraphErrorBodyCode string
 
+// GraphErrorResponse The graph envelope in its error form — what every graph error
+// status actually carries on the wire ({success: false, error:
+// {code, message, details?}, metadata?}; `data` is absent.
+type GraphErrorResponse struct {
+	Error    GraphErrorBody         `json:"error"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
 // GraphNodeBatchResults defines model for GraphNodeBatchResults.
 type GraphNodeBatchResults struct {
 	CreatedCount uint64          `json:"created_count"`
@@ -3162,14 +3171,20 @@ type AbacUnavailable = AbacOperatorErrorResponse
 // bug reports.
 type BadRequest = ErrorResponse
 
-// GraphBadRequest defines model for GraphBadRequest.
-type GraphBadRequest = GraphErrorBody
+// GraphBadRequest The graph envelope in its error form — what every graph error
+// status actually carries on the wire ({success: false, error:
+// {code, message, details?}, metadata?}; `data` is absent.
+type GraphBadRequest = GraphErrorResponse
 
-// GraphInternal defines model for GraphInternal.
-type GraphInternal = GraphErrorBody
+// GraphInternal The graph envelope in its error form — what every graph error
+// status actually carries on the wire ({success: false, error:
+// {code, message, details?}, metadata?}; `data` is absent.
+type GraphInternal = GraphErrorResponse
 
-// GraphNotFound defines model for GraphNotFound.
-type GraphNotFound = GraphErrorBody
+// GraphNotFound The graph envelope in its error form — what every graph error
+// status actually carries on the wire ({success: false, error:
+// {code, message, details?}, metadata?}; `data` is absent.
+type GraphNotFound = GraphErrorResponse
 
 // InternalError Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 //
@@ -19513,6 +19528,8 @@ type GetConnectedComponentsHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *GraphComponentsResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -19520,6 +19537,11 @@ type GetConnectedComponentsHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetConnectedComponentsHTTPResp) GetJSON200() *GraphComponentsResponse {
 	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetConnectedComponentsHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -19563,6 +19585,8 @@ type RemoveUniqueConstraintHTTPResp struct {
 	JSON200 *GraphDdlResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -19575,6 +19599,11 @@ func (r RemoveUniqueConstraintHTTPResp) GetJSON200() *GraphDdlResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r RemoveUniqueConstraintHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RemoveUniqueConstraintHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -19618,6 +19647,8 @@ type AddUniqueConstraintHTTPResp struct {
 	JSON200 *GraphDdlResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -19630,6 +19661,11 @@ func (r AddUniqueConstraintHTTPResp) GetJSON200() *GraphDdlResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r AddUniqueConstraintHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AddUniqueConstraintHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -19671,6 +19707,8 @@ type CheckCyclesHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *GraphCyclesResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -19678,6 +19716,11 @@ type CheckCyclesHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r CheckCyclesHTTPResp) GetJSON200() *GraphCyclesResponse {
 	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CheckCyclesHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -19783,6 +19826,8 @@ type BatchCreateEdgesHTTPResp struct {
 	JSON200 *GraphBatchEdgesResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -19795,6 +19840,11 @@ func (r BatchCreateEdgesHTTPResp) GetJSON200() *GraphBatchEdgesResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r BatchCreateEdgesHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r BatchCreateEdgesHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -20182,6 +20232,8 @@ type BatchCreateNodesHTTPResp struct {
 	JSON200 *GraphBatchNodesResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -20194,6 +20246,11 @@ func (r BatchCreateNodesHTTPResp) GetJSON200() *GraphBatchNodesResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r BatchCreateNodesHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r BatchCreateNodesHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -20464,6 +20521,8 @@ type ExecuteGraphQueryHTTPResp struct {
 	JSON200 *GraphQueryResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -20476,6 +20535,11 @@ func (r ExecuteGraphQueryHTTPResp) GetJSON200() *GraphQueryResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r ExecuteGraphQueryHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ExecuteGraphQueryHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -20519,6 +20583,8 @@ type QueryEdgesHTTPResp struct {
 	JSON200 *GraphEdgeQueryResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -20531,6 +20597,11 @@ func (r QueryEdgesHTTPResp) GetJSON200() *GraphEdgeQueryResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r QueryEdgesHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r QueryEdgesHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -20574,6 +20645,8 @@ type QueryNodesHTTPResp struct {
 	JSON200 *GraphNodeQueryResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -20586,6 +20659,11 @@ func (r QueryNodesHTTPResp) GetJSON200() *GraphNodeQueryResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r QueryNodesHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r QueryNodesHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -20751,6 +20829,8 @@ type GetGraphStatsHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *GraphStatsResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *GraphInternal
 }
@@ -20758,6 +20838,11 @@ type GetGraphStatsHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetGraphStatsHTTPResp) GetJSON200() *GraphStatsResponse {
 	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetGraphStatsHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -26781,6 +26866,13 @@ func ParseGetConnectedComponentsHTTPResp(rsp *http.Response) (*GetConnectedCompo
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -26820,6 +26912,13 @@ func ParseRemoveUniqueConstraintHTTPResp(rsp *http.Response) (*RemoveUniqueConst
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
@@ -26861,6 +26960,13 @@ func ParseAddUniqueConstraintHTTPResp(rsp *http.Response) (*AddUniqueConstraintH
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -26893,6 +26999,13 @@ func ParseCheckCyclesHTTPResp(rsp *http.Response) (*CheckCyclesHTTPResp, error) 
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
@@ -26980,6 +27093,13 @@ func ParseBatchCreateEdgesHTTPResp(rsp *http.Response) (*BatchCreateEdgesHTTPRes
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
@@ -27275,6 +27395,13 @@ func ParseBatchCreateNodesHTTPResp(rsp *http.Response) (*BatchCreateNodesHTTPRes
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -27482,6 +27609,13 @@ func ParseExecuteGraphQueryHTTPResp(rsp *http.Response) (*ExecuteGraphQueryHTTPR
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -27522,6 +27656,13 @@ func ParseQueryEdgesHTTPResp(rsp *http.Response) (*QueryEdgesHTTPResp, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -27561,6 +27702,13 @@ func ParseQueryNodesHTTPResp(rsp *http.Response) (*QueryNodesHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal
@@ -27688,6 +27836,13 @@ func ParseGetGraphStatsHTTPResp(rsp *http.Response) (*GetGraphStatsHTTPResp, err
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest GraphInternal

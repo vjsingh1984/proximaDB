@@ -103,6 +103,7 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateGraphRequest"
       responses:
+
         "201":
           description: Graph collection created (envelope; data = serialized collection).
           content:
@@ -169,6 +170,7 @@ paths:
             schema:
               $ref: "#/components/schemas/UpdateGraphSchemaRequest"
       responses:
+
         "200":
           description: Updated collection (envelope).
           content:
@@ -192,6 +194,7 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateNodeRequest"
       responses:
+
         "201":
           description: Created node (envelope).
           content:
@@ -232,6 +235,7 @@ paths:
             schema:
               $ref: "#/components/schemas/NodeInput"
       responses:
+
         "200":
           description: Updated node (envelope).
           content:
@@ -285,6 +289,7 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateEdgeRequest"
       responses:
+
         "201":
           description: Created edge (envelope).
           content:
@@ -325,6 +330,7 @@ paths:
             schema:
               $ref: "#/components/schemas/EdgeInput"
       responses:
+
         "200":
           description: Updated edge (envelope).
           content:
@@ -364,6 +370,7 @@ paths:
             schema:
               $ref: "#/components/schemas/BatchCreateNodesRequest"
       responses:
+
         "200":
           description: Batch outcome (envelope).
           content:
@@ -371,6 +378,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GraphBatchNodesResponse"
         "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/edges/batch:
     parameters:
@@ -389,6 +397,7 @@ paths:
             schema:
               $ref: "#/components/schemas/BatchCreateEdgesRequest"
       responses:
+
         "200":
           description: Batch outcome (envelope).
           content:
@@ -396,6 +405,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GraphBatchEdgesResponse"
         "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/traverse:
     parameters:
@@ -411,6 +421,7 @@ paths:
             schema:
               $ref: "#/components/schemas/TraverseRequest"
       responses:
+
         "200":
           description: Traversal result (envelope).
           content:
@@ -437,6 +448,7 @@ paths:
             schema:
               $ref: "#/components/schemas/WalkRequest"
       responses:
+
         "200":
           description: Walk result (envelope; traversal shape).
           content:
@@ -463,6 +475,7 @@ paths:
             schema:
               $ref: "#/components/schemas/WalkStepRequest"
       responses:
+
         "200":
           description: Step result (envelope).
           content:
@@ -486,6 +499,7 @@ paths:
             schema:
               $ref: "#/components/schemas/ShortestPathRequest"
       responses:
+
         "200":
           description: Shortest-path result (envelope; found=false when unreachable).
           content:
@@ -513,6 +527,7 @@ paths:
             schema:
               $ref: "#/components/schemas/GraphQueryRequest"
       responses:
+
         "200":
           description: Query result (envelope; data carries rows and row_count).
           content:
@@ -520,6 +535,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GraphQueryResponse"
         "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/query/nodes:
     parameters:
@@ -538,6 +554,7 @@ paths:
             schema:
               $ref: "#/components/schemas/GraphNodeQuery"
       responses:
+
         "200":
           description: Matching nodes (envelope; QueryResults shape).
           content:
@@ -545,6 +562,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GraphNodeQueryResponse"
         "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/query/edges:
     parameters:
@@ -564,6 +582,7 @@ paths:
             schema:
               $ref: "#/components/schemas/GraphEdgeQuery"
       responses:
+
         "200":
           description: Matching edges (envelope; QueryResults shape).
           content:
@@ -571,6 +590,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GraphEdgeQueryResponse"
         "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/components:
     parameters:
@@ -586,6 +606,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GraphComponentsResponse"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/cycles:
     parameters:
@@ -601,6 +622,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GraphCyclesResponse"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/constraints/unique:
     parameters:
@@ -616,6 +638,7 @@ paths:
             schema:
               $ref: "#/components/schemas/UniqueConstraintRequest"
       responses:
+
         "200":
           description: DDL outcome (envelope; data carries success).
           content:
@@ -623,6 +646,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GraphDdlResponse"
         "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
     delete:
       tags: [Graphs]
@@ -635,6 +659,7 @@ paths:
             schema:
               $ref: "#/components/schemas/UniqueConstraintRequest"
       responses:
+
         "200":
           description: DDL outcome (envelope; data carries success).
           content:
@@ -642,6 +667,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GraphDdlResponse"
         "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/stats:
     parameters:
@@ -657,6 +683,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GraphStatsResponse"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
         "500": { $ref: "#/components/responses/GraphInternal" }
 
   # ── Hybrid search (free-form passthrough). ──────────────────────────────
@@ -1838,28 +1865,31 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     GraphBadRequest:
       description: |
-        Invalid argument (graph envelope error body, success=false,
-        code INVALID_ARGUMENT).
+        Invalid argument — the FULL graph envelope with success=false
+        and error.code INVALID_ARGUMENT (a genuine handler-emitted JSON
+        400 exists only on updateGraphSchema; axum extractor rejections
+        — malformed JSON, wrong content-type, missing required field —
+        are 400/415/422 with PLAIN-TEXT bodies and no envelope).
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/GraphErrorBody"
+            $ref: "#/components/schemas/GraphErrorResponse"
     GraphNotFound:
       description: |
-        Not found (graph envelope error body, success=false, code
-        NOT_FOUND).
+        Not found — the FULL graph envelope with success=false and
+        error.code NOT_FOUND.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/GraphErrorBody"
+            $ref: "#/components/schemas/GraphErrorResponse"
     GraphInternal:
       description: |
-        Internal error (graph envelope error body, success=false, code
-        INTERNAL_ERROR).
+        Internal error — the FULL graph envelope with success=false and
+        error.code INTERNAL_ERROR.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/GraphErrorBody"
+            $ref: "#/components/schemas/GraphErrorResponse"
   schemas:
     HealthResponse:
       type: object
@@ -1909,6 +1939,18 @@ components:
           enum: [NOT_FOUND, ALREADY_EXISTS, INVALID_ARGUMENT, CONSTRAINT_VIOLATION, INTERNAL_ERROR, TIMEOUT, PERMISSION_DENIED]
         message: { type: string }
         details: {}
+    GraphErrorResponse:
+      type: object
+      required: [success, error]
+      description: |
+        The graph envelope in its error form — what every graph error
+        status actually carries on the wire ({success: false, error:
+        {code, message, details?}, metadata?}; `data` is absent.
+      properties:
+        success:
+          type: boolean
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
     GraphResponseMetadata:
       type: object
       properties:

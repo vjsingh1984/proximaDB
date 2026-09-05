@@ -11,7 +11,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.graph_error_body import GraphErrorBody
+from ...models.graph_error_response import GraphErrorResponse
 from ...types import UNSET, Response, Unset
 
 
@@ -37,18 +37,18 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | GraphErrorBody | None:
+) -> Any | GraphErrorResponse | None:
     if response.status_code == 204:
         response_204 = cast(Any, None)
         return response_204
 
     if response.status_code == 404:
-        response_404 = GraphErrorBody.from_dict(response.json())
+        response_404 = GraphErrorResponse.from_dict(response.json())
 
         return response_404
 
     if response.status_code == 500:
-        response_500 = GraphErrorBody.from_dict(response.json())
+        response_500 = GraphErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -60,7 +60,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | GraphErrorBody]:
+) -> Response[Any | GraphErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,7 +74,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[Any | GraphErrorBody]:
+) -> Response[Any | GraphErrorResponse]:
     """Delete a graph collection.
 
      204 on success (the handler's success body is not transmitted on
@@ -89,7 +89,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | GraphErrorBody]
+        Response[Any | GraphErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -109,7 +109,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Any | GraphErrorBody | None:
+) -> Any | GraphErrorResponse | None:
     """Delete a graph collection.
 
      204 on success (the handler's success body is not transmitted on
@@ -124,7 +124,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | GraphErrorBody
+        Any | GraphErrorResponse
     """
 
     return sync_detailed(
@@ -139,7 +139,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[Any | GraphErrorBody]:
+) -> Response[Any | GraphErrorResponse]:
     """Delete a graph collection.
 
      204 on success (the handler's success body is not transmitted on
@@ -154,7 +154,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | GraphErrorBody]
+        Response[Any | GraphErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -172,7 +172,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Any | GraphErrorBody | None:
+) -> Any | GraphErrorResponse | None:
     """Delete a graph collection.
 
      204 on success (the handler's success body is not transmitted on
@@ -187,7 +187,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | GraphErrorBody
+        Any | GraphErrorResponse
     """
 
     return (

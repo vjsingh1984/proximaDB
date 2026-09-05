@@ -12,7 +12,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.graph_components_response import GraphComponentsResponse
-from ...models.graph_error_body import GraphErrorBody
+from ...models.graph_error_response import GraphErrorResponse
 from ...types import UNSET, Response, Unset
 
 
@@ -38,14 +38,19 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> GraphComponentsResponse | GraphErrorBody | None:
+) -> GraphComponentsResponse | GraphErrorResponse | None:
     if response.status_code == 200:
         response_200 = GraphComponentsResponse.from_dict(response.json())
 
         return response_200
 
+    if response.status_code == 404:
+        response_404 = GraphErrorResponse.from_dict(response.json())
+
+        return response_404
+
     if response.status_code == 500:
-        response_500 = GraphErrorBody.from_dict(response.json())
+        response_500 = GraphErrorResponse.from_dict(response.json())
 
         return response_500
 
@@ -57,7 +62,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[GraphComponentsResponse | GraphErrorBody]:
+) -> Response[GraphComponentsResponse | GraphErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,7 +76,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[GraphComponentsResponse | GraphErrorBody]:
+) -> Response[GraphComponentsResponse | GraphErrorResponse]:
     """Get the graph's connected components.
 
     Args:
@@ -83,7 +88,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GraphComponentsResponse | GraphErrorBody]
+        Response[GraphComponentsResponse | GraphErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -103,7 +108,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> GraphComponentsResponse | GraphErrorBody | None:
+) -> GraphComponentsResponse | GraphErrorResponse | None:
     """Get the graph's connected components.
 
     Args:
@@ -115,7 +120,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GraphComponentsResponse | GraphErrorBody
+        GraphComponentsResponse | GraphErrorResponse
     """
 
     return sync_detailed(
@@ -130,7 +135,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[GraphComponentsResponse | GraphErrorBody]:
+) -> Response[GraphComponentsResponse | GraphErrorResponse]:
     """Get the graph's connected components.
 
     Args:
@@ -142,7 +147,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GraphComponentsResponse | GraphErrorBody]
+        Response[GraphComponentsResponse | GraphErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -160,7 +165,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> GraphComponentsResponse | GraphErrorBody | None:
+) -> GraphComponentsResponse | GraphErrorResponse | None:
     """Get the graph's connected components.
 
     Args:
@@ -172,7 +177,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GraphComponentsResponse | GraphErrorBody
+        GraphComponentsResponse | GraphErrorResponse
     """
 
     return (
