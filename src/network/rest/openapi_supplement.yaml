@@ -694,10 +694,12 @@ paths:
   # the optional X-Tenant-ID header IS consulted (per-tenant structural
   # isolation: each tenant gets its own engine rooted at
   # <data>/timeseries/<tenant>). Responses are FLAT (no envelope). All
-  # handler errors map to 500 with the canonical error envelope —
-  # including "collection not found" (not 404); extractor rejections are
-  # plain text. Aggregate buckets are free-form JSON (the aggregation
-  # result objects).
+  # handler errors map to 500 with the canonical error envelope (no 404
+  # exists on this surface); an UNKNOWN collection is NOT an error —
+  # query/aggregate return 200 with empty points/buckets, delete returns
+  # 200 with success:false. Extractor rejections are plain text.
+  # Aggregate buckets are free-form JSON (the aggregation result
+  # objects).
   /api/v2/timeseries/collections:
     post:
       tags: [Timeseries]
@@ -3665,8 +3667,12 @@ components:
       required: [name]
       properties:
         name: { type: string }
-        unit: { type: string }
-        aggregation: { type: string }
+        unit:
+          type: [string, "null"]
+          description: Serialized as an explicit null when unset.
+        aggregation:
+          type: [string, "null"]
+          description: Serialized as an explicit null when unset.
     TsCollectionConfig:
       type: object
       required: [name]
@@ -3694,7 +3700,7 @@ components:
           description: Epoch milliseconds.
         values:
           type: object
-          additionalProperties: { type: number }
+          additionalProperties: { type: number, format: double }
         tags:
           type: object
           additionalProperties: { type: string }

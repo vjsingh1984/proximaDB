@@ -14452,7 +14452,8 @@ pub mod types {
     ///    "values": {
     ///      "type": "object",
     ///      "additionalProperties": {
-    ///        "type": "number"
+    ///        "type": "number",
+    ///        "format": "double"
     ///      }
     ///    }
     ///  }
@@ -14564,13 +14565,21 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "aggregation": {
-    ///      "type": "string"
+    ///      "description": "Serialized as an explicit null when unset.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
     ///    },
     ///    "name": {
     ///      "type": "string"
     ///    },
     ///    "unit": {
-    ///      "type": "string"
+    ///      "description": "Serialized as an explicit null when unset.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
     ///    }
     ///  }
     ///}
@@ -14578,9 +14587,11 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct TsValueColumn {
+        ///Serialized as an explicit null when unset.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub aggregation: ::std::option::Option<::std::string::String>,
         pub name: ::std::string::String,
+        ///Serialized as an explicit null when unset.
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub unit: ::std::option::Option<::std::string::String>,
     }

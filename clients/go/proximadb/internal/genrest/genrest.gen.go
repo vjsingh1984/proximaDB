@@ -2929,7 +2929,7 @@ type TsPoint struct {
 
 	// Timestamp Epoch milliseconds.
 	Timestamp int64               `json:"timestamp"`
-	Values    *map[string]float32 `json:"values,omitempty"`
+	Values    *map[string]float64 `json:"values,omitempty"`
 }
 
 // TsQueryRequest defines model for TsQueryRequest.
@@ -2946,9 +2946,12 @@ type TsQueryResponse struct {
 
 // TsValueColumn defines model for TsValueColumn.
 type TsValueColumn struct {
+	// Aggregation Serialized as an explicit null when unset.
 	Aggregation *string `json:"aggregation,omitempty"`
 	Name        string  `json:"name"`
-	Unit        *string `json:"unit,omitempty"`
+
+	// Unit Serialized as an explicit null when unset.
+	Unit *string `json:"unit,omitempty"`
 }
 
 // TypedFilter A typed filter for search operations

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -21,21 +21,29 @@ class TsValueColumn:
     """
     Attributes:
         name (str):
-        unit (str | Unset):
-        aggregation (str | Unset):
+        unit (None | str | Unset): Serialized as an explicit null when unset.
+        aggregation (None | str | Unset): Serialized as an explicit null when unset.
     """
 
     name: str
-    unit: str | Unset = UNSET
-    aggregation: str | Unset = UNSET
+    unit: None | str | Unset = UNSET
+    aggregation: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
 
-        unit = self.unit
+        unit: None | str | Unset
+        if isinstance(self.unit, Unset):
+            unit = UNSET
+        else:
+            unit = self.unit
 
-        aggregation = self.aggregation
+        aggregation: None | str | Unset
+        if isinstance(self.aggregation, Unset):
+            aggregation = UNSET
+        else:
+            aggregation = self.aggregation
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -56,9 +64,23 @@ class TsValueColumn:
         d = dict(src_dict)
         name = d.pop("name")
 
-        unit = d.pop("unit", UNSET)
+        def _parse_unit(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
 
-        aggregation = d.pop("aggregation", UNSET)
+        unit = _parse_unit(d.pop("unit", UNSET))
+
+        def _parse_aggregation(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        aggregation = _parse_aggregation(d.pop("aggregation", UNSET))
 
         ts_value_column = cls(
             name=name,

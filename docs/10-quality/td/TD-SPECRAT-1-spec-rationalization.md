@@ -310,10 +310,15 @@ Rationalization notes:
   here.
 * **Flat responses, no envelope** — the handler bodies are the wire
   bodies (`{ingested}`, `{points}`, `{buckets}`, …).
-* **Error posture documented honestly:** every handler error maps to
-  500 with the canonical envelope — including "collection not found"
-  (there is no 404 on this surface); a missing global service is also a
-  500. `aggregate` buckets are free-form JSON objects.
-* The surface deliberately matches the contract the Python SDK's
-  `rest_adapter` already consumes (its field reads align with the flat
-  wire shapes — verified no facade fallout this time).
+* **Error posture documented honestly:** handler errors map to 500
+  with the canonical envelope (no 404 exists on this surface); an
+  UNKNOWN collection is not an error — query/aggregate return 200
+  empty, delete returns 200 `success:false`. A missing global service
+  is a 500. `aggregate` buckets are free-form JSON objects.
+* **Python facade divergence recorded (round-1 review):** the
+  hand-written `timeseries.py` facade sends ISO-8601 STRING timestamps
+  where the handler requires epoch-millis i64 (axum 422; the facade
+  then silently falls back to local storage), sends aggregation fields
+  to `/query` (serde drops them — never worked), and never calls
+  `/aggregate`. Pre-existing, not introduced here — the published spec
+  is what makes the divergence visible; the facade fix is a follow-up.

@@ -4444,8 +4444,10 @@ export interface components {
         };
         TsValueColumn: {
             name: string;
-            unit?: string;
-            aggregation?: string;
+            /** @description Serialized as an explicit null when unset. */
+            unit?: string | null;
+            /** @description Serialized as an explicit null when unset. */
+            aggregation?: string | null;
         };
         TsCollectionConfig: {
             name: string;
