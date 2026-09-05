@@ -187,10 +187,15 @@ impl VectorExtractor for HelixExtractor {
 
                 // Handle metadata - convert HashMap<String, SqlValue> to JSON Value
                 let metadata = if !record.metadata.is_empty() {
+                    // Round 14: an unset oneof is the wire null — kept as a
+                    // JSON null entry, not dropped (null accounting per seam).
                     let json_map: serde_json::Map<String, serde_json::Value> = record
                         .metadata
                         .into_iter()
-                        .filter_map(|(k, v)| sql_value_to_json(&v).map(|jv| (k, jv)))
+                        .map(|(k, v)| {
+                            let jv = sql_value_to_json(&v).unwrap_or(serde_json::Value::Null);
+                            (k, jv)
+                        })
                         .collect();
                     if json_map.is_empty() {
                         None

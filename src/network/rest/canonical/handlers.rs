@@ -1318,36 +1318,10 @@ fn parse_distribution_mode(
 
 /// Helper: convert proto SqlValue to serde_json::Value (temporary until full internal refactor)
 fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
-    use proximadb_v1::sql_value::Value as V;
-    match v.value.as_ref() {
-        Some(V::StringValue(s)) => serde_json::Value::String(s.clone()),
-        Some(V::NumberValue(n)) => serde_json::Value::Number(
-            serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
-        ),
-        Some(V::BoolValue(b)) => serde_json::Value::Bool(*b),
-        Some(V::Int64Value(i)) => serde_json::Value::Number((*i).into()),
-        Some(V::BytesValue(b)) => {
-            // Represent bytes as JSON array of integers
-            serde_json::Value::Array(
-                b.iter()
-                    .map(|x| serde_json::Value::Number((*x as u64).into()))
-                    .collect(),
-            )
-        }
-        Some(V::JsonbValue(b)) => proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b),
-        Some(V::NullValue(_)) => serde_json::Value::Null,
-        Some(V::ArrayValue(arr)) => {
-            serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
-        }
-        Some(V::ObjectValue(obj)) => {
-            let mut map = serde_json::Map::new();
-            for (k, sv) in &obj.fields {
-                map.insert(k.clone(), sql_value_to_json(sv));
-            }
-            serde_json::Value::Object(map)
-        }
-        None => serde_json::Value::Null,
-    }
+    // Round 14: delegate to the shared converter — this hand-rolled copy had
+    // already drifted (bytes as int-array/hex vs the helper's base64; NaN as
+    // Number(0) vs Null).
+    crate::storage::formats::arrow_conversion::sql_value_to_json(v)
 }
 
 // =============================================================================

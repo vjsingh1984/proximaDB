@@ -93,33 +93,24 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
         // walker for the remainder. Only the final leaf is cloned.
         let (head, tail) = field.split_once('.')?;
         let mut segments = tail.split('.');
-        let mut current = metadata.get(head)?.value.as_ref()?;
-        // (a null ROOT is handled by the wrapper when the whole field is
-        // requested; a null HEAD with remaining segments is terminal below.)
+        // Sentinel for a null HEAD (unset oneof at depth 1): NullValue is
+        // the wire null the rest of the file already lowers — a dotted path
+        // into it dead-ends in the wildcard below; as a leaf it lowers to
+        // JSON null (round 14: null behaved differently at depth 1 vs 2).
+        static NULL_SENTINEL: SqlVal = SqlVal::NullValue(0);
+        let mut current = metadata.get(head)?.value.as_ref().unwrap_or(&NULL_SENTINEL);
         for segment in segments.by_ref() {
             match current {
-                SqlVal::ObjectValue(obj) => {
-                    // A present key with an unset oneof IS the wire form of a
-                    // nested null (search-types' writer emits SqlValue{value:
-                    // None} for ProximaValue::Null children) — treat it as a
-                    // JSON null leaf, not a dead end (round 11: the old
-                    // `?` silently dropped rows on `a.b.c = null`).
-                    match obj.fields.get(segment) {
-                        Some(child) => match child.value.as_ref() {
-                            Some(inner) => current = inner,
-                            // Unset oneof: the wire form of null. As a leaf it
-                            // resolves to JSON null; mid-path it is terminal.
-                            None => {
-                                return if segments.next().is_none() {
-                                    Some(serde_json::Value::Null)
-                                } else {
-                                    None
-                                };
-                            }
-                        },
-                        None => return None,
+                SqlVal::ObjectValue(obj) => match obj.fields.get(segment) {
+                    Some(child) => {
+                        static NULL_SENTINEL: SqlVal = SqlVal::NullValue(0);
+                        current = child.value.as_ref().unwrap_or(&NULL_SENTINEL);
                     }
-                }
+                    None => return None,
+                },
+                // A NullValue sentinel mid-path is terminal (the wildcard
+                // below returns None); as the final leaf the post-loop
+                // lowering renders it as JSON null.
                 // Canonical JSONB decodes once and continues as JSON; legacy
                 // tag-8 bytes stay opaque (pre-PR behavior).
                 SqlVal::JsonbValue(bytes) => {
@@ -161,10 +152,6 @@ pub fn json_get_path<'a>(
     Some(current)
 }
 
-/// Lower a proto `SqlValue` payload to `serde_json::Value` so the wire/`SqlValue`
-/// metadata path shares the canonical operator semantics (the seam compares on
-/// `serde_json::Value`). Numbers stay numeric (so `compare_json_numbers` keeps
-/// integer precision); bytes become a JSON array of byte values.
 /// Lower a whole `SqlValue` (including its unset-oneof null wire form) to
 /// JSON. Single authority for "unset oneof == JSON null" — rounds 11/12 were
 /// each this rule drifting by depth; do not re-derive it per call site.
@@ -175,7 +162,11 @@ fn sql_value_to_json(sql: &SqlValue) -> serde_json::Value {
     }
 }
 
-fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
+/// Lower a proto `SqlValue` payload to `serde_json::Value` so the wire/`SqlValue`
+/// metadata path shares the canonical operator semantics (the seam compares on
+/// `serde_json::Value`). Numbers stay numeric (so `compare_json_numbers` keeps
+/// integer precision); bytes become a JSON array of byte values.
+pub fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
     match value {
         SqlVal::StringValue(s) => serde_json::Value::String(s.clone()),
         SqlVal::NumberValue(n) => serde_json::Number::from_f64(*n)
@@ -377,29 +368,28 @@ pub fn compare_json_op(
     json_val: &serde_json::Value,
     value: &serde_json::Value,
 ) -> bool {
+    // SQL three-valued logic, centralized (round 14): a null on EITHER side
+    // makes every comparison false, with exactly two carve-outs —
+    // `field IS NULL` / `IS NOT NULL` (they speak about null by design) and
+    // the pinned JSON-consistent `field = null` (both sides null ⇒ true).
+    // Subsumes the round-13 per-arm range guards (which missed Between) and
+    // closes the !=/NOT-IN null admission.
+    let either_null = json_val.is_null() || value.is_null();
+    if either_null {
+        return match operator {
+            ComparisonOperator::IsNull => json_val.is_null(),
+            ComparisonOperator::IsNotNull => !json_val.is_null(),
+            ComparisonOperator::Equals => json_val.is_null() && value.is_null(),
+            _ => false,
+        };
+    }
     match operator {
         ComparisonOperator::Equals => json_eq(json_val, value),
         ComparisonOperator::NotEquals => !json_eq(json_val, value),
-        ComparisonOperator::LessThan => {
-            // SQL: NULL is unordered — a null-valued field
-            // satisfies no range predicate (round 13).
-            !json_val.is_null() && !value.is_null() && compare_json_lt(json_val, value)
-        }
-        ComparisonOperator::LessThanOrEqual => {
-            // SQL: NULL is unordered — a null-valued field
-            // satisfies no range predicate (round 13).
-            !json_val.is_null() && !value.is_null() && compare_json_lte(json_val, value)
-        }
-        ComparisonOperator::GreaterThan => {
-            // SQL: NULL is unordered — a null-valued field
-            // satisfies no range predicate (round 13).
-            !json_val.is_null() && !value.is_null() && compare_json_gt(json_val, value)
-        }
-        ComparisonOperator::GreaterThanOrEqual => {
-            // SQL: NULL is unordered — a null-valued field
-            // satisfies no range predicate (round 13).
-            !json_val.is_null() && !value.is_null() && compare_json_gte(json_val, value)
-        }
+        ComparisonOperator::LessThan => compare_json_lt(json_val, value),
+        ComparisonOperator::LessThanOrEqual => compare_json_lte(json_val, value),
+        ComparisonOperator::GreaterThan => compare_json_gt(json_val, value),
+        ComparisonOperator::GreaterThanOrEqual => compare_json_gte(json_val, value),
         ComparisonOperator::In => match json_val {
             // Array-valued prop (e.g. `member_oids`): match when
             // the prop set intersects the query list.

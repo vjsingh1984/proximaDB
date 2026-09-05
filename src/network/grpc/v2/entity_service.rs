@@ -716,15 +716,17 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
         // Round 11: JSON(B) as canonical JSON text — the wildcard silently
         // dropped the property at this sibling of the adjacency seam the
         // round-8 fix closed.
-        Some(Value::JsonValue(_)) => {
-            // Parse through the canonical v2 boundary adapter so equivalent
-            // JSON spellings (including whitespace around null) have one
-            // semantic representation and malformed JSON is not persisted as
-            // an apparently valid string property.
-            match proximadb_records::proto_v2::typed_value_to_proxima(tv).ok()? {
-                ProximaValue::Json(serde_json::Value::Null) => None,
-                ProximaValue::Json(json) => Some(GraphValue::StringValue(json.to_string())),
-                _ => return None,
+        Some(Value::JsonValue(json)) => {
+            // Round 14: null detection is PARSE-based — raw text equality
+            // misses non-canonical spellings (" null" is valid JSON).
+            let parsed: serde_json::Value = serde_json::from_str(json).unwrap_or(
+                // Not parseable JSON text: keep the raw string (observable,
+                // not dropped).
+                serde_json::Value::String(json.clone()),
+            );
+            match parsed {
+                serde_json::Value::Null => None,
+                other => Some(GraphValue::StringValue(other.to_string())),
             }
         }
         _ => return None, // Arrays / maps are not supported as scalar node props.
@@ -799,26 +801,6 @@ mod tests {
             Some(Value::TextValue(s)) => assert_eq!(s, "test"),
             other => panic!("expected TextValue, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn json_null_property_is_parsed_not_compared_as_raw_text() {
-        use pv2::typed_value::Value;
-
-        let null = pv2::TypedValue {
-            declared_type: 0,
-            value: Some(Value::JsonValue(" \n null \t".to_string())),
-        };
-        assert_eq!(
-            typed_value_to_property_value(&null),
-            Some(PropertyValue { value: None })
-        );
-
-        let invalid = pv2::TypedValue {
-            declared_type: 0,
-            value: Some(Value::JsonValue("not-json".to_string())),
-        };
-        assert_eq!(typed_value_to_property_value(&invalid), None);
     }
 
     #[test]

@@ -657,32 +657,9 @@ fn json_to_sql_value(value: &serde_json::Value) -> SqlValue {
 
 /// Convert SqlValue to JSON
 fn sql_value_to_json(value: &SqlValue) -> serde_json::Value {
-    use crate::proto::proximadb_v1::sql_value::Value;
-
-    match &value.value {
-        Some(Value::NullValue(_)) => serde_json::Value::Null,
-        Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-        Some(Value::Int64Value(i)) => serde_json::json!(*i),
-        Some(Value::NumberValue(f)) => serde_json::json!(*f),
-        Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-        Some(Value::BytesValue(b)) => {
-            // Convert bytes to hex string
-            serde_json::Value::String(b.iter().map(|byte| format!("{:02x}", byte)).collect())
-        }
-        Some(Value::JsonbValue(b)) => proximadb_data_model::ProximaValue::jsonb_to_json_lossy(b),
-        Some(Value::ArrayValue(arr)) => {
-            serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
-        }
-        Some(Value::ObjectValue(obj)) => {
-            let map: serde_json::Map<String, serde_json::Value> = obj
-                .fields
-                .iter()
-                .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                .collect();
-            serde_json::Value::Object(map)
-        }
-        None => serde_json::Value::Null,
-    }
+    // Round 14: delegate to the shared converter — this hand-rolled copy had
+    // already drifted (hex bytes vs the helper's base64).
+    crate::storage::formats::arrow_conversion::sql_value_to_json(value)
 }
 
 /// Convert SqlObject to JSON
