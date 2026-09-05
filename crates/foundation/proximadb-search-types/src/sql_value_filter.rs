@@ -79,49 +79,92 @@ impl std::error::Error for FilterEvalError {}
 pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlValue>) -> bool {
     evaluate_filter_resolved(expr, &|field| {
         if let Some(sql_value) = metadata.get(field) {
-            return sql_value.value.as_ref().map(sql_val_to_json);
+            // Round 12: a top-level unset oneof is the SAME wire form of null
+            // as the nested one the round-11 fix handles — `a = null` must
+            // match, not drop the row.
+            return Some(sql_value_to_json(sql_value));
         }
         // Dot traversal for JSON(B) roots — mirrors `resolve_proxima_value`
         // so the SqlValue and ProximaTree paths agree for nested fields:
         // `memory.type` resolves inside JsonbValue({"memory":{"type":…}}).
+        // Two phases (round 8: the three-cursor form enforced its own
+        // invariants by hand): walk SqlObject segments by reference until the
+        // path ends or a JSONB leaf appears, then (re)use the shared JSON
+        // walker for the remainder. Only the final leaf is cloned.
         let (head, tail) = field.split_once('.')?;
-        let root = match metadata.get(head)?.value.as_ref()? {
-            SqlVal::ObjectValue(obj) => obj_to_json(obj),
-            // Canonical JSONB decodes to the document; legacy tag-8 bytes
-            // stay opaque (pre-PR behavior).
-            SqlVal::JsonbValue(bytes) => ProximaValue::jsonb_to_json_lossy(bytes),
-            _ => return None,
-        };
-        // Walk by reference, cloning only the final leaf — a clone per
-        // segment deep-copies the remaining subtree at every step (round-6
-        // finding; this now matches resolve_proxima_value's cost shape).
-        let mut current: &serde_json::Value = &root;
-        for segment in tail.split('.') {
-            current = match current {
-                serde_json::Value::Object(object) => object.get(segment)?,
+        let mut segments = tail.split('.');
+        // A null HEAD (unset oneof at depth 1) is untraversable — no object
+        // behind it, so a dotted path dead-ends: `a.b` over {"a": null}
+        // resolves to nothing (consistent with its IS NULL answer).
+        let mut current = metadata.get(head)?.value.as_ref()?;
+        for segment in segments.by_ref() {
+            match current {
+                SqlVal::ObjectValue(obj) => match obj.fields.get(segment) {
+                    Some(child) => {
+                        static NULL_SENTINEL: SqlVal = SqlVal::NullValue(0);
+                        current = child.value.as_ref().unwrap_or(&NULL_SENTINEL);
+                    }
+                    None => return None,
+                },
+                // A NullValue sentinel mid-path is terminal (the wildcard
+                // below returns None); as the final leaf the post-loop
+                // lowering renders it as JSON null.
+                // Canonical JSONB decodes once and continues as JSON; legacy
+                // tag-8 bytes stay opaque (pre-PR behavior).
+                SqlVal::JsonbValue(bytes) => {
+                    let root = ProximaValue::jsonb_to_json_lossy(bytes);
+                    // `segment` was consumed from the iterator but not yet
+                    // applied — it leads the JSON-side path.
+                    return json_get_path(&root, std::iter::once(segment).chain(segments)).cloned();
+                }
+                // A non-object mid-path cannot be traversed further —
+                // `segment` was consumed as a lookup key and found nothing
+                // object-shaped behind it. Returning the PARENT's value here
+                // (round-10 finding) admitted rows on `user.name = <user's
+                // own value>` and flipped IS NULL semantics; the legitimate
+                // leaf case is the post-loop match.
                 _ => return None,
-            };
+            }
         }
-        Some(current.clone())
+        // Path ended on a node: lower the leaf (sql_val_to_json's
+        // ObjectValue arm already maps unset-oneof children to null —
+        // obj_to_json was a duplicate of it).
+        Some(sql_val_to_json(current))
     })
 }
 
-/// Flatten a proto `SqlObject` to JSON for dot traversal.
-fn obj_to_json(obj: &proximadb_proto::proximadb_v1::SqlObject) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    for (k, v) in &obj.fields {
-        if let Some(inner) = v.value.as_ref() {
-            map.insert(k.clone(), sql_val_to_json(inner));
-        }
+/// Walk dotted path segments through a JSON document by reference — the
+/// single walker shared by the SqlValue and ProximaTree dot-traversals
+/// (round 8: it was maintained twice in this file).
+pub fn json_get_path<'a>(
+    root: &'a serde_json::Value,
+    segments: impl Iterator<Item = &'a str>,
+) -> Option<&'a serde_json::Value> {
+    let mut current = root;
+    for segment in segments {
+        current = match current {
+            serde_json::Value::Object(object) => object.get(segment)?,
+            _ => return None,
+        };
     }
-    serde_json::Value::Object(map)
+    Some(current)
+}
+
+/// Lower a whole `SqlValue` (including its unset-oneof null wire form) to
+/// JSON. Single authority for "unset oneof == JSON null" — rounds 11/12 were
+/// each this rule drifting by depth; do not re-derive it per call site.
+fn sql_value_to_json(sql: &SqlValue) -> serde_json::Value {
+    match sql.value.as_ref() {
+        Some(inner) => sql_val_to_json(inner),
+        None => serde_json::Value::Null,
+    }
 }
 
 /// Lower a proto `SqlValue` payload to `serde_json::Value` so the wire/`SqlValue`
 /// metadata path shares the canonical operator semantics (the seam compares on
 /// `serde_json::Value`). Numbers stay numeric (so `compare_json_numbers` keeps
 /// integer precision); bytes become a JSON array of byte values.
-fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
+pub fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
     match value {
         SqlVal::StringValue(s) => serde_json::Value::String(s.clone()),
         SqlVal::NumberValue(n) => serde_json::Number::from_f64(*n)
@@ -323,7 +366,39 @@ pub fn compare_json_op(
     json_val: &serde_json::Value,
     value: &serde_json::Value,
 ) -> bool {
+    // Null tests are total — decided once, here (round 17: they were
+    // previously decided in these guards AND again in the main match, three
+    // encodings of one rule).
     match operator {
+        ComparisonOperator::IsNull => return json_val.is_null(),
+        ComparisonOperator::IsNotNull => return !json_val.is_null(),
+        _ => {}
+    }
+    // Null LITERAL semantics: `= null` matches a null field (pinned);
+    // `!= null` / NOT IN(null) are the Mongo-style exclude-nulls idiom
+    // (admit non-null rows — the live REST neq path); In(null) is false;
+    // Contains null matches arrays holding a null element (develop's
+    // structural semantics). Everything else with a null literal: false.
+    if value.is_null() {
+        return match operator {
+            ComparisonOperator::Equals => json_val.is_null(),
+            ComparisonOperator::NotEquals | ComparisonOperator::NotIn => !json_val.is_null(),
+            ComparisonOperator::In => false,
+            ComparisonOperator::Contains => {
+                matches!(json_val, serde_json::Value::Array(items) if items.iter().any(|i| i.is_null()))
+            }
+            _ => false,
+        };
+    }
+    // Null FIELD with a non-null literal: no value comparison matches.
+    if json_val.is_null() {
+        return false;
+    }
+    match operator {
+        // Unreachable — null tests return above; kept for exhaustiveness so
+        // a future operator fails compilation here rather than silently
+        // falling through.
+        ComparisonOperator::IsNull | ComparisonOperator::IsNotNull => false,
         ComparisonOperator::Equals => json_eq(json_val, value),
         ComparisonOperator::NotEquals => !json_eq(json_val, value),
         ComparisonOperator::LessThan => compare_json_lt(json_val, value),
@@ -343,18 +418,30 @@ pub fn compare_json_op(
                 .as_array()
                 .is_some_and(|values| values.iter().any(|v| json_eq(json_val, v))),
         },
-        ComparisonOperator::NotIn => match json_val {
-            // Array-valued prop: pass when the prop set is
-            // disjoint from the query list.
-            serde_json::Value::Array(items) => value.as_array().is_none_or(|values| {
-                !items
-                    .iter()
-                    .any(|item| values.iter().any(|v| json_eq(item, v)))
-            }),
-            _ => value
+        ComparisonOperator::NotIn => {
+            // SQL: a null element in the list makes NOT IN UNKNOWN ⇒ deny
+            // (round 15; the security walker delegates here too).
+            let list_has_null = value
                 .as_array()
-                .is_none_or(|values| values.iter().all(|v| !json_eq(json_val, v))),
-        },
+                .is_some_and(|vs| vs.iter().any(|v| v.is_null()));
+            if list_has_null {
+                false
+            } else {
+                match json_val {
+                    // Array-valued prop: pass when the prop set is
+                    // disjoint from the query list.
+                    serde_json::Value::Array(items) => value.as_array().is_none_or(|values| {
+                        !items
+                            .iter()
+                            .any(|item| values.iter().any(|v| json_eq(item, v)))
+                    }),
+                    // Scalar prop: excluded when it equals any list element.
+                    _ => value
+                        .as_array()
+                        .is_none_or(|values| values.iter().all(|v| !json_eq(json_val, v))),
+                }
+            }
+        }
         ComparisonOperator::Contains => match json_val {
             // Array-valued prop: element membership
             // (e.g. `member_oids` contains `"u1"`).
@@ -374,15 +461,17 @@ pub fn compare_json_op(
             .zip(value.as_str())
             .is_some_and(|(haystack, suffix)| haystack.ends_with(suffix)),
         ComparisonOperator::Between => value.as_array().is_some_and(|bounds| {
+            // (A null FIELD never reaches here — the centralized guards
+            // above return first; the bounds checks are the live ones.)
             bounds.len() == 2
+                && !bounds[0].is_null()
+                && !bounds[1].is_null()
                 && compare_json_gte(json_val, &bounds[0])
                 && compare_json_lte(json_val, &bounds[1])
         }),
         // Null tests on a value that the resolver already produced: present and
         // JSON-null ⇒ null. Field *absence* is handled in `evaluate_filter_resolved`
         // (absent ⇒ IS NULL), which is the only place that can observe absence.
-        ComparisonOperator::IsNull => json_val.is_null(),
-        ComparisonOperator::IsNotNull => !json_val.is_null(),
         // Full SQL LIKE: `%` = any run, `_` = exactly one char, anywhere in the
         // pattern. Shared with every evaluator via `json_comparison`.
         ComparisonOperator::Like => {
@@ -414,7 +503,28 @@ where
     match expr {
         FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter_resolved(e, resolve)),
         FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter_resolved(e, resolve)),
-        FilterExpression::Not(e) => !evaluate_filter_resolved(e, resolve),
+        FilterExpression::Not(e) => {
+            // SQL 3VL: NOT(UNKNOWN) = UNKNOWN ⇒ deny. The two-valued flip
+            // would ADMIT null/absent-field rows whose inner comparison
+            // denied (rounds 18-19 vs develop). Nullness is probed only when
+            // the inner comparison DENIED (single resolution in the common
+            // match case — the eager probe double-resolved every record).
+            let inner = evaluate_filter_resolved(e, resolve);
+            if !inner
+                && let FilterExpression::Comparison {
+                    field, operator, ..
+                } = &**e
+                && !matches!(
+                    operator,
+                    ComparisonOperator::IsNull | ComparisonOperator::IsNotNull
+                )
+                && resolve(field).is_none_or(|v| v.is_null())
+            {
+                false
+            } else {
+                !inner
+            }
+        }
         FilterExpression::Comparison {
             field,
             operator,
@@ -477,7 +587,24 @@ where
                 None => Ok(false),
             }
         }
-        FilterExpression::Not(e) => Ok(!evaluate_filter_resolved_strict(e, resolve)?),
+        FilterExpression::Not(e) => {
+            // Round 19: same SQL NOT(UNKNOWN)=deny rule as the permissive
+            // walker (round 18 fixed only that one — strict/legacy modes
+            // disagreed on null-field rows).
+            if let FilterExpression::Comparison {
+                field, operator, ..
+            } = &**e
+                && !matches!(
+                    operator,
+                    ComparisonOperator::IsNull | ComparisonOperator::IsNotNull
+                )
+                && resolve(field).is_none_or(|v| v.is_null())
+            {
+                Ok(false)
+            } else {
+                Ok(!evaluate_filter_resolved_strict(e, resolve)?)
+            }
+        }
         FilterExpression::Comparison {
             field,
             operator,
@@ -523,11 +650,7 @@ fn resolve_proxima_value<'a>(props: &'a ProximaTree, field: &str) -> Option<Cow<
         | ProximaTreeNode::Value(ProximaValue::Jsonb(value)) => value,
         _ => return None,
     };
-    tail.split('.')
-        .try_fold(root, |value, segment| match value {
-            serde_json::Value::Object(object) => object.get(segment),
-            _ => None,
-        })
+    json_get_path(root, tail.split('.'))
         .map(|value| Cow::Owned(proximadb_records::conversions::json_to_proxima(value)))
 }
 
@@ -646,7 +769,23 @@ pub fn evaluate_filter_proxima_strict(
                 None => Ok(false),
             }
         }
-        FilterExpression::Not(e) => Ok(!evaluate_filter_proxima_strict(e, props)?),
+        FilterExpression::Not(e) => {
+            // Round 19: NOT(UNKNOWN)=deny — see the resolved-strict arm.
+            if let FilterExpression::Comparison {
+                field, operator, ..
+            } = &**e
+                && !matches!(
+                    operator,
+                    ComparisonOperator::IsNull | ComparisonOperator::IsNotNull
+                )
+                && proximadb_records::tree_get(props, field)
+                    .is_none_or(|pv| matches!(pv, ProximaValue::Null))
+            {
+                Ok(false)
+            } else {
+                Ok(!evaluate_filter_proxima_strict(e, props)?)
+            }
+        }
         FilterExpression::Comparison {
             field,
             operator,
@@ -752,6 +891,202 @@ mod tests {
         assert_eq!(
             sql_val_to_json(&SqlVal::JsonbValue(vec![0xc1])),
             serde_json::Value::String("c1".to_string())
+        );
+    }
+
+    #[test]
+    fn null_valued_field_satisfies_no_range_predicate() {
+        // Round 13 (SQL three-valued logic): a null-valued field must not
+        // leak into range results while an absent field does not.
+        let mut metadata = HashMap::new();
+        metadata.insert("rank".to_string(), SqlValue { value: None });
+        let lt = FilterExpression::Comparison {
+            field: "rank".to_string(),
+            operator: ComparisonOperator::LessThan,
+            value: json!(10),
+        };
+        assert!(!evaluate_filter(&lt, &metadata));
+        let gte = FilterExpression::Comparison {
+            field: "rank".to_string(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: json!(0),
+        };
+        assert!(!evaluate_filter(&gte, &metadata));
+        // Equality with an explicit null literal still matches (pinned in
+        // round 12) — the JSON-consistent choice, documented here.
+        let eq = FilterExpression::Comparison {
+            field: "rank".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(null),
+        };
+        assert!(evaluate_filter(&eq, &metadata));
+
+        metadata.insert("rank".to_string(), make_sql_value(SqlVal::Int64Value(5)));
+        let between_null_bound = FilterExpression::Comparison {
+            field: "rank".to_string(),
+            operator: ComparisonOperator::Between,
+            value: json!([null, 10]),
+        };
+        assert!(
+            !evaluate_filter(&between_null_bound, &metadata),
+            "BETWEEN is a range predicate and a null bound is unordered"
+        );
+    }
+
+    #[test]
+    fn null_valued_field_satisfies_no_not_equals_or_not_in() {
+        // Round 14's centralized guard: a null on either side makes every
+        // comparison false except IS NULL / IS NOT NULL and both-null `=`.
+        // Pins the !=/NOT-IN half the round-13 guards missed — a null field
+        // is not "different from" a literal.
+        let mut metadata = HashMap::new();
+        metadata.insert("status".to_string(), SqlValue { value: None });
+
+        let ne_literal = FilterExpression::Comparison {
+            field: "status".to_string(),
+            operator: ComparisonOperator::NotEquals,
+            value: json!("deleted"),
+        };
+        assert!(
+            !evaluate_filter(&ne_literal, &metadata),
+            "null != 'deleted' is UNKNOWN, not TRUE — the row must not match"
+        );
+
+        let not_in = FilterExpression::Comparison {
+            field: "status".to_string(),
+            operator: ComparisonOperator::NotIn,
+            value: json!(["archived", "deleted"]),
+        };
+        assert!(
+            !evaluate_filter(&not_in, &metadata),
+            "null NOT IN (...) is UNKNOWN, not TRUE"
+        );
+
+        // Positive control: a non-null field keeps matching both forms.
+        metadata.insert(
+            "status".to_string(),
+            make_sql_value(SqlVal::StringValue("active".to_string())),
+        );
+        assert!(evaluate_filter(&ne_literal, &metadata));
+        assert!(evaluate_filter(&not_in, &metadata));
+
+        // The deliberate stricter carve-out: `!= null` is FALSE for every
+        // field (either-null short-circuit) — IS NOT NULL is the operator
+        // that speaks about null.
+        metadata.insert("status".to_string(), SqlValue { value: None });
+        let ne_null = FilterExpression::Comparison {
+            field: "status".to_string(),
+            operator: ComparisonOperator::NotEquals,
+            value: json!(null),
+        };
+        assert!(!evaluate_filter(&ne_null, &metadata));
+        // Round 15 DELIBERATELY diverges from an earlier pin here: `!= null`
+        // is the Mongo-style exclude-nulls idiom (live on the REST neq path),
+        // and develop admitted non-null rows — zero rows was the regression
+        // the round-15 review flagged. Use IS NOT NULL for null-testing.
+        metadata.insert(
+            "status".to_string(),
+            make_sql_value(SqlVal::StringValue("active".to_string())),
+        );
+        assert!(evaluate_filter(&ne_null, &metadata));
+    }
+
+    #[test]
+    fn top_level_none_valued_field_resolves_to_json_null() {
+        // Round 12: the same wire form of null at the TOP level — `a = null`
+        // must match, not drop the row.
+        let mut metadata = HashMap::new();
+        metadata.insert("a".to_string(), SqlValue { value: None });
+        let eq_null = FilterExpression::Comparison {
+            field: "a".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(null),
+        };
+        assert!(evaluate_filter(&eq_null, &metadata));
+    }
+
+    #[test]
+    fn none_valued_child_resolves_to_json_null() {
+        // Round 11: {"a": {"b": {"c": null}}} — the writer emits
+        // SqlValue{value: None} for the nested null; `a.b.c = null` and
+        // `a.b = {"c": null}` must both match as they did pre-rewrite.
+        let mut c_leaf = HashMap::new();
+        c_leaf.insert("c".to_string(), SqlValue { value: None });
+        let mut a_root = HashMap::new();
+        a_root.insert(
+            "b".to_string(),
+            make_sql_value(SqlVal::ObjectValue(
+                proximadb_proto::proximadb_v1::SqlObject { fields: c_leaf },
+            )),
+        );
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "a".to_string(),
+            make_sql_value(SqlVal::ObjectValue(
+                proximadb_proto::proximadb_v1::SqlObject { fields: a_root },
+            )),
+        );
+        let eq_null = FilterExpression::Comparison {
+            field: "a.b.c".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(null),
+        };
+        assert!(evaluate_filter(&eq_null, &metadata));
+
+        let obj_eq = FilterExpression::Comparison {
+            field: "a".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!({"b": {"c": null}}),
+        };
+        assert!(evaluate_filter(&obj_eq, &metadata));
+    }
+
+    #[test]
+    fn dotted_field_on_a_scalar_parent_never_resolves() {
+        // Round 10: the traversal once returned the scalar PARENT's value
+        // for `user.name` over {"user": "admin"}, admitting rows on
+        // `user.name = "admin"` and flipping IS NULL semantics.
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "user".to_string(),
+            make_sql_value(SqlVal::StringValue("admin".to_string())),
+        );
+        let filter = FilterExpression::Comparison {
+            field: "user.name".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!("admin"),
+        };
+        assert!(!evaluate_filter(&filter, &metadata));
+
+        let null_test = FilterExpression::Comparison {
+            field: "user.name".to_string(),
+            operator: ComparisonOperator::IsNull,
+            value: json!(null),
+        };
+        // The field cannot resolve — SQL semantics treat an absent field as
+        // NULL (the strict evaluator's is_none_or; the round-10 bug returned
+        // the parent's non-null value and flipped this to false).
+        assert!(evaluate_filter(&null_test, &metadata));
+
+        metadata.insert(
+            "payload".to_string(),
+            make_sql_value(SqlVal::ObjectValue(
+                proximadb_proto::proximadb_v1::SqlObject {
+                    fields: HashMap::from([(
+                        "rank".to_string(),
+                        make_sql_value(SqlVal::Int64Value(7)),
+                    )]),
+                },
+            )),
+        );
+        let nested = FilterExpression::Comparison {
+            field: "payload.rank.extra".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(7),
+        };
+        assert!(
+            !evaluate_filter(&nested, &metadata),
+            "a nested scalar cannot satisfy a remaining path segment"
         );
     }
 
@@ -1310,6 +1645,16 @@ pub fn compare_json_op_type_strict(
     value: &serde_json::Value,
 ) -> Option<bool> {
     use crate::json_comparison::comparable_class;
+
+    // Null literals: the class gate below would make every null literal
+    // cross-class (Null is its own class) and deny BEFORE the centralized
+    // null-literal idioms apply — a security predicate using the documented
+    // `!= null` exclude-nulls idiom would silently match zero rows. Route
+    // null literals through compare_json_op first (round 17); the null
+    // FIELD case still falls through to the class gate as deny.
+    if value.is_null() {
+        return Some(compare_json_op(operator, json_val, value));
+    }
 
     let same_class =
         |other: &serde_json::Value| comparable_class(json_val) == comparable_class(other);

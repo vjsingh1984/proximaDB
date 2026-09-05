@@ -713,6 +713,30 @@ fn typed_value_to_property_value(tv: &pv2::TypedValue) -> Option<PropertyValue> 
             Some(GraphValue::BytesValue(u.clone()))
         }
         Some(Value::IsNull(_)) => return None,
+        // Round 11: JSON(B) as canonical JSON text — the wildcard silently
+        // dropped the property at this sibling of the adjacency seam the
+        // round-8 fix closed.
+        Some(Value::JsonValue(json)) => {
+            // Round 17: mirror the sibling services (document/record route
+            // TypedValue through typed_value_to_proxima, which REJECTS
+            // malformed JSON). Parse strictly: a valid JSON document becomes
+            // its canonical text; malformed input is rejected (no silent
+            // raw-string spellings that differ per service).
+            match serde_json::from_str::<serde_json::Value>(json) {
+                Ok(parsed) => match parsed {
+                    serde_json::Value::Null => None,
+                    serde_json::Value::String(inner) => Some(GraphValue::StringValue(inner)),
+                    other => Some(GraphValue::StringValue(
+                        crate::storage::entity_store::graph_schema::canonical_json_string(&other),
+                    )),
+                },
+                // Round 19: malformed JSON REJECTS the whole value
+                // (return None from the fn — the round-18 arm only nulled
+                // the inner Option, which the tail re-wrapped into a present
+                // value-less property, making the fix inert).
+                Err(_) => return None,
+            }
+        }
         _ => return None, // Arrays / maps are not supported as scalar node props.
     };
 

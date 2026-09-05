@@ -47,10 +47,26 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
         Some(sql_value::Value::NumberValue(f)) => ProximaValue::Float64(*f),
         Some(sql_value::Value::BoolValue(b)) => ProximaValue::Boolean(*b),
         Some(sql_value::Value::Int64Value(i)) => ProximaValue::Int64(*i),
-        Some(sql_value::Value::BytesValue(b)) => match ProximaValue::from_jsonb_slice(b) {
-            Ok(v) => ProximaValue::Jsonb(v),
-            Err(_) => ProximaValue::Binary(b.clone()),
-        },
+        Some(sql_value::Value::BytesValue(b)) => {
+            // Round 8: strip the legacy magic prefix FIRST — feeding it to
+            // rmp-serde "succeeds" (0xff is a negative fixint; trailing bytes
+            // ignored) and silently replaces the document with Number(-1).
+            // This matches search-types' decoder for magic-prefixed bytes
+            // (magic + JSON text); only the magic BYTES are shared via the
+            // data-model const — the codec bodies remain line-copies pending
+            // the tracked consolidation.
+            // The legacy payload after the magic is JSON TEXT (matching
+            // search-types' decoder) — round 8 mistakenly msgpack-decoded it,
+            // which "succeeds" on short payloads as a garbage number and
+            // mangles documents into Binary (round-9 empirical finding).
+            if let Some(payload) = b.strip_prefix(proximadb_data_model::JSONB_LEGACY_MAGIC) {
+                match serde_json::from_slice(payload) {
+                    Ok(v) => return ProximaValue::Jsonb(v),
+                    Err(_) => return ProximaValue::Binary(b.clone()),
+                }
+            }
+            ProximaValue::from_jsonb_or_binary(b)
+        }
         // types.proto tag 9: JSONB by declaration — canonical decode-or-binary
         // via the shared helper.
         Some(sql_value::Value::JsonbValue(b)) => ProximaValue::from_jsonb_or_binary(b),
@@ -223,9 +239,19 @@ pub fn proxima_to_sql_value(value: &ProximaValue) -> SqlValue {
         // tag-9 values — legacy-tagged JSONB filters exactly as it did before
         // this PR (byte-rendering miss), until rewritten. The tag-9 variant
         // did not exist before this PR.
-        ProximaValue::Jsonb(v) => sql_value::Value::JsonbValue(
-            ProximaValue::to_jsonb_vec(v).unwrap_or_else(|_| v.to_string().into_bytes()),
-        ),
+        ProximaValue::Jsonb(v) => match ProximaValue::to_jsonb_vec(v) {
+            Ok(bytes) => sql_value::Value::JsonbValue(bytes),
+            Err(_) => {
+                // Round 7: fall back to the legacy tag-8 magic+JSON-text
+                // encoding (matching search-types' writer) — the existing
+                // magic-stripping decoder recovers it losslessly. Plain
+                // JSON-text under tag 9 would violate tag 9's MessagePack
+                // contract and silently change type on read.
+                let mut bytes = proximadb_data_model::JSONB_LEGACY_MAGIC.to_vec();
+                bytes.extend_from_slice(v.to_string().as_bytes());
+                sql_value::Value::BytesValue(bytes)
+            }
+        },
         ProximaValue::Array(values) => sql_value::Value::ArrayValue(SqlArray {
             values: values.iter().map(proxima_to_sql_value).collect(),
         }),
@@ -689,6 +715,33 @@ mod tests {
             ProximaValue::Jsonb(v) => assert_eq!(v, original),
             other => panic!("expected Jsonb, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn legacy_magic_json_text_decodes_to_jsonb() {
+        let original = serde_json::json!({"memory": {"type": "fact"}, "rank": 7});
+        let mut bytes = proximadb_data_model::JSONB_LEGACY_MAGIC.to_vec();
+        bytes.extend_from_slice(original.to_string().as_bytes());
+        let sql = SqlValue {
+            value: Some(sql_value::Value::BytesValue(bytes)),
+        };
+
+        assert_eq!(
+            sql_value_to_proxima(&sql),
+            ProximaValue::Jsonb(original),
+            "the legacy magic payload is JSON text, not MessagePack"
+        );
+    }
+
+    #[test]
+    fn invalid_legacy_magic_payload_stays_binary() {
+        let mut bytes = proximadb_data_model::JSONB_LEGACY_MAGIC.to_vec();
+        bytes.extend_from_slice(b"{not-json");
+        let sql = SqlValue {
+            value: Some(sql_value::Value::BytesValue(bytes.clone())),
+        };
+
+        assert_eq!(sql_value_to_proxima(&sql), ProximaValue::Binary(bytes));
     }
 
     #[test]

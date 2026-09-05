@@ -124,8 +124,10 @@ impl DocumentBlock {
                             Some((mv, mk)) if mk >= key => (mv, mk),
                             Some(_) => (value.clone(), key),
                         });
-                    } else {
-                        // Update min/max
+                    } else if jsonb_min.is_none() {
+                        // Update min/max — skipped for mixed columns: the
+                        // JSONB extremum post-loop wins by design (incomparable
+                        // ⇒ never prunes), so these stores would be dead work.
                         stats.min_value =
                             Some(stats.min_value.take().map_or_else(
                                 || value.clone(),
@@ -140,6 +142,14 @@ impl DocumentBlock {
                 }
             }
 
+            // Round 8: kind-segregated extrema. A path mixing JSONB and
+            // scalars has no meaningful cross-kind total order (the round-7
+            // lexicographic merge did not bound the column and made the
+            // might_match_range false-prune reachable). The conservative
+            // choice records the JSONB extremum: compare_values treats a
+            // JSONB operand as incomparable (0), so the block is never
+            // pruned on that path — matching the pre-round-7 behavior.
+            // Pure-scalar and pure-JSONB columns keep their exact semantics.
             if let Some((value, _)) = jsonb_min {
                 stats.min_value = Some(value);
             }
@@ -288,10 +298,15 @@ impl DocumentBlock {
 
     /// Check if a value is null
     fn is_null(value: &SqlValue) -> bool {
+        // Round 17: an unset oneof is the wire form of null too — without
+        // it, a null at an indexed path was neither null-counted nor
+        // excluded from the scalar extrema branch (and compare_values'
+        // wildcard made it stick as both extrema, permanently disabling
+        // range pruning for the block).
         matches!(
             &value.value,
             Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_))
-        )
+        ) || value.value.is_none()
     }
 
     /// Compare two values, returning -1, 0, or 1
@@ -503,6 +518,30 @@ mod tests {
         assert_eq!(
             decode(stats.max_value.as_ref().expect("maximum")),
             serde_json::json!({"region": "west"})
+        );
+    }
+
+    #[test]
+    fn mixed_jsonb_and_scalar_stats_do_not_false_prune() {
+        let jsonb = SqlValue {
+            value: Some(SqlVal::JsonbValue(
+                proximadb_data_model::ProximaValue::to_jsonb_vec(&serde_json::json!({"rank": 1}))
+                    .expect("encode JSONB test value"),
+            )),
+        };
+        let docs = vec![
+            (
+                "scalar".to_string(),
+                make_doc(vec![("mixed", make_sql_int(10))]),
+            ),
+            ("jsonb".to_string(), make_doc(vec![("mixed", jsonb)])),
+        ];
+        let block = DocumentBlock::from_documents(docs, &["mixed".to_string()], false)
+            .expect("build mixed-kind block");
+
+        assert!(
+            block.might_match_range("mixed", None, Some(&make_sql_int(5))),
+            "an incomparable JSONB value must keep mixed-kind pruning conservative"
         );
     }
 

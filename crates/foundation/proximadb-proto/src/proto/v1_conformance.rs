@@ -387,16 +387,25 @@ fn parse_enum_value(line: &str) -> Option<(String, i32)> {
 }
 
 fn parse_from_str_arm(line: &str) -> Option<(String, String)> {
-    // "WIRE_NAME" => Some(Self::Variant),
+    // "WIRE_NAME" => Some(Self::Variant), — also tolerates the qualified
+    // EnumName::Variant spelling its as_str_name twin accepts (round 17: a
+    // correctly-written qualified arm parsed as an empty table and tripped
+    // the fail-loud guard on a correct mirror).
     if !line.contains("\" =>") {
         return None; // `_ => None,` and friends
     }
     let (wire, rest) = line.split_once("=>")?;
     let wire = wire.trim().trim_matches('"');
+    let rest = rest.trim();
     let variant = rest
-        .trim()
-        .trim_start_matches("Some(Self::")
-        .trim_end_matches("),");
+        .strip_prefix("Some(")
+        .and_then(|inner| inner.strip_suffix("),").or_else(|| inner.strip_suffix(')')))
+        .map(|path| {
+            // Self::Variant or EnumName::Variant — the VARIANT is the last
+            // segment either way.
+            path.rsplit("::").next().unwrap_or_default()
+        })
+        .unwrap_or("");
     if wire.is_empty()
         || variant.is_empty()
         || variant.contains(|c: char| !c.is_alphanumeric() && c != '_')
@@ -1519,32 +1528,35 @@ impl Comparer {
                 }
             }
 
-            if as_table.is_empty() && from_table.is_empty() {
-                // No name table at all: fall back to comparing the discriminant
-                // multisets (weaker — a renamed value would pass, a missing or
-                // renumbered one would not).
-                let mut dnums: Vec<i32> = dvalues.iter().map(|(_, n)| *n).collect();
-                let mut mnums: Vec<i32> = menum.values.iter().map(|(_, n)| *n).collect();
-                dnums.sort_unstable();
-                mnums.sort_unstable();
-                if dnums != mnums {
-                    self.record(
-                        key,
-                        format!("enum value numbers mismatch proto {dnums:?} vs mirror {mnums:?}"),
-                    );
-                }
+            // prost::Enumeration ALWAYS generates BOTH name tables: an empty
+            // table (joint or single) is drift — a deleted half-impl or a
+            // scanner miss — and the weak fallbacks would let a wire-name
+            // rename (the Polar/Polaris class) or a broken decode direction
+            // pass green (round-8 finding: one-sided absence slipped through).
+            if as_table.is_empty() || from_table.is_empty() {
+                // Fail loud naming the missing table(s).
+                self.record(
+                    key,
+                    format!(
+                        "enum name table(s) missing: as_str_name {}, from_str_name {} — \
+                         prost always generates both; absence is drift, not a comparable \
+                         shape",
+                        if as_table.is_empty() { "MISSING" } else { "ok" },
+                        if from_table.is_empty() {
+                            "MISSING"
+                        } else {
+                            "ok"
+                        },
+                    ),
+                );
                 continue;
             }
             for (wire, number) in dvalues {
-                // Each PRESENT table must cover the value independently —
-                // accepting either table would let a missing from_str_name
-                // arm hide behind a complete as_str_name (one-sided drift).
+                // Each table must cover the value independently (absence of a
+                // whole table already failed loud above).
                 let checks: [(&BTreeMap<&str, i32>, &str); 2] =
                     [(&from_table, "from_str_name"), (&as_table, "as_str_name")];
                 for (table, table_name) in checks {
-                    if table.is_empty() {
-                        continue;
-                    }
                     match table.get(wire.as_str()) {
                         None => self.record(
                             key,
@@ -1562,6 +1574,8 @@ impl Comparer {
                     }
                 }
             }
+            // Both tables key by WIRE NAME (built from the parsed arms), so
+            // .keys() iterates wire names — surplus/typo arms are caught here.
             for wire in as_table.keys().chain(from_table.keys()) {
                 if !dvalues.iter().any(|(w, _)| w == wire) {
                     self.record(
@@ -1587,20 +1601,19 @@ impl Comparer {
 // protoc driver + entry point
 // ---------------------------------------------------------------------------
 
-/// The one skip arm: a missing protoc degrades to SKIP only on developer
-/// machines. Under `REQUIRE_PROTOC=1` (set by CI's unit-test job) the same
+/// The disarm gate: any skip cause (missing protoc, absent repo root,
+/// unreadable proto tree) degrades to SKIP only on developer machines. Under `REQUIRE_PROTOC=1` (set by CI's unit-test job) the same
 /// condition FAILS, so the gate can never silently disarm where it is the
 /// only drift check — a skip and a pass stay distinguishable.
-fn skip_protoc_absent() -> Option<Vec<u8>> {
-    let message = "SKIP: protoc not found — TD-PROTO-2 mirror conformance check \
-         did not run. Install protobuf-compiler (or set PROTOC).";
+fn skip_or_fail(cause: &str) -> Option<Vec<u8>> {
+    // See the doc comment above for the disarm causes and contract.
     if std::env::var_os("REQUIRE_PROTOC").is_some() {
         panic!(
-            "TD-PROTO-2: protoc is REQUIRED here (REQUIRE_PROTOC=1) but not available — \
-                the conformance gate refuses to silently disarm. {message}"
+            "TD-PROTO-2: the conformance gate is REQUIRED here (REQUIRE_PROTOC=1) \
+             but cannot run: {cause} — refusing to silently disarm."
         );
     }
-    eprintln!("{message}");
+    eprintln!("SKIP: {cause} — TD-PROTO-2 mirror conformance check did not run.");
     None
 }
 
@@ -1612,15 +1625,14 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     match Command::new(&protoc).arg("--version").output() {
         Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return skip_protoc_absent();
+            return skip_or_fail("protoc not found — install protobuf-compiler (or set PROTOC)");
         }
         Err(err) => panic!("failed to spawn protoc: {err}"),
     }
 
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let Some(repo_root) = manifest.ancestors().nth(3) else {
-        eprintln!("SKIP: repository root not found above the crate manifest");
-        return None;
+        return skip_or_fail("repository root not found above the crate manifest");
     };
     let repo_root = repo_root.to_path_buf();
     let proto_root = repo_root.join("proto");
@@ -1628,8 +1640,9 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     let mut inputs = vec![proto_root.join("proximadb/explain.proto")];
     let v1_dir = proto_root.join("proximadb/v1");
     let Ok(v1_entries) = std::fs::read_dir(&v1_dir) else {
-        // proto/ absent (graceful-skip contract above): nothing to check.
-        return None;
+        // proto/ absent: skip on dev machines, FAIL under REQUIRE_PROTOC —
+        // a repo restructure must not silently disarm the gate (round-7).
+        return skip_or_fail("proto tree unreadable (moved or missing)");
     };
     let mut v1_files: Vec<PathBuf> = v1_entries
         .filter_map(|e| e.ok())
@@ -1655,7 +1668,7 @@ fn compile_descriptor_set() -> Option<Vec<u8>> {
     {
         Ok(output) => output,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return skip_protoc_absent();
+            return skip_or_fail("protoc not found — install protobuf-compiler (or set PROTOC)");
         }
         Err(err) => panic!("failed to spawn protoc: {err}"),
     };

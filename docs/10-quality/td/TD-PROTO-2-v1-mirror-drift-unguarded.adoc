@@ -301,6 +301,349 @@ mutation-proven), 1 dispositioned:**
   to `syn` or TD option 2's generate-and-diff is the tracked end state;
   grow a special case per new shape only until then.
 
+**Round 7 (post-merge confirmation, 2026-09-05) — 10 findings, 7 fixed in
+the follow-up PR, 3 deferred with rationale:**
+
+* Fixed (guard): an enum whose wire-name tables are BOTH absent now FAILS
+  LOUD instead of silently downgrading to discriminant-multiset comparison
+  (prost always generates both tables — joint absence is drift, and the weak
+  fallback would let a wire-name rename pass green). REQUIRE_PROTOC now
+  gates the FILESYSTEM disarm causes too (absent repo root, unreadable proto
+  tree) — a repo restructure can no longer silently disarm the gate on CI.
+* Fixed (runtime): document-block path stats merge JSONB and scalar extrema
+  with a deterministic cross-kind comparison instead of the JSONB extremum
+  blindly overwriting the scalar one (pure columns keep exact semantics).
+  The records-crate writer's encode-error fallback is the legacy tag-8
+  magic encoding (matching search-types; plain JSON-text under tag 9
+  violated the MessagePack contract). The graph seam converts JSONB to
+  canonical JSON text like its array/object arms (raw MessagePack bytes
+  rendered as AqlValue::Null). The two new SqlValue→JSON converter copies
+  (pgwire protocol.rs, executor.rs) delegate to the shared
+  arrow_conversion helper. The SqlValue dot-traversal walks ObjectValue
+  roots by reference instead of materializing the whole owned tree.
+* Deferred: (a) the `{"jsonb_value": …}` sniffed-tag ambiguity — rmp-serde
+  accepts almost any short byte sequence, so the round-4 MessagePack-validity
+  gate narrows little; the durable fix is an unambiguous tagged shape, which
+  is a wire-visible REST change needing owner sign-off; (b) a shared
+  big-stack test-runtime builder for the ~670 in-process-server tests
+  (only 8 set stack sizes; production already runs 32 MiB) — separate
+  test-infra PR; (c) filter+group-by on the same JSONB field renders twice
+  per log — measure-first before plumbing pre-rendered keys.
+
+**Round 8 (review of the round-7 PR, 2026-09-05) — 10 findings, all
+addressed in the same PR:**
+
+* Build-break (reproduced by the reviewer): the round-7 fail-loud guard
+  passed a `&str` where `record` takes `String` — invisible to
+  `cargo check`/`clippy --lib` because the module is `#[cfg(test)]`; CI's
+  unit lane would have gone red. Fixed, and the one-sided gap closed
+  properly: an empty name table (single OR joint) now fails loud. That
+  stricter check surfaced REAL drift — explain.v1's three enums
+  (QueryType/NodeType/ExplainFormat) never had `from_str_name` at all:
+  JSON/enum-name decoding of explain types has never worked. The mirror
+  gained the three impls.
+* Mixed-kind extrema reverted to the conservative kind-segregated form:
+  the lexicographic merge did not bound the column and made
+  `might_match_range` false-prune reachable; recording the JSONB extremum
+  (incomparable, never prunes) is the safe choice. A mixed-kind regression
+  pins the no-false-prune behavior.
+* The graph fix moved to the LIVE seam (`proxima_value_to_property_value`
+  in adjacency_projection — the round-7 edit had landed in its
+  `#[allow(dead_code)]` twin): Json/Jsonb map to canonical JSON text
+  instead of `_ => None`.
+* `JSONB_LEGACY_MAGIC` is now a single data-model authority used by both
+  writers; the records-crate reader strips the magic prefix BEFORE
+  msgpack-decoding (feeding it raw succeeds as Number(-1) — the
+  recovers-losslessly claim was empirically false).
+* The dot-traversal is a two-phase walk (SqlObject segments by reference,
+  then the shared `json_get_path` for JSON(B) tails) — replacing the
+  three-cursor form whose invariants were hand-enforced, and unifying the
+  JSON walker this file previously maintained twice.
+
+**Round 9 (partial — review agent rate-limited mid-run, 2026-09-05) —
+1 empirically-confirmed finding, fixed:**
+
+* The round-8 records-reader fix stripped the legacy magic but then
+  msgpack-decoded the remaining bytes — the legacy payload after the magic
+  is JSON TEXT (search-types' decoder had this right). Short payloads
+  "decoded" as garbage numbers (`123` → Number(123)); documents degraded
+  to Binary. The reader now decodes magic-stripped bytes with
+  serde_json; only magic-free bytes take the MessagePack path. Regression
+  tests pin both a structured document and the malformed-payload binary
+  fallback.
+
+**Round 10 (2026-09-05) — 6 findings, all fixed:**
+
+* **Correctness** (6/8 angles + reviewer trace): the two-phase dot-traversal
+  returned a scalar PARENT's value for a dotted field (`user.name` over
+  `{"user": "admin"}` resolved to "admin") — admitting rows on
+  `user.name = "admin"` and flipping IS NULL semantics on the GA engine
+  filter paths (helix, swift, compiled-filter). The mid-path non-object arm
+  now returns None (the leaf case is the post-loop match); pinned by
+  `dotted_field_on_a_scalar_parent_never_resolves` for both root and nested
+  scalar parents.
+* The live graph seam dropped `ProximaValue::Map` via the wildcard one line
+  below the new Json/Jsonb arm while the structurally identical Struct
+  mapped to ObjectValue — Map now joins the Struct arm, with a direct test
+  covering both Map and Jsonb projection.
+* Deleted the dead `sql_value_to_property_value` /
+  `property_value_to_sql_value` twins in graph_schema (the round-7 trap —
+  re-armed by parity-editing instead of deleting).
+* `json_get_path` takes an iterator (`once(segment).chain(segments)`,
+  `tail.split('.')`) — zero allocations on the per-record hot path where
+  both call sites previously collected Vecs.
+* Guard: removed the now-unreachable empty-table `continue` and its stale
+  PRESENT-table comment (absence fails loud above).
+* Not re-fixed (tracked, per the standing consolidation disposition): the
+  legacy magic+JSON-text codec body is still line-copied between records
+  and search-types — it rides with the single-authority consolidation.
+
+**Round 11 (2026-09-05) — 7 findings, all addressed:**
+
+* Correctness: a nested field stored as `SqlValue{value: None}` (the wire
+  form of a nested null) became unresolvable by the two-phase traversal —
+  `a.b.c = null` silently dropped rows where the develop-era path matched.
+  A present key with an unset oneof now resolves as a JSON null leaf, and
+  `obj_to_json` includes None-valued children as null (restoring
+  `a = {"b": {"c": null}}` equality). Pinned by
+  `none_valued_child_resolves_to_json_null`.
+* The v2 gRPC entity seam (`typed_value_to_property_value`) gained the
+  `JsonValue` arm — the wildcard was still silently dropping JSON
+  properties one file over from the round-8 fix.
+* `json_get_path` is pub and the federated JSONB vector-path arm
+  delegates to it (was a verbatim third copy of the walk).
+* The mixed-column scalar min/max branch is guarded by
+  `else if jsonb_min.is_none()` — the JSONB extremum wins by design, so
+  the scalar stores were dead work inviting a future "fix" that would
+  reintroduce the round-7 false-prune.
+* The `JSONB_LEGACY_MAGIC` and records comments now say precisely what is
+  shared (the magic bytes) and what is not (the codec bodies, tracked).
+* The nested-null traversal no longer uses `.expect("checked")`; the
+  production panic-policy applies even when a preceding guard proves the
+  option is present, so the branch now matches `Option` explicitly.
+* Tracked (unchanged disposition): the root-crate SqlValue→JSON helper's
+  home (arrow_conversion) is unreachable from extracted crates; the
+  foundation-level anchor (proximadb-records) is the consolidation target.
+
+**Round 12 (2026-09-05) — 8 findings: 6 fixed, 2 tracked/dispositioned:**
+
+* Correctness: the round-11 null fix was depth-inconsistent — a TOP-LEVEL
+  unset oneof (`a = null`) still resolved as absent and dropped rows while
+  the nested form matched. The fast path now maps an unset oneof to JSON
+  null at every depth; pinned by
+  `top_level_none_valued_field_resolves_to_json_null`.
+* The `.expect("checked")` in the traversal is gone (no-expect mandate; the
+  panic-policy guard scans only src/ so nothing machine-checked this
+  crate) — restructured as a plain match.
+* `obj_to_json` deleted — it duplicated `sql_val_to_json`'s ObjectValue arm
+  (including the round-11 null-children change, re-derived by hand); the
+  post-loop leaf lowers through the one shared function.
+* The records BytesValue tail delegates to `from_jsonb_or_binary` (was a
+  verbatim copy of the helper the adjacent arm already uses).
+* Graph seam: a JSON null document stays the property model's null form —
+  rendering it as the string "null" flipped null-equality to string
+  equality.
+* Tracked: (a) SqlValue-vs-ProximaTree object-literal equality divergence
+  (`a.b = {"c":1}` matches one evaluator, not the other) — pre-existing on
+  develop, needs a tree_get contract change in proximadb-records;
+  (b) the canonical-JSON-text-as-StringValue policy is hand-encoded at two
+  sibling graph seams — rides with the shared-converter consolidation.
+
+**Round 13 (2026-09-05) — 7 findings: 6 fixed, 1 tracked:**
+
+* Correctness (SQL three-valued logic): the round-12 null resolution let
+  null-valued fields leak into range results (`rank < 10` admitted them
+  while an absent field was excluded). Ordering comparisons now return
+  false when either side is null; `= null` keeps matching (the pinned
+  JSON-consistent choice for explicit null literals — documented in the
+  test). Pinned by `null_valued_field_satisfies_no_range_predicate`.
+* The third sibling seam: entity_to_node's direct-property loop
+  wildcard-dropped JSON(B)/object/array flexible-metadata fields, making
+  them unfilterable (matches_metadata_filter reads only direct
+  properties). They now lower to canonical JSON text — with the literal
+  `null` document mapping to the property model's null form (the round-12
+  rule applied at this seam too).
+* The v2 gRPC write seam: `json_value: "null"` no longer becomes the
+  string "null" (same rule).
+* The unset-oneof-is-null rule now lives in one wrapper
+  (`sql_value_to_json`) at the top level instead of being re-derived by
+  hand at four depths.
+* Cleanup: duplicate disarm-contract comment removed; (tracked, unchanged)
+  the Jsonb read-rendering round-trip asymmetry at the graph property
+  seam (StringValue loses the JSON typing on read-modify-write) — needs a
+  typed property or marker scheme, folded into the JSON-text-policy
+  consolidation.
+
+**Round 14 (2026-09-05) — 4 findings, all fixed:**
+
+* `EntityNodeMapper` serialized `SqlObject`/`SqlArray` protobuf wrappers,
+  producing strings such as `{"fields":{"rank":{"int64_value":7}}}`
+  instead of the natural document `{"rank":7}`. The compatibility input
+  now lowers through `SqlValue -> ProximaValue` before JSON projection.
+* The same mapper's JSON-null helper returned `None`, but its caller treated
+  that as "skip this field" rather than an unset `PropertyValue` oneof.
+  JSON null is now retained as a present null property.
+* The v2 entity seam compared raw JSON text to the exact spelling `"null"`;
+  valid whitespace-equivalent nulls became strings and malformed JSON was
+  accepted. It now parses through `typed_value_to_proxima` first.
+* The null ordering guard covered four comparison operators but omitted
+  `BETWEEN`; a null bound could therefore act as an open lower bound.
+  `BETWEEN` now rejects null fields and either null bound.
+
+* **SQL null semantics centralized**: the round-13 per-arm range guards
+  were copy-pasted (missing Between) and left `!=`/`NOT IN` admitting
+  null rows. One central rule now opens `compare_json_op`: a null on
+  either side makes every comparison false, except IS NULL/IS NOT NULL
+  and the pinned both-null `= null`. Covers Between, !=, NOT IN, and the
+  security walker's delegation.
+* Null-at-depth-1 (a null HEAD under a dotted path) now matches the
+  depth-2 rule via a NullValue sentinel — `a.b = null` and
+  `a.b IS NULL` agree, and the triple-nested child special-case
+  collapsed to the same sentinel.
+* graph_schema's Object/Array arms lower canonically via the shared
+  `sql_val_to_json` (serde_json::to_string on the prost struct emitted
+  the proto serde ENVELOPE — `{"fields":{…}}` — unmatchable by the
+  exact-string entity filter and divergent from the JSONB arm).
+* The v2 seam's null detection is parse-based (" null" is valid JSON
+  text and was stored as a string property).
+* The legacy vector-search executor no longer collapses nulls/bytes to
+  String("") — nulls stay null, bytes stay binary, objects lower
+  canonically.
+* HELIX/SWIFT extraction keeps unset-oneof keys as JSON null instead of
+  dropping them (per-seam null accounting).
+* The last two hand-rolled root-crate REST converters (canonical
+  handlers + document) delegate to the shared arrow_conversion helper —
+  their bytes/NaN renderings had already drifted from it.
+* Doc blocks disentangled (the payload-lowering contract sits on
+  `sql_val_to_json` again).
+
+**Round 15 (2026-09-05) — 10 findings: 8 fixed, 1 pre-addressed, 1
+inherent:**
+
+* Null-LITERAL semantics restored: `!= null` had become a zero-rows trap
+  (the Mongo-style exclude-nulls idiom, live on the REST neq path) and
+  NOT IN with a null literal rejected everything. The central rule now
+  distinguishes a null literal (Equals/=null pinned; NotEquals/NotIn
+  exclude nulls; In false) from a null FIELD (no value comparison
+  matches).
+* NOT IN with a null ELEMENT in the list now denies (SQL UNKNOWN ⇒
+  deny) — including via the security walker's delegation.
+* The stale in-file converter tests (bytes int-array, NaN→0) updated to
+  the shared helper's rendering — the delegation would have gone red on
+  CI's unit lane (the #[cfg(test)] invisibility class again).
+* The executor's object/array arms delegate to the canonical converter
+  (the hand-rolled JSON round-trip dropped null children, re-typed
+  bytes, degraded floats; ArrayValue still hit the wildcard → "");
+  the owned-bytes clone dropped.
+* The v2 seam's unparseable-JSON fallback keeps the raw string verbatim
+  (was double-serialized — JSON quoting the filter can never match).
+* The dead outer NULL sentinel removed with an accurate comment (a null
+  HEAD is untraversable; `a.b` over `{"a":null}` resolves to nothing,
+  consistent with IS NULL).
+* Pre-addressed by the parallel session: the guard's surplus wire-name
+  key check (verified present and correctly keyed).
+* Inherent (documented): a JSONB-null flexible-metadata field becomes
+  an ABSENT v1-entity property (the v1 property map cannot express
+  present-null) while v2/adjacency store present nulls — the v1 entity
+  path's property map would need an Option<Value> shape change; tracked
+  with the typed-property consolidation.
+
+**Round 16 (2026-09-05) — 6 findings, all fixed:**
+
+* Contains-null regression: the null-literal guard's catch-all denied
+  `tags contains null` (develop matched null array elements
+  structurally). A Contains carve-out restores array-membership-of-null.
+* NotIn-with-null-literal now excludes null rows (was `true` — code,
+  comment, and ledger disagreed; now consistent with NotEquals).
+* The executor's entire SqlValue lowering delegates to the canonical
+  converter (8 hand-copied arms had a nesting-dependent divergence:
+  top-level legacy magic bytes stayed Binary while nested ones were
+  sniffed).
+* HELIX/SWIFT extraction delegates to the shared converter — their
+  private helpers rendered bytes as hex and arrays/objects as
+  placeholder strings, drifting per-surface; the dead helpers deleted.
+* The Between arm's dead `!json_val.is_null()` conjunct dropped (the
+  centralized guards return first; a comment now says so).
+
+**Round 17 (2026-09-05) — 10 findings, all fixed:**
+
+* Non-canonical key order: SqlObject.fields is a HashMap and serde_json's
+  preserve_order is active (utoipa), so the graph-schema object/array
+  property text varied per write — exact-string property filters flaked.
+  Serialization now sorts keys recursively (canonical_json_string), and
+  the arm uses the same shared converter the six delegated sites use (was
+  the competing search-types twin — two-authority drift).
+* The Jsonb arm rejects undecodable bytes (property dropped, develop's
+  behavior) instead of storing quoted-hex junk.
+* The v2 seam parses strictly and unwraps JSON string documents (a
+  valid-JSON string stores its inner text, not a double-quoted spelling;
+  malformed JSON is rejected, matching the sibling services'
+  typed_value_to_proxima contract).
+* The type-strict/security path routes null LITERALS through the
+  centralized idioms before its class gate (Null is its own comparable
+  class, so `!= null` deny-all'd on the RLS walkers while returning
+  exclude-nulls everywhere else).
+* parse_from_str_arm tolerates the qualified EnumName::Variant spelling
+  (a correct arm parsed as an empty table and tripped the fail-loud
+  guard).
+* DocumentBlock::is_null recognizes the unset-oneof null wire form
+  (null-count/selectivity and extrema exclusion).
+* Null tests hoisted above the null-value guards (three encodings of
+  one rule collapsed to one); the centralizing comment now states the
+  actual carve-out table.
+
+**Round 18 (2026-09-05) — 10 findings: 5 fixed, 5 tracked:**
+
+* Fixed: NOT over a null-field value comparison now denies (SQL
+  NOT(UNKNOWN)=UNKNOWN; the two-valued flip admitted null rows — a
+  regression vs develop). Direct Comparison children only; deeper
+  nestings keep the flip (double negation cancels; documented).
+* Fixed: the v2 seam's malformed-JSON arm no longer stores a present
+  value-less property (silent content destruction with an OK response) —
+  the property is skipped; full write-rejection parity needs a Result
+  signature threaded through upsert (tracked).
+* Fixed: sorted-key canonical text applied at the remaining two
+  JSON-to-StringValue seams (adjacency_projection, entity_service) —
+  equal documents materialize as equal property text regardless of
+  write path.
+* Fixed: unreachable null-test arms' comment corrected; dead is_empty
+  branches in helix/swift extraction dropped.
+
+**Round 19 (2026-09-05) — 10 findings: 6 fixed, 4 tracked:**
+
+* Fixed: NOT(UNKNOWN)=deny extended to BOTH strict evaluators (round 18
+  patched only the permissive one — strict/legacy filter modes returned
+  different result sets for the same filter+record) and to ABSENT
+  fields (is_none_or — present-null and absent are both "null" per the
+  file's own rule; they denied differently).
+* Fixed: the v2 malformed-JSON fix made effective (return None from the
+  fn — the round-18 arm only nulled the inner Option, which the fn tail
+  re-wrapped into exactly the present value-less property the comment
+  claimed eliminated).
+* Fixed: json_text_property matches the PARSED Value::Null (was a
+  serialized-text compare against "null" — renderer-dependent).
+* Fixed: the AXIS eventlog consumer lowers structured metadata via the
+  canonical JSON→ProximaValue mapping (the round-16 extraction contract
+  change had been silently re-lowered to Null — tags changed value
+  with no error).
+* Fixed: the Not null-probe resolves once (probe only when the inner
+  comparison denied — was double-resolution per record).
+* Tracked: JSON string-document spelling divergence between the v2
+  entity seam (unwrapped inner text) and adjacency/graph_schema
+  (quoted canonical text); the extraction twin blocks (helix/swift,
+  parity-edited three times); canonical_json_string's clone-per-write
+  (in-place sort_keys pending); the two unconsolidated dot-walkers
+  (auth oidc claim_at_path, plan_executor field_value).
+* Tracked: evaluate_filter_proxima_strict decides IS NULL on the raw
+  ProximaValue (Jsonb(Null) answers false there, true elsewhere —
+  pre-existing; needs null normalization at the records boundary);
+  corrupt JSONB nested inside ObjectValue renders quoted-hex while
+  top-level is dropped (corrupt-input only); the executor delegation
+  clones per field per row (owned-input entry point pending);
+  canonical_json_string is one of three recursive key-sorts (one home
+  pending); In with a null list element admits an array-field holding
+  null (pre-existing, benign-direction, permissive path only).
+
 
 * **The ledger must be `git add -f`-tracked**: `.gitignore`'s `*.json` silently
   swallowed it (now a negation beside the other ratchet baselines). Untracked,

@@ -35,7 +35,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 
 use crate::graph::{Edge, Node, PropertyValue, property_value};
-use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Relation, SqlValue, sql_value};
+use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Relation, sql_value};
 
 /// Special property keys for storing SKS metadata in Orion nodes
 const TYPED_METADATA_KEY: &str = "__typed_metadata";
@@ -46,6 +46,40 @@ const EMBEDDINGS_KEY: &str = "__embeddings";
 
 /// Maps Entity to Node and vice versa
 pub struct EntityNodeMapper;
+
+/// JSON text becomes a StringValue property — except the literal `null`
+/// document, which is the property model's null form (round-12 rule at this
+/// third seam).
+/// Serialize with SORTED object keys — stable across HashMap iteration
+/// orders so exact-string property comparisons are write-order-independent
+/// (serde_json's preserve_order is active via utoipa; unsorted
+/// serialization is not canonical).
+pub(crate) fn canonical_json_string(value: &serde_json::Value) -> String {
+    fn sort_rec(v: &serde_json::Value) -> serde_json::Value {
+        match v {
+            serde_json::Value::Object(map) => {
+                let mut entries: Vec<(String, serde_json::Value)> =
+                    map.iter().map(|(k, v)| (k.clone(), sort_rec(v))).collect();
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                entries.into_iter().collect()
+            }
+            _ => v.clone(),
+        }
+    }
+    sort_rec(value).to_string()
+}
+
+/// JSON document → property value. A JSON null stays the property model's
+/// null form (matched on the PARSED value, not a serialized-text compare —
+/// round 19: the string compare silently depended on the renderer).
+fn json_text_property(json: &serde_json::Value) -> Option<property_value::Value> {
+    match json {
+        serde_json::Value::Null => None,
+        _ => Some(property_value::Value::StringValue(canonical_json_string(
+            json,
+        ))),
+    }
+}
 
 impl EntityNodeMapper {
     /// Convert SKS Entity to Orion Node
@@ -99,7 +133,33 @@ impl EntityNodeMapper {
                         sql_value::Value::BoolValue(b) => {
                             Some(property_value::Value::BoolValue(*b))
                         }
-                        _ => None, // Skip unsupported types
+                        // Round 13: JSON(B)/array/object flexible-metadata
+                        // fields lower to canonical JSON text — the wildcard
+                        // made them unfilterable (matches_metadata_filter
+                        // reads only direct properties, never the blob).
+                        sql_value::Value::JsonbValue(bytes) => {
+                            // Undecodable bytes would render as quoted-hex
+                            // junk — drop the property instead (develop's
+                            // behavior for corrupt input).
+                            match proximadb_data_model::ProximaValue::from_jsonb_slice(bytes) {
+                                Ok(json) => json_text_property(&json),
+                                Err(_) => None,
+                            }
+                        }
+                        // Canonical JSON lowering: the shared root-crate
+                        // converter (NOT serde_json::to_string on the prost
+                        // struct — that emits the proto envelope — and NOT the
+                        // search-types twin, which renders bytes differently),
+                        // then SORTED to a stable key order: SqlObject.fields
+                        // is a HashMap, so unsorted text varies per write and
+                        // exact-string property filters would flake (round 17).
+                        sql_value::Value::ObjectValue(_) | sql_value::Value::ArrayValue(_) => {
+                            let json = crate::storage::formats::arrow_conversion::sql_value_to_json(
+                                sql_value,
+                            );
+                            json_text_property(&json)
+                        }
+                        _ => None, // bytes and nulls stay blob-only
                     };
                     if let Some(pv) = prop_value {
                         properties.insert(key.clone(), PropertyValue { value: Some(pv) });
@@ -323,61 +383,6 @@ impl RelationEdgeMapper {
 // ============================================================================
 // Helper Functions: SqlValue ↔ PropertyValue Conversion
 // ============================================================================
-
-#[allow(dead_code)]
-fn sql_value_to_property_value(sql_value: &SqlValue) -> Result<PropertyValue> {
-    let value = match &sql_value.value {
-        Some(sql_value::Value::StringValue(s)) => {
-            Some(property_value::Value::StringValue(s.clone()))
-        }
-        Some(sql_value::Value::NumberValue(n)) => Some(property_value::Value::DoubleValue(*n)),
-        Some(sql_value::Value::BoolValue(b)) => Some(property_value::Value::BoolValue(*b)),
-        Some(sql_value::Value::Int64Value(i)) => Some(property_value::Value::IntValue(*i)),
-        Some(sql_value::Value::BytesValue(bytes)) => {
-            Some(property_value::Value::BytesValue(bytes.clone()))
-        }
-        // JSONB carries typed JSON semantics property_value lacks — pass the
-        // bytes through like BytesValue.
-        Some(sql_value::Value::JsonbValue(bytes)) => {
-            Some(property_value::Value::BytesValue(bytes.clone()))
-        }
-        Some(sql_value::Value::NullValue(_)) => None,
-        // For complex types (arrays, objects), serialize to JSON string for now
-        Some(sql_value::Value::ArrayValue(arr)) => {
-            let json = serde_json::to_string(arr).context("Failed to serialize array")?;
-            Some(property_value::Value::StringValue(json))
-        }
-        Some(sql_value::Value::ObjectValue(obj)) => {
-            let json = serde_json::to_string(obj).context("Failed to serialize object")?;
-            Some(property_value::Value::StringValue(json))
-        }
-        None => None,
-    };
-
-    Ok(PropertyValue { value })
-}
-
-#[allow(dead_code)]
-fn property_value_to_sql_value(prop_value: &PropertyValue) -> Result<SqlValue> {
-    let value = match &prop_value.value {
-        Some(property_value::Value::StringValue(s)) => {
-            Some(sql_value::Value::StringValue(s.clone()))
-        }
-        Some(property_value::Value::IntValue(i)) => Some(sql_value::Value::Int64Value(*i)),
-        Some(property_value::Value::DoubleValue(d)) => Some(sql_value::Value::NumberValue(*d)),
-        Some(property_value::Value::BoolValue(b)) => Some(sql_value::Value::BoolValue(*b)),
-        Some(property_value::Value::BytesValue(bytes)) => {
-            Some(sql_value::Value::BytesValue(bytes.clone()))
-        }
-        // For now, treat complex types as null (will improve in future)
-        Some(property_value::Value::ArrayValue(_)) => Some(sql_value::Value::NullValue(0)),
-        Some(property_value::Value::ObjectValue(_)) => Some(sql_value::Value::NullValue(0)),
-        Some(property_value::Value::VectorValue(_)) => Some(sql_value::Value::NullValue(0)),
-        None => Some(sql_value::Value::NullValue(0)),
-    };
-
-    Ok(SqlValue { value })
-}
 
 #[cfg(test)]
 mod tests {

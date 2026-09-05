@@ -43,29 +43,9 @@ use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
 
 fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
-    use crate::proto::proximadb_v1::sql_value::Value;
-
-    match &value.value {
-        Some(Value::StringValue(value)) => serde_json::Value::String(value.clone()),
-        Some(Value::Int64Value(value)) => serde_json::json!(value),
-        Some(Value::NumberValue(value)) => serde_json::json!(value),
-        Some(Value::BoolValue(value)) => serde_json::Value::Bool(*value),
-        Some(Value::BytesValue(value)) => {
-            serde_json::Value::String(proximadb_kernel::encoding::base64_encode(value))
-        }
-        Some(Value::JsonbValue(value)) => ProximaValue::jsonb_to_json_lossy(value),
-        Some(Value::ObjectValue(value)) => serde_json::Value::Object(
-            value
-                .fields
-                .iter()
-                .map(|(key, value)| (key.clone(), sql_value_to_json(value)))
-                .collect(),
-        ),
-        Some(Value::ArrayValue(value)) => {
-            serde_json::Value::Array(value.values.iter().map(sql_value_to_json).collect())
-        }
-        Some(Value::NullValue(_)) | None => serde_json::Value::Null,
-    }
+    // Round 7: delegate to the shared converter — this local copy duplicated
+    // it arm-for-arm (the family the consolidation follow-up collapses).
+    crate::storage::formats::arrow_conversion::sql_value_to_json(value)
 }
 
 fn sql_object_to_json(obj: &crate::proto::proximadb_v1::SqlObject) -> String {
